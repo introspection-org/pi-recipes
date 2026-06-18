@@ -119,6 +119,33 @@ export interface RunnerLifecycleEvent {
   data: Record<string, unknown>;
 }
 
+export type RunnerTranscriptEventType =
+  | "run_started"
+  | "run_completed"
+  | "run_failed"
+  | "session_started"
+  | "session_completed"
+  | "user_prompt"
+  | "assistant_message"
+  | "tool_call"
+  | "tool_result"
+  | "skill_loaded"
+  | "skill_used"
+  | "agent_run_started"
+  | "agent_run_completed";
+
+export interface RunnerTranscriptEvent {
+  type: RunnerTranscriptEventType;
+  runId: string;
+  occurredAt: Date;
+  agentName?: string;
+  data: Record<string, unknown>;
+}
+
+export interface RunnerTranscriptSink {
+  emit(event: RunnerTranscriptEvent): void | Promise<void>;
+}
+
 export interface ConversationItem {
   id: string;
   inputMessages?: unknown[];

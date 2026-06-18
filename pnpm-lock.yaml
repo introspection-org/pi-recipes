@@ -17,6 +17,12 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.75.4
         version: 0.75.4(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-tui':
+        specifier: 0.75.5
+        version: 0.75.5
+      typebox:
+        specifier: ^1.0.56
+        version: 1.1.38
       yaml:
         specifier: ^2.9.0
         version: 2.9.0

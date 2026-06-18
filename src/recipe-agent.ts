@@ -1,6 +1,11 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { parse } from "yaml";
+import {
+  packageResourcePaths,
+  readPiPackageManifest,
+  RecipePackageError,
+} from "./recipe-package.js";
 
 export interface RecipeSystemInstructions {
   mode: "append" | "replace";
@@ -27,6 +32,7 @@ export interface RecipeProfileDefinition {
     name?: string;
     thinkingLevel?: string;
   };
+  systemInstructions?: RecipeSystemInstructions;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -67,7 +73,10 @@ function parseSystemInstructions(
 ): RecipeSystemInstructions | undefined {
   const raw = asRecord(data.system_instructions ?? data.systemInstructions);
   const content = typeof raw.content === "string" ? raw.content.trim() : "";
-  if (!content) return undefined;
+  if (!content) {
+    const prompt = typeof data.prompt === "string" ? data.prompt.trim() : "";
+    return prompt ? { mode: "append", content: prompt } : undefined;
+  }
   const mode = raw.mode === "replace" ? "replace" : "append";
   return { mode, content };
 }
@@ -76,18 +85,53 @@ function readYaml(path: string): Record<string, unknown> {
   return asRecord(parse(readFileSync(path, "utf8")));
 }
 
+function recipeManifest(recipeDir: string) {
+  try {
+    return readPiPackageManifest(recipeDir);
+  } catch (err) {
+    if (err instanceof RecipePackageError) return null;
+    throw err;
+  }
+}
+
+function yamlFilesFromPaths(paths: string[]): string[] {
+  const files: string[] = [];
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    const stats = statSync(path);
+    if (stats.isFile() && /\.ya?ml$/i.test(path)) {
+      files.push(path);
+      continue;
+    }
+    if (!stats.isDirectory()) continue;
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      if (!entry.isFile() || !/\.ya?ml$/i.test(entry.name)) continue;
+      files.push(join(path, entry.name));
+    }
+  }
+  return files.sort();
+}
+
+function recipeAgentFiles(recipeDir: string): string[] {
+  const manifest = recipeManifest(recipeDir);
+  if (manifest) return yamlFilesFromPaths(packageResourcePaths(manifest, "agents"));
+  return yamlFilesFromPaths([join(recipeDir, "agents")]);
+}
+
+function recipeProfileFiles(recipeDir: string): string[] {
+  const manifest = recipeManifest(recipeDir);
+  if (manifest) return yamlFilesFromPaths(packageResourcePaths(manifest, "profiles"));
+  return yamlFilesFromPaths([join(recipeDir, "profiles")]);
+}
+
 export function loadRecipeAgentDefinitions(
   recipeDir: string
 ): Map<string, RecipeAgentDefinition> {
-  const agentsDir = join(recipeDir, "agents");
   const definitions = new Map<string, RecipeAgentDefinition>();
-  if (!existsSync(agentsDir)) return definitions;
 
-  for (const entry of readdirSync(agentsDir)) {
-    if (!/\.ya?ml$/i.test(entry)) continue;
-    const path = join(agentsDir, entry);
+  for (const path of recipeAgentFiles(recipeDir)) {
     const data = readYaml(path);
-    const fallbackName = entry.replace(/\.ya?ml$/i, "");
+    const fallbackName = basename(path).replace(/\.ya?ml$/i, "");
     const name =
       typeof data.name === "string" && data.name.trim()
         ? data.name.trim()
@@ -115,21 +159,26 @@ export function loadRecipeProfile(
 ): RecipeProfileDefinition | null {
   const name = profileName?.trim();
   if (!name) return null;
-  const path = join(recipeDir, "profiles", `${name}.yaml`);
-  if (!existsSync(path)) return null;
-  const data = readYaml(path);
-  const entrypoint =
-    typeof data.entrypoint === "string" && data.entrypoint.trim()
-      ? data.entrypoint.trim()
-      : "agent";
-  return {
-    name:
+  for (const path of recipeProfileFiles(recipeDir)) {
+    const data = readYaml(path);
+    const fallbackName = basename(path).replace(/\.ya?ml$/i, "");
+    const parsedName =
       typeof data.name === "string" && data.name.trim()
         ? data.name.trim()
-        : name,
-    entrypoint,
-    model: parseModel(data),
-  };
+        : fallbackName;
+    if (name !== parsedName && name !== fallbackName) continue;
+    const entrypoint =
+      typeof data.entrypoint === "string" && data.entrypoint.trim()
+        ? data.entrypoint.trim()
+        : "agent";
+    return {
+      name: parsedName,
+      entrypoint,
+      model: parseModel(data),
+      systemInstructions: parseSystemInstructions(data),
+    };
+  }
+  return null;
 }
 
 export function resolveRecipeAgentName(opts: {

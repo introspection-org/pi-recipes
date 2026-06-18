@@ -2,6 +2,7 @@ export * from "./adapter.js";
 export * from "./env.js";
 export * from "./local.js";
 export * from "./recipe-agent.js";
+export * from "./recipe-agents-extension.js";
 export * from "./recipe-package.js";
 export * from "./runner.js";
 export * from "./session.js";

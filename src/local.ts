@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import type {
   ModelCredentialProvider,
   RecipeProvider,
@@ -9,13 +9,18 @@ import type {
 } from "./adapter.js";
 import { launchContextFromPortableEnv } from "./env.js";
 import { createRecipeRunner, type RecipeRunner } from "./runner.js";
-import { PiAgentSessionDriver, type PiAgentSessionTool } from "./session.js";
+import {
+  PiAgentSessionDriver,
+  type PiAgentSessionTool,
+  type RecipeAgentRunSink,
+} from "./session.js";
 import type {
   MaterializedRecipe,
   ModelCredential,
   ModelCredentialRequest,
   RunnerLaunchContext,
   RunnerResourceBundle,
+  RunnerTranscriptSink,
 } from "./types.js";
 import { readPiPackageManifest } from "./recipe-package.js";
 
@@ -48,9 +53,21 @@ export class LocalResourceProvider implements ResourceProvider {
     context: RunnerLaunchContext,
     recipe: MaterializedRecipe
   ): Promise<RunnerResourceBundle> {
+    const workspaceDir = context.workspace.workspaceDir;
+    const repositories = existsSync(workspaceDir)
+      ? [
+          {
+            type: "repository" as const,
+            name: basename(workspaceDir) || "workspace",
+            repositoryPath: workspaceDir,
+            mountPath: workspaceDir,
+            access: "read_write" as const,
+          },
+        ]
+      : [];
     return {
       recipe,
-      repositories: [],
+      repositories,
       files: [],
       memories: [],
       skills: [],
@@ -104,6 +121,9 @@ export interface LocalRecipeAdapterOptions {
   session?: boolean;
   tools?: PiAgentSessionTool[];
   defaultModel?: string;
+  enableRecipeAgents?: boolean;
+  recipeAgentRunSink?: RecipeAgentRunSink;
+  transcriptSink?: RunnerTranscriptSink;
 }
 
 export function createLocalRecipeAdapter(
@@ -117,6 +137,7 @@ export function createLocalRecipeAdapter(
     resources: new LocalResourceProvider(),
     resourceSync: new LocalResourceSync(),
     modelCredentials,
+    transcript: opts.transcriptSink,
     createSession:
       opts.session === false
         ? undefined
@@ -127,6 +148,9 @@ export function createLocalRecipeAdapter(
               modelCredentials,
               tools: opts.tools,
               defaultModel: opts.defaultModel,
+              enableRecipeAgents: opts.enableRecipeAgents,
+              recipeAgentRunSink: opts.recipeAgentRunSink,
+              transcriptSink: opts.transcriptSink,
             }),
   };
 }

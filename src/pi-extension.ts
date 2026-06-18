@@ -1,275 +1,675 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionFactory,
+import {
+  defineTool,
+  type AgentToolUpdateCallback,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { Type, type Static } from "typebox";
 import { launchContextFromPortableEnv } from "./env.js";
 import { createLocalRecipeRunner } from "./local.js";
-import { loadRecipeAgentDefinitions, loadRecipeProfile } from "./recipe-agent.js";
-import { readPiPackageManifest } from "./recipe-package.js";
-
-export interface RunRecipeRequest {
-  recipeDir: string;
-  prompt: string;
-  workspaceDir: string;
-}
-
-export interface RunRecipeResult {
-  output: string;
-  workspaceDir: string;
-}
+import type { RecipeRunner } from "./runner.js";
+import type { RunnerTranscriptEvent } from "./types.js";
+import {
+  loadRecipeAgentDefinitions,
+  loadRecipeSystemPrompt,
+  resolveRecipeAgentDefinition,
+  type RecipeAgentDefinition,
+  type RecipeProfileDefinition,
+  type RecipeSystemInstructions,
+} from "./recipe-agent.js";
+import {
+  packageResourcePaths,
+  readPiPackageManifest,
+  validatePiPackageManifest,
+  type PiPackageManifest,
+} from "./recipe-package.js";
+import { promptResultText } from "./session.js";
 
 export interface PiRecipesExtensionOptions {
-  libraryDir?: string;
   env?: NodeJS.ProcessEnv;
-  runRecipe?: (request: RunRecipeRequest) => Promise<RunRecipeResult>;
+  createRecipeRunner?: typeof createLocalRecipeRunner;
 }
 
-const DEFAULT_PROMPT = "Run this recipe.";
+const RunRecipeAgentParams = Type.Object({
+  action: Type.Optional(
+    Type.Union([
+      Type.Literal("start"),
+      Type.Literal("status"),
+      Type.Literal("wait"),
+      Type.Literal("interrupt"),
+      Type.Literal("close"),
+    ])
+  ),
+  id: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+  task: Type.Optional(Type.String()),
+  label: Type.Optional(Type.String()),
+  wait: Type.Optional(Type.Boolean()),
+});
 
-function defaultLibraryDir(env: NodeJS.ProcessEnv): string {
-  return resolve(env.PI_RECIPES_LIBRARY_DIR || join(homedir(), ".pi", "recipes"));
+type RunRecipeAgentParams = Static<typeof RunRecipeAgentParams>;
+type ChildRunStatus = "running" | "completed" | "failed" | "interrupted";
+
+interface RecipeAgentToolDetails {
+  action: string;
+  id?: string;
+  agent?: string;
+  label?: string;
+  task?: string;
+  status?: ChildRunStatus;
+  startedAt?: string;
+  completedAt?: string;
+  output?: string;
+  error?: string;
+  agent_runs?: Array<
+    Pick<
+      RecipeAgentToolDetails,
+      "id" | "agent" | "label" | "task" | "status" | "startedAt" | "completedAt" | "output" | "error"
+    >
+  >;
+  available_agents?: string[];
 }
 
-function parseArgs(args: string): string[] {
-  const tokens: string[] = [];
-  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(args)) !== null) {
-    tokens.push(match[1] ?? match[2] ?? match[3] ?? "");
+type RecipeAgentToolUpdate = AgentToolUpdateCallback<RecipeAgentToolDetails>;
+
+interface ChildRun {
+  id: string;
+  agent: string;
+  label?: string;
+  task: string;
+  status: ChildRunStatus;
+  startedAt: string;
+  completedAt?: string;
+  output?: string;
+  error?: string;
+  runner: RecipeRunner;
+  promise: Promise<ChildRun>;
+}
+
+interface RecipeLaunchState {
+  key: string;
+  cwd: string;
+  recipeDir: string;
+  manifest: PiPackageManifest;
+  profileName?: string;
+  agentName: string;
+  agent: RecipeAgentDefinition;
+  profile: RecipeProfileDefinition | null;
+  skillPaths: string[];
+  promptPaths: string[];
+  themePaths: string[];
+  extensionPaths: string[];
+  extensionsLoaded: boolean;
+  configured: boolean;
+}
+
+const require = createRequire(import.meta.url);
+
+function stringFlag(value: boolean | string | undefined): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function modelParts(spec: string): { provider: string; model: string } {
+  const index = spec.indexOf("/");
+  if (index < 0) {
+    throw new Error(
+      `Invalid recipe model "${spec}" - expected "<provider>/<model_id>"`
+    );
   }
-  return tokens;
+  return {
+    provider: spec.slice(0, index),
+    model: spec.slice(index + 1),
+  };
 }
 
-function slug(value: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return normalized || "recipe";
+function applySystemInstructions(
+  base: string,
+  instructions: RecipeSystemInstructions | undefined
+): string {
+  if (!instructions) return base;
+  if (instructions.mode === "replace") return instructions.content;
+  return [base, instructions.content].filter(Boolean).join("\n\n");
 }
 
-function ensureLibrary(libraryDir: string): void {
-  mkdirSync(libraryDir, { recursive: true });
-}
-
-function notify(
-  ctx: ExtensionCommandContext,
-  message: string,
-  type: "info" | "warning" | "error" = "info"
-): void {
-  if (ctx.hasUI) {
-    ctx.ui.notify(message, type);
-    return;
-  }
-  console.log(message);
-}
-
-function resolveRecipeRef(libraryDir: string, ref: string): string {
-  const direct = resolve(ref);
-  if (existsSync(direct)) return direct;
-  return join(libraryDir, slug(ref));
-}
-
-function recipeSummary(recipeDir: string): string {
-  const manifest = readPiPackageManifest(recipeDir);
-  const agents = [...loadRecipeAgentDefinitions(recipeDir).values()];
-  const uniqueAgents = [...new Map(agents.map((agent) => [agent.name, agent])).values()];
+function runtimeContextPrompt(
+  base: string,
+  state: RecipeLaunchState
+): string {
   return [
-    `Recipe: ${manifest.name}@${manifest.version}`,
-    `Path: ${recipeDir}`,
-    `Agents: ${uniqueAgents.map((agent) => agent.name).join(", ") || "none"}`,
-  ].join("\n");
-}
-
-function writeStarterRecipe(recipeDir: string, name: string): void {
-  mkdirSync(join(recipeDir, "agents"), { recursive: true });
-  writeFileSync(
-    join(recipeDir, "package.json"),
-    JSON.stringify(
-      {
-        name,
-        version: "0.1.0",
-        pi: {
-          agents: ["agents/*.yaml"],
-          profiles: ["profiles/*.yaml"],
-          skills: ["skills/**/SKILL.md"],
-          prompts: ["SYSTEM.md"],
-        },
-      },
-      null,
-      2
-    ) + "\n"
-  );
-  writeFileSync(
-    join(recipeDir, "SYSTEM.md"),
-    `You are the ${name} recipe agent. Follow the user's task carefully.\n`
-  );
-  writeFileSync(
-    join(recipeDir, "agents", "agent.yaml"),
+    base,
     [
-      "name: agent",
-      `description: Default agent for ${name}`,
-      "model:",
-      "  name: openai/gpt-5.5",
-      "  thinking_level: low",
-      "tools: []",
-      "skills: []",
-      "subagents: []",
-      "",
-    ].join("\n")
-  );
+      "## Recipe Runtime Context",
+      "- Current workspace: " + state.cwd,
+      "- Recipe directory: " + state.recipeDir,
+    ].join("\n"),
+  ].filter(Boolean).join("\n\n");
 }
 
-async function defaultRunRecipe(
-  request: RunRecipeRequest,
-  env: NodeJS.ProcessEnv
-): Promise<RunRecipeResult> {
-  const runner = createLocalRecipeRunner({
-    recipeDir: request.recipeDir,
-    env,
-    context: launchContextFromPortableEnv({
-      ...env,
-      PI_TASK_ID: `local-${Date.now()}`,
-      PI_RECIPE_DIR: request.recipeDir,
-      PI_WORKSPACE_DIR: request.workspaceDir,
-    }),
+function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
+  const definitions = loadRecipeAgentDefinitions(state.recipeDir);
+  const names = state.agent.subagents.length
+    ? state.agent.subagents
+    : [...new Set([...definitions.values()].map((agent) => agent.name))]
+        .filter((name) => name !== state.agentName);
+  return names
+    .map((name) => definitions.get(name))
+    .filter((agent): agent is RecipeAgentDefinition => Boolean(agent));
+}
+
+function textResult<TDetails>(text: string, details: TDetails) {
+  return {
+    content: [{ type: "text" as const, text }],
+    details,
+  };
+}
+
+function describeRun(run: ChildRun): string {
+  const suffix = run.error ? `: ${run.error}` : run.output ? `: ${run.output}` : "";
+  return `${run.id} ${run.agent}: ${run.status}${suffix}`;
+}
+
+function runDetails(run: ChildRun, action = "status"): RecipeAgentToolDetails {
+  return {
+    action,
+    id: run.id,
+    agent: run.agent,
+    label: run.label,
+    task: run.task,
+    status: run.status,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    output: run.output,
+    error: run.error,
+  };
+}
+
+function runBlock(run: ChildRun): string {
+  const lines = [
+    `Recipe agent: ${run.agent}`,
+    `Run: ${run.id}`,
+    run.label ? `Label: ${run.label}` : undefined,
+    `Status: ${run.status}`,
+    "",
+    "Prompt:",
+    run.task,
+    "",
+    "Output:",
+    run.error ? `Error: ${run.error}` : run.output?.trim() || "(waiting for output...)",
+  ].filter((line): line is string => line !== undefined);
+  return lines.join("\n");
+}
+
+function emitRunUpdate(run: ChildRun, onUpdate: RecipeAgentToolUpdate | undefined): void {
+  onUpdate?.({
+    content: [{ type: "text", text: runBlock(run) }],
+    details: runDetails(run, "update"),
   });
+}
+
+function assistantTranscriptText(event: RunnerTranscriptEvent): { text: string; stream: string | undefined } | null {
+  if (event.type !== "assistant_message") return null;
+  const text = typeof event.data.text === "string" ? event.data.text : "";
+  if (!text) return null;
+  const stream = typeof event.data.stream === "string" ? event.data.stream : undefined;
+  return { text, stream };
+}
+
+function resolvePackage(specifier: string): string | undefined {
   try {
-    await runner.start();
-    const result = await runner.prompt(request.prompt);
-    return {
-      output: typeof result === "string" ? result : JSON.stringify(result, null, 2),
-      workspaceDir: request.workspaceDir,
-    };
-  } finally {
-    await runner.shutdown();
+    return import.meta.resolve(specifier);
+  } catch {
+    // Fall through to CommonJS resolution for packages that do not expose ESM exports.
+  }
+  try {
+    return require.resolve(specifier);
+  } catch {
+    return undefined;
   }
 }
 
-function helpText(): string {
-  return [
-    "Usage: /recipe <command>",
-    "Commands:",
-    "  new <name>",
-    "  import <path> [name]",
-    "  list",
-    "  inspect <name-or-path> [profile]",
-    "  run <name-or-path> [prompt]",
-    "  export <name-or-path>",
-  ].join("\n");
+function recipeExtensionAliases(): Record<string, string> {
+  return Object.fromEntries(
+    [
+      ["@earendil-works/pi-coding-agent", resolvePackage("@earendil-works/pi-coding-agent")],
+      ["@earendil-works/pi-agent-core", resolvePackage("@earendil-works/pi-agent-core")],
+      ["@earendil-works/pi-ai", resolvePackage("@earendil-works/pi-ai")],
+      ["@earendil-works/pi-ai/oauth", resolvePackage("@earendil-works/pi-ai/oauth")],
+      ["typebox", resolvePackage("typebox")],
+      ["typebox/compile", resolvePackage("typebox/compile")],
+      ["typebox/value", resolvePackage("typebox/value")],
+      ["@sinclair/typebox", resolvePackage("typebox")],
+      ["@sinclair/typebox/compile", resolvePackage("typebox/compile")],
+      ["@sinclair/typebox/value", resolvePackage("typebox/value")],
+    ].filter((entry): entry is [string, string] => Boolean(entry[1]))
+  );
+}
+
+function loadJiti(): { createJiti: (url: string, opts: Record<string, unknown>) => { import: (id: string, opts?: { default?: boolean }) => Promise<unknown> } } {
+  try {
+    return require("jiti") as ReturnType<typeof loadJiti>;
+  } catch {
+    const piAgentEntry = resolvePackage("@earendil-works/pi-coding-agent");
+    if (!piAgentEntry) {
+      throw new Error("Unable to resolve @earendil-works/pi-coding-agent for recipe extension loading");
+    }
+    const piRequire = createRequire(piAgentEntry);
+    return piRequire("jiti") as ReturnType<typeof loadJiti>;
+  }
+}
+
+async function loadRecipeExtensionFactory(extensionPath: string): Promise<ExtensionFactory> {
+  const { createJiti } = loadJiti();
+  const jiti = createJiti(import.meta.url, {
+    moduleCache: false,
+    alias: recipeExtensionAliases(),
+  });
+  const loaded = await jiti.import(extensionPath, { default: true });
+  const factory =
+    typeof loaded === "function"
+      ? loaded
+      : loaded && typeof loaded === "object" && "default" in loaded && typeof loaded.default === "function"
+        ? loaded.default
+        : undefined;
+  if (!factory) {
+    throw new Error(`Recipe extension does not export a factory function: ${extensionPath}`);
+  }
+  return factory as ExtensionFactory;
 }
 
 export function createPiRecipesExtension(
   opts: PiRecipesExtensionOptions = {}
 ): ExtensionFactory {
   const env = opts.env ?? process.env;
-  const libraryDir = opts.libraryDir ?? defaultLibraryDir(env);
-  const runRecipe = opts.runRecipe ?? ((request) => defaultRunRecipe(request, env));
+  const createRecipeRunner = opts.createRecipeRunner ?? createLocalRecipeRunner;
+  let state: RecipeLaunchState | null = null;
+  let childRunIndex = 0;
+  const childRuns = new Map<string, ChildRun>();
 
-  return (pi: ExtensionAPI) => {
-    pi.registerCommand("recipe", {
-      description: "Create, import, inspect, and run local Pi recipes.",
-      getArgumentCompletions(argumentPrefix: string) {
-        const [command, refPrefix = ""] = parseArgs(argumentPrefix);
-        if (!command || !argumentPrefix.trim().includes(" ")) {
-          return ["new", "import", "list", "inspect", "run", "export"]
-            .filter((item) => item.startsWith(command ?? ""))
-            .map((label) => ({ label, value: label }));
-        }
-        if (["inspect", "run", "export"].includes(command)) {
-          ensureLibrary(libraryDir);
-          return readdirSync(libraryDir, { withFileTypes: true })
-            .filter((entry) => entry.isDirectory() && entry.name.startsWith(refPrefix))
-            .map((entry) => ({ label: entry.name, value: entry.name }));
-        }
-        return null;
+  function recipeFlag(pi: Parameters<ExtensionFactory>[0]): string | undefined {
+    return stringFlag(pi.getFlag("recipe")) ?? stringFlag(env.PI_RECIPE_DIR);
+  }
+
+  function selectedProfileName(pi: Parameters<ExtensionFactory>[0]): string | undefined {
+    return stringFlag(pi.getFlag("recipe-profile")) ?? stringFlag(env.PI_PROFILE_NAME);
+  }
+
+  function selectedAgentName(pi: Parameters<ExtensionFactory>[0]): string | undefined {
+    return stringFlag(pi.getFlag("recipe-agent")) ?? stringFlag(env.PI_AGENT_NAME);
+  }
+
+  function loadState(pi: Parameters<ExtensionFactory>[0], cwd: string): RecipeLaunchState | null {
+    const flag = recipeFlag(pi);
+    if (!flag) return null;
+
+    const recipeDir = resolve(cwd, flag);
+    const profileName = selectedProfileName(pi);
+    const requestedAgentName = selectedAgentName(pi);
+    const key = [cwd, recipeDir, profileName ?? "", requestedAgentName ?? ""].join("\0");
+    if (state?.key === key) return state;
+
+    const manifest = readPiPackageManifest(recipeDir);
+    const validation = validatePiPackageManifest(manifest);
+    const errors = validation.findings.filter((finding) => finding.severity === "error");
+    if (errors.length > 0) {
+      throw new Error(errors.map((finding) => finding.message).join("\n"));
+    }
+
+    const resolved = resolveRecipeAgentDefinition({
+      recipeDir,
+      profileName,
+      agentName: requestedAgentName,
+    });
+    if (profileName && !resolved.profile) {
+      throw new Error(`Recipe profile not found: ${profileName}`);
+    }
+    if (!resolved.agent) {
+      throw new Error(`Recipe agent not found: ${resolved.agentName}`);
+    }
+
+    state = {
+      key,
+      cwd,
+      recipeDir,
+      manifest,
+      profileName,
+      agentName: resolved.agentName,
+      agent: resolved.agent,
+      profile: resolved.profile,
+      skillPaths: packageResourcePaths(manifest, "skills"),
+      promptPaths: packageResourcePaths(manifest, "prompts"),
+      themePaths: packageResourcePaths(manifest, "themes"),
+      extensionPaths: packageResourcePaths(manifest, "extensions"),
+      extensionsLoaded: false,
+      configured: false,
+    };
+    return state;
+  }
+
+  async function loadRecipeExtensions(
+    pi: ExtensionAPI,
+    ctx: ExtensionContext,
+    launchState: RecipeLaunchState
+  ): Promise<void> {
+    if (launchState.extensionsLoaded) return;
+    let loadedCount = 0;
+    for (const extensionPath of launchState.extensionPaths) {
+      try {
+        const factory = await loadRecipeExtensionFactory(extensionPath);
+        await factory(pi);
+        loadedCount += 1;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(
+          `Recipe extension failed to load: ${extensionPath}\n${message}`,
+          "warning"
+        );
+      }
+    }
+    launchState.extensionsLoaded = true;
+    if (launchState.extensionPaths.length > 0) {
+      ctx.ui.notify(
+        `Recipe extensions: ${loadedCount}/${launchState.extensionPaths.length} loaded`,
+        "info"
+      );
+    }
+  }
+
+  async function configureSession(
+    pi: ExtensionAPI,
+    ctx: ExtensionContext,
+    launchState: RecipeLaunchState
+  ): Promise<void> {
+    if (launchState.configured) return;
+
+    const labelParts = [
+      `${launchState.manifest.name}@${launchState.manifest.version}`,
+      launchState.profile ? `profile:${launchState.profile.name}` : undefined,
+      `agent:${launchState.agentName}`,
+    ].filter(Boolean);
+    pi.setSessionName(labelParts.join(" "));
+
+    const modelSpec = launchState.profile?.model?.name ?? launchState.agent.model?.name;
+    if (modelSpec) {
+      const { provider, model } = modelParts(modelSpec);
+      const lookupProvider = provider === "gemini" ? "google" : provider;
+      const resolvedModel = ctx.modelRegistry.find(lookupProvider, model);
+      if (!resolvedModel) {
+        throw new Error(`Recipe model is not available: ${modelSpec}`);
+      }
+      const ok = await pi.setModel(resolvedModel);
+      if (!ok) {
+        throw new Error(`Recipe model has no configured API key: ${modelSpec}`);
+      }
+    }
+
+    const thinkingLevel =
+      launchState.profile?.model?.thinkingLevel ?? launchState.agent.model?.thinkingLevel;
+    if (thinkingLevel) {
+      pi.setThinkingLevel(thinkingLevel as ThinkingLevel);
+    }
+
+    const activeTools = new Set(launchState.agent.tools);
+    if (visibleSubagents(launchState).length > 0) activeTools.add("agent");
+    pi.setActiveTools([...activeTools]);
+    launchState.configured = true;
+  }
+
+  async function runChildAgent(
+    launchState: RecipeLaunchState,
+    agentName: string,
+    task: string,
+    onUpdate?: RecipeAgentToolUpdate
+  ): Promise<ChildRun> {
+    const id = `recipe-agent-${++childRunIndex}`;
+    const runRoot = join(tmpdir(), "pi-recipe-agent-runs", id);
+    mkdirSync(runRoot, { recursive: true });
+    let run: ChildRun | undefined;
+    const runner = createRecipeRunner({
+      recipeDir: launchState.recipeDir,
+      env,
+      agentName,
+      adapter: {
+        transcriptSink: {
+          emit(event) {
+            if (!run) return;
+            const assistant = assistantTranscriptText(event);
+            if (!assistant) return;
+            if (assistant.stream === "delta") {
+              run.output = `${run.output ?? ""}${assistant.text}`;
+            } else if (!run.output?.trim()) {
+              run.output = assistant.text;
+            }
+            emitRunUpdate(run, onUpdate);
+          },
+        },
       },
-      async handler(args: string, ctx: ExtensionCommandContext) {
-        const [command, ...rest] = parseArgs(args);
-        try {
-          switch (command) {
-            case "new": {
-              const name = slug(rest[0] ?? "");
-              if (!name) throw new Error("Recipe name is required");
-              ensureLibrary(libraryDir);
-              const recipeDir = join(libraryDir, name);
-              if (existsSync(recipeDir)) {
-                throw new Error(`Recipe already exists: ${name}`);
-              }
-              writeStarterRecipe(recipeDir, name);
-              notify(ctx, `Created recipe ${name} at ${recipeDir}`);
-              return;
-            }
-            case "import": {
-              const source = rest[0];
-              if (!source) throw new Error("Import path is required");
-              const sourceDir = resolve(source);
-              if (!existsSync(sourceDir)) throw new Error(`Recipe path does not exist: ${sourceDir}`);
-              readPiPackageManifest(sourceDir);
-              ensureLibrary(libraryDir);
-              const name = slug(rest[1] ?? basename(sourceDir));
-              const targetDir = join(libraryDir, name);
-              if (existsSync(targetDir)) throw new Error(`Recipe already exists: ${name}`);
-              cpSync(sourceDir, targetDir, { recursive: true, force: false, errorOnExist: true });
-              notify(ctx, `Imported recipe ${name} from ${sourceDir}`);
-              return;
-            }
-            case "list": {
-              ensureLibrary(libraryDir);
-              const lines = readdirSync(libraryDir, { withFileTypes: true })
-                .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-                .map((entry) => {
-                  const recipeDir = join(libraryDir, entry.name);
-                  try {
-                    const manifest = readPiPackageManifest(recipeDir);
-                    return `${entry.name} - ${manifest.name}@${manifest.version}`;
-                  } catch {
-                    return `${entry.name} - invalid recipe`;
-                  }
-                });
-              notify(ctx, lines.length > 0 ? lines.join("\n") : `No recipes in ${libraryDir}`);
-              return;
-            }
-            case "inspect": {
-              const ref = rest[0];
-              if (!ref) throw new Error("Recipe name or path is required");
-              const recipeDir = resolveRecipeRef(libraryDir, ref);
-              const profile = rest[1] ? loadRecipeProfile(recipeDir, rest[1]) : null;
-              const profileLine = profile ? `\nProfile: ${profile.name} -> ${profile.entrypoint}` : "";
-              notify(ctx, recipeSummary(recipeDir) + profileLine);
-              return;
-            }
-            case "run": {
-              const ref = rest[0];
-              if (!ref) throw new Error("Recipe name or path is required");
-              const recipeDir = resolveRecipeRef(libraryDir, ref);
-              readPiPackageManifest(recipeDir);
-              const prompt = rest.slice(1).join(" ").trim() || DEFAULT_PROMPT;
-              const workspaceDir = join(libraryDir, ".runs", `${Date.now()}-${slug(basename(recipeDir))}`);
-              const result = await runRecipe({ recipeDir, prompt, workspaceDir });
-              notify(ctx, `Recipe run completed in ${result.workspaceDir}\n${result.output}`);
-              return;
-            }
-            case "export": {
-              const ref = rest[0];
-              if (!ref) throw new Error("Recipe name or path is required");
-              const recipeDir = resolveRecipeRef(libraryDir, ref);
-              readPiPackageManifest(recipeDir);
-              notify(ctx, `Recipe directory: ${recipeDir}`);
-              return;
-            }
-            default:
-              notify(ctx, helpText());
-          }
-        } catch (err) {
-          notify(ctx, err instanceof Error ? err.message : String(err), "error");
+      context: launchContextFromPortableEnv({
+        ...env,
+        PI_TASK_ID: id,
+        PI_RUN_ID: id,
+        PI_RECIPE_DIR: launchState.recipeDir,
+        PI_WORKSPACE_DIR: launchState.cwd,
+        PI_REPOS_DIR: launchState.cwd,
+        PI_OUTPUTS_DIR: join(runRoot, "outputs"),
+        PI_UPLOADS_DIR: join(runRoot, "uploads"),
+        PI_MEMORIES_DIR: join(runRoot, "memories"),
+      }),
+    });
+    run = {
+      id,
+      agent: agentName,
+      task,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      runner,
+      promise: Promise.resolve(undefined as never),
+    };
+    emitRunUpdate(run, onUpdate);
+    run.promise = (async () => {
+      try {
+        await runner.start();
+        const result = await runner.prompt(task);
+        const finalOutput = promptResultText(result);
+        if (finalOutput && finalOutput.length >= (run.output?.length ?? 0)) {
+          run.output = finalOutput;
+        } else if (!run.output?.trim()) {
+          run.output = "(no final response)";
         }
-      },
+        run.status = "completed";
+      } catch (err) {
+        if (run.status !== "interrupted") run.status = "failed";
+        run.error = err instanceof Error ? err.message : String(err);
+      } finally {
+        run.completedAt = new Date().toISOString();
+        emitRunUpdate(run, onUpdate);
+        await runner.shutdown();
+      }
+      return run;
+    })();
+    childRuns.set(id, run);
+    return run;
+  }
+
+  async function waitForRun(
+    run: ChildRun,
+    signal: AbortSignal | undefined,
+    onUpdate?: RecipeAgentToolUpdate
+  ): Promise<ChildRun> {
+    if (!signal) return await run.promise;
+    const interrupt = () => {
+      run.status = "interrupted";
+      void run.runner.cancel();
+      emitRunUpdate(run, onUpdate);
+    };
+    if (signal.aborted) interrupt();
+    signal.addEventListener("abort", interrupt, { once: true });
+    try {
+      return await run.promise;
+    } finally {
+      signal.removeEventListener("abort", interrupt);
+    }
+  }
+
+  async function handleAgentTool(
+    params: RunRecipeAgentParams,
+    signal: AbortSignal | undefined,
+    onUpdate?: RecipeAgentToolUpdate
+  ) {
+    if (!state) {
+      return {
+        ...textResult("No recipe is active. Launch Pi with --recipe <dir> to use recipe agents.", {
+          error: "recipe_not_active",
+        }),
+        isError: true,
+      };
+    }
+
+    const action = params.action ?? "start";
+    if (action === "status") {
+      const runs = params.id
+        ? [childRuns.get(params.id)].filter((run): run is ChildRun => Boolean(run))
+        : [...childRuns.values()];
+      if (params.id && runs.length === 0) {
+        return { ...textResult(`Unknown recipe agent run: ${params.id}`, { id: params.id }), isError: true };
+      }
+      return textResult(
+        runs.length > 0 ? runs.map(describeRun).join("\n") : "No recipe agent runs have been started yet.",
+        { action, agent_runs: runs.map((run) => runDetails(run)) }
+      );
+    }
+
+    if (action === "wait") {
+      const run = params.id ? childRuns.get(params.id) : [...childRuns.values()].at(-1);
+      if (!run) {
+        return { ...textResult(params.id ? `Unknown recipe agent run: ${params.id}` : "No recipe agent runs have been started yet.", {}), isError: true };
+      }
+      emitRunUpdate(run, onUpdate);
+      await waitForRun(run, signal, onUpdate);
+      emitRunUpdate(run, onUpdate);
+      return textResult(runBlock(run), runDetails(run, action));
+    }
+
+    if (action === "interrupt") {
+      const run = params.id ? childRuns.get(params.id) : undefined;
+      if (!run) return { ...textResult(params.id ? `Unknown recipe agent run: ${params.id}` : "Interrupt requires a recipe agent run id.", {}), isError: true };
+      run.status = "interrupted";
+      await run.runner.cancel();
+      emitRunUpdate(run, onUpdate);
+      return textResult(runBlock(run), runDetails(run, action));
+    }
+
+    if (action === "close") {
+      const run = params.id ? childRuns.get(params.id) : undefined;
+      if (!run) return { ...textResult(params.id ? `Unknown recipe agent run: ${params.id}` : "Close requires a recipe agent run id.", {}), isError: true };
+      childRuns.delete(run.id);
+      return textResult(`Closed recipe agent run ${run.id} (${run.agent}).`, { id: run.id });
+    }
+
+    if (!params.name || !params.task) {
+      return {
+        ...textResult("Starting a recipe agent requires both name and task.", {
+          available_agents: visibleSubagents(state).map((agent) => agent.name),
+        }),
+        isError: true,
+      };
+    }
+
+    const visible = visibleSubagents(state);
+    const agent = visible.find((item) => item.name === params.name);
+    if (!agent) {
+      return {
+        ...textResult(
+          `Unknown or unavailable recipe agent: ${params.name}. Available agents: ${visible.map((item) => item.name).join(", ")}`,
+          { action, agent: params.name, available_agents: visible.map((item) => item.name) }
+        ),
+        isError: true,
+      };
+    }
+
+    const run = await runChildAgent(state, agent.name, params.task, onUpdate);
+    run.label = params.label;
+    emitRunUpdate(run, onUpdate);
+    if (params.wait !== false) {
+      await waitForRun(run, signal, onUpdate);
+      return textResult(runBlock(run), runDetails(run, action));
+    }
+    return textResult(
+      runBlock(run),
+      runDetails(run, action)
+    );
+  }
+
+  return (pi) => {
+    pi.registerFlag("recipe", {
+      description: "Recipe folder to use for this Pi session",
+      type: "string",
+    });
+    pi.registerFlag("recipe-profile", {
+      description: "Recipe profile to use",
+      type: "string",
+    });
+    pi.registerFlag("recipe-agent", {
+      description: "Recipe agent to use",
+      type: "string",
+    });
+
+    pi.registerTool(
+      defineTool({
+        name: "agent",
+        label: "Recipe agent",
+        description: [
+          "Start or manage another agent from the active recipe.",
+          "Start calls stream the prompted task and subagent assistant output in one tool block.",
+          "By default start waits for completion; pass wait=false only when a background run is desired.",
+          "This tool is active only when the selected recipe agent has available subagents.",
+        ].join("\n"),
+        parameters: RunRecipeAgentParams,
+        async execute(_runId, params: RunRecipeAgentParams, signal, onUpdate) {
+          return await handleAgentTool(params, signal, onUpdate);
+        },
+      })
+    );
+
+    pi.on("session_start", async (_event, ctx) => {
+      const launchState = loadState(pi, ctx.cwd);
+      if (!launchState) return;
+      await loadRecipeExtensions(pi, ctx, launchState);
+      await configureSession(pi, ctx, launchState);
+      ctx.ui.notify(
+        `Recipe: ${launchState.manifest.name}@${launchState.manifest.version} (${basename(launchState.recipeDir)})`,
+        "info"
+      );
+    });
+
+    pi.on("resources_discover", (event) => {
+      const launchState = loadState(pi, event.cwd);
+      if (!launchState) return {};
+      return {
+        skillPaths: launchState.skillPaths,
+        promptPaths: launchState.promptPaths,
+        themePaths: launchState.themePaths,
+      };
+    });
+
+    pi.on("before_agent_start", (event, ctx) => {
+      const launchState = loadState(pi, ctx.cwd);
+      if (!launchState) return {};
+      const base = loadRecipeSystemPrompt(launchState.recipeDir) ?? event.systemPrompt;
+      const recipePrompt = applySystemInstructions(
+        applySystemInstructions(
+          base,
+          launchState.profile?.systemInstructions
+        ),
+        launchState.agent.systemInstructions
+      );
+      const systemPrompt = runtimeContextPrompt(recipePrompt, launchState);
+      return { systemPrompt };
     });
   };
 }

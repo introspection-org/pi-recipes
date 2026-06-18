@@ -248,6 +248,7 @@ describe("recipe package manifest", () => {
             profiles: ["profiles/*.yaml"],
             extensions: ["extensions/*.ts"],
             skills: ["skills/**/SKILL.md"],
+            themes: ["themes/*.json"],
           },
         })
       );
@@ -257,7 +258,48 @@ describe("recipe package manifest", () => {
 
       expect(manifest.resources.agents).toEqual(["agents/*.yaml"]);
       expect(manifest.resources.skills).toEqual(["skills/**/SKILL.md"]);
+      expect(manifest.resources.themes).toEqual(["themes/*.json"]);
       expect(report).toEqual({ valid: true, findings: [] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("expands declared package resource globs and tolerates empty optional globs", async () => {
+    const {
+      packageResourcePaths,
+      resolvePiPackageResourcePaths,
+      RecipePackageError,
+    } = await import("../src/index.js");
+    const root = mkdtempSync(join(tmpdir(), "pi-package-"));
+    try {
+      mkdirSync(join(root, "skills", "repo-index"), { recursive: true });
+      writeFileSync(join(root, "skills", "repo-index", "SKILL.md"), "Index repos\n");
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "portable",
+          version: "0.1.0",
+          pi: {
+            agents: ["agents/*.yaml"],
+            skills: ["skills/**/SKILL.md"],
+            themes: ["themes/*.json"],
+          },
+        })
+      );
+
+      const manifest = readPiPackageManifest(root);
+
+      expect(packageResourcePaths(manifest, "skills")).toEqual([
+        join(root, "skills", "repo-index", "SKILL.md"),
+      ]);
+      expect(packageResourcePaths(manifest, "themes")).toEqual([]);
+      expect(() => resolvePiPackageResourcePaths(manifest, "agents")).toThrow(
+        RecipePackageError
+      );
+      expect(() => resolvePiPackageResourcePaths(manifest, "agents")).toThrow(
+        /glob with no matches/
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

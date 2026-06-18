@@ -6,6 +6,7 @@ import type {
   RunnerLaunchContext,
   RunnerLifecycleEvent,
   RunnerResourceBundle,
+  RunnerTranscriptSink,
 } from "./types.js";
 
 export interface RecipeProvider<
@@ -76,6 +77,7 @@ export interface RunnerPlatformAdapter<
   resources: ResourceProvider<TContext, TRecipe, TResources>;
   resourceSync?: ResourceSync<TResources>;
   lifecycle?: LifecycleSink;
+  transcript?: RunnerTranscriptSink;
   conversationHistory?: ConversationHistoryProvider;
   telemetry?: TelemetryAdapter;
   modelCredentials?: ModelCredentialProvider;
