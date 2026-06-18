@@ -1,0 +1,46 @@
+{
+  "name": "@introspection/pi-recipes",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./local": {
+      "types": "./dist/local.d.ts",
+      "import": "./dist/local.js"
+    },
+    "./pi-extension": {
+      "types": "./dist/pi-extension.d.ts",
+      "import": "./dist/pi-extension.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./dist/pi-extension.js"
+    ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo node_modules"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.75.4",
+    "@earendil-works/pi-ai": "0.75.4",
+    "@earendil-works/pi-coding-agent": "0.75.4",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.3",
+    "vitest": "^4.0.18"
+  }
+}
