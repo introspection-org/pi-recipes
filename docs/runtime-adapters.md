@@ -53,7 +53,7 @@ The core owns recipe semantics. The adapter owns host integration.
 - profile/agent selection;
 - local resource layout;
 - local Pi `AgentSession` driver;
-- local Pi extension command surface;
+- local Pi extension launch surface;
 - transcript events for the Pi extension UI;
 - subagent tool semantics for local recipe runs.
 
@@ -190,19 +190,19 @@ The local runtime is implemented by `createLocalRecipeAdapter()` and `PiAgentSes
 
 ```mermaid
 flowchart TD
-  Command["/recipe run operator ..."]
+  Launch["pi --recipe /path/to/recipe"]
   Extension["Pi extension<br>src/pi-extension.ts"]
   LocalRunner["createLocalRecipeRunner"]
   LocalAdapter["createLocalRecipeAdapter"]
-  RecipeProvider["LocalRecipeProvider<br>PI_RECIPE_DIR or library path"]
+  RecipeProvider["LocalRecipeProvider<br>--recipe, PI_RECIPE_DIR, or API option"]
   ResourceProvider["LocalResourceProvider<br>current cwd as writable repo"]
   ResourceSync["LocalResourceSync<br>mkdir outputs"]
   Credentials["LocalModelCredentialProvider<br>OPENAI_API_KEY etc"]
   Session["PiAgentSessionDriver"]
   Pi["Pi AgentSession"]
-  Transcript["RunnerTranscriptSink<br>UI messages + transcript.jsonl"]
+  Transcript["RunnerTranscriptSink<br>UI/tool updates or host-provided sink"]
 
-  Command --> Extension
+  Launch --> Extension
   Extension --> LocalRunner
   LocalRunner --> LocalAdapter
   LocalAdapter --> RecipeProvider
@@ -215,23 +215,23 @@ flowchart TD
   Extension --> Transcript
 ```
 
-Local mode supplies a fixed local adapter. Users do not choose adapters from the Pi extension. The command assumes local execution and uses the current Pi working directory as the project workspace.
+Local mode supplies a fixed local adapter. Users do not choose adapters from the Pi extension. The launch flags assume local execution and use the current Pi working directory as the project workspace.
 
 Local runtime responsibilities:
 
 - materialize a recipe from a local directory;
 - treat the current project directory as the writable repository;
-- create local output/upload/memory directories under the run directory;
+- create the local output mount directory;
 - use local provider API keys from environment variables;
 - create a Pi `AgentSession`;
-- stream transcript events into the Pi UI;
-- write run artifacts to disk.
+- stream transcript events to a host-provided `RunnerTranscriptSink` when one is configured;
+- surface recipe skills, prompts, themes, and extensions through Pi resource loading.
 
 ## Subagent Runs
 
 Subagents are recipe behavior, not local-adapter behavior.
 
-The recipe agent YAML can declare subagents. The session driver exposes those subagents through an `agent` tool. The tool supports retained child runs:
+The recipe agent YAML can declare subagents. The session driver exposes those subagents through an `agent` tool. The reusable session-driver tool supports retained child runs:
 
 - `action: "start"` or omitted: start a child agent run;
 - `wait: false` by default: return a run id immediately so several subagents can run in parallel;
@@ -240,6 +240,8 @@ The recipe agent YAML can declare subagents. The session driver exposes those su
 - `action: "wait"`: wait for one child run or all child runs;
 - `action: "interrupt"`: cancel a running child;
 - `action: "close"`: close a retained child run.
+
+The Pi launch extension also registers an `agent` tool for the live local session. That tool has the same management actions, but its `start` action waits by default so the tool block can stream the delegated prompt and output inline. Pass `wait: false` there when a background child run is desired.
 
 ```mermaid
 sequenceDiagram
@@ -278,7 +280,7 @@ This belongs in the portable recipe runtime layer because local, cloud, and futu
 
 ## Transcript Events
 
-The runner emits neutral transcript events. The local Pi extension renders them as grouped UI blocks and also writes them to `transcript.jsonl`.
+The runner emits neutral transcript events. The local Pi extension can render subagent output as grouped tool updates, and direct runner users can provide any `RunnerTranscriptSink` they want.
 
 Example event types:
 
@@ -585,12 +587,12 @@ This is intentionally only a shape. Whether it can use the exact local `PiAgentS
 
 | Concern | Local Pi extension | Introspection Cloud | Vercel |
 | --- | --- | --- | --- |
-| User surface | `/recipe` command in Pi | task/runtime-worker flow | route handler, server action, API, or job |
-| Recipe source | `~/.pi/recipes` or imported local path | DP/CP materialized recipe, baked image, git source | bundled package, git, Blob, upload |
+| User surface | `pi --recipe` launch flags | task/runtime-worker flow | route handler, server action, API, or job |
+| Recipe source | local path from `--recipe`, `PI_RECIPE_DIR`, or API option | DP/CP materialized recipe, baked image, git source | bundled package, git, Blob, upload |
 | Workspace | current Pi `ctx.cwd` | sandbox workspace/repo mounts | `/tmp`, git checkout, uploaded file tree |
-| Outputs | local run dir | Files API/artifacts/memories | Blob/S3/db/HTTP response |
+| Outputs | local output mount | Files API/artifacts/memories | Blob/S3/db/HTTP response |
 | Lifecycle | local/no-op plus UI notification | DP internal task events | SSE/WebSocket/db status/polling |
-| Transcript | Pi custom messages + JSONL | task/conversation stream | SSE/WebSocket/db/log sink |
+| Transcript | Pi tool/UI updates or supplied sink | task/conversation stream | SSE/WebSocket/db/log sink |
 | Credentials | local env vars | AnyLLM proxy/BYOK/session materialization | env vars/user secrets/gateway |
 | Session | local Pi `AgentSession` | sandbox coding-agent/Pi session | Pi-compatible driver or custom session driver |
 | Subagents | portable `agent` tool semantics | same semantics through cloud session | same semantics if session driver supports child sessions |
