@@ -8,17 +8,9 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./local": {
-      "types": "./dist/local.d.ts",
-      "import": "./dist/local.js"
-    },
     "./pi-extension": {
       "types": "./dist/pi-extension.d.ts",
       "import": "./dist/pi-extension.js"
-    },
-    "./testing": {
-      "types": "./dist/testing.d.ts",
-      "import": "./dist/testing.js"
     }
   },
   "pi": {

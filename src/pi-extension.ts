@@ -1,7 +1,5 @@
-import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import {
   defineTool,
   type AgentToolUpdateCallback,
@@ -11,10 +9,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
-import { launchContextFromPortableEnv } from "./env.js";
-import { createLocalRecipeRunner } from "./local.js";
-import type { RecipeRunner } from "./runner.js";
-import type { RunnerTranscriptEvent } from "./types.js";
+import {
+  createRecipeChildAgentRunner,
+  promptResultText,
+} from "./child-agent.js";
 import {
   loadRecipeAgentDefinitions,
   loadRecipeSystemPrompt,
@@ -29,12 +27,26 @@ import {
   validatePiPackageManifest,
   type PiPackageManifest,
 } from "./recipe-package.js";
-import { promptResultText } from "./session.js";
 
 export interface PiRecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
-  createRecipeRunner?: typeof createLocalRecipeRunner;
+  createChildAgentRunner?: CreateRecipeChildAgentRunner;
 }
+
+interface RecipeChildAgentRunner {
+  start(): Promise<void>;
+  prompt(task: string): Promise<unknown>;
+  cancel(): Promise<void>;
+  shutdown(): Promise<void>;
+}
+
+type CreateRecipeChildAgentRunner = (opts: {
+  recipeDir: string;
+  workspaceDir: string;
+  agentName: string;
+  env?: NodeJS.ProcessEnv;
+  onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
+}) => RecipeChildAgentRunner;
 
 const RunRecipeAgentParams = Type.Object({
   action: Type.Optional(
@@ -88,7 +100,7 @@ interface ChildRun {
   completedAt?: string;
   output?: string;
   error?: string;
-  runner: RecipeRunner;
+  runner: RecipeChildAgentRunner;
   promise: Promise<ChildRun>;
 }
 
@@ -212,14 +224,6 @@ function emitRunUpdate(run: ChildRun, onUpdate: RecipeAgentToolUpdate | undefine
   });
 }
 
-function assistantTranscriptText(event: RunnerTranscriptEvent): { text: string; stream: string | undefined } | null {
-  if (event.type !== "assistant_message") return null;
-  const text = typeof event.data.text === "string" ? event.data.text : "";
-  if (!text) return null;
-  const stream = typeof event.data.stream === "string" ? event.data.stream : undefined;
-  return { text, stream };
-}
-
 function resolvePackage(specifier: string): string | undefined {
   try {
     return import.meta.resolve(specifier);
@@ -286,7 +290,8 @@ export function createPiRecipesExtension(
   opts: PiRecipesExtensionOptions = {}
 ): ExtensionFactory {
   const env = opts.env ?? process.env;
-  const createRecipeRunner = opts.createRecipeRunner ?? createLocalRecipeRunner;
+  const createChildAgentRunner =
+    opts.createChildAgentRunner ?? createRecipeChildAgentRunner;
   let state: RecipeLaunchState | null = null;
   let childRunIndex = 0;
   const childRuns = new Map<string, ChildRun>();
@@ -427,39 +432,21 @@ export function createPiRecipesExtension(
     onUpdate?: RecipeAgentToolUpdate
   ): Promise<ChildRun> {
     const id = `recipe-agent-${++childRunIndex}`;
-    const runRoot = join(tmpdir(), "pi-recipe-agent-runs", id);
-    mkdirSync(runRoot, { recursive: true });
     let run: ChildRun | undefined;
-    const runner = createRecipeRunner({
+    const runner = createChildAgentRunner({
       recipeDir: launchState.recipeDir,
+      workspaceDir: launchState.cwd,
       env,
       agentName,
-      adapter: {
-        transcriptSink: {
-          emit(event) {
-            if (!run) return;
-            const assistant = assistantTranscriptText(event);
-            if (!assistant) return;
-            if (assistant.stream === "delta") {
-              run.output = `${run.output ?? ""}${assistant.text}`;
-            } else if (!run.output?.trim()) {
-              run.output = assistant.text;
-            }
-            emitRunUpdate(run, onUpdate);
-          },
-        },
+      onAssistantMessage(text, stream) {
+        if (!run) return;
+        if (stream === "delta") {
+          run.output = `${run.output ?? ""}${text}`;
+        } else if (!run.output?.trim()) {
+          run.output = text;
+        }
+        emitRunUpdate(run, onUpdate);
       },
-      context: launchContextFromPortableEnv({
-        ...env,
-        PI_TASK_ID: id,
-        PI_RUN_ID: id,
-        PI_RECIPE_DIR: launchState.recipeDir,
-        PI_WORKSPACE_DIR: launchState.cwd,
-        PI_REPOS_DIR: launchState.cwd,
-        PI_OUTPUTS_DIR: join(runRoot, "outputs"),
-        PI_UPLOADS_DIR: join(runRoot, "uploads"),
-        PI_MEMORIES_DIR: join(runRoot, "memories"),
-      }),
     });
     run = {
       id,

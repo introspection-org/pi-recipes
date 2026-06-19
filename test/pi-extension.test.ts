@@ -4,7 +4,6 @@ import { join } from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createPiRecipesExtension } from "../src/pi-extension.js";
-import type { RecipeRunner } from "../src/runner.js";
 import { createMockExtensionAPI } from "../src/testing.js";
 
 function extensionContext(cwd: string, notify = vi.fn()) {
@@ -76,7 +75,7 @@ function writeRecipe(root: string) {
 }
 
 describe("Pi recipes launch extension", () => {
-  it("registers recipe launch flags without the old recipe command", async () => {
+  it("registers recipe launch flags", async () => {
     const pi = createMockExtensionAPI();
     createPiRecipesExtension()(pi);
 
@@ -279,34 +278,24 @@ describe("Pi recipes launch extension", () => {
       const projectDir = join(root, "project");
       mkdirSync(projectDir, { recursive: true });
 
-      const createRecipeRunner = vi.fn((opts: Parameters<typeof import("../src/local.js").createLocalRecipeRunner>[0] = {}) => {
-        const runner: RecipeRunner = {
-          state: { recipe: null, resources: null, started: false },
+      const createChildAgentRunner = vi.fn((opts: any = {}) => {
+        return {
           async start() {
-            runner.state.started = true;
-            return runner.state;
+            return undefined;
           },
           async prompt() {
-            await opts.adapter?.transcriptSink?.emit({
-              type: "assistant_message",
-              runId: "child-run",
-              occurredAt: new Date(),
-              data: { text: "streamed output", stream: "delta" },
-            });
-            return {
-              messages: [{ role: "assistant", content: "streamed output final" }],
-            };
+            opts.onAssistantMessage?.("streamed output", "delta");
+            return "streamed output final";
           },
           async cancel() {},
           async shutdown() {},
         };
-        return runner;
       });
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("recipe-agent", "main");
 
-      createPiRecipesExtension({ createRecipeRunner })(pi);
+      createPiRecipesExtension({ createChildAgentRunner })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         extensionContext(projectDir)
@@ -321,8 +310,12 @@ describe("Pi recipes launch extension", () => {
         extensionContext(projectDir)
       );
 
-      expect(createRecipeRunner).toHaveBeenCalledWith(
-        expect.objectContaining({ recipeDir, agentName: "explorer" })
+      expect(createChildAgentRunner).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipeDir,
+          agentName: "explorer",
+          workspaceDir: projectDir,
+        })
       );
       expect(updates[0]?.content[0]).toEqual(
         expect.objectContaining({
