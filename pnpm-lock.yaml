@@ -8,6 +8,10 @@ importers:
 
   .:
     dependencies:
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
+    devDependencies:
       '@earendil-works/pi-agent-core':
         specifier: 0.75.4
         version: 0.75.4(ws@8.21.0)(zod@4.4.3)
@@ -20,16 +24,12 @@ importers:
       '@earendil-works/pi-tui':
         specifier: 0.75.5
         version: 0.75.5
-      typebox:
-        specifier: ^1.0.56
-        version: 1.1.38
-      yaml:
-        specifier: ^2.9.0
-        version: 2.9.0
-    devDependencies:
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.21
+      typebox:
+        specifier: ^1.0.56
+        version: 1.1.38
       typescript:
         specifier: ^5.7.3
         version: 5.9.3

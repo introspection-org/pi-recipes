@@ -132,6 +132,14 @@ Recipe packages can declare additional Pi extensions:
 
 Extensions are loaded during `session_start`. If one extension fails, Pi shows a warning and continues loading the rest of the recipe.
 
+## Install From npm
+
+Once published, install the package with Pi:
+
+```bash
+pi install npm:@introspection/pi-recipes
+```
+
 ## Development
 
 ```bash
@@ -143,4 +151,4 @@ pnpm build
 
 ## Status
 
-This package is private while publishing, licensing, and distribution decisions are settled.
+The package metadata is prepared for public npm publication under `@introspection`. Publishing requires npm org access and a final license decision.
