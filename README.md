@@ -140,6 +140,20 @@ Once published, install the package with Pi:
 pi install npm:@introspection/pi-recipes
 ```
 
+## Install From a Clone
+
+Clone the repo, build it, and install the local package path into Pi:
+
+```bash
+git clone git@github.com:introspection-org/pi-recipes.git
+cd pi-recipes
+pnpm install
+pnpm build
+pi install "$(pwd)"
+```
+
+Pi records the local path in `~/.pi/agent/settings.json`. Re-run `pnpm build` after changing the extension source.
+
 ## Development
 
 ```bash
