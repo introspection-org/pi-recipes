@@ -42,6 +42,14 @@ type RecipeYaml = {
   resources?: Partial<Record<keyof RecipePackageResources, unknown>>;
 } & Partial<Record<keyof RecipePackageResources, unknown>>;
 
+type PackageJson = {
+  name?: unknown;
+  version?: unknown;
+  description?: unknown;
+  recipe?: unknown;
+  pi?: unknown;
+};
+
 const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "agents",
   "extensions",
@@ -170,6 +178,12 @@ export class RecipePackageError extends Error {
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 function readYamlFile(path: string): RecipeYaml {
   try {
     const parsed = parse(readFileSync(path, "utf8")) as unknown;
@@ -179,6 +193,21 @@ function readYamlFile(path: string): RecipeYaml {
   } catch (err) {
     throw new RecipePackageError(
       `Recipe package at ${path} has invalid YAML: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+function readJsonFile(path: string): PackageJson {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as PackageJson)
+      : {};
+  } catch (err) {
+    throw new RecipePackageError(
+      `Recipe package at ${path} has invalid JSON: ${
         err instanceof Error ? err.message : String(err)
       }`
     );
@@ -195,6 +224,25 @@ function recipeYamlPath(packageDir: string): string | undefined {
   const yml = join(packageDir, "recipe.yml");
   if (existsSync(yml)) return yml;
   return undefined;
+}
+
+function packageJsonPath(packageDir: string): string | undefined {
+  const packagePath = join(packageDir, "package.json");
+  return existsSync(packagePath) ? packagePath : undefined;
+}
+
+function packageJsonManifestBlock(raw: PackageJson): Record<string, unknown> | undefined {
+  const recipe = asRecord(raw.recipe);
+  if (Object.keys(recipe).length > 0) return recipe;
+  const pi = asRecord(raw.pi);
+  return Object.keys(pi).length > 0 ? pi : undefined;
+}
+
+function legacyPackageManifestPath(packageDir: string): string | undefined {
+  const manifestPath = packageJsonPath(packageDir);
+  if (!manifestPath) return undefined;
+  const raw = readJsonFile(manifestPath);
+  return packageJsonManifestBlock(raw) ? manifestPath : undefined;
 }
 
 export function readRecipePackageManifest(packageDir: string): RecipePackageManifest {
@@ -223,7 +271,36 @@ export function readRecipePackageManifest(packageDir: string): RecipePackageMani
 }
 
 export function readPiPackageManifest(packageDir: string): RecipePackageManifest {
-  return readRecipePackageManifest(packageDir);
+  const manifestPath = recipeYamlPath(packageDir);
+  if (manifestPath) return readRecipePackageManifest(packageDir);
+
+  const packagePath = packageJsonPath(packageDir);
+  if (!packagePath) {
+    throw new RecipePackageError(
+      `Recipe package at ${packageDir} is missing recipe.yaml or legacy package.json recipe/pi manifest`
+    );
+  }
+
+  const raw = readJsonFile(packagePath);
+  const recipe = packageJsonManifestBlock(raw);
+  if (!recipe) {
+    throw new RecipePackageError(
+      `Recipe package at ${packageDir} is missing recipe.yaml or legacy package.json recipe/pi manifest`
+    );
+  }
+
+  const resources = emptyResources();
+  for (const key of RESOURCE_KEYS) {
+    resources[key] = stringArray(recipe[key]).map(normalizeResourcePath);
+  }
+
+  return {
+    name: stringValue(raw.name) ?? "local",
+    version: stringValue(raw.version) ?? "0.0.0",
+    ...(stringValue(raw.description) ? { description: stringValue(raw.description) } : {}),
+    path: packageDir,
+    resources,
+  };
 }
 
 export function resolvePiPackageResourcePaths(
@@ -303,12 +380,12 @@ export function validatePiPackageManifest(
       finding("error", "package.name_missing", "Package is missing name")
     );
   }
-  if (!recipeYamlPath(pkg.path)) {
+  if (!recipeYamlPath(pkg.path) && !legacyPackageManifestPath(pkg.path)) {
     findings.push(
       finding(
         "error",
         "package.manifest_missing",
-        "Package is missing recipe.yaml",
+        "Package is missing recipe.yaml or legacy package.json recipe/pi manifest",
         pkg.name
       )
     );

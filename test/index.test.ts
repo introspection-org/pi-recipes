@@ -12,6 +12,7 @@ import {
   loadRecipeAgentDefinitions,
   packageResourcePaths,
   parseRecipeSource,
+  readPiPackageManifest,
   readRecipePackageManifest,
   RecipePackageError,
   removeRecipe,
@@ -84,6 +85,46 @@ describe("recipe package manifest", () => {
     }
   });
 
+  it("reads legacy package.json pi blocks for Pi compatibility", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-"));
+    try {
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "recipe-package",
+          version: "0.1.0",
+          description: "Legacy Pi recipe",
+          pi: {
+            agents: ["./agents/*.yaml"],
+            extensions: ["extensions/*.ts"],
+            skills: ["skills/**/SKILL.md"],
+            prompts: ["prompts/*.md"],
+            themes: ["themes/*.json"],
+          },
+        })
+      );
+
+      const manifest = readPiPackageManifest(root);
+      const report = validatePiPackageManifest(manifest);
+
+      expect(manifest).toMatchObject({
+        name: "recipe-package",
+        version: "0.1.0",
+        description: "Legacy Pi recipe",
+      });
+      expect(manifest.resources).toEqual({
+        agents: ["agents/*.yaml"],
+        extensions: ["extensions/*.ts"],
+        skills: ["skills/**/SKILL.md"],
+        prompts: ["prompts/*.md"],
+        themes: ["themes/*.json"],
+      });
+      expect(report).toEqual({ valid: true, findings: [] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not treat package.json recipe blocks as recipe manifests", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-package-"));
     try {
@@ -107,6 +148,31 @@ describe("recipe package manifest", () => {
     }
   });
 
+  it("reads legacy package.json recipe blocks for Pi compatibility", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-package-"));
+    try {
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "recipe-package",
+          version: "0.1.0",
+          recipe: {
+            agents: ["agents/*.yaml"],
+          },
+        })
+      );
+
+      const manifest = readPiPackageManifest(root);
+
+      expect(manifest.name).toBe("recipe-package");
+      expect(manifest.version).toBe("0.1.0");
+      expect(manifest.resources.agents).toEqual(["agents/*.yaml"]);
+      expect(validatePiPackageManifest(manifest).valid).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not treat plain package.json files as recipe manifests", () => {
     const root = mkdtempSync(join(tmpdir(), "dependency-package-"));
     try {
@@ -124,6 +190,9 @@ describe("recipe package manifest", () => {
       expect(() => readRecipePackageManifest(root)).toThrow(RecipePackageError);
       expect(() => readRecipePackageManifest(root)).toThrow(
         /missing recipe\.yaml/
+      );
+      expect(() => readPiPackageManifest(root)).toThrow(
+        /missing recipe\.yaml or legacy package\.json recipe\/pi manifest/
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
