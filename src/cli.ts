@@ -23,7 +23,7 @@ interface ParsedArgs {
 
 function usage(): string {
   return [
-    "Usage: recipe <command> [args]",
+    "Usage: recipes <command> [args]",
     "",
     "Commands:",
     "  add <source>       Install or register a recipe source",
