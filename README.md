@@ -9,6 +9,12 @@ installs or registers recipes in a neutral local store. The Pi extension is
 currently the first harness: it resolves an installed recipe into a local
 directory and wires those recipe files into the live Pi session at launch time.
 
+`recipe.yaml` is the recipe manifest: it owns recipe identity and resource
+globs. A root `package.json` is optional and exists only for TypeScript
+extension dependencies and package-manager metadata. New recipes should keep
+those responsibilities separate; Pi still accepts older `package.json` `pi` or
+`recipe` manifest blocks for compatibility.
+
 ## Documentation
 
 - [Recipe CLI](docs/recipe-cli.md): creating, adding, resolving, publishing, and removing recipes.

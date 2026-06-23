@@ -70,7 +70,8 @@ On session startup, the extension:
 
 1. Reads `--recipe` or `PI_RECIPE_DIR`.
 2. Resolves the value as a local directory or installed recipe.
-3. Loads the recipe manifest from `recipe.yaml`.
+3. Loads the recipe manifest from `recipe.yaml`, with a legacy fallback for
+   package.json `pi` or `recipe` manifest blocks.
 4. Selects the active recipe agent.
 5. Loads declared recipe extensions.
 6. Sets the Pi session name.
@@ -82,6 +83,33 @@ On session startup, the extension:
 The current Pi working directory remains the user's project workspace. The
 recipe directory is available in runtime context, but it does not become the
 workspace.
+
+## Manifest Files
+
+`recipe.yaml` is the recipe manifest. It tells Pi what recipe this is and which
+recipe-owned files should be loaded:
+
+- `name`, `version`, and `description`
+- agent definition globs
+- extension globs
+- skill, prompt, and theme paths
+
+`package.json` is not the recipe manifest for new recipes. It is optional Node
+package metadata for extension dependencies. Add it when TypeScript extensions
+under `extensions/` import npm packages that are not provided by Pi itself.
+
+This separation keeps the recipe format portable. `recipe.yaml` stays focused
+on harness-neutral recipe resources, while `package.json` stays focused on
+Node's dependency installer and module resolver.
+
+When both files exist, Pi reads recipe resources from `recipe.yaml` and resolves
+extension imports through dependencies installed from `package.json`. The two
+names can be different: `recipe.yaml` `name` is the recipe identifier, while
+`package.json` `name` is npm metadata.
+
+For compatibility with older Pi recipes, this extension still accepts
+`package.json` `pi` or `recipe` blocks when `recipe.yaml` is absent. New recipes
+should prefer `recipe.yaml`; keep `package.json` for dependencies.
 
 ## Agent Selection
 
@@ -261,10 +289,55 @@ recipe's optional `package.json` and install/register the recipe with
 `recipes add` so dependencies are installed into the recipe directory. For
 remote Git recipes, commit a lockfile with the recipe.
 
+Example layout:
+
+```text
+my-recipe/
+  recipe.yaml
+  package.json
+  package-lock.json
+  agents/
+    agent.yaml
+  extensions/
+    tools.ts
+```
+
+Example dependency manifest:
+
+```json
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}
+```
+
+Generate the lockfile from inside the recipe directory:
+
+```bash
+cd my-recipe
+npm install --package-lock-only
+recipes add .
+```
+
+For a remote Git recipe, commit `recipe.yaml`, `package.json`, and the lockfile.
+When users run `recipes add github:owner/repo`, the CLI installs production
+dependencies into that cloned recipe before Pi loads extensions.
+
 Imports of Pi runtime packages such as `@earendil-works/pi-coding-agent`,
 `@earendil-works/pi-ai`, and `typebox` are resolved to the host Pi installation.
 Declare those as peers in the recipe `package.json` rather than bundling another
 copy.
+
+Use normal `dependencies` for packages your extension imports at runtime. Use
+`devDependencies` only for local recipe development tools; they are not needed
+for Pi to run the recipe.
 
 Example extension:
 
