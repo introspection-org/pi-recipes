@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -70,11 +70,13 @@ export function recipeStoreFilePath(storeDir = defaultRecipeStoreDir()): string 
 }
 
 function sanitizeSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-|-$/g, "") || "_";
+  const sanitized =
+    value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-|-$/g, "") || "_";
+  return sanitized === "." || sanitized === ".." ? "_" : sanitized;
 }
 
 function hashedCacheSegment(value: string): string {
-  const slug = sanitizeSegment(value).slice(0, 80);
+  const slug = sanitizeSegment(redactUrl(value)).slice(0, 80);
   const hash = createHash("sha256").update(value).digest("hex").slice(0, 16);
   return `${slug}-${hash}`;
 }
@@ -95,7 +97,23 @@ function splitRef(input: string): { spec: string; ref?: string } {
 
 function normalizeSubdir(value: string | undefined): string | undefined {
   const subdir = value?.replace(/^\/+|\/+$/g, "");
+  if (subdir && !isSafeRelativePath(subdir)) return undefined;
   return subdir ? subdir : undefined;
+}
+
+function hasUnsafePathSegment(value: string): boolean {
+  return value
+    .replace(/\\/g, "/")
+    .split("/")
+    .some((segment) => segment === "." || segment === "..");
+}
+
+function isSafeRelativePath(value: string): boolean {
+  return !isAbsolute(value) && !hasUnsafePathSegment(value);
+}
+
+function isSafeGithubName(value: string): boolean {
+  return /^[a-zA-Z0-9_.-]+$/.test(value) && value !== "." && value !== "..";
 }
 
 function stripGitSuffix(value: string): string {
@@ -120,8 +138,14 @@ function parseGithubUrl(input: string): GithubRecipeSource | undefined {
   const [owner, repoWithGit] = parts;
   if (!owner || !repoWithGit) return undefined;
   const repo = stripGitSuffix(repoWithGit);
+  if (!isSafeGithubName(owner) || !isSafeGithubName(repo)) return undefined;
   const hashRef = url.hash ? decodeURIComponent(url.hash.slice(1)) : undefined;
+  if (hashRef && !isSafeRelativePath(hashRef)) return undefined;
   if (parts[2] === "tree" && parts[3]) {
+    if (!isSafeRelativePath(parts[3])) return undefined;
+    const subdirInput = parts.slice(4).join("/");
+    const subdir = normalizeSubdir(subdirInput);
+    if (subdirInput && !subdir) return undefined;
     return {
       kind: "github",
       input,
@@ -129,7 +153,7 @@ function parseGithubUrl(input: string): GithubRecipeSource | undefined {
       owner,
       repo,
       ref: hashRef ?? parts[3],
-      subdir: normalizeSubdir(parts.slice(4).join("/")),
+      ...(subdir ? { subdir } : {}),
     };
   }
   return {
@@ -148,9 +172,13 @@ function parseGithubShorthand(input: string): GithubRecipeSource | undefined {
   if (parts.length < 2) return undefined;
   const [owner, repo, ...subdirParts] = parts;
   if (!owner || !repo) return undefined;
-  if (!/^[a-zA-Z0-9_.-]+$/.test(owner) || !/^[a-zA-Z0-9_.-]+$/.test(repo)) {
+  if (!isSafeGithubName(owner) || !isSafeGithubName(repo)) {
     return undefined;
   }
+  if (ref && !isSafeRelativePath(ref)) return undefined;
+  const subdirInput = subdirParts.join("/");
+  const subdir = normalizeSubdir(subdirInput);
+  if (subdirInput && !subdir) return undefined;
   return {
     kind: "github",
     input,
@@ -158,7 +186,7 @@ function parseGithubShorthand(input: string): GithubRecipeSource | undefined {
     owner,
     repo,
     ...(ref ? { ref } : {}),
-    subdir: normalizeSubdir(subdirParts.join("/")),
+    ...(subdir ? { subdir } : {}),
   };
 }
 
@@ -260,7 +288,17 @@ function recipeDirectoryForSource(source: RecipeSource, storeDir: string): strin
     source.kind === "github"
       ? cloneDirectoryForSource(source, storeDir)
       : cloneDirectoryForGitSource(source, storeDir);
-  return source.subdir ? join(cloned, source.subdir) : cloned;
+  const recipeDir = source.subdir ? resolve(cloned, source.subdir) : cloned;
+  const relativePath = relative(cloned, recipeDir);
+  if (
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    relativePath.startsWith("..\\") ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error(`Recipe source resolves outside its clone: ${source.input}`);
+  }
+  return recipeDir;
 }
 
 export function readRecipeStore(storeDir = defaultRecipeStoreDir()): RecipeStoreFile {
@@ -439,7 +477,7 @@ function githubGitEnv(
 }
 
 function redactUrl(value: string): string {
-  return value.replace(/https:\/\/([^/@:]+):([^/@]+)@/g, "https://$1:***@");
+  return value.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1***@");
 }
 
 function gitErrorText(err: unknown): string {
@@ -499,7 +537,7 @@ async function cloneGitSource(
     if (!source.ref) {
       const message = source.kind === "github"
         ? `${githubAuthHint(source)}\n\nUnderlying git error:\n${gitErrorText(err)}`
-        : `Could not install git source ${source.input}.\n\nUnderlying git error:\n${gitErrorText(err)}`;
+        : `Could not install git source ${redactUrl(source.input)}.\n\nUnderlying git error:\n${gitErrorText(err)}`;
       throw new Error(message);
     }
     rmSync(target, { recursive: true, force: true });
@@ -509,7 +547,7 @@ async function cloneGitSource(
     } catch (fallbackErr) {
       const message = source.kind === "github"
         ? `${githubAuthHint(source)}\n\nUnderlying git error:\n${gitErrorText(fallbackErr)}`
-        : `Could not install git source ${source.input}.\n\nUnderlying git error:\n${gitErrorText(fallbackErr)}`;
+        : `Could not install git source ${redactUrl(source.input)}.\n\nUnderlying git error:\n${gitErrorText(fallbackErr)}`;
       throw new Error(message);
     }
   } finally {

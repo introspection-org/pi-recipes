@@ -9,6 +9,7 @@ import {
   addRecipe,
   listRecipes,
   loadRecipeAgentDefinitions,
+  packageResourcePaths,
   parseRecipeSource,
   readRecipePackageManifest,
   RecipePackageError,
@@ -177,6 +178,33 @@ describe("recipe package manifest", () => {
     }
   });
 
+  it("rejects declared package resources outside the recipe directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-boundary-"));
+    try {
+      const recipeDir = join(root, "recipe");
+      mkdirSync(recipeDir, { recursive: true });
+      mkdirSync(join(root, "outside-prompts"), { recursive: true });
+      writeFileSync(
+        join(recipeDir, "recipe.yaml"),
+        [
+          "name: escaped-resources",
+          "version: 0.1.0",
+          "prompts:",
+          "  - ../outside-prompts",
+          "",
+        ].join("\n")
+      );
+
+      const manifest = readRecipePackageManifest(recipeDir);
+
+      expect(() => packageResourcePaths(manifest, "prompts")).toThrow(
+        /outside the package/
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports packages with no declared/default agents", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-"));
     try {
@@ -305,6 +333,37 @@ describe("recipe store", () => {
       url: "https://example.com/team/recipe.git",
       ref: "abc123",
     });
+  });
+
+  it("rejects github recipe sources with traversal segments", () => {
+    expect(() => parseRecipeSource("github:owner/repo/../outside#main")).toThrow(
+      /Unsupported recipe source/
+    );
+    expect(() => parseRecipeSource("github:owner/../recipe#v1")).toThrow(
+      /Unsupported recipe source/
+    );
+    expect(() => parseRecipeSource("github:owner/repo/path#../secret")).toThrow(
+      /Unsupported recipe source/
+    );
+  });
+
+  it("redacts credentials from explicit git clone errors", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-git-redact-"));
+    try {
+      let message = "";
+      try {
+        await addRecipe("git+https://user:secret-token@127.0.0.1:1/nope.git", {
+          storeDir: join(root, "store"),
+        });
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+
+      expect(message).toMatch(/git\+https:\/\/\*\*\*@127\.0\.0\.1:1\/nope\.git/);
+      expect(message).not.toContain("secret-token");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("registers local recipes and resolves them by name", async () => {

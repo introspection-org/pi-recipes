@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { parse } from "yaml";
 
 export interface RecipePackageResources {
@@ -68,6 +68,36 @@ function emptyResources(): RecipePackageResources {
 
 function normalizeResourcePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function hasTraversalSegment(path: string): boolean {
+  return normalizeResourcePath(path)
+    .split("/")
+    .some((segment) => segment === "." || segment === "..");
+}
+
+function assertPackageResourcePath(
+  pkg: RecipePackageManifest,
+  key: keyof RecipePackageResources,
+  resource: string,
+  resolved: string
+): void {
+  if (isAbsolute(resource) || hasTraversalSegment(resource)) {
+    throw new RecipePackageError(
+      `Recipe ${pkg.name} declares ${key} resource outside the package: ${resource}`
+    );
+  }
+  const relativePath = relative(resolve(pkg.path), resolved);
+  if (
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    relativePath.startsWith("..\\") ||
+    isAbsolute(relativePath)
+  ) {
+    throw new RecipePackageError(
+      `Recipe ${pkg.name} declares ${key} resource outside the package: ${resource}`
+    );
+  }
 }
 
 function hasGlob(value: string): boolean {
@@ -207,6 +237,7 @@ export function resolvePiPackageResourcePaths(
 
   for (const glob of globs) {
     if (!glob.trim()) continue;
+    assertPackageResourcePath(pkg, key, glob, resolve(pkg.path, glob));
     if (!hasGlob(glob)) {
       const direct = resolve(pkg.path, glob);
       if (!existsSync(direct)) {
