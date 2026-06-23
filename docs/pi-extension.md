@@ -70,7 +70,8 @@ On session startup, the extension:
 
 1. Reads `--recipe` or `PI_RECIPE_DIR`.
 2. Resolves the value as a local directory or installed recipe.
-3. Loads the recipe package manifest.
+3. Loads the recipe manifest from `recipe.yaml` or a legacy `package.json`
+   `recipe`/`pi` block.
 4. Selects the active recipe agent.
 5. Loads declared recipe extensions.
 6. Sets the Pi session name.
@@ -231,6 +232,17 @@ warning and continues loading the rest of the recipe.
 Extension glob branches are optional, so a recipe can declare both flat and
 nested extension layouts without failing when one branch has no matches.
 
+Extensions are loaded with module resolution rooted at the recipe directory. If
+an extension imports a third-party package, declare that dependency in the
+recipe's optional `package.json` and install/register the recipe with
+`recipes add` so dependencies are installed into the recipe directory. For
+remote Git recipes, commit a lockfile with the recipe.
+
+Imports of Pi runtime packages such as `@earendil-works/pi-coding-agent`,
+`@earendil-works/pi-ai`, and `typebox` are resolved to the host Pi installation.
+Declare those as peers in the recipe `package.json` rather than bundling another
+copy.
+
 Example extension:
 
 ```ts
@@ -275,3 +287,7 @@ model provider exists in Pi and the corresponding API key is configured.
 If a recipe tool is listed in an agent but not active, confirm the extension
 that registers the tool is declared in the recipe manifest and loads without a
 warning.
+
+If an extension fails with `Cannot find module`, confirm the dependency is in
+the recipe `package.json`, the recipe was installed with `recipes add`, and the
+dependency was written to the recipe's `node_modules`.

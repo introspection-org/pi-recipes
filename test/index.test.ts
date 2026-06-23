@@ -9,8 +9,8 @@ import {
   addRecipe,
   listRecipes,
   parseRecipeSource,
-  readPiPackageManifest,
   readRecipePackageManifest,
+  RecipePackageError,
   removeRecipe,
   resolveRecipeDirectory,
   validatePiPackageManifest,
@@ -55,7 +55,7 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("reads pi package resources", () => {
+  it("reads legacy package.json pi manifests", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-"));
     try {
       writeFileSync(
@@ -64,6 +64,7 @@ describe("recipe package manifest", () => {
           name: "recipe-package",
           version: "0.1.0",
           pi: {
+            entrypoint: "agent",
             agents: ["./agents/*.yaml"],
             extensions: ["extensions/*.ts"],
             skills: ["skills/**/SKILL.md"],
@@ -72,13 +73,65 @@ describe("recipe package manifest", () => {
         })
       );
 
-      const manifest = readPiPackageManifest(root);
+      const manifest = readRecipePackageManifest(root);
       const report = validatePiPackageManifest(manifest);
 
+      expect(manifest).toMatchObject({
+        name: "recipe-package",
+        version: "0.1.0",
+        entrypoint: "agent",
+      });
       expect(manifest.resources.agents).toEqual(["agents/*.yaml"]);
+      expect(manifest.resources.extensions).toEqual(["extensions/*.ts"]);
       expect(manifest.resources.skills).toEqual(["skills/**/SKILL.md"]);
       expect(manifest.resources.themes).toEqual(["themes/*.json"]);
       expect(report).toEqual({ valid: true, findings: [] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads legacy package.json recipe manifests", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-package-"));
+    try {
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "recipe-package",
+          version: "0.1.0",
+          recipe: {
+            agents: ["agents/*.yaml"],
+          },
+        })
+      );
+
+      const manifest = readRecipePackageManifest(root);
+
+      expect(manifest.name).toBe("recipe-package");
+      expect(manifest.resources.agents).toEqual(["agents/*.yaml"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat plain package.json files as recipe manifests", () => {
+    const root = mkdtempSync(join(tmpdir(), "dependency-package-"));
+    try {
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          name: "dependency-package",
+          version: "0.1.0",
+          dependencies: {
+            zod: "^4.0.0",
+          },
+        })
+      );
+
+      expect(() => readRecipePackageManifest(root)).toThrow(RecipePackageError);
+      expect(() => readRecipePackageManifest(root)).toThrow(
+        /missing recipe\.yaml or legacy package\.json recipe\/pi manifest/
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -97,20 +150,24 @@ describe("recipe package manifest", () => {
       writeFileSync(join(root, "skills", "repo-index", "SKILL.md"), "Index repos\n");
       writeFileSync(join(root, "extensions", "tools.ts"), "export default () => {}\n");
       writeFileSync(
-        join(root, "package.json"),
-        JSON.stringify({
-          name: "recipe-package",
-          version: "0.1.0",
-          pi: {
-            agents: ["agents/*.yaml"],
-            extensions: ["extensions/*.ts", "extensions/*/index.ts"],
-            skills: ["skills/**/SKILL.md"],
-            themes: ["themes/*.json"],
-          },
-        })
+        join(root, "recipe.yaml"),
+        [
+          "name: recipe-package",
+          "version: 0.1.0",
+          "agents:",
+          "  - agents/*.yaml",
+          "extensions:",
+          "  - extensions/*.ts",
+          "  - extensions/*/index.ts",
+          "skills:",
+          "  - skills/**/SKILL.md",
+          "themes:",
+          "  - themes/*.json",
+          "",
+        ].join("\n")
       );
 
-      const manifest = readPiPackageManifest(root);
+      const manifest = readRecipePackageManifest(root);
 
       expect(packageResourcePaths(manifest, "skills")).toEqual([
         join(root, "skills", "repo-index", "SKILL.md"),
@@ -134,11 +191,11 @@ describe("recipe package manifest", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-"));
     try {
       writeFileSync(
-        join(root, "package.json"),
-        JSON.stringify({ name: "recipe-package", version: "0.1.0" })
+        join(root, "recipe.yaml"),
+        "name: recipe-package\nversion: 0.1.0\n"
       );
 
-      const report = validatePiPackageManifest(readPiPackageManifest(root));
+      const report = validatePiPackageManifest(readRecipePackageManifest(root));
 
       expect(report.valid).toBe(true);
       expect(report.findings).toEqual([
@@ -232,6 +289,107 @@ describe("recipe store", () => {
       expect(resolveRecipeDirectory("recipe", { storeDir })).toBe(installed.path);
       expect(readRecipePackageManifest(installed.path).entrypoint).toBe("agent");
       expect(removeRecipe("recipe", { storeDir })).toEqual(installed);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps explicit git URL clone caches distinct after sanitization", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-git-collision-"));
+    const storeDir = join(root, "store");
+    const firstSourceDir = join(root, "first-source");
+    const secondSourceDir = join(root, "second-source");
+    const firstBareDir = join(root, "a-b.git");
+    const secondBareDir = join(root, "a", "b.git");
+
+    async function createBareRecipeRepo(sourceDir: string, bareDir: string, name: string) {
+      mkdirSync(join(sourceDir, "agents"), { recursive: true });
+      writeFileSync(
+        join(sourceDir, "recipe.yaml"),
+        `name: ${name}\nversion: 1.0.0\nentrypoint: agent\nagents:\n  - agents/*.yaml\n`
+      );
+      writeFileSync(join(sourceDir, "agents", "agent.yaml"), "name: agent\ntools: []\n");
+      await execFileAsync("git", ["init"], { cwd: sourceDir });
+      await execFileAsync("git", ["add", "."], { cwd: sourceDir });
+      await execFileAsync(
+        "git",
+        ["-c", "user.name=Recipe Test", "-c", "user.email=recipe@example.com", "commit", "-m", "recipe"],
+        { cwd: sourceDir }
+      );
+      await execFileAsync("git", ["tag", "v1"], { cwd: sourceDir });
+      await execFileAsync("git", ["clone", "--bare", sourceDir, bareDir]);
+    }
+
+    try {
+      mkdirSync(join(root, "a"), { recursive: true });
+      await createBareRecipeRepo(firstSourceDir, firstBareDir, "git-collision-one");
+      await createBareRecipeRepo(secondSourceDir, secondBareDir, "git-collision-two");
+
+      const first = await addRecipe(`file://${firstBareDir}#v1`, { storeDir });
+      const second = await addRecipe(`file://${secondBareDir}#v1`, { storeDir });
+
+      expect(first.path).not.toBe(second.path);
+      expect(first.name).toBe("git-collision-one");
+      expect(second.name).toBe("git-collision-two");
+      expect(readRecipePackageManifest(second.path).name).toBe("git-collision-two");
+      expect(listRecipes({ storeDir }).map((recipe) => recipe.name).sort()).toEqual([
+        "git-collision-one",
+        "git-collision-two",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("installs extension runtime dependencies for cloned recipes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-git-deps-"));
+    const sourceDir = join(root, "source");
+    const bareDir = join(root, "recipe.git");
+    const storeDir = join(root, "store");
+    try {
+      mkdirSync(join(sourceDir, "agents"), { recursive: true });
+      mkdirSync(join(sourceDir, "deps", "recipe-test-dep"), { recursive: true });
+      writeFileSync(
+        join(sourceDir, "recipe.yaml"),
+        "name: dep-review\nversion: 0.4.0\nentrypoint: agent\nagents:\n  - agents/*.yaml\nextensions:\n  - extensions/*.ts\n"
+      );
+      writeFileSync(join(sourceDir, "agents", "agent.yaml"), "name: agent\ntools: []\n");
+      writeFileSync(
+        join(sourceDir, "package.json"),
+        JSON.stringify({
+          name: "dep-review-extension-runtime",
+          version: "0.0.0",
+          type: "module",
+          dependencies: {
+            "recipe-test-dep": "file:deps/recipe-test-dep",
+          },
+        })
+      );
+      writeFileSync(
+        join(sourceDir, "deps", "recipe-test-dep", "package.json"),
+        JSON.stringify({ name: "recipe-test-dep", version: "1.0.0", main: "index.js" })
+      );
+      writeFileSync(
+        join(sourceDir, "deps", "recipe-test-dep", "index.js"),
+        "module.exports = { value: 'installed' };\n"
+      );
+      await execFileAsync("npm", ["install", "--package-lock-only", "--ignore-scripts"], { cwd: sourceDir });
+      await execFileAsync("git", ["init"], { cwd: sourceDir });
+      await execFileAsync("git", ["add", "."], { cwd: sourceDir });
+      await execFileAsync(
+        "git",
+        ["-c", "user.name=Recipe Test", "-c", "user.email=recipe@example.com", "commit", "-m", "recipe"],
+        { cwd: sourceDir }
+      );
+      await execFileAsync("git", ["tag", "v0.4.0"], { cwd: sourceDir });
+      await execFileAsync("git", ["clone", "--bare", sourceDir, bareDir]);
+
+      const installed = await addRecipe(`file://${bareDir}#v0.4.0`, { storeDir });
+
+      expect(installed.name).toBe("dep-review");
+      expect(
+        await readFile(join(installed.path, "node_modules", "recipe-test-dep", "index.js"), "utf8")
+      ).toContain("installed");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

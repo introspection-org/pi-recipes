@@ -36,14 +36,6 @@ export interface RecipeValidationReport {
   findings: RecipeValidationFinding[];
 }
 
-type PackageJson = {
-  name?: unknown;
-  version?: unknown;
-  description?: unknown;
-  recipe?: Partial<Record<keyof RecipePackageResources | "entrypoint", unknown>>;
-  pi?: Partial<Record<keyof RecipePackageResources, unknown>>;
-};
-
 type RecipeYaml = {
   name?: unknown;
   version?: unknown;
@@ -51,6 +43,14 @@ type RecipeYaml = {
   entrypoint?: unknown;
   resources?: Partial<Record<keyof RecipePackageResources, unknown>>;
 } & Partial<Record<keyof RecipePackageResources, unknown>>;
+
+type PackageJson = {
+  name?: unknown;
+  version?: unknown;
+  description?: unknown;
+  recipe?: Partial<Record<keyof RecipePackageResources | "entrypoint", unknown>>;
+  pi?: Partial<Record<keyof RecipePackageResources | "entrypoint", unknown>>;
+};
 
 const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "agents",
@@ -150,18 +150,6 @@ export class RecipePackageError extends Error {
   }
 }
 
-function readJsonFile(path: string): PackageJson {
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as PackageJson;
-  } catch (err) {
-    throw new RecipePackageError(
-      `Recipe package at ${path} has invalid JSON: ${
-        err instanceof Error ? err.message : String(err)
-      }`
-    );
-  }
-}
-
 function readYamlFile(path: string): RecipeYaml {
   try {
     const parsed = parse(readFileSync(path, "utf8")) as unknown;
@@ -171,6 +159,21 @@ function readYamlFile(path: string): RecipeYaml {
   } catch (err) {
     throw new RecipePackageError(
       `Recipe package at ${path} has invalid YAML: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+function readJsonFile(path: string): PackageJson {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as PackageJson)
+      : {};
+  } catch (err) {
+    throw new RecipePackageError(
+      `Recipe package at ${path} has invalid JSON: ${
         err instanceof Error ? err.message : String(err)
       }`
     );
@@ -187,6 +190,13 @@ function recipeYamlPath(packageDir: string): string | undefined {
   const yml = join(packageDir, "recipe.yml");
   if (existsSync(yml)) return yml;
   return undefined;
+}
+
+function legacyPackageManifestPath(packageDir: string): string | undefined {
+  const packagePath = join(packageDir, "package.json");
+  if (!existsSync(packagePath)) return undefined;
+  const raw = readJsonFile(packagePath);
+  return raw.recipe || raw.pi ? packagePath : undefined;
 }
 
 export function readRecipePackageManifest(packageDir: string): RecipePackageManifest {
@@ -213,23 +223,28 @@ export function readRecipePackageManifest(packageDir: string): RecipePackageMani
   const packagePath = join(packageDir, "package.json");
   if (!existsSync(packagePath)) {
     throw new RecipePackageError(
-      `Recipe package at ${packageDir} is missing recipe.yaml or package.json`
+      `Recipe package at ${packageDir} is missing recipe.yaml or legacy package.json recipe/pi manifest`
     );
   }
 
   const raw = readJsonFile(packagePath);
   const recipe = raw.recipe ?? raw.pi;
+  if (!recipe) {
+    throw new RecipePackageError(
+      `Recipe package at ${packageDir} is missing recipe.yaml or legacy package.json recipe/pi manifest`
+    );
+  }
 
   const resources = emptyResources();
   for (const key of RESOURCE_KEYS) {
-    resources[key] = stringArray(recipe?.[key]).map(normalizeResourcePath);
+    resources[key] = stringArray(recipe[key]).map(normalizeResourcePath);
   }
 
   return {
     name: stringValue(raw.name) ?? "local",
     version: stringValue(raw.version) ?? "0.0.0",
     ...(stringValue(raw.description) ? { description: stringValue(raw.description) } : {}),
-    ...(stringValue(raw.recipe?.entrypoint) ? { entrypoint: stringValue(raw.recipe?.entrypoint) } : {}),
+    ...(stringValue(recipe.entrypoint) ? { entrypoint: stringValue(recipe.entrypoint) } : {}),
     path: packageDir,
     resources,
   };
@@ -315,12 +330,12 @@ export function validatePiPackageManifest(
       finding("error", "package.name_missing", "Package is missing name")
     );
   }
-  if (!recipeYamlPath(pkg.path) && !existsSync(join(pkg.path, "package.json"))) {
+  if (!recipeYamlPath(pkg.path) && !legacyPackageManifestPath(pkg.path)) {
     findings.push(
       finding(
         "error",
         "package.manifest_missing",
-        "Package is missing recipe.yaml or package.json",
+        "Package is missing recipe.yaml or legacy package.json recipe/pi manifest",
         pkg.name
       )
     );

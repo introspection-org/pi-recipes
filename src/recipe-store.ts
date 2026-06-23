@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { execFile } from "node:child_process";
@@ -10,6 +11,8 @@ import {
 } from "./recipe-package.js";
 
 const execFileAsync = promisify(execFile);
+
+type PackageManager = "npm" | "pnpm" | "yarn";
 
 export interface RecipeStoreOptions {
   storeDir?: string;
@@ -68,6 +71,12 @@ export function recipeStoreFilePath(storeDir = defaultRecipeStoreDir()): string 
 
 function sanitizeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-|-$/g, "") || "_";
+}
+
+function hashedCacheSegment(value: string): string {
+  const slug = sanitizeSegment(value).slice(0, 80);
+  const hash = createHash("sha256").update(value).digest("hex").slice(0, 16);
+  return `${slug}-${hash}`;
 }
 
 function expandHome(path: string): string {
@@ -235,12 +244,12 @@ function cloneDirectoryForSource(source: GithubRecipeSource, storeDir: string): 
 }
 
 function cloneDirectoryForGitSource(source: GitRecipeSource, storeDir: string): string {
-  const ref = sanitizeSegment(source.ref ?? "HEAD");
+  const ref = hashedCacheSegment(source.ref ?? "HEAD");
   return join(
     storeDir,
     "sources",
     "git",
-    sanitizeSegment(source.url),
+    hashedCacheSegment(source.url),
     ref
   );
 }
@@ -264,6 +273,124 @@ function writeRecipeStore(store: RecipeStoreFile, storeDir: string): void {
   const path = recipeStoreFilePath(storeDir);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readPackageJson(path: string): Record<string, unknown> {
+  try {
+    return asRecord(JSON.parse(readFileSync(path, "utf8")));
+  } catch (err) {
+    throw new Error(
+      `Recipe dependency manifest at ${path} has invalid JSON: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+function hasRuntimeDependencies(pkg: Record<string, unknown>): boolean {
+  return [pkg.dependencies, pkg.optionalDependencies].some(
+    (value) => Object.keys(asRecord(value)).length > 0
+  );
+}
+
+function packageManagerFromSpec(value: unknown): PackageManager | undefined {
+  if (typeof value !== "string") return undefined;
+  const name = value.split("@")[0];
+  return name === "npm" || name === "pnpm" || name === "yarn" ? name : undefined;
+}
+
+function packageManagerForRecipe(recipeDir: string, pkg: Record<string, unknown>): PackageManager {
+  return packageManagerFromSpec(pkg.packageManager)
+    ?? (existsSync(join(recipeDir, "pnpm-lock.yaml"))
+      ? "pnpm"
+      : existsSync(join(recipeDir, "yarn.lock"))
+        ? "yarn"
+        : "npm");
+}
+
+function hasDependencyLockfile(recipeDir: string): boolean {
+  return [
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+  ].some((name) => existsSync(join(recipeDir, name)));
+}
+
+function dependencyInstallCommand(
+  manager: PackageManager,
+  recipeDir: string,
+  requireLockfile: boolean
+): { command: string; args: string[] } {
+  if (manager === "pnpm") {
+    return {
+      command: "pnpm",
+      args: [
+        "install",
+        "--prod",
+        "--ignore-scripts",
+        ...(requireLockfile ? ["--frozen-lockfile"] : []),
+      ],
+    };
+  }
+  if (manager === "yarn") {
+    return {
+      command: "yarn",
+      args: [
+        "install",
+        "--production",
+        "--ignore-scripts",
+        ...(requireLockfile ? ["--frozen-lockfile"] : []),
+      ],
+    };
+  }
+  if (
+    requireLockfile &&
+    (existsSync(join(recipeDir, "package-lock.json")) ||
+      existsSync(join(recipeDir, "npm-shrinkwrap.json")))
+  ) {
+    return { command: "npm", args: ["ci", "--omit=dev", "--ignore-scripts"] };
+  }
+  return { command: "npm", args: ["install", "--omit=dev", "--ignore-scripts"] };
+}
+
+async function installRecipeDependencies(
+  recipeDir: string,
+  opts: RecipeStoreOptions & { requireLockfile: boolean }
+): Promise<void> {
+  const packagePath = join(recipeDir, "package.json");
+  if (!existsSync(packagePath)) return;
+
+  const pkg = readPackageJson(packagePath);
+  if (!hasRuntimeDependencies(pkg)) return;
+  if (opts.requireLockfile && !hasDependencyLockfile(recipeDir)) {
+    throw new Error(
+      `Recipe ${recipeDir} declares extension dependencies but has no lockfile; add package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, or yarn.lock`
+    );
+  }
+
+  const manager = packageManagerForRecipe(recipeDir, pkg);
+  const { command, args } = dependencyInstallCommand(
+    manager,
+    recipeDir,
+    opts.requireLockfile
+  );
+  try {
+    await execFileAsync(command, args, {
+      cwd: recipeDir,
+      env: opts.env ?? process.env,
+    });
+  } catch (err) {
+    throw new Error(
+      `Failed to install recipe extension dependencies with ${command} ${args.join(" ")}:\n${gitErrorText(err)}`
+    );
+  }
 }
 
 function githubToken(env: NodeJS.ProcessEnv): string | undefined {
@@ -424,6 +551,10 @@ export async function addRecipe(
   if (errors.length > 0) {
     throw new Error(errors.map((finding) => finding.message).join("\n"));
   }
+  await installRecipeDependencies(path, {
+    ...opts,
+    requireLockfile: source.kind !== "local",
+  });
 
   const id = recipeSourceId(source);
   const installed = installedRecipeFromManifest(id, input, path, manifest);

@@ -1,13 +1,15 @@
 # @tfidfwastaken/local-session-tools
 
-Experimental local session tooling with a lightweight recipe CLI and
-package-based Pi extension support.
+Experimental local session tooling with a lightweight recipe CLI and Pi
+extension support.
 
-Recipes are package folders that describe agent behavior, prompts, skills, and
-optional runtime extensions. The `recipes` CLI installs or registers recipes in
-a neutral local store. The Pi extension is currently the first harness: it
-resolves an installed recipe into a local directory and wires those recipe files
-into the live Pi session at launch time.
+Recipes are folders with a manifest that describes agent behavior, prompts,
+skills, and optional TypeScript runtime extensions. New recipes should use
+`recipe.yaml`; legacy recipes with a `package.json` `pi` or `recipe` block are
+still supported. The `recipes` CLI installs or registers recipes in a neutral
+local store. The Pi extension is currently the first harness: it resolves an
+installed recipe into a local directory and wires those recipe files into the
+live Pi session at launch time.
 
 ## Documentation
 

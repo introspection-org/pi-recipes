@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   defineTool,
   type AgentToolUpdateCallback,
@@ -304,9 +305,13 @@ function loadJiti(): { createJiti: (url: string, opts: Record<string, unknown>) 
   }
 }
 
-async function loadRecipeExtensionFactory(extensionPath: string): Promise<ExtensionFactory> {
+async function loadRecipeExtensionFactory(
+  recipeDir: string,
+  extensionPath: string
+): Promise<ExtensionFactory> {
   const { createJiti } = loadJiti();
-  const jiti = createJiti(import.meta.url, {
+  const recipeLoaderUrl = pathToFileURL(join(recipeDir, ".recipe-extension-loader.js")).href;
+  const jiti = createJiti(recipeLoaderUrl, {
     moduleCache: false,
     alias: recipeExtensionAliases(),
   });
@@ -391,7 +396,7 @@ export function createPiRecipesExtension(
     let loadedCount = 0;
     for (const extensionPath of launchState.extensionPaths) {
       try {
-        const factory = await loadRecipeExtensionFactory(extensionPath);
+        const factory = await loadRecipeExtensionFactory(launchState.recipeDir, extensionPath);
         await factory(pi);
         loadedCount += 1;
       } catch (err) {

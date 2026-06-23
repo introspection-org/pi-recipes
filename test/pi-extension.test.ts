@@ -24,17 +24,20 @@ function writeRecipe(root: string) {
   mkdirSync(join(recipeDir, "prompts"), { recursive: true });
   mkdirSync(join(recipeDir, "themes"), { recursive: true });
   writeFileSync(
-    join(recipeDir, "package.json"),
-    JSON.stringify({
-      name: "demo",
-      version: "1.0.0",
-      pi: {
-        agents: ["defs/*.yaml"],
-        skills: ["skills/**/SKILL.md"],
-        prompts: ["prompts"],
-        themes: ["themes/*.json"],
-      },
-    })
+    join(recipeDir, "recipe.yaml"),
+    [
+      "name: demo",
+      "version: 1.0.0",
+      "agents:",
+      "  - defs/*.yaml",
+      "skills:",
+      "  - skills/**/SKILL.md",
+      "prompts:",
+      "  - prompts",
+      "themes:",
+      "  - themes/*.json",
+      "",
+    ].join("\n")
   );
   writeFileSync(join(recipeDir, "SYSTEM.md"), "Base recipe prompt");
   writeFileSync(
@@ -234,6 +237,7 @@ describe("Pi recipes launch extension", () => {
     try {
       const recipeDir = writeRecipe(root);
       mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+      mkdirSync(join(recipeDir, "node_modules", "recipe-test-dep"), { recursive: true });
       writeFileSync(
         join(recipeDir, "defs", "main.yaml"),
         [
@@ -246,7 +250,9 @@ describe("Pi recipes launch extension", () => {
       writeFileSync(
         join(recipeDir, "extensions", "setup-git.ts"),
         [
+          "import dep from 'recipe-test-dep';",
           "export default (pi) => {",
+          "  if (dep.value !== 'loaded') throw new Error('recipe dependency did not load');",
           "  pi.registerTool({",
           "    name: 'setup_git',",
           "    label: 'Setup git',",
@@ -264,15 +270,24 @@ describe("Pi recipes launch extension", () => {
         "export default () => { throw new Error('runtime-only extension unavailable'); };\n"
       );
       writeFileSync(
-        join(recipeDir, "package.json"),
-        JSON.stringify({
-          name: "demo",
-          version: "1.0.0",
-          pi: {
-            agents: ["defs/*.yaml"],
-            extensions: ["extensions/*.ts"],
-          },
-        })
+        join(recipeDir, "node_modules", "recipe-test-dep", "package.json"),
+        JSON.stringify({ name: "recipe-test-dep", version: "1.0.0", main: "index.js" })
+      );
+      writeFileSync(
+        join(recipeDir, "node_modules", "recipe-test-dep", "index.js"),
+        "module.exports = { value: 'loaded' };\n"
+      );
+      writeFileSync(
+        join(recipeDir, "recipe.yaml"),
+        [
+          "name: demo",
+          "version: 1.0.0",
+          "agents:",
+          "  - defs/*.yaml",
+          "extensions:",
+          "  - extensions/*.ts",
+          "",
+        ].join("\n")
       );
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
