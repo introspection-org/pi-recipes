@@ -1,21 +1,26 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { parse } from "yaml";
 
-export interface PiPackageResources {
+export interface RecipePackageResources {
   agents: string[];
-  profiles: string[];
   extensions: string[];
   skills: string[];
   prompts: string[];
   themes: string[];
 }
 
-export interface PiPackageManifest {
+export interface RecipePackageManifest {
   name: string;
   version: string;
+  description?: string;
+  entrypoint?: string;
   path: string;
-  resources: PiPackageResources;
+  resources: RecipePackageResources;
 }
+
+export type PiPackageResources = RecipePackageResources;
+export type PiPackageManifest = RecipePackageManifest;
 
 export type RecipeValidationSeverity = "error" | "warning";
 
@@ -34,12 +39,21 @@ export interface RecipeValidationReport {
 type PackageJson = {
   name?: unknown;
   version?: unknown;
-  pi?: Partial<Record<keyof PiPackageResources, unknown>>;
+  description?: unknown;
+  recipe?: Partial<Record<keyof RecipePackageResources | "entrypoint", unknown>>;
+  pi?: Partial<Record<keyof RecipePackageResources, unknown>>;
 };
 
-const RESOURCE_KEYS: Array<keyof PiPackageResources> = [
+type RecipeYaml = {
+  name?: unknown;
+  version?: unknown;
+  description?: unknown;
+  entrypoint?: unknown;
+  resources?: Partial<Record<keyof RecipePackageResources, unknown>>;
+} & Partial<Record<keyof RecipePackageResources, unknown>>;
+
+const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "agents",
-  "profiles",
   "extensions",
   "skills",
   "prompts",
@@ -52,10 +66,9 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
-function emptyResources(): PiPackageResources {
+function emptyResources(): RecipePackageResources {
   return {
     agents: [],
-    profiles: [],
     extensions: [],
     skills: [],
     prompts: [],
@@ -137,47 +150,98 @@ export class RecipePackageError extends Error {
   }
 }
 
-export function readPiPackageManifest(packageDir: string): PiPackageManifest {
-  const packagePath = join(packageDir, "package.json");
-  if (!existsSync(packagePath)) {
-    throw new RecipePackageError(
-      `Pi package at ${packageDir} is missing package.json`
-    );
-  }
-
-  let raw: PackageJson;
+function readJsonFile(path: string): PackageJson {
   try {
-    raw = JSON.parse(readFileSync(packagePath, "utf8")) as PackageJson;
+    return JSON.parse(readFileSync(path, "utf8")) as PackageJson;
   } catch (err) {
     throw new RecipePackageError(
-      `Pi package at ${packageDir} has invalid package.json: ${
+      `Recipe package at ${path} has invalid JSON: ${
         err instanceof Error ? err.message : String(err)
       }`
     );
   }
+}
+
+function readYamlFile(path: string): RecipeYaml {
+  try {
+    const parsed = parse(readFileSync(path, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as RecipeYaml)
+      : {};
+  } catch (err) {
+    throw new RecipePackageError(
+      `Recipe package at ${path} has invalid YAML: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function recipeYamlPath(packageDir: string): string | undefined {
+  const yaml = join(packageDir, "recipe.yaml");
+  if (existsSync(yaml)) return yaml;
+  const yml = join(packageDir, "recipe.yml");
+  if (existsSync(yml)) return yml;
+  return undefined;
+}
+
+export function readRecipePackageManifest(packageDir: string): RecipePackageManifest {
+  const manifestPath = recipeYamlPath(packageDir);
+  if (manifestPath) {
+    const raw = readYamlFile(manifestPath);
+    const resources = emptyResources();
+    for (const key of RESOURCE_KEYS) {
+      resources[key] = stringArray(raw.resources?.[key] ?? raw[key]).map(
+        normalizeResourcePath
+      );
+    }
+
+    return {
+      name: stringValue(raw.name) ?? "local",
+      version: stringValue(raw.version) ?? "0.0.0",
+      ...(stringValue(raw.description) ? { description: stringValue(raw.description) } : {}),
+      ...(stringValue(raw.entrypoint) ? { entrypoint: stringValue(raw.entrypoint) } : {}),
+      path: packageDir,
+      resources,
+    };
+  }
+
+  const packagePath = join(packageDir, "package.json");
+  if (!existsSync(packagePath)) {
+    throw new RecipePackageError(
+      `Recipe package at ${packageDir} is missing recipe.yaml or package.json`
+    );
+  }
+
+  const raw = readJsonFile(packagePath);
+  const recipe = raw.recipe ?? raw.pi;
 
   const resources = emptyResources();
   for (const key of RESOURCE_KEYS) {
-    resources[key] = stringArray(raw.pi?.[key]).map(normalizeResourcePath);
+    resources[key] = stringArray(recipe?.[key]).map(normalizeResourcePath);
   }
 
   return {
-    name:
-      typeof raw.name === "string" && raw.name.trim()
-        ? raw.name.trim()
-        : "local",
-    version:
-      typeof raw.version === "string" && raw.version.trim()
-        ? raw.version.trim()
-        : "0.0.0",
+    name: stringValue(raw.name) ?? "local",
+    version: stringValue(raw.version) ?? "0.0.0",
+    ...(stringValue(raw.description) ? { description: stringValue(raw.description) } : {}),
+    ...(stringValue(raw.recipe?.entrypoint) ? { entrypoint: stringValue(raw.recipe?.entrypoint) } : {}),
     path: packageDir,
     resources,
   };
 }
 
+export function readPiPackageManifest(packageDir: string): RecipePackageManifest {
+  return readRecipePackageManifest(packageDir);
+}
+
 export function resolvePiPackageResourcePaths(
-  pkg: PiPackageManifest,
-  key: keyof PiPackageResources,
+  pkg: RecipePackageManifest,
+  key: keyof RecipePackageResources,
   opts: { allowEmptyGlobMatches?: boolean } = {}
 ): string[] {
   const globs = pkg.resources[key];
@@ -214,12 +278,11 @@ export function resolvePiPackageResourcePaths(
 }
 
 export function defaultPiPackageResourcePaths(
-  pkg: PiPackageManifest,
-  key: keyof PiPackageResources
+  pkg: RecipePackageManifest,
+  key: keyof RecipePackageResources
 ): string[] {
-  const defaults: Partial<Record<keyof PiPackageResources, string[]>> = {
+  const defaults: Partial<Record<keyof RecipePackageResources, string[]>> = {
     agents: [join(pkg.path, "agents")],
-    profiles: [join(pkg.path, "profiles")],
     skills: [join(pkg.path, "skills")],
     prompts: [join(pkg.path, "prompts")],
     themes: [join(pkg.path, "themes")],
@@ -228,19 +291,23 @@ export function defaultPiPackageResourcePaths(
 }
 
 export function packageResourcePaths(
-  pkg: PiPackageManifest,
-  key: keyof PiPackageResources
+  pkg: RecipePackageManifest,
+  key: keyof RecipePackageResources
 ): string[] {
   if (pkg.resources[key].length > 0) {
     return resolvePiPackageResourcePaths(pkg, key, {
-      allowEmptyGlobMatches: key === "skills" || key === "prompts" || key === "themes",
+      allowEmptyGlobMatches:
+        key === "extensions" ||
+        key === "skills" ||
+        key === "prompts" ||
+        key === "themes",
     });
   }
   return defaultPiPackageResourcePaths(pkg, key);
 }
 
 export function validatePiPackageManifest(
-  pkg: PiPackageManifest
+  pkg: RecipePackageManifest
 ): RecipeValidationReport {
   const findings: RecipeValidationFinding[] = [];
   if (!pkg.name.trim()) {
@@ -248,12 +315,12 @@ export function validatePiPackageManifest(
       finding("error", "package.name_missing", "Package is missing name")
     );
   }
-  if (!existsSync(join(pkg.path, "package.json"))) {
+  if (!recipeYamlPath(pkg.path) && !existsSync(join(pkg.path, "package.json"))) {
     findings.push(
       finding(
         "error",
-        "package.package_json_missing",
-        "Package is missing package.json",
+        "package.manifest_missing",
+        "Package is missing recipe.yaml or package.json",
         pkg.name
       )
     );

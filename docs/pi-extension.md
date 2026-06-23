@@ -1,23 +1,24 @@
-# Pi Recipe Extension
+# Session Recipe Extension
 
-The Pi recipe extension turns a local recipe package into the active Pi session configuration.
+The session recipe extension turns a resolved recipe package into the active session configuration. The recipe can be a local directory or a recipe installed in the neutral local store.
 
 ## Launch Flow
 
 1. Read `--recipe` or `PI_RECIPE_DIR`.
-2. Load the recipe package manifest.
-3. Resolve the selected profile and agent.
-4. Load declared recipe extensions.
-5. Set session name, model, thinking level, and active tools.
-6. Return recipe resources for skills, prompts, and themes.
-7. Compose the session prompt from Pi defaults, `SYSTEM.md`, profile instructions, agent instructions, and recipe runtime context.
+2. Resolve the value as a local directory, installed recipe name, installed source, or installed source id.
+3. Load the recipe package manifest.
+4. Resolve the selected agent.
+5. Load declared recipe extensions.
+6. Set session name, model, thinking level, and active tools.
+7. Return recipe resources for skills, prompts, and themes.
+8. Compose the session prompt from Pi defaults, `SYSTEM.md`, agent instructions, and recipe runtime context.
 
 ## Agent Selection
 
 Selection order:
 
-1. profile `entrypoint`
-2. `--recipe-agent` or `PI_AGENT_NAME`
+1. `--agent` or `PI_AGENT_NAME`
+2. recipe manifest `entrypoint`
 3. `agents/agent.yaml`
 4. the only available agent
 
@@ -37,6 +38,12 @@ The tool accepts:
 - `id`: retained child-run id for management actions
 
 Child runs use the same recipe directory and current Pi workspace as the parent session.
+
+## Commands
+
+The extension registers:
+
+- `/recipe`: active recipe summary, selected agent, model, thinking level, visible subagents, and active tools from the recipe.
 
 ## Resources
 

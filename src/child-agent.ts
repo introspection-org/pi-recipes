@@ -154,7 +154,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   async start(): Promise<void> {
     if (this.session) return;
 
-    const { agentName, agent, profile } = resolveRecipeAgentDefinition({
+    const { agentName, agent } = resolveRecipeAgentDefinition({
       recipeDir: this.opts.recipeDir,
       agentName: this.opts.agentName,
     });
@@ -162,7 +162,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       throw new Error(`Recipe agent not found: ${agentName}`);
     }
 
-    const modelSpec = profile?.model?.name ?? agent.model?.name ?? "openai/gpt-5.5";
+    const modelSpec = agent.model?.name ?? "openai/gpt-5.5";
     const model = modelFromSpec(modelSpec);
     const env = this.opts.env ?? process.env;
     const apiKey = getEnvApiKey(model.provider) ?? env[`${model.provider.toUpperCase()}_API_KEY`];
@@ -183,10 +183,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       resourceLoaderOptions: {
         systemPromptOverride: (base) =>
           applySystemInstructions(
-            applySystemInstructions(
-              loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
-              profile?.systemInstructions
-            ),
+            loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
             agent.systemInstructions
           ),
         appendSystemPromptOverride: (base) => [
@@ -200,9 +197,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       services,
       sessionManager: SessionManager.inMemory(this.opts.workspaceDir),
       model,
-      thinkingLevel: (profile?.model?.thinkingLevel ??
-        agent.model?.thinkingLevel ??
-        "low") as ThinkingLevel,
+      thinkingLevel: (agent.model?.thinkingLevel ?? "low") as ThinkingLevel,
       tools: agent.tools.length > 0 ? agent.tools : undefined,
     });
     this.session = created.session;

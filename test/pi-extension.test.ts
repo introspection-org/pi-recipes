@@ -20,7 +20,6 @@ function extensionContext(cwd: string, notify = vi.fn()) {
 function writeRecipe(root: string) {
   const recipeDir = join(root, "recipe");
   mkdirSync(join(recipeDir, "defs"), { recursive: true });
-  mkdirSync(join(recipeDir, "profiles"), { recursive: true });
   mkdirSync(join(recipeDir, "skills", "repo-index"), { recursive: true });
   mkdirSync(join(recipeDir, "prompts"), { recursive: true });
   mkdirSync(join(recipeDir, "themes"), { recursive: true });
@@ -31,7 +30,6 @@ function writeRecipe(root: string) {
       version: "1.0.0",
       pi: {
         agents: ["defs/*.yaml"],
-        profiles: ["profiles/*.yaml"],
         skills: ["skills/**/SKILL.md"],
         prompts: ["prompts"],
         themes: ["themes/*.json"],
@@ -57,17 +55,6 @@ function writeRecipe(root: string) {
     ].join("\n")
   );
   writeFileSync(join(recipeDir, "defs", "explorer.yaml"), "name: explorer\n");
-  writeFileSync(
-    join(recipeDir, "profiles", "deep.yaml"),
-    [
-      "name: deep",
-      "entrypoint: main",
-      "model:",
-      "  name: anthropic/claude-sonnet-4-5",
-      "  thinking_level: high",
-      "prompt: Profile prompt",
-    ].join("\n")
-  );
   writeFileSync(join(recipeDir, "skills", "repo-index", "SKILL.md"), "---\ndescription: Index repo\n---\n");
   writeFileSync(join(recipeDir, "prompts", "review.md"), "Review this\n");
   writeFileSync(join(recipeDir, "themes", "demo.json"), "{}\n");
@@ -79,10 +66,10 @@ describe("Pi recipes launch extension", () => {
     const pi = createMockExtensionAPI();
     createPiRecipesExtension()(pi);
 
-    expect(pi.commands.has("recipe")).toBe(false);
+    expect(pi.commands.has("recipe")).toBe(true);
+    expect(pi.commands.has("recipe-resources")).toBe(false);
     expect(pi.flags.has("recipe")).toBe(true);
-    expect(pi.flags.has("recipe-profile")).toBe(true);
-    expect(pi.flags.has("recipe-agent")).toBe(true);
+    expect(pi.flags.has("agent")).toBe(true);
 
     const results = await pi.emitExtensionEvent(
       { type: "resources_discover", cwd: process.cwd(), reason: "startup" } as any,
@@ -90,6 +77,19 @@ describe("Pi recipes launch extension", () => {
     );
     expect(results).toEqual([{}]);
     expect(pi.activeTools).toEqual([]);
+  });
+
+  it("reports when recipe inspection commands run without an active recipe", async () => {
+    const pi = createMockExtensionAPI();
+    const notify = vi.fn();
+    createPiRecipesExtension()(pi);
+
+    await pi.commands.get("recipe")?.handler("", extensionContext(process.cwd(), notify));
+
+    expect(notify).toHaveBeenCalledWith(
+      "No recipe is active. Launch Pi with --recipe <recipe>.",
+      "info"
+    );
   });
 
   it("configures the launched session from a recipe folder", async () => {
@@ -102,8 +102,7 @@ describe("Pi recipes launch extension", () => {
       const ctx = extensionContext(projectDir, notify);
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
-      pi.flagValues.set("recipe-profile", "deep");
-      pi.flagValues.set("recipe-agent", "explorer");
+      pi.flagValues.set("agent", "main");
 
       createPiRecipesExtension()(pi);
       await pi.emitExtensionEvent(
@@ -111,9 +110,9 @@ describe("Pi recipes launch extension", () => {
         ctx
       );
 
-      expect(pi.sessionName).toBe("demo@1.0.0 profile:deep agent:main");
-      expect(pi.model).toEqual({ provider: "anthropic", id: "claude-sonnet-4-5" });
-      expect(pi.thinkingLevel).toBe("high");
+      expect(pi.sessionName).toBe("demo@1.0.0 agent:main");
+      expect(pi.model).toEqual({ provider: "openai", id: "gpt-4.1" });
+      expect(pi.thinkingLevel).toBe("low");
       expect(pi.activeTools.sort()).toEqual(["agent", "bash", "read"]);
       expect(notify).toHaveBeenCalledWith(expect.stringContaining("Recipe: demo@1.0.0"), "info");
 
@@ -147,11 +146,37 @@ describe("Pi recipes launch extension", () => {
         "Current workspace: " + projectDir
       );
       expect((promptResults[0] as { systemPrompt: string }).systemPrompt).toContain(
-        "Profile prompt"
-      );
-      expect((promptResults[0] as { systemPrompt: string }).systemPrompt).toContain(
         "Agent-specific prompt"
       );
+
+      await pi.commands.get("recipe")?.handler("", ctx as any);
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("Name: demo@1.0.0"),
+        "info"
+      );
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("Agent: main"),
+        "info"
+      );
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("Active recipe tools:"),
+        "info"
+      );
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("  - bash"),
+        "info"
+      );
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("  - read"),
+        "info"
+      );
+      const recipeMessage = notify.mock.calls
+        .map((call) => call[0])
+        .find((message): message is string =>
+          typeof message === "string" && message.includes("Active Recipe")
+        );
+      expect(recipeMessage).not.toContain(join(recipeDir, "skills", "repo-index", "SKILL.md"));
+      expect(recipeMessage).not.toContain(join(recipeDir, "prompts"));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -176,7 +201,7 @@ describe("Pi recipes launch extension", () => {
       );
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
-      pi.flagValues.set("recipe-agent", "main");
+      pi.flagValues.set("agent", "main");
 
       createPiRecipesExtension()(pi);
       await pi.emitExtensionEvent(
@@ -251,7 +276,7 @@ describe("Pi recipes launch extension", () => {
       );
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
-      pi.flagValues.set("recipe-agent", "main");
+      pi.flagValues.set("agent", "main");
       createPiRecipesExtension()(pi);
       const notify = vi.fn();
 
@@ -293,7 +318,7 @@ describe("Pi recipes launch extension", () => {
       });
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
-      pi.flagValues.set("recipe-agent", "main");
+      pi.flagValues.set("agent", "main");
 
       createPiRecipesExtension({ createChildAgentRunner })(pi);
       await pi.emitExtensionEvent(

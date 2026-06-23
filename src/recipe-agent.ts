@@ -25,16 +25,6 @@ export interface RecipeAgentDefinition {
   systemInstructions?: RecipeSystemInstructions;
 }
 
-export interface RecipeProfileDefinition {
-  name: string;
-  entrypoint: string;
-  model?: {
-    name?: string;
-    thinkingLevel?: string;
-  };
-  systemInstructions?: RecipeSystemInstructions;
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -118,12 +108,6 @@ function recipeAgentFiles(recipeDir: string): string[] {
   return yamlFilesFromPaths([join(recipeDir, "agents")]);
 }
 
-function recipeProfileFiles(recipeDir: string): string[] {
-  const manifest = recipeManifest(recipeDir);
-  if (manifest) return yamlFilesFromPaths(packageResourcePaths(manifest, "profiles"));
-  return yamlFilesFromPaths([join(recipeDir, "profiles")]);
-}
-
 export function loadRecipeAgentDefinitions(
   recipeDir: string
 ): Map<string, RecipeAgentDefinition> {
@@ -153,42 +137,13 @@ export function loadRecipeAgentDefinitions(
   return definitions;
 }
 
-export function loadRecipeProfile(
-  recipeDir: string,
-  profileName?: string
-): RecipeProfileDefinition | null {
-  const name = profileName?.trim();
-  if (!name) return null;
-  for (const path of recipeProfileFiles(recipeDir)) {
-    const data = readYaml(path);
-    const fallbackName = basename(path).replace(/\.ya?ml$/i, "");
-    const parsedName =
-      typeof data.name === "string" && data.name.trim()
-        ? data.name.trim()
-        : fallbackName;
-    if (name !== parsedName && name !== fallbackName) continue;
-    const entrypoint =
-      typeof data.entrypoint === "string" && data.entrypoint.trim()
-        ? data.entrypoint.trim()
-        : "agent";
-    return {
-      name: parsedName,
-      entrypoint,
-      model: parseModel(data),
-      systemInstructions: parseSystemInstructions(data),
-    };
-  }
-  return null;
-}
-
 export function resolveRecipeAgentName(opts: {
   recipeDir: string;
-  profileName?: string;
   agentName?: string;
 }): string {
-  const profile = loadRecipeProfile(opts.recipeDir, opts.profileName);
-  if (profile?.entrypoint) return profile.entrypoint;
   if (opts.agentName?.trim()) return opts.agentName.trim();
+  const manifest = recipeManifest(opts.recipeDir);
+  if (manifest?.entrypoint) return manifest.entrypoint;
   const definitions = loadRecipeAgentDefinitions(opts.recipeDir);
   if (definitions.has("agent")) return "agent";
   const uniqueNames = [
@@ -197,23 +152,20 @@ export function resolveRecipeAgentName(opts: {
   if (uniqueNames.length === 1) return uniqueNames[0]!;
   if (uniqueNames.length === 0) return "agent";
   throw new Error(
-    "Recipe has multiple agents and no default entrypoint; add agents/agent.yaml, select a profile, or set PI_AGENT_NAME"
+    "Recipe has multiple agents and no default entrypoint; add agents/agent.yaml or set PI_AGENT_NAME"
   );
 }
 
 export function resolveRecipeAgentDefinition(opts: {
   recipeDir: string;
-  profileName?: string;
   agentName?: string;
 }): {
   agentName: string;
   agent: RecipeAgentDefinition | null;
-  profile: RecipeProfileDefinition | null;
 } {
-  const profile = loadRecipeProfile(opts.recipeDir, opts.profileName);
   const agentName = resolveRecipeAgentName(opts);
   const agent = loadRecipeAgentDefinitions(opts.recipeDir).get(agentName) ?? null;
-  return { agentName, agent, profile };
+  return { agentName, agent };
 }
 
 export function loadRecipeSystemPrompt(recipeDir: string): string | undefined {

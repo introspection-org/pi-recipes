@@ -1,34 +1,35 @@
 {
-  "name": "@introspection/pi-recipes",
+  "name": "@tfidfwastaken/local-session-tools",
   "version": "0.1.0",
-  "description": "Local Pi recipe support for launching multi-agent recipe packages.",
-  "keywords": [
-    "pi-package",
-    "pi",
-    "recipes",
-    "agents"
-  ],
-  "homepage": "https://github.com/introspection-org/pi-recipes#readme",
-  "bugs": {
-    "url": "https://github.com/introspection-org/pi-recipes/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+ssh://git@github.com/introspection-org/pi-recipes.git"
-  },
+  "description": "Local session tooling for package-based workflows.",
+  "license": "UNLICENSED",
   "type": "module",
   "files": [
-    "dist/child-agent.*",
-    "dist/index.*",
-    "dist/pi-extension.*",
-    "dist/recipe-agent.*",
-    "dist/recipe-package.*",
+    "dist/child-agent.d.ts",
+    "dist/child-agent.js",
+    "dist/cli.d.ts",
+    "dist/cli.js",
+    "dist/index.d.ts",
+    "dist/index.js",
+    "dist/pi-extension.d.ts",
+    "dist/pi-extension.js",
+    "dist/recipe-agent.d.ts",
+    "dist/recipe-agent.js",
+    "dist/recipe-package.d.ts",
+    "dist/recipe-package.js",
+    "dist/recipe-store.d.ts",
+    "dist/recipe-store.js",
     "docs",
     "README.md",
     "package.json"
   ],
+  "bin": {
+    "recipe": "dist/cli.js",
+    "recipes": "dist/cli.js"
+  },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "testing"
   },
   "exports": {
     ".": {
@@ -38,6 +39,10 @@
     "./pi-extension": {
       "types": "./dist/pi-extension.d.ts",
       "import": "./dist/pi-extension.js"
+    },
+    "./recipe-store": {
+      "types": "./dist/recipe-store.d.ts",
+      "import": "./dist/recipe-store.js"
     }
   },
   "pi": {
@@ -50,6 +55,7 @@
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
+    "test:system": "node test/recipes-system.mjs",
     "clean": "rm -rf dist .turbo node_modules"
   },
   "dependencies": {

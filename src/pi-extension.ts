@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { basename, resolve } from "node:path";
+import { basename } from "node:path";
 import {
   defineTool,
   type AgentToolUpdateCallback,
@@ -18,7 +18,6 @@ import {
   loadRecipeSystemPrompt,
   resolveRecipeAgentDefinition,
   type RecipeAgentDefinition,
-  type RecipeProfileDefinition,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
 import {
@@ -27,6 +26,7 @@ import {
   validatePiPackageManifest,
   type PiPackageManifest,
 } from "./recipe-package.js";
+import { resolveRecipeDirectory } from "./recipe-store.js";
 
 export interface PiRecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
@@ -109,10 +109,8 @@ interface RecipeLaunchState {
   cwd: string;
   recipeDir: string;
   manifest: PiPackageManifest;
-  profileName?: string;
   agentName: string;
   agent: RecipeAgentDefinition;
-  profile: RecipeProfileDefinition | null;
   skillPaths: string[];
   promptPaths: string[];
   themePaths: string[];
@@ -217,6 +215,45 @@ function runBlock(run: ChildRun): string {
   return lines.join("\n");
 }
 
+function nameList(names: string[]): string {
+  return names.length > 0 ? names.join(", ") : "(none)";
+}
+
+function bulletList(items: string[]): string[] {
+  return items.length > 0 ? items.map((item) => `  - ${item}`) : ["  - none"];
+}
+
+function activeRecipeTools(
+  state: RecipeLaunchState,
+  activeTools: string[]
+): string[] {
+  const active = new Set(activeTools);
+  const recipeTools = new Set(state.agent.tools);
+  if (visibleSubagents(state).length > 0) recipeTools.add("agent");
+  return [...recipeTools]
+    .filter((tool) => active.has(tool))
+    .sort();
+}
+
+function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string {
+  const subagents = visibleSubagents(state).map((agent) => agent.name);
+  return [
+    "Active Recipe",
+    `Name: ${state.manifest.name}@${state.manifest.version}`,
+    state.manifest.description ? `Description: ${state.manifest.description}` : undefined,
+    `Agent: ${state.agentName}`,
+    `Model: ${state.agent.model?.name ?? "(session default)"}`,
+    `Thinking level: ${state.agent.model?.thinkingLevel ?? "(session default)"}`,
+    `Subagents: ${nameList(subagents)}`,
+    "",
+    "Active recipe tools:",
+    ...bulletList(activeRecipeTools(state, activeTools)),
+    "",
+    `Directory: ${state.recipeDir}`,
+    `Workspace: ${state.cwd}`,
+  ].filter((line): line is string => line !== undefined).join("\n");
+}
+
 function emitRunUpdate(run: ChildRun, onUpdate: RecipeAgentToolUpdate | undefined): void {
   onUpdate?.({
     content: [{ type: "text", text: runBlock(run) }],
@@ -300,22 +337,17 @@ export function createPiRecipesExtension(
     return stringFlag(pi.getFlag("recipe")) ?? stringFlag(env.PI_RECIPE_DIR);
   }
 
-  function selectedProfileName(pi: Parameters<ExtensionFactory>[0]): string | undefined {
-    return stringFlag(pi.getFlag("recipe-profile")) ?? stringFlag(env.PI_PROFILE_NAME);
-  }
-
   function selectedAgentName(pi: Parameters<ExtensionFactory>[0]): string | undefined {
-    return stringFlag(pi.getFlag("recipe-agent")) ?? stringFlag(env.PI_AGENT_NAME);
+    return stringFlag(pi.getFlag("agent")) ?? stringFlag(env.PI_AGENT_NAME);
   }
 
   function loadState(pi: Parameters<ExtensionFactory>[0], cwd: string): RecipeLaunchState | null {
     const flag = recipeFlag(pi);
     if (!flag) return null;
 
-    const recipeDir = resolve(cwd, flag);
-    const profileName = selectedProfileName(pi);
+    const recipeDir = resolveRecipeDirectory(flag, { cwd, env });
     const requestedAgentName = selectedAgentName(pi);
-    const key = [cwd, recipeDir, profileName ?? "", requestedAgentName ?? ""].join("\0");
+    const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
     if (state?.key === key) return state;
 
     const manifest = readPiPackageManifest(recipeDir);
@@ -327,12 +359,8 @@ export function createPiRecipesExtension(
 
     const resolved = resolveRecipeAgentDefinition({
       recipeDir,
-      profileName,
       agentName: requestedAgentName,
     });
-    if (profileName && !resolved.profile) {
-      throw new Error(`Recipe profile not found: ${profileName}`);
-    }
     if (!resolved.agent) {
       throw new Error(`Recipe agent not found: ${resolved.agentName}`);
     }
@@ -342,10 +370,8 @@ export function createPiRecipesExtension(
       cwd,
       recipeDir,
       manifest,
-      profileName,
       agentName: resolved.agentName,
       agent: resolved.agent,
-      profile: resolved.profile,
       skillPaths: packageResourcePaths(manifest, "skills"),
       promptPaths: packageResourcePaths(manifest, "prompts"),
       themePaths: packageResourcePaths(manifest, "themes"),
@@ -394,12 +420,11 @@ export function createPiRecipesExtension(
 
     const labelParts = [
       `${launchState.manifest.name}@${launchState.manifest.version}`,
-      launchState.profile ? `profile:${launchState.profile.name}` : undefined,
       `agent:${launchState.agentName}`,
     ].filter(Boolean);
     pi.setSessionName(labelParts.join(" "));
 
-    const modelSpec = launchState.profile?.model?.name ?? launchState.agent.model?.name;
+    const modelSpec = launchState.agent.model?.name;
     if (modelSpec) {
       const { provider, model } = modelParts(modelSpec);
       const lookupProvider = provider === "gemini" ? "google" : provider;
@@ -413,8 +438,7 @@ export function createPiRecipesExtension(
       }
     }
 
-    const thinkingLevel =
-      launchState.profile?.model?.thinkingLevel ?? launchState.agent.model?.thinkingLevel;
+    const thinkingLevel = launchState.agent.model?.thinkingLevel;
     if (thinkingLevel) {
       pi.setThinkingLevel(thinkingLevel as ThinkingLevel);
     }
@@ -594,16 +618,24 @@ export function createPiRecipesExtension(
 
   return (pi) => {
     pi.registerFlag("recipe", {
-      description: "Recipe folder to use for this Pi session",
+      description: "Recipe folder, installed recipe name, or installed recipe source to use for this Pi session",
       type: "string",
     });
-    pi.registerFlag("recipe-profile", {
-      description: "Recipe profile to use",
-      type: "string",
-    });
-    pi.registerFlag("recipe-agent", {
+    pi.registerFlag("agent", {
       description: "Recipe agent to use",
       type: "string",
+    });
+
+    pi.registerCommand("recipe", {
+      description: "Inspect the active recipe",
+      handler: async (_args, ctx) => {
+        const launchState = loadState(pi, ctx.cwd);
+        if (!launchState) {
+          ctx.ui.notify("No recipe is active. Launch Pi with --recipe <recipe>.", "info");
+          return;
+        }
+        ctx.ui.notify(recipeSummary(launchState, pi.getActiveTools()), "info");
+      },
     });
 
     pi.registerTool(
@@ -648,13 +680,7 @@ export function createPiRecipesExtension(
       const launchState = loadState(pi, ctx.cwd);
       if (!launchState) return {};
       const base = loadRecipeSystemPrompt(launchState.recipeDir) ?? event.systemPrompt;
-      const recipePrompt = applySystemInstructions(
-        applySystemInstructions(
-          base,
-          launchState.profile?.systemInstructions
-        ),
-        launchState.agent.systemInstructions
-      );
+      const recipePrompt = applySystemInstructions(base, launchState.agent.systemInstructions);
       const systemPrompt = runtimeContextPrompt(recipePrompt, launchState);
       return { systemPrompt };
     });
