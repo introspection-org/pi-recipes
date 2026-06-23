@@ -67,7 +67,6 @@ Minimal `recipe.yaml`:
 name: my-recipe
 version: 0.1.0
 description: A short description of what this recipe is for.
-entrypoint: agent
 
 agents:
   - agents/*.yaml
@@ -89,6 +88,19 @@ system_instructions:
   content: |
     Follow the recipe's workflow.
 ```
+
+`agents/agent.yaml` is the conventional default entrypoint. A named variant is
+another agent that inherits from a base with `from:`:
+
+```yaml
+name: agent-high-recall
+from: agent
+model:
+  thinking_level: high
+```
+
+Objects such as `model` and `extensions` merge by key, while arrays such as
+`tools`, `skills`, and `subagents` replace the inherited array.
 
 `SYSTEM.md` is optional. When present, Pi uses it as the recipe-level system
 prompt before applying the selected agent's `system_instructions`.
@@ -120,10 +132,8 @@ When entries are omitted, conventional folders are used if present:
 
 `extensions` are only loaded when declared.
 
-`recipe.yaml` is the preferred recipe manifest. For backward compatibility,
-recipes without `recipe.yaml` can still declare resources in a root
-`package.json` `recipe` or `pi` block. Plain `package.json` files are not treated
-as recipe manifests unless one of those blocks is present.
+`recipe.yaml` is the recipe manifest. A root `package.json` is optional and is
+used only for extension runtime dependencies.
 
 ## Extension Dependencies
 
@@ -154,10 +164,9 @@ Example `package.json`:
 }
 ```
 
-For new recipes, keep recipe identity, entrypoint, agents, skills, prompts,
-themes, and extension globs in `recipe.yaml`. Existing recipes can keep using a
-root `package.json` `recipe` or `pi` block while also declaring dependencies in
-the same file.
+Keep recipe identity, agents, skills, prompts, themes, and extension globs in
+`recipe.yaml`. Use `package.json` only when recipe extensions need runtime
+dependencies.
 
 When a remote Git recipe has `dependencies` or `optionalDependencies`, it must
 also commit a lockfile:

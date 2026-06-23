@@ -3,13 +3,11 @@
 Experimental local session tooling with a lightweight recipe CLI and Pi
 extension support.
 
-Recipes are folders with a manifest that describes agent behavior, prompts,
-skills, and optional TypeScript runtime extensions. New recipes should use
-`recipe.yaml`; legacy recipes with a `package.json` `pi` or `recipe` block are
-still supported. The `recipes` CLI installs or registers recipes in a neutral
-local store. The Pi extension is currently the first harness: it resolves an
-installed recipe into a local directory and wires those recipe files into the
-live Pi session at launch time.
+Recipes are folders with a `recipe.yaml` manifest plus agent YAML files,
+prompts, skills, and optional TypeScript runtime extensions. The `recipes` CLI
+installs or registers recipes in a neutral local store. The Pi extension is
+currently the first harness: it resolves an installed recipe into a local
+directory and wires those recipe files into the live Pi session at launch time.
 
 ## Documentation
 
@@ -46,7 +44,6 @@ my-recipe/
 name: my-recipe
 version: 0.1.0
 description: Demo recipe
-entrypoint: agent
 
 agents:
   - agents/*.yaml
@@ -66,6 +63,15 @@ tools:
 system_instructions:
   mode: append
   content: Follow the recipe workflow.
+```
+
+Named variants are agents too:
+
+```yaml
+name: agent-opus
+from: agent
+model:
+  name: openrouter/anthropic/claude-opus-4.8
 ```
 
 Validate and register it:

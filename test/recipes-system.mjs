@@ -103,20 +103,10 @@ function readYamlFile(path) {
   return parseYaml(readFileSync(path, "utf8")) ?? {};
 }
 
-function packageHasPi(path) {
-  if (!existsSync(path)) return false;
-  try {
-    return Boolean(readJson(readFileSync(path, "utf8")).pi);
-  } catch {
-    return false;
-  }
-}
-
 function hasRecipeManifest(dir) {
   return (
     existsSync(join(dir, "recipe.yaml")) ||
-    existsSync(join(dir, "recipe.yml")) ||
-    packageHasPi(join(dir, "package.json"))
+    existsSync(join(dir, "recipe.yml"))
   );
 }
 
@@ -269,10 +259,8 @@ function patchAgentModels(recipeDir, modelName) {
 }
 
 function defaultAgent(recipeDir) {
-  const manifest = readManifest(recipeDir);
   const agents = readAgents(recipeDir);
   return (
-    agents.find((agent) => agent.name === manifest.entrypoint) ??
     agents.find((agent) => agent.name === "agent") ??
     (agents.length === 1 ? agents[0] : undefined)
   );

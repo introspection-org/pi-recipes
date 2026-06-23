@@ -311,6 +311,83 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
+  it("filters recipe extensions through the selected agent", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "tools:",
+          "  - setup_git",
+          "subagents: []",
+          "extensions:",
+          "  include:",
+          "    - \"*\"",
+          "  exclude:",
+          "    - optional-runtime",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "extensions", "setup-git.ts"),
+        [
+          "export default (pi) => {",
+          "  pi.registerTool({",
+          "    name: 'setup_git',",
+          "    label: 'Setup git',",
+          "    description: 'Prepare git auth',",
+          "    parameters: { type: 'object', properties: {}, additionalProperties: false },",
+          "    async execute() {",
+          "      return { content: [{ type: 'text', text: 'ok' }], details: {} };",
+          "    },",
+          "  });",
+          "};",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "extensions", "optional-runtime.ts"),
+        "export default () => { throw new Error('excluded extension loaded'); };\n"
+      );
+      writeFileSync(
+        join(recipeDir, "recipe.yaml"),
+        [
+          "name: demo",
+          "version: 1.0.0",
+          "agents:",
+          "  - defs/*.yaml",
+          "extensions:",
+          "  - extensions/*.ts",
+          "",
+        ].join("\n")
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createPiRecipesExtension()(pi);
+      const notify = vi.fn();
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        extensionContext(join(root, "project"), notify)
+      );
+
+      expect(pi.tools.has("setup_git")).toBe(true);
+      expect(pi.activeTools.sort()).toEqual(["agent", "setup_git"]);
+      expect(notify).not.toHaveBeenCalledWith(
+        expect.stringContaining("excluded extension loaded"),
+        "warning"
+      );
+      expect(notify).toHaveBeenCalledWith(
+        "Recipe extensions: 1/1 loaded",
+        "info"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("streams recipe agent prompt and output through tool updates", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {

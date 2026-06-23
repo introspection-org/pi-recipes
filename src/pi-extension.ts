@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { basename, join } from "node:path";
+import { basename, extname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   defineTool,
@@ -236,6 +236,58 @@ function activeRecipeTools(
     .sort();
 }
 
+function normalizeSelector(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\.[^/.]+$/, "");
+}
+
+function extensionSelectorSet(recipeDir: string, extensionPath: string): Set<string> {
+  const relativePath = relative(recipeDir, extensionPath).replace(/\\/g, "/");
+  const withoutExtension = normalizeSelector(relativePath);
+  const base = basename(extensionPath, extname(extensionPath));
+  const parts = withoutExtension.split("/");
+  const parent = parts.length > 1 ? parts[parts.length - 2] : undefined;
+  return new Set(
+    [
+      relativePath,
+      withoutExtension,
+      base,
+      parent && base === "index" ? parent : undefined,
+    ].filter((value): value is string => Boolean(value))
+  );
+}
+
+function extensionSelectorMatches(
+  recipeDir: string,
+  extensionPath: string,
+  selector: string
+): boolean {
+  const normalized = normalizeSelector(selector.trim());
+  if (!normalized) return false;
+  if (normalized === "*") return true;
+  return extensionSelectorSet(recipeDir, extensionPath).has(normalized);
+}
+
+function filterExtensionPaths(
+  recipeDir: string,
+  extensionPaths: string[],
+  agent: RecipeAgentDefinition
+): string[] {
+  const include = agent.extensions?.include;
+  const exclude = agent.extensions?.exclude ?? [];
+  return extensionPaths.filter((extensionPath) => {
+    const included =
+      include === undefined
+        ? true
+        : include.some((selector) =>
+            extensionSelectorMatches(recipeDir, extensionPath, selector)
+          );
+    if (!included) return false;
+    return !exclude.some((selector) =>
+      extensionSelectorMatches(recipeDir, extensionPath, selector)
+    );
+  });
+}
+
 function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string {
   const subagents = visibleSubagents(state).map((agent) => agent.name);
   return [
@@ -370,6 +422,12 @@ export function createPiRecipesExtension(
       throw new Error(`Recipe agent not found: ${resolved.agentName}`);
     }
 
+    const extensionPaths = filterExtensionPaths(
+      recipeDir,
+      packageResourcePaths(manifest, "extensions"),
+      resolved.agent
+    );
+
     state = {
       key,
       cwd,
@@ -380,7 +438,7 @@ export function createPiRecipesExtension(
       skillPaths: packageResourcePaths(manifest, "skills"),
       promptPaths: packageResourcePaths(manifest, "prompts"),
       themePaths: packageResourcePaths(manifest, "themes"),
-      extensionPaths: packageResourcePaths(manifest, "extensions"),
+      extensionPaths,
       extensionsLoaded: false,
       configured: false,
     };

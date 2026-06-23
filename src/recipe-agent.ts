@@ -12,8 +12,14 @@ export interface RecipeSystemInstructions {
   content: string;
 }
 
+export interface RecipeAgentExtensions {
+  include?: string[];
+  exclude?: string[];
+}
+
 export interface RecipeAgentDefinition {
   name: string;
+  from?: string;
   description?: string;
   model?: {
     name?: string;
@@ -22,8 +28,18 @@ export interface RecipeAgentDefinition {
   tools: string[];
   skills: string[];
   subagents: string[];
+  extensions?: RecipeAgentExtensions;
   systemInstructions?: RecipeSystemInstructions;
 }
+
+type ParsedRecipeAgentDefinition = Omit<
+  RecipeAgentDefinition,
+  "tools" | "skills" | "subagents"
+> & {
+  tools?: string[];
+  skills?: string[];
+  subagents?: string[];
+};
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -71,6 +87,14 @@ function parseSystemInstructions(
   return { mode, content };
 }
 
+function parseExtensions(data: Record<string, unknown>): RecipeAgentExtensions | undefined {
+  const raw = asRecord(data.extensions);
+  const extensions: RecipeAgentExtensions = {};
+  if (Object.hasOwn(raw, "include")) extensions.include = stringArray(raw.include);
+  if (Object.hasOwn(raw, "exclude")) extensions.exclude = stringArray(raw.exclude);
+  return extensions.include || extensions.exclude ? extensions : undefined;
+}
+
 function readYaml(path: string): Record<string, unknown> {
   return asRecord(parse(readFileSync(path, "utf8")));
 }
@@ -111,6 +135,9 @@ function recipeAgentFiles(recipeDir: string): string[] {
 export function loadRecipeAgentDefinitions(
   recipeDir: string
 ): Map<string, RecipeAgentDefinition> {
+  const rawDefinitions = new Map<string, ParsedRecipeAgentDefinition>();
+  const aliases = new Map<string, string>();
+  const resolvedDefinitions = new Map<string, RecipeAgentDefinition>();
   const definitions = new Map<string, RecipeAgentDefinition>();
 
   for (const path of recipeAgentFiles(recipeDir)) {
@@ -120,18 +147,85 @@ export function loadRecipeAgentDefinitions(
       typeof data.name === "string" && data.name.trim()
         ? data.name.trim()
         : fallbackName;
-    const definition: RecipeAgentDefinition = {
+    const definition: ParsedRecipeAgentDefinition = {
       name,
+      from: typeof data.from === "string" && data.from.trim() ? data.from.trim() : undefined,
       description:
         typeof data.description === "string" ? data.description : undefined,
       model: parseModel(data),
-      tools: stringArray(data.tools),
-      skills: stringArray(data.skills),
-      subagents: stringArray(data.subagents),
+      tools: Object.hasOwn(data, "tools") ? stringArray(data.tools) : undefined,
+      skills: Object.hasOwn(data, "skills") ? stringArray(data.skills) : undefined,
+      subagents: Object.hasOwn(data, "subagents") ? stringArray(data.subagents) : undefined,
+      extensions: parseExtensions(data),
       systemInstructions: parseSystemInstructions(data),
     };
+    rawDefinitions.set(name, definition);
+    aliases.set(fallbackName, name);
+  }
+
+  function resolveName(name: string): string {
+    return aliases.get(name) ?? name;
+  }
+
+  function mergeModel(
+    base: RecipeAgentDefinition["model"],
+    child: RecipeAgentDefinition["model"]
+  ): RecipeAgentDefinition["model"] {
+    return base || child ? { ...base, ...child } : undefined;
+  }
+
+  function mergeExtensions(
+    base: RecipeAgentExtensions | undefined,
+    child: RecipeAgentExtensions | undefined
+  ): RecipeAgentExtensions | undefined {
+    if (!base) return child;
+    if (!child) return base;
+    return {
+      ...(base.include ? { include: base.include } : {}),
+      ...(base.exclude ? { exclude: base.exclude } : {}),
+      ...(child.include ? { include: child.include } : {}),
+      ...(child.exclude ? { exclude: child.exclude } : {}),
+    };
+  }
+
+  function resolveDefinition(
+    name: string,
+    stack: string[] = []
+  ): RecipeAgentDefinition | undefined {
+    const resolvedName = resolveName(name);
+    if (resolvedDefinitions.has(resolvedName)) return resolvedDefinitions.get(resolvedName);
+    if (stack.includes(resolvedName)) return undefined;
+    const raw = rawDefinitions.get(resolvedName);
+    if (!raw) return undefined;
+
+    const base = raw.from
+      ? resolveDefinition(raw.from, [...stack, resolvedName])
+      : undefined;
+    if (raw.from && !base) return undefined;
+
+    const definition: RecipeAgentDefinition = {
+      name: raw.name,
+      ...(raw.from ? { from: raw.from } : {}),
+      description: raw.description ?? base?.description,
+      model: mergeModel(base?.model, raw.model),
+      tools: raw.tools ?? base?.tools ?? [],
+      skills: raw.skills ?? base?.skills ?? [],
+      subagents: raw.subagents ?? base?.subagents ?? [],
+      extensions: mergeExtensions(base?.extensions, raw.extensions),
+      systemInstructions: raw.systemInstructions ?? base?.systemInstructions,
+    };
+    resolvedDefinitions.set(resolvedName, definition);
+    return definition;
+  }
+
+  for (const name of rawDefinitions.keys()) {
+    const definition = resolveDefinition(name);
+    if (!definition) continue;
     definitions.set(name, definition);
-    if (fallbackName !== name) definitions.set(fallbackName, definition);
+  }
+  for (const [alias, name] of aliases) {
+    const definition = definitions.get(name);
+    if (definition) definitions.set(alias, definition);
   }
 
   return definitions;
@@ -142,10 +236,9 @@ export function resolveRecipeAgentName(opts: {
   agentName?: string;
 }): string {
   if (opts.agentName?.trim()) return opts.agentName.trim();
-  const manifest = recipeManifest(opts.recipeDir);
-  if (manifest?.entrypoint) return manifest.entrypoint;
   const definitions = loadRecipeAgentDefinitions(opts.recipeDir);
-  if (definitions.has("agent")) return "agent";
+  const defaultAgent = definitions.get("agent");
+  if (defaultAgent) return defaultAgent.name;
   const uniqueNames = [
     ...new Set([...definitions.values()].map((definition) => definition.name)),
   ];

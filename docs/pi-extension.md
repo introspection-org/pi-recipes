@@ -70,8 +70,7 @@ On session startup, the extension:
 
 1. Reads `--recipe` or `PI_RECIPE_DIR`.
 2. Resolves the value as a local directory or installed recipe.
-3. Loads the recipe manifest from `recipe.yaml` or a legacy `package.json`
-   `recipe`/`pi` block.
+3. Loads the recipe manifest from `recipe.yaml`.
 4. Selects the active recipe agent.
 5. Loads declared recipe extensions.
 6. Sets the Pi session name.
@@ -89,9 +88,8 @@ workspace.
 Selection order:
 
 1. `--agent` or `PI_AGENT_NAME`
-2. recipe manifest `entrypoint`
-3. `agents/agent.yaml`
-4. the only available agent
+2. `agents/agent.yaml`
+3. the only available agent
 
 If multiple agents exist and no default can be inferred, launch fails with a
 clear error.
@@ -116,6 +114,18 @@ system_instructions:
   content: |
     Extra instructions for this agent.
 ```
+
+A named variant is another agent that inherits from a base with `from:`:
+
+```yaml
+name: agent-opus
+from: agent
+model:
+  name: openrouter/anthropic/claude-opus-4.8
+```
+
+Objects such as `model` and `extensions` merge by key. Arrays such as `tools`,
+`skills`, and `subagents` replace the inherited array.
 
 `system_instructions.mode` can be:
 
@@ -151,6 +161,19 @@ recipe `agent` tool.
 Recipe extensions must be loaded before active tools are selected, because they
 can register additional tools such as `WebFetch`, `WebSearch`, `todo_write`, or
 custom workflow tools.
+
+The selected agent can gate which declared recipe extensions load:
+
+```yaml
+extensions:
+  include:
+    - "*"
+  exclude:
+    - optional-runtime
+```
+
+Omitting `extensions` or `extensions.include` loads all declared recipe
+extensions. `exclude` subtracts matching extension names.
 
 ## Commands
 
