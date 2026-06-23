@@ -41,6 +41,26 @@ type ParsedRecipeAgentDefinition = Omit<
   subagents?: string[];
 };
 
+export type RequiredResolvedRecipeAgentField =
+  | "model.name"
+  | "model.thinkingLevel"
+  | "tools"
+  | "skills"
+  | "subagents"
+  | "systemInstructions";
+
+export interface RecipeAgentValidationFinding {
+  agentName: string;
+  field: "name" | RequiredResolvedRecipeAgentField;
+  message: string;
+}
+
+interface RecipeAgentSource {
+  fallbackName: string;
+  explicitName: boolean;
+  definition: ParsedRecipeAgentDefinition;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -132,6 +152,33 @@ function recipeAgentFiles(recipeDir: string): string[] {
   return yamlFilesFromPaths([join(recipeDir, "agents")]);
 }
 
+function readRecipeAgentSources(recipeDir: string): RecipeAgentSource[] {
+  const sources: RecipeAgentSource[] = [];
+  for (const path of recipeAgentFiles(recipeDir)) {
+    const data = readYaml(path);
+    const fallbackName = basename(path).replace(/\.ya?ml$/i, "");
+    const explicitName = typeof data.name === "string" && Boolean(data.name.trim());
+    const name = explicitName ? (data.name as string).trim() : fallbackName;
+    sources.push({
+      fallbackName,
+      explicitName,
+      definition: {
+        name,
+        from: typeof data.from === "string" && data.from.trim() ? data.from.trim() : undefined,
+        description:
+          typeof data.description === "string" ? data.description : undefined,
+        model: parseModel(data),
+        tools: Object.hasOwn(data, "tools") ? stringArray(data.tools) : undefined,
+        skills: Object.hasOwn(data, "skills") ? stringArray(data.skills) : undefined,
+        subagents: Object.hasOwn(data, "subagents") ? stringArray(data.subagents) : undefined,
+        extensions: parseExtensions(data),
+        systemInstructions: parseSystemInstructions(data),
+      },
+    });
+  }
+  return sources;
+}
+
 export function loadRecipeAgentDefinitions(
   recipeDir: string
 ): Map<string, RecipeAgentDefinition> {
@@ -140,27 +187,9 @@ export function loadRecipeAgentDefinitions(
   const resolvedDefinitions = new Map<string, RecipeAgentDefinition>();
   const definitions = new Map<string, RecipeAgentDefinition>();
 
-  for (const path of recipeAgentFiles(recipeDir)) {
-    const data = readYaml(path);
-    const fallbackName = basename(path).replace(/\.ya?ml$/i, "");
-    const name =
-      typeof data.name === "string" && data.name.trim()
-        ? data.name.trim()
-        : fallbackName;
-    const definition: ParsedRecipeAgentDefinition = {
-      name,
-      from: typeof data.from === "string" && data.from.trim() ? data.from.trim() : undefined,
-      description:
-        typeof data.description === "string" ? data.description : undefined,
-      model: parseModel(data),
-      tools: Object.hasOwn(data, "tools") ? stringArray(data.tools) : undefined,
-      skills: Object.hasOwn(data, "skills") ? stringArray(data.skills) : undefined,
-      subagents: Object.hasOwn(data, "subagents") ? stringArray(data.subagents) : undefined,
-      extensions: parseExtensions(data),
-      systemInstructions: parseSystemInstructions(data),
-    };
-    rawDefinitions.set(name, definition);
-    aliases.set(fallbackName, name);
+  for (const source of readRecipeAgentSources(recipeDir)) {
+    rawDefinitions.set(source.definition.name, source.definition);
+    aliases.set(source.fallbackName, source.definition.name);
   }
 
   function resolveName(name: string): string {
@@ -229,6 +258,74 @@ export function loadRecipeAgentDefinitions(
   }
 
   return definitions;
+}
+
+function recipeAgentFieldProvided(
+  definition: ParsedRecipeAgentDefinition,
+  field: RequiredResolvedRecipeAgentField
+): boolean {
+  if (field === "model.name") return Boolean(definition.model?.name);
+  if (field === "model.thinkingLevel") return Boolean(definition.model?.thinkingLevel);
+  if (field === "tools") return definition.tools !== undefined;
+  if (field === "skills") return definition.skills !== undefined;
+  if (field === "subagents") return definition.subagents !== undefined;
+  return definition.systemInstructions !== undefined;
+}
+
+export function validateResolvedRecipeAgentDefinition(opts: {
+  recipeDir: string;
+  agentName: string;
+  requireExplicitName?: boolean;
+  requiredFields?: RequiredResolvedRecipeAgentField[];
+}): RecipeAgentValidationFinding[] {
+  const rawDefinitions = new Map<string, ParsedRecipeAgentDefinition>();
+  const aliases = new Map<string, string>();
+  const explicitNames = new Map<string, boolean>();
+  for (const source of readRecipeAgentSources(opts.recipeDir)) {
+    rawDefinitions.set(source.definition.name, source.definition);
+    aliases.set(source.fallbackName, source.definition.name);
+    explicitNames.set(source.definition.name, source.explicitName);
+  }
+
+  function resolveName(name: string): string {
+    return aliases.get(name) ?? name;
+  }
+
+  function resolvedFieldProvided(
+    name: string,
+    field: RequiredResolvedRecipeAgentField,
+    stack: string[] = []
+  ): boolean {
+    const resolvedName = resolveName(name);
+    if (stack.includes(resolvedName)) return false;
+    const definition = rawDefinitions.get(resolvedName);
+    if (!definition) return false;
+    if (recipeAgentFieldProvided(definition, field)) return true;
+    return definition.from
+      ? resolvedFieldProvided(definition.from, field, [...stack, resolvedName])
+      : false;
+  }
+
+  const agentName = resolveName(opts.agentName);
+  const findings: RecipeAgentValidationFinding[] = [];
+  if (opts.requireExplicitName && explicitNames.get(agentName) !== true) {
+    findings.push({
+      agentName,
+      field: "name",
+      message: `Recipe agent "${agentName}" must declare name`,
+    });
+  }
+
+  for (const field of opts.requiredFields ?? []) {
+    if (resolvedFieldProvided(agentName, field)) continue;
+    findings.push({
+      agentName,
+      field,
+      message: `Recipe agent "${agentName}" must declare ${field} directly or inherit it with from`,
+    });
+  }
+
+  return findings;
 }
 
 export function resolveRecipeAgentName(opts: {

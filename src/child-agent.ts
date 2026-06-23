@@ -12,6 +12,7 @@ import {
 import {
   loadRecipeSystemPrompt,
   resolveRecipeAgentDefinition,
+  validateResolvedRecipeAgentDefinition,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
 
@@ -162,7 +163,29 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       throw new Error(`Recipe agent not found: ${agentName}`);
     }
 
-    const modelSpec = agent.model?.name ?? "openai/gpt-5.5";
+    const validationFindings = validateResolvedRecipeAgentDefinition({
+      recipeDir: this.opts.recipeDir,
+      agentName,
+      requireExplicitName: true,
+      requiredFields: [
+        "model.name",
+        "model.thinkingLevel",
+        "tools",
+        "skills",
+        "subagents",
+        "systemInstructions",
+      ],
+    });
+    if (validationFindings.length > 0) {
+      throw new Error(
+        validationFindings.map((finding) => finding.message).join("\n")
+      );
+    }
+
+    const modelSpec = agent.model?.name;
+    if (!modelSpec) {
+      throw new Error(`Recipe agent "${agentName}" must declare model.name`);
+    }
     const model = modelFromSpec(modelSpec);
     const env = this.opts.env ?? process.env;
     const apiKey = getEnvApiKey(model.provider) ?? env[`${model.provider.toUpperCase()}_API_KEY`];

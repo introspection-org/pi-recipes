@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { createRecipeChildAgentRunner } from "../src/child-agent.js";
 import {
   addRecipe,
   listRecipes,
@@ -16,6 +17,7 @@ import {
   removeRecipe,
   resolveRecipeAgentDefinition,
   resolveRecipeDirectory,
+  validateResolvedRecipeAgentDefinition,
   validatePiPackageManifest,
 } from "../src/index.js";
 
@@ -308,6 +310,138 @@ describe("recipe agent definitions", () => {
           },
         })
       );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("recipe child agents", () => {
+  it("requires child agents to declare a model name", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-child-agent-"));
+    const recipeDir = join(root, "recipe");
+    const workspaceDir = join(root, "workspace");
+    try {
+      mkdirSync(join(recipeDir, "agents"), { recursive: true });
+      mkdirSync(workspaceDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "recipe.yaml"),
+        "name: child-agent-model\nversion: 0.1.0\nagents:\n  - agents/*.yaml\n"
+      );
+      writeFileSync(
+        join(recipeDir, "agents", "worker.yaml"),
+        "name: worker\ntools: []\n"
+      );
+
+      const runner = createRecipeChildAgentRunner({
+        recipeDir,
+        workspaceDir,
+        agentName: "worker",
+        env: {},
+      });
+
+      await expect(runner.start()).rejects.toThrow(
+        'Recipe agent "worker" must declare model.name'
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts required child agent fields inherited through from", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-child-agent-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writeFileSync(
+        join(root, "recipe.yaml"),
+        "name: child-agent-model\nversion: 0.1.0\nagents:\n  - agents/*.yaml\n"
+      );
+      writeFileSync(
+        join(root, "agents", "base.yaml"),
+        [
+          "name: base",
+          "model:",
+          "  name: test/provider-model",
+          "  thinking_level: low",
+          "tools: []",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Base instructions",
+          "",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(root, "agents", "worker.yaml"),
+        "name: worker\nfrom: base\nmodel:\n  thinking_level: medium\n"
+      );
+
+      expect(
+        validateResolvedRecipeAgentDefinition({
+          recipeDir: root,
+          agentName: "worker",
+          requireExplicitName: true,
+          requiredFields: [
+            "model.name",
+            "model.thinkingLevel",
+            "tools",
+            "skills",
+            "subagents",
+            "systemInstructions",
+          ],
+        })
+      ).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires child agent names to be explicit in each file", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-child-agent-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writeFileSync(
+        join(root, "recipe.yaml"),
+        "name: child-agent-model\nversion: 0.1.0\nagents:\n  - agents/*.yaml\n"
+      );
+      writeFileSync(
+        join(root, "agents", "worker.yaml"),
+        [
+          "model:",
+          "  name: test/provider-model",
+          "  thinking_level: low",
+          "tools: []",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Worker instructions",
+          "",
+        ].join("\n")
+      );
+
+      expect(
+        validateResolvedRecipeAgentDefinition({
+          recipeDir: root,
+          agentName: "worker",
+          requireExplicitName: true,
+          requiredFields: [
+            "model.name",
+            "model.thinkingLevel",
+            "tools",
+            "skills",
+            "subagents",
+            "systemInstructions",
+          ],
+        })
+      ).toEqual([
+        {
+          agentName: "worker",
+          field: "name",
+          message: 'Recipe agent "worker" must declare name',
+        },
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
