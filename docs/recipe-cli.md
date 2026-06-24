@@ -382,6 +382,28 @@ pi-recipes list --json
 pi-recipes doctor my-recipe --json
 ```
 
+## Customize Recipes
+
+When you want to make a small local change to a recipe installed from elsewhere,
+copy it into an editable local recipe:
+
+```bash
+pi-recipes customize pi-codex
+```
+
+This creates a copy under the recipe store's `local/` directory, registers that
+copy under the same recipe name, and leaves remote clone caches alone. Edit the
+printed directory, then run:
+
+```bash
+pi-recipes doctor pi-codex
+pi --recipe pi-codex
+```
+
+If the recipe is already registered as an editable local copy, `customize`
+reuses it. Pass `--force` only when the target local directory already exists
+while copying from another registered source.
+
 ## Resolve Recipes
 
 `pi-recipes path <identifier>` resolves an installed recipe directory:

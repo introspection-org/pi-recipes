@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import {
   addRecipe,
   createRecipePublishGuide,
   createRecipeScaffold,
+  customizeRecipe,
   listRecipes,
   loadRecipeAgentDefinitions,
   packageResourcePaths,
@@ -636,6 +637,46 @@ describe("recipe store", () => {
       expect(resolveRecipeDirectory("local-review", { storeDir })).toBe(recipeDir);
       expect(removeRecipe("local-review", { storeDir })).toEqual(installed);
       expect(listRecipes({ storeDir })).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("customizes installed recipes into editable local copies", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-customize-"));
+    const storeDir = join(root, "store");
+    const sourceDir = join(root, "source");
+    try {
+      mkdirSync(join(sourceDir, "agents"), { recursive: true });
+      mkdirSync(join(sourceDir, "node_modules", "transient"), { recursive: true });
+      mkdirSync(join(sourceDir, ".git"), { recursive: true });
+      writePiPackageManifest(sourceDir, {
+        name: "upstream-review",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      writeFileSync(join(sourceDir, "agents", "agent.yaml"), "name: agent\ntools: []\n");
+      writeFileSync(join(sourceDir, "node_modules", "transient", "index.js"), "module.exports = {};\n");
+      writeFileSync(join(sourceDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+
+      const original = await addRecipe(sourceDir, { storeDir });
+      const customized = await customizeRecipe("upstream-review", { storeDir });
+
+      expect(customized.original).toEqual(original);
+      expect(customized.recipe.name).toBe("upstream-review");
+      expect(customized.path).toBe(join(storeDir, "local", "upstream-review"));
+      expect(customized.overwritten).toBe(false);
+      expect(resolveRecipeDirectory("upstream-review", { storeDir })).toBe(customized.path);
+      expect(listRecipes({ storeDir })).toEqual([customized.recipe]);
+      expect(readPiPackageManifest(customized.path).resources.agents).toEqual(["agents/*.yaml"]);
+      expect(existsSync(join(customized.path, "agents", "agent.yaml"))).toBe(true);
+      expect(existsSync(join(customized.path, "node_modules"))).toBe(false);
+      expect(existsSync(join(customized.path, ".git"))).toBe(false);
+      const alreadyCustomized = await customizeRecipe("upstream-review", { storeDir });
+      expect(alreadyCustomized.path).toBe(customized.path);
+      expect(alreadyCustomized.overwritten).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

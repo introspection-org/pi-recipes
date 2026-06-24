@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -33,6 +33,13 @@ export interface InstalledRecipe {
 export interface RecipeStoreFile {
   version: 1;
   recipes: InstalledRecipe[];
+}
+
+export interface CustomizedRecipe {
+  original: InstalledRecipe;
+  recipe: InstalledRecipe;
+  path: string;
+  overwritten: boolean;
 }
 
 interface GithubRecipeSource {
@@ -299,6 +306,37 @@ function recipeDirectoryForSource(source: RecipeSource, storeDir: string): strin
     throw new Error(`Recipe source resolves outside its clone: ${source.input}`);
   }
   return recipeDir;
+}
+
+function localRecipeDirectoryForName(name: string, storeDir: string): string {
+  return join(storeDir, "local", sanitizeSegment(name));
+}
+
+function copyRecipeDirectory(
+  sourceDir: string,
+  targetDir: string,
+  opts: { force?: boolean }
+): boolean {
+  if (resolve(sourceDir) === resolve(targetDir)) return false;
+  const existed = existsSync(targetDir);
+  if (existed) {
+    if (!opts.force) {
+      throw new Error(
+        `Local editable recipe already exists at ${targetDir}. Re-run with --force to overwrite it.`
+      );
+    }
+    rmSync(targetDir, { recursive: true, force: true });
+  }
+  mkdirSync(dirname(targetDir), { recursive: true });
+  cpSync(sourceDir, targetDir, {
+    recursive: true,
+    filter(source) {
+      const relativePath = relative(sourceDir, source).replace(/\\/g, "/");
+      const parts = relativePath.split("/");
+      return !parts.includes(".git") && !parts.includes("node_modules");
+    },
+  });
+  return existed;
 }
 
 export function readRecipeStore(storeDir = defaultRecipeStoreDir()): RecipeStoreFile {
@@ -640,6 +678,26 @@ export function removeRecipe(identifier: string, opts: RecipeStoreOptions = {}):
   store.recipes = store.recipes.filter((recipe) => recipe !== removed);
   writeRecipeStore(store, storeDir);
   return removed;
+}
+
+export async function customizeRecipe(
+  identifier: string,
+  opts: RecipeStoreOptions & { force?: boolean } = {}
+): Promise<CustomizedRecipe> {
+  const storeDir = opts.storeDir ?? defaultRecipeStoreDir(opts.env);
+  const store = readRecipeStore(storeDir);
+  const original = store.recipes.find((recipe) => installedRecipeMatches(recipe, identifier));
+  if (!original) throw new Error(`Recipe not found: ${identifier}`);
+
+  const targetPath = localRecipeDirectoryForName(original.name, storeDir);
+  const overwritten = copyRecipeDirectory(original.path, targetPath, opts);
+  const recipe = await addRecipe(targetPath, opts);
+  return {
+    original,
+    recipe,
+    path: targetPath,
+    overwritten,
+  };
 }
 
 export function resolveRecipeDirectory(input: string, opts: RecipeStoreOptions = {}): string {

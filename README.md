@@ -85,6 +85,14 @@ folder to a Git repository and sharing the GitHub or Git source locator.
 Run `pi-recipes publish ./my-recipe` for a validation pass, publishing checklist,
 and install commands to share.
 
+Customize an installed recipe into an editable local copy:
+
+```bash
+pi-recipes customize pi-codex
+pi-recipes doctor pi-codex
+pi --recipe pi-codex
+```
+
 ## Development
 
 ```bash

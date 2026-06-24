@@ -14,6 +14,7 @@ import {
 } from "./recipe-dev.js";
 import {
   addRecipe,
+  customizeRecipe,
   defaultRecipeStoreDir,
   listRecipes,
   recipeDisplayName,
@@ -49,6 +50,7 @@ function usage(commandName = "pi-recipes"): string {
     "  init <dir>         Create a starter recipe directory",
     "  install <source>   Install or register a recipe source",
     "  add <source>       Alias for install",
+    "  customize <recipe> Copy an installed recipe into an editable local copy",
     "  list               List installed recipes",
     "  remove <name|id>   Remove an installed recipe record",
     "  path <name|source>  Print the resolved recipe directory",
@@ -339,6 +341,33 @@ async function main(argv: string[]): Promise<number> {
       printJson(recipe);
     } else {
       process.stdout.write(`Installed ${recipeDisplayName(recipe)}\n${recipe.path}\n`);
+    }
+    return 0;
+  }
+
+  if (args.command === "customize" || args.command === "fork") {
+    const identifier = requireOne(args, "<recipe>");
+    const result = await customizeRecipe(identifier, { ...opts, force: args.force });
+    if (args.json) {
+      printJson(result);
+    } else {
+      const heading = result.overwritten
+        ? `Updated editable recipe ${recipeDisplayName(result.recipe)}`
+        : `Editable recipe ${recipeDisplayName(result.recipe)}`;
+      process.stdout.write(
+        [
+          heading,
+          result.path,
+          "",
+          `Original source: ${result.original.source}`,
+          `Registered as: ${result.recipe.name}`,
+          "",
+          "Edit the files there, then try:",
+          `  ${commandName} doctor ${result.recipe.name}`,
+          `  pi --recipe ${result.recipe.name}`,
+          "",
+        ].join("\n")
+      );
     }
     return 0;
   }
