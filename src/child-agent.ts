@@ -4,6 +4,7 @@ import {
   AuthStorage,
   createAgentSessionFromServices,
   createAgentSessionServices,
+  type ModelRegistry,
   SessionManager,
   SettingsManager,
   type AgentSession,
@@ -21,6 +22,8 @@ export interface CreateRecipeChildAgentRunnerOptions {
   workspaceDir: string;
   agentName: string;
   env?: NodeJS.ProcessEnv;
+  authStorage?: AuthStorage;
+  modelRegistry?: ModelRegistry;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
 }
@@ -59,7 +62,7 @@ export type RecipeChildToolEvent =
       isError: boolean;
     };
 
-function modelFromSpec(spec: string): Model<any> {
+function parseModelSpec(spec: string): { provider: string; modelId: string; lookupProvider: string } {
   const slash = spec.indexOf("/");
   if (slash < 0) {
     throw new Error(
@@ -69,7 +72,38 @@ function modelFromSpec(spec: string): Model<any> {
   const provider = spec.slice(0, slash);
   const modelId = spec.slice(slash + 1);
   const lookupProvider = provider === "gemini" ? "google" : provider;
-  return getModel(lookupProvider as never, modelId as never);
+  return { provider, modelId, lookupProvider };
+}
+
+function modelFromSpec(
+  spec: string,
+  modelRegistry: ModelRegistry | undefined
+): Model<any> {
+  const { modelId, lookupProvider } = parseModelSpec(spec);
+  return (
+    modelRegistry?.find(lookupProvider, modelId) ??
+    getModel(lookupProvider as never, modelId as never)
+  );
+}
+
+function authStorageForChildAgent(
+  model: Model<any>,
+  opts: CreateRecipeChildAgentRunnerOptions
+): AuthStorage {
+  if (opts.authStorage) return opts.authStorage;
+  if (opts.modelRegistry) return opts.modelRegistry.authStorage;
+
+  const env = opts.env ?? process.env;
+  const apiKey = getEnvApiKey(model.provider) ?? env[`${model.provider.toUpperCase()}_API_KEY`];
+  if (!apiKey) {
+    throw new Error(
+      `${model.provider.toUpperCase()}_API_KEY is required when the recipe child agent is not running inside Pi`
+    );
+  }
+
+  const authStorage = AuthStorage.inMemory();
+  authStorage.setRuntimeApiKey(model.provider, apiKey);
+  return authStorage;
 }
 
 function applySystemInstructions(
@@ -243,19 +277,13 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     if (!modelSpec) {
       throw new Error(`Recipe agent "${agentName}" must declare model.name`);
     }
-    const model = modelFromSpec(modelSpec);
-    const env = this.opts.env ?? process.env;
-    const apiKey = getEnvApiKey(model.provider) ?? env[`${model.provider.toUpperCase()}_API_KEY`];
-    if (!apiKey) {
-      throw new Error(`${model.provider.toUpperCase()}_API_KEY is required`);
-    }
-
-    const authStorage = AuthStorage.inMemory();
-    authStorage.setRuntimeApiKey(model.provider, apiKey);
+    const model = modelFromSpec(modelSpec, this.opts.modelRegistry);
+    const authStorage = authStorageForChildAgent(model, this.opts);
     const services = await createAgentSessionServices({
       cwd: this.opts.workspaceDir,
       agentDir: this.opts.recipeDir,
       authStorage,
+      modelRegistry: this.opts.modelRegistry,
       settingsManager: SettingsManager.create(
         this.opts.workspaceDir,
         this.opts.recipeDir

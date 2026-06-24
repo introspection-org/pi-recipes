@@ -7,11 +7,13 @@ import { createPiRecipesExtension } from "../src/pi-extension.js";
 import { createMockExtensionAPI } from "../src/testing.js";
 
 function extensionContext(cwd: string, notify = vi.fn()) {
+  const authStorage = { kind: "shared-auth-storage" };
   return {
     cwd,
     hasUI: true,
     ui: { notify },
     modelRegistry: {
+      authStorage,
       find: vi.fn((provider: string, id: string) => ({ provider, id })),
     },
   } as any;
@@ -94,6 +96,39 @@ describe("Pi recipes launch extension", () => {
       "No recipe is active. Launch Pi with --recipe <recipe>.",
       "info"
     );
+  });
+
+  it("reports a friendly message when the selected recipe is missing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-missing-"));
+    try {
+      const pi = createMockExtensionAPI();
+      const notify = vi.fn();
+      const ctx = extensionContext(root, notify);
+      pi.flagValues.set("recipe", "missing-recipe");
+
+      createPiRecipesExtension()(pi);
+      await expect(
+        pi.emitExtensionEvent({ type: "session_start", reason: "startup" } as any, ctx)
+      ).resolves.toEqual([undefined]);
+
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining('Recipe "missing-recipe" was not found.'),
+        "warning"
+      );
+      const message = notify.mock.calls[0]?.[0] as string;
+      expect(message).toContain("pi-recipes list");
+      expect(message).toContain("pi-recipes install <source>");
+      expect(message).not.toContain("RecipePackageError");
+      expect(message).not.toContain("at ");
+
+      const resourceResults = await pi.emitExtensionEvent(
+        { type: "resources_discover", cwd: root, reason: "startup" } as any,
+        ctx
+      );
+      expect(resourceResults).toEqual([{}]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("configures the launched session from a recipe folder", async () => {
@@ -511,11 +546,12 @@ describe("Pi recipes launch extension", () => {
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
+      const ctx = extensionContext(projectDir);
 
       createPiRecipesExtension({ createChildAgentRunner })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
-        extensionContext(projectDir)
+        ctx
       );
 
       const updates: AgentToolResult<any>[] = [];
@@ -524,7 +560,7 @@ describe("Pi recipes launch extension", () => {
         { name: "explorer", task: "inspect auth flow" },
         undefined,
         (update) => updates.push(update),
-        extensionContext(projectDir)
+        ctx
       );
 
       expect(createChildAgentRunner).toHaveBeenCalledWith(
@@ -532,6 +568,8 @@ describe("Pi recipes launch extension", () => {
           recipeDir,
           agentName: "explorer",
           workspaceDir: projectDir,
+          authStorage: ctx.modelRegistry.authStorage,
+          modelRegistry: ctx.modelRegistry,
         })
       );
       expect(updates[0]?.content[0]).toEqual(

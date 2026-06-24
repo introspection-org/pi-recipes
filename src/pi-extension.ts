@@ -1,12 +1,15 @@
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   defineTool,
   type AgentToolUpdateCallback,
+  type AuthStorage,
   type ExtensionAPI,
   type ExtensionContext,
   type ExtensionFactory,
+  type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
@@ -48,7 +51,10 @@ type CreateRecipeChildAgentRunner = (opts: {
   workspaceDir: string;
   agentName: string;
   env?: NodeJS.ProcessEnv;
+  authStorage?: AuthStorage;
+  modelRegistry?: ModelRegistry;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
+  onToolEvent?: (event: RecipeChildToolEvent) => void;
 }) => RecipeChildAgentRunner;
 
 const RunRecipeAgentParams = Type.Object({
@@ -138,8 +144,45 @@ interface RecipeLaunchState {
 
 const require = createRequire(import.meta.url);
 
+class RecipeLaunchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RecipeLaunchError";
+  }
+}
+
 function stringFlag(value: boolean | string | undefined): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isPathLikeRecipeInput(input: string): boolean {
+  return (
+    input.startsWith("/") ||
+    input.startsWith(".") ||
+    input.startsWith("~") ||
+    input.includes("/")
+  );
+}
+
+function recipeNotFoundMessage(input: string, resolvedPath: string): string {
+  const lines = [`Recipe "${input}" was not found.`];
+  if (isPathLikeRecipeInput(input)) {
+    lines.push(`Resolved path: ${resolvedPath}`);
+    lines.push("Make sure that directory exists and contains package.json with a pi block.");
+  } else {
+    lines.push(`No installed recipe matched "${input}", and no local directory exists at: ${resolvedPath}`);
+    lines.push("Run `pi-recipes list` to see installed recipes, or `pi-recipes install <source>` first.");
+  }
+  lines.push("Then launch again with `pi --recipe <recipe>`.");
+  return lines.join("\n");
+}
+
+function recipeLoadErrorMessage(input: string, reason: string): string {
+  return [
+    `Recipe "${input}" could not be loaded.`,
+    reason,
+    "Run `pi-recipes doctor <recipe>` for a validation report.",
+  ].join("\n");
 }
 
 function modelParts(spec: string): { provider: string; model: string } {
@@ -564,6 +607,7 @@ export function createPiRecipesExtension(
   const createChildAgentRunner =
     opts.createChildAgentRunner ?? createRecipeChildAgentRunner;
   let state: RecipeLaunchState | null = null;
+  let lastLaunchErrorKey: string | null = null;
   let childRunIndex = 0;
   const childRuns = new Map<string, ChildRun>();
 
@@ -580,15 +624,27 @@ export function createPiRecipesExtension(
     if (!flag) return null;
 
     const recipeDir = resolveRecipeDirectory(flag, { cwd, env });
+    if (!existsSync(recipeDir)) {
+      throw new RecipeLaunchError(recipeNotFoundMessage(flag, recipeDir));
+    }
     const requestedAgentName = selectedAgentName(pi);
     const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
     if (state?.key === key) return state;
 
-    const manifest = readPiPackageManifest(recipeDir);
+    let manifest: PiPackageManifest;
+    try {
+      manifest = readPiPackageManifest(recipeDir);
+    } catch (err) {
+      throw new RecipeLaunchError(
+        recipeLoadErrorMessage(flag, err instanceof Error ? err.message : String(err))
+      );
+    }
     const validation = validatePiPackageManifest(manifest);
     const errors = validation.findings.filter((finding) => finding.severity === "error");
     if (errors.length > 0) {
-      throw new Error(errors.map((finding) => finding.message).join("\n"));
+      throw new RecipeLaunchError(
+        recipeLoadErrorMessage(flag, errors.map((finding) => finding.message).join("\n"))
+      );
     }
 
     const resolved = resolveRecipeAgentDefinition({
@@ -596,7 +652,16 @@ export function createPiRecipesExtension(
       agentName: requestedAgentName,
     });
     if (!resolved.agent) {
-      throw new Error(`Recipe agent not found: ${resolved.agentName}`);
+      const availableAgents = [...loadRecipeAgentDefinitions(recipeDir).keys()].sort();
+      throw new RecipeLaunchError(
+        [
+          `Recipe "${manifest.name}" loaded, but agent "${resolved.agentName}" was not found.`,
+          availableAgents.length > 0
+            ? `Available agents: ${availableAgents.join(", ")}`
+            : "No recipe agents were found.",
+          "Launch with `pi --recipe <recipe> --agent <agent>` or update the recipe agents.",
+        ].join("\n")
+      );
     }
 
     const extensionPaths = filterExtensionPaths(
@@ -620,6 +685,24 @@ export function createPiRecipesExtension(
       configured: false,
     };
     return state;
+  }
+
+  function safeLoadState(
+    pi: Parameters<ExtensionFactory>[0],
+    cwd: string,
+    ctx?: Pick<ExtensionContext, "ui">
+  ): RecipeLaunchState | null {
+    try {
+      return loadState(pi, cwd);
+    } catch (err) {
+      if (!(err instanceof RecipeLaunchError)) throw err;
+      const key = [cwd, recipeFlag(pi) ?? "", err.message].join("\0");
+      if (ctx && lastLaunchErrorKey !== key) {
+        ctx.ui.notify(err.message, "warning");
+        lastLaunchErrorKey = key;
+      }
+      return null;
+    }
   }
 
   async function loadRecipeExtensions(
@@ -694,6 +777,7 @@ export function createPiRecipesExtension(
     agentName: string,
     task: string,
     label: string | undefined,
+    ctx: ExtensionContext,
     onUpdate?: RecipeAgentToolUpdate
   ): Promise<ChildRun> {
     const id = `recipe-agent-${++childRunIndex}`;
@@ -703,6 +787,8 @@ export function createPiRecipesExtension(
       workspaceDir: launchState.cwd,
       env,
       agentName,
+      authStorage: ctx.modelRegistry.authStorage,
+      modelRegistry: ctx.modelRegistry,
       onAssistantMessage(text, stream) {
         if (!run) return;
         if (stream === "delta") {
@@ -778,7 +864,8 @@ export function createPiRecipesExtension(
   async function handleAgentTool(
     params: RunRecipeAgentParams,
     signal: AbortSignal | undefined,
-    onUpdate?: RecipeAgentToolUpdate
+    onUpdate: RecipeAgentToolUpdate | undefined,
+    ctx: ExtensionContext
   ) {
     if (!state) {
       return {
@@ -851,7 +938,7 @@ export function createPiRecipesExtension(
       };
     }
 
-    const run = await runChildAgent(state, agent.name, params.task, params.label, onUpdate);
+    const run = await runChildAgent(state, agent.name, params.task, params.label, ctx, onUpdate);
     if (params.wait !== false) {
       await waitForRun(run, signal, onUpdate);
       return textResult(runBlock(run), runDetails(run, action));
@@ -877,9 +964,11 @@ export function createPiRecipesExtension(
       handler: async (args, ctx) => {
         const action = args.trim();
         if (action === "reload") {
-          const launchState = loadState(pi, ctx.cwd);
+          const launchState = safeLoadState(pi, ctx.cwd, ctx);
           if (!launchState) {
-            ctx.ui.notify("No recipe is active. Launch Pi with --recipe <recipe>.", "info");
+            if (!recipeFlag(pi)) {
+              ctx.ui.notify("No recipe is active. Launch Pi with --recipe <recipe>.", "info");
+            }
             return;
           }
           state = null;
@@ -893,9 +982,11 @@ export function createPiRecipesExtension(
           ctx.ui.notify("Usage: /recipe [reload]", "info");
           return;
         }
-        const launchState = loadState(pi, ctx.cwd);
+        const launchState = safeLoadState(pi, ctx.cwd, ctx);
         if (!launchState) {
-          ctx.ui.notify("No recipe is active. Launch Pi with --recipe <recipe>.", "info");
+          if (!recipeFlag(pi)) {
+            ctx.ui.notify("No recipe is active. Launch Pi with --recipe <recipe>.", "info");
+          }
           return;
         }
         ctx.ui.notify(recipeSummary(launchState, pi.getActiveTools()), "info");
@@ -925,14 +1016,14 @@ export function createPiRecipesExtension(
           text.setText(formatRecipeAgentResult(details, fallbackText, options, theme));
           return text;
         },
-        async execute(_runId, params: RunRecipeAgentParams, signal, onUpdate) {
-          return await handleAgentTool(params, signal, onUpdate);
+        async execute(_runId, params: RunRecipeAgentParams, signal, onUpdate, ctx) {
+          return await handleAgentTool(params, signal, onUpdate, ctx);
         },
       })
     );
 
     pi.on("session_start", async (_event, ctx) => {
-      const launchState = loadState(pi, ctx.cwd);
+      const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return;
       await loadRecipeExtensions(pi, ctx, launchState);
       await configureSession(pi, ctx, launchState);
@@ -943,7 +1034,7 @@ export function createPiRecipesExtension(
     });
 
     pi.on("resources_discover", (event) => {
-      const launchState = loadState(pi, event.cwd);
+      const launchState = safeLoadState(pi, event.cwd);
       if (!launchState) return {};
       return {
         skillPaths: launchState.skillPaths,
@@ -953,7 +1044,7 @@ export function createPiRecipesExtension(
     });
 
     pi.on("before_agent_start", (event, ctx) => {
-      const launchState = loadState(pi, ctx.cwd);
+      const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return {};
       const base = loadRecipeSystemPrompt(launchState.recipeDir) ?? event.systemPrompt;
       const recipePrompt = applySystemInstructions(base, launchState.agent.systemInstructions);
