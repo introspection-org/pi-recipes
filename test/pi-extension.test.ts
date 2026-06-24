@@ -24,20 +24,21 @@ function writeRecipe(root: string) {
   mkdirSync(join(recipeDir, "prompts"), { recursive: true });
   mkdirSync(join(recipeDir, "themes"), { recursive: true });
   writeFileSync(
-    join(recipeDir, "recipe.yaml"),
-    [
-      "name: demo",
-      "version: 1.0.0",
-      "agents:",
-      "  - defs/*.yaml",
-      "skills:",
-      "  - skills/**/SKILL.md",
-      "prompts:",
-      "  - prompts",
-      "themes:",
-      "  - themes/*.json",
-      "",
-    ].join("\n")
+    join(recipeDir, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "demo",
+        version: "1.0.0",
+        pi: {
+          agents: ["defs/*.yaml"],
+          skills: ["skills/**/SKILL.md"],
+          prompts: ["prompts"],
+          themes: ["themes/*.json"],
+        },
+      },
+      null,
+      2
+    )}\n`
   );
   writeFileSync(join(recipeDir, "SYSTEM.md"), "Base recipe prompt");
   writeFileSync(
@@ -185,6 +186,71 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
+  it("reloads recipe state through the recipe command", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-reload-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      const notify = vi.fn();
+      const reload = vi.fn();
+      const waitForIdle = vi.fn();
+      const ctx = {
+        ...extensionContext(projectDir, notify),
+        reload,
+        waitForIdle,
+      } as any;
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      mkdirSync(join(recipeDir, "skills", "new-skill"), { recursive: true });
+      writeFileSync(join(recipeDir, "skills", "new-skill", "SKILL.md"), "---\ndescription: New\n---\n");
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: {
+              agents: ["defs/*.yaml"],
+              skills: ["skills/new-skill/SKILL.md"],
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+
+      await pi.commands.get("recipe")?.handler("reload", ctx);
+
+      expect(waitForIdle).toHaveBeenCalled();
+      expect(reload).toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith(
+        "Recipe reload requested: demo@1.0.0",
+        "info"
+      );
+
+      const resourceResults = await pi.emitExtensionEvent(
+        { type: "resources_discover", cwd: projectDir, reason: "reload" } as any,
+        ctx
+      );
+      expect(resourceResults).toEqual([
+        expect.objectContaining({
+          skillPaths: [join(recipeDir, "skills", "new-skill", "SKILL.md")],
+        }),
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps runtime context when agent system instructions replace recipe prompts", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {
@@ -278,16 +344,19 @@ describe("Pi recipes launch extension", () => {
         "module.exports = { value: 'loaded' };\n"
       );
       writeFileSync(
-        join(recipeDir, "recipe.yaml"),
-        [
-          "name: demo",
-          "version: 1.0.0",
-          "agents:",
-          "  - defs/*.yaml",
-          "extensions:",
-          "  - extensions/*.ts",
-          "",
-        ].join("\n")
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: {
+              agents: ["defs/*.yaml"],
+              extensions: ["extensions/*.ts"],
+            },
+          },
+          null,
+          2
+        )}\n`
       );
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
@@ -351,16 +420,19 @@ describe("Pi recipes launch extension", () => {
         "export default () => { throw new Error('excluded extension loaded'); };\n"
       );
       writeFileSync(
-        join(recipeDir, "recipe.yaml"),
-        [
-          "name: demo",
-          "version: 1.0.0",
-          "agents:",
-          "  - defs/*.yaml",
-          "extensions:",
-          "  - extensions/*.ts",
-          "",
-        ].join("\n")
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: {
+              agents: ["defs/*.yaml"],
+              extensions: ["extensions/*.ts"],
+            },
+          },
+          null,
+          2
+        )}\n`
       );
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
@@ -401,6 +473,34 @@ describe("Pi recipes launch extension", () => {
             return undefined;
           },
           async prompt() {
+            opts.onToolEvent?.({
+              type: "start",
+              id: "read-a",
+              name: "read",
+              args: { path: "src/a.ts" },
+            });
+            opts.onToolEvent?.({
+              type: "start",
+              id: "read-b",
+              name: "read",
+              args: { path: "src/b.ts" },
+            });
+            opts.onToolEvent?.({
+              type: "end",
+              id: "read-b",
+              name: "read",
+              args: { path: "src/b.ts" },
+              result: { content: [{ type: "text", text: "file b" }], details: undefined },
+              isError: false,
+            });
+            opts.onToolEvent?.({
+              type: "end",
+              id: "read-a",
+              name: "read",
+              args: { path: "src/a.ts" },
+              result: { content: [{ type: "text", text: "file a" }], details: undefined },
+              isError: false,
+            });
             opts.onAssistantMessage?.("streamed output", "delta");
             return "streamed output final";
           },
@@ -453,8 +553,31 @@ describe("Pi recipes launch extension", () => {
         expect.objectContaining({
           task: "inspect auth flow",
           status: "completed",
+          tool_calls: [
+            expect.objectContaining({
+              id: "read-a",
+              name: "read",
+              status: "completed",
+              output: "file a",
+            }),
+            expect.objectContaining({
+              id: "read-b",
+              name: "read",
+              status: "completed",
+              output: "file b",
+            }),
+          ],
         })
       );
+      const rendered = pi.tools.get("agent")?.renderResult?.(
+        result as any,
+        { expanded: false, isPartial: false },
+        { fg: (_name: string, text: string) => text, bold: (text: string) => text } as any,
+        { lastComponent: undefined } as any
+      );
+      expect(rendered?.render(100).join("\n")).toContain("Tool calls:");
+      expect(rendered?.render(100).join("\n")).toContain("read src/a.ts [done]");
+      expect(rendered?.render(100).join("\n")).not.toContain("Prompt:");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

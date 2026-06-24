@@ -22,6 +22,7 @@ export interface CreateRecipeChildAgentRunnerOptions {
   agentName: string;
   env?: NodeJS.ProcessEnv;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
+  onToolEvent?: (event: RecipeChildToolEvent) => void;
 }
 
 export interface RecipeChildAgentRunner {
@@ -34,6 +35,29 @@ export interface RecipeChildAgentRunner {
 export type CreateRecipeChildAgentRunner = (
   opts: CreateRecipeChildAgentRunnerOptions
 ) => RecipeChildAgentRunner;
+
+export type RecipeChildToolEvent =
+  | {
+      type: "start";
+      id: string;
+      name: string;
+      args: unknown;
+    }
+  | {
+      type: "update";
+      id: string;
+      name: string;
+      args: unknown;
+      partialResult: unknown;
+    }
+  | {
+      type: "end";
+      id: string;
+      name: string;
+      args: unknown;
+      result: unknown;
+      isError: boolean;
+    };
 
 function modelFromSpec(spec: string): Model<any> {
   const slash = spec.indexOf("/");
@@ -127,6 +151,39 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     const record = asRecord(event);
     const message = messageFromEvent(event);
     const role = typeof message?.role === "string" ? message.role : undefined;
+
+    if (record?.type === "tool_execution_start") {
+      this.opts.onToolEvent?.({
+        type: "start",
+        id: String(record.toolCallId ?? ""),
+        name: String(record.toolName ?? ""),
+        args: record.args,
+      });
+      return;
+    }
+
+    if (record?.type === "tool_execution_update") {
+      this.opts.onToolEvent?.({
+        type: "update",
+        id: String(record.toolCallId ?? ""),
+        name: String(record.toolName ?? ""),
+        args: record.args,
+        partialResult: record.partialResult,
+      });
+      return;
+    }
+
+    if (record?.type === "tool_execution_end") {
+      this.opts.onToolEvent?.({
+        type: "end",
+        id: String(record.toolCallId ?? ""),
+        name: String(record.toolName ?? ""),
+        args: record.args,
+        result: record.result,
+        isError: record.isError === true,
+      });
+      return;
+    }
 
     if (record?.type === "message_start" && role === "assistant") {
       this.assistantStreamedText = false;

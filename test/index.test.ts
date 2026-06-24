@@ -8,48 +8,105 @@ import { describe, expect, it } from "vitest";
 import { createRecipeChildAgentRunner } from "../src/child-agent.js";
 import {
   addRecipe,
+  createRecipePublishGuide,
+  createRecipeScaffold,
   listRecipes,
   loadRecipeAgentDefinitions,
   packageResourcePaths,
   parseRecipeSource,
   readPiPackageManifest,
-  readRecipePackageManifest,
   RecipePackageError,
   removeRecipe,
   resolveRecipeAgentDefinition,
   resolveRecipeDirectory,
   validateResolvedRecipeAgentDefinition,
+  validateRecipeDirectory,
   validatePiPackageManifest,
 } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
 
+function writePiPackageManifest(
+  root: string,
+  pkg: Record<string, unknown>
+): void {
+  writeFileSync(join(root, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+}
+
 describe("recipe package manifest", () => {
-  it("reads neutral recipe.yaml manifests", () => {
+  it("scaffolds a working starter recipe", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-scaffold-"));
+    try {
+      const result = createRecipeScaffold("my-recipe", {
+        cwd: root,
+        name: "my-recipe",
+      });
+
+      expect(result).toMatchObject({
+        recipeDir: join(root, "my-recipe"),
+        name: "my-recipe",
+      });
+      expect(result.files.map((file) => file.action)).toEqual([
+        "created",
+        "created",
+        "created",
+        "created",
+      ]);
+      expect(readPiPackageManifest(result.recipeDir).name).toBe("my-recipe");
+      expect(loadRecipeAgentDefinitions(result.recipeDir).get("agent")).toMatchObject({
+        name: "agent",
+        tools: ["read", "bash"],
+      });
+      expect(validateRecipeDirectory(result.recipeDir)).toMatchObject({
+        valid: true,
+        findings: [],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to overwrite scaffold files unless forced", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-scaffold-"));
+    try {
+      const recipeDir = join(root, "my-recipe");
+      mkdirSync(recipeDir, { recursive: true });
+      writePiPackageManifest(recipeDir, { name: "existing", version: "0.0.0", pi: {} });
+
+      expect(() => createRecipeScaffold(recipeDir)).toThrow(/would overwrite/);
+      const result = createRecipeScaffold(recipeDir, { force: true });
+
+      expect(result.files[0]).toMatchObject({
+        path: join(recipeDir, "package.json"),
+        action: "overwritten",
+      });
+      expect(readPiPackageManifest(recipeDir).name).toBe("my-recipe");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads package.json pi manifests", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-manifest-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
-      writeFileSync(
-        join(root, "recipe.yaml"),
-        [
-          "name: neutral-recipe",
-          "version: 0.2.0",
-          "description: Portable recipe",
-          "agents:",
-          "  - agents/*.yaml",
-          "skills:",
-          "  - skills/**/SKILL.md",
-          "",
-        ].join("\n")
-      );
+      writePiPackageManifest(root, {
+        name: "pi-recipe",
+        version: "0.2.0",
+        description: "Pi recipe",
+        pi: {
+          agents: ["agents/*.yaml"],
+          skills: ["skills/**/SKILL.md"],
+        },
+      });
 
-      const manifest = readRecipePackageManifest(root);
+      const manifest = readPiPackageManifest(root);
       const report = validatePiPackageManifest(manifest);
 
       expect(manifest).toMatchObject({
-        name: "neutral-recipe",
+        name: "pi-recipe",
         version: "0.2.0",
-        description: "Portable recipe",
+        description: "Pi recipe",
       });
       expect(manifest.resources.agents).toEqual(["agents/*.yaml"]);
       expect(manifest.resources.skills).toEqual(["skills/**/SKILL.md"]);
@@ -59,50 +116,21 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("does not treat package.json pi blocks as recipe manifests", () => {
+  it("reads package.json pi blocks as recipe manifests", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-"));
     try {
-      writeFileSync(
-        join(root, "package.json"),
-        JSON.stringify({
-          name: "recipe-package",
-          version: "0.1.0",
-          pi: {
-            agents: ["./agents/*.yaml"],
-            extensions: ["extensions/*.ts"],
-            skills: ["skills/**/SKILL.md"],
-            themes: ["themes/*.json"],
-          },
-        })
-      );
-
-      expect(() => readRecipePackageManifest(root)).toThrow(RecipePackageError);
-      expect(() => readRecipePackageManifest(root)).toThrow(
-        /missing recipe\.yaml/
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("reads legacy package.json pi blocks for Pi compatibility", () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-package-"));
-    try {
-      writeFileSync(
-        join(root, "package.json"),
-        JSON.stringify({
-          name: "recipe-package",
-          version: "0.1.0",
-          description: "Legacy Pi recipe",
-          pi: {
-            agents: ["./agents/*.yaml"],
-            extensions: ["extensions/*.ts"],
-            skills: ["skills/**/SKILL.md"],
-            prompts: ["prompts/*.md"],
-            themes: ["themes/*.json"],
-          },
-        })
-      );
+      writePiPackageManifest(root, {
+        name: "recipe-package",
+        version: "0.1.0",
+        description: "Pi recipe",
+        pi: {
+          agents: ["./agents/*.yaml"],
+          extensions: ["extensions/*.ts"],
+          skills: ["skills/**/SKILL.md"],
+          prompts: ["prompts/*.md"],
+          themes: ["themes/*.json"],
+        },
+      });
 
       const manifest = readPiPackageManifest(root);
       const report = validatePiPackageManifest(manifest);
@@ -110,7 +138,7 @@ describe("recipe package manifest", () => {
       expect(manifest).toMatchObject({
         name: "recipe-package",
         version: "0.1.0",
-        description: "Legacy Pi recipe",
+        description: "Pi recipe",
       });
       expect(manifest.resources).toEqual({
         agents: ["agents/*.yaml"],
@@ -125,7 +153,7 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("does not treat package.json recipe blocks as recipe manifests", () => {
+  it("rejects package.json files without pi manifests", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-package-"));
     try {
       writeFileSync(
@@ -139,35 +167,7 @@ describe("recipe package manifest", () => {
         })
       );
 
-      expect(() => readRecipePackageManifest(root)).toThrow(RecipePackageError);
-      expect(() => readRecipePackageManifest(root)).toThrow(
-        /missing recipe\.yaml/
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("reads legacy package.json recipe blocks for Pi compatibility", () => {
-    const root = mkdtempSync(join(tmpdir(), "recipe-package-"));
-    try {
-      writeFileSync(
-        join(root, "package.json"),
-        JSON.stringify({
-          name: "recipe-package",
-          version: "0.1.0",
-          recipe: {
-            agents: ["agents/*.yaml"],
-          },
-        })
-      );
-
-      const manifest = readPiPackageManifest(root);
-
-      expect(manifest.name).toBe("recipe-package");
-      expect(manifest.version).toBe("0.1.0");
-      expect(manifest.resources.agents).toEqual(["agents/*.yaml"]);
-      expect(validatePiPackageManifest(manifest).valid).toBe(true);
+      expect(() => readPiPackageManifest(root)).toThrow(RecipePackageError);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -187,12 +187,12 @@ describe("recipe package manifest", () => {
         })
       );
 
-      expect(() => readRecipePackageManifest(root)).toThrow(RecipePackageError);
-      expect(() => readRecipePackageManifest(root)).toThrow(
-        /missing recipe\.yaml/
+      expect(() => readPiPackageManifest(root)).toThrow(RecipePackageError);
+      expect(() => readPiPackageManifest(root)).toThrow(
+        /missing package\.json pi manifest/
       );
       expect(() => readPiPackageManifest(root)).toThrow(
-        /missing recipe\.yaml or legacy package\.json recipe\/pi manifest/
+        /missing package\.json pi manifest/
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -211,25 +211,18 @@ describe("recipe package manifest", () => {
       mkdirSync(join(root, "extensions"), { recursive: true });
       writeFileSync(join(root, "skills", "repo-index", "SKILL.md"), "Index repos\n");
       writeFileSync(join(root, "extensions", "tools.ts"), "export default () => {}\n");
-      writeFileSync(
-        join(root, "recipe.yaml"),
-        [
-          "name: recipe-package",
-          "version: 0.1.0",
-          "agents:",
-          "  - agents/*.yaml",
-          "extensions:",
-          "  - extensions/*.ts",
-          "  - extensions/*/index.ts",
-          "skills:",
-          "  - skills/**/SKILL.md",
-          "themes:",
-          "  - themes/*.json",
-          "",
-        ].join("\n")
-      );
+      writePiPackageManifest(root, {
+        name: "recipe-package",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+          extensions: ["extensions/*.ts", "extensions/*/index.ts"],
+          skills: ["skills/**/SKILL.md"],
+          themes: ["themes/*.json"],
+        },
+      });
 
-      const manifest = readRecipePackageManifest(root);
+      const manifest = readPiPackageManifest(root);
 
       expect(packageResourcePaths(manifest, "skills")).toEqual([
         join(root, "skills", "repo-index", "SKILL.md"),
@@ -255,18 +248,15 @@ describe("recipe package manifest", () => {
       const recipeDir = join(root, "recipe");
       mkdirSync(recipeDir, { recursive: true });
       mkdirSync(join(root, "outside-prompts"), { recursive: true });
-      writeFileSync(
-        join(recipeDir, "recipe.yaml"),
-        [
-          "name: escaped-resources",
-          "version: 0.1.0",
-          "prompts:",
-          "  - ../outside-prompts",
-          "",
-        ].join("\n")
-      );
+      writePiPackageManifest(recipeDir, {
+        name: "escaped-resources",
+        version: "0.1.0",
+        pi: {
+          prompts: ["../outside-prompts"],
+        },
+      });
 
-      const manifest = readRecipePackageManifest(recipeDir);
+      const manifest = readPiPackageManifest(recipeDir);
 
       expect(() => packageResourcePaths(manifest, "prompts")).toThrow(
         /outside the package/
@@ -279,12 +269,15 @@ describe("recipe package manifest", () => {
   it("reports packages with no declared/default agents", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-"));
     try {
-      writeFileSync(
-        join(root, "recipe.yaml"),
-        "name: recipe-package\nversion: 0.1.0\n"
-      );
+      writePiPackageManifest(root, {
+        name: "recipe-package",
+        version: "0.1.0",
+        pi: {
+          prompts: ["prompts"],
+        },
+      });
 
-      const report = validatePiPackageManifest(readRecipePackageManifest(root));
+      const report = validatePiPackageManifest(readPiPackageManifest(root));
 
       expect(report.valid).toBe(true);
       expect(report.findings).toEqual([
@@ -299,6 +292,47 @@ describe("recipe package manifest", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("reports invalid resource globs during recipe development validation", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-dev-validation-"));
+    try {
+      writePiPackageManifest(root, {
+        name: "broken-recipe",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+
+      const report = validateRecipeDirectory(root);
+
+      expect(report.valid).toBe(false);
+      expect(report.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            severity: "error",
+            code: "package.agents_invalid",
+          }),
+        ])
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("creates a publish guide from a valid recipe", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-guide-"));
+    try {
+      const { recipeDir } = createRecipeScaffold("guide-recipe", { cwd: root });
+      const guide = createRecipePublishGuide(recipeDir);
+
+      expect(guide.report.valid).toBe(true);
+      expect(guide.checklist).toContain("Run `pi-recipes doctor .` and fix any errors.");
+      expect(guide.sourceExamples).toContain("pi-recipes install github:owner/guide-recipe");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("recipe agent definitions", () => {
@@ -306,10 +340,13 @@ describe("recipe agent definitions", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agents-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
-      writeFileSync(
-        join(root, "recipe.yaml"),
-        "name: inherited-agents\nversion: 0.1.0\nagents:\n  - agents/*.yaml\n"
-      );
+      writePiPackageManifest(root, {
+        name: "inherited-agents",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
       writeFileSync(
         join(root, "agents", "agent.yaml"),
         [
@@ -393,10 +430,13 @@ describe("recipe child agents", () => {
     try {
       mkdirSync(join(recipeDir, "agents"), { recursive: true });
       mkdirSync(workspaceDir, { recursive: true });
-      writeFileSync(
-        join(recipeDir, "recipe.yaml"),
-        "name: child-agent-model\nversion: 0.1.0\nagents:\n  - agents/*.yaml\n"
-      );
+      writePiPackageManifest(recipeDir, {
+        name: "child-agent-model",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
       writeFileSync(
         join(recipeDir, "agents", "worker.yaml"),
         "name: worker\ntools: []\n"
@@ -421,10 +461,13 @@ describe("recipe child agents", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-child-agent-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
-      writeFileSync(
-        join(root, "recipe.yaml"),
-        "name: child-agent-model\nversion: 0.1.0\nagents:\n  - agents/*.yaml\n"
-      );
+      writePiPackageManifest(root, {
+        name: "child-agent-model",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
       writeFileSync(
         join(root, "agents", "base.yaml"),
         [
@@ -470,10 +513,13 @@ describe("recipe child agents", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-child-agent-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
-      writeFileSync(
-        join(root, "recipe.yaml"),
-        "name: child-agent-model\nversion: 0.1.0\nagents:\n  - agents/*.yaml\n"
-      );
+      writePiPackageManifest(root, {
+        name: "child-agent-model",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
       writeFileSync(
         join(root, "agents", "worker.yaml"),
         [
@@ -575,10 +621,13 @@ describe("recipe store", () => {
     const recipeDir = join(root, "recipe");
     try {
       mkdirSync(join(recipeDir, "agents"), { recursive: true });
-      writeFileSync(
-        join(recipeDir, "recipe.yaml"),
-        "name: local-review\nversion: 0.1.0\nagents:\n  - agents/*.yaml\n"
-      );
+      writePiPackageManifest(recipeDir, {
+        name: "local-review",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
 
       const installed = await addRecipe(recipeDir, { storeDir });
 
@@ -599,10 +648,13 @@ describe("recipe store", () => {
     const storeDir = join(root, "store");
     try {
       mkdirSync(join(sourceDir, "agents"), { recursive: true });
-      writeFileSync(
-        join(sourceDir, "recipe.yaml"),
-        "name: git-review\nversion: 0.3.0\nagents:\n  - agents/*.yaml\n"
-      );
+      writePiPackageManifest(sourceDir, {
+        name: "git-review",
+        version: "0.3.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
       writeFileSync(join(sourceDir, "agents", "agent.yaml"), "name: agent\ntools: []\n");
       await execFileAsync("git", ["init"], { cwd: sourceDir });
       await execFileAsync("git", ["add", "."], { cwd: sourceDir });
@@ -623,7 +675,7 @@ describe("recipe store", () => {
       });
       expect(resolveRecipeDirectory("git-review", { storeDir })).toBe(installed.path);
       expect(resolveRecipeDirectory("recipe", { storeDir })).toBe(installed.path);
-      expect(readRecipePackageManifest(installed.path).resources.agents).toEqual(["agents/*.yaml"]);
+      expect(readPiPackageManifest(installed.path).resources.agents).toEqual(["agents/*.yaml"]);
       expect(removeRecipe("recipe", { storeDir })).toEqual(installed);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -640,10 +692,13 @@ describe("recipe store", () => {
 
     async function createBareRecipeRepo(sourceDir: string, bareDir: string, name: string) {
       mkdirSync(join(sourceDir, "agents"), { recursive: true });
-      writeFileSync(
-        join(sourceDir, "recipe.yaml"),
-        `name: ${name}\nversion: 1.0.0\nagents:\n  - agents/*.yaml\n`
-      );
+      writePiPackageManifest(sourceDir, {
+        name,
+        version: "1.0.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
       writeFileSync(join(sourceDir, "agents", "agent.yaml"), "name: agent\ntools: []\n");
       await execFileAsync("git", ["init"], { cwd: sourceDir });
       await execFileAsync("git", ["add", "."], { cwd: sourceDir });
@@ -667,7 +722,7 @@ describe("recipe store", () => {
       expect(first.path).not.toBe(second.path);
       expect(first.name).toBe("git-collision-one");
       expect(second.name).toBe("git-collision-two");
-      expect(readRecipePackageManifest(second.path).name).toBe("git-collision-two");
+      expect(readPiPackageManifest(second.path).name).toBe("git-collision-two");
       expect(listRecipes({ storeDir }).map((recipe) => recipe.name).sort()).toEqual([
         "git-collision-one",
         "git-collision-two",
@@ -685,22 +740,19 @@ describe("recipe store", () => {
     try {
       mkdirSync(join(sourceDir, "agents"), { recursive: true });
       mkdirSync(join(sourceDir, "deps", "recipe-test-dep"), { recursive: true });
-      writeFileSync(
-        join(sourceDir, "recipe.yaml"),
-        "name: dep-review\nversion: 0.4.0\nagents:\n  - agents/*.yaml\nextensions:\n  - extensions/*.ts\n"
-      );
       writeFileSync(join(sourceDir, "agents", "agent.yaml"), "name: agent\ntools: []\n");
-      writeFileSync(
-        join(sourceDir, "package.json"),
-        JSON.stringify({
-          name: "dep-review-extension-runtime",
-          version: "0.0.0",
-          type: "module",
-          dependencies: {
-            "recipe-test-dep": "file:deps/recipe-test-dep",
-          },
-        })
-      );
+      writePiPackageManifest(sourceDir, {
+        name: "dep-review",
+        version: "0.4.0",
+        type: "module",
+        pi: {
+          agents: ["agents/*.yaml"],
+          extensions: ["extensions/*.ts"],
+        },
+        dependencies: {
+          "recipe-test-dep": "file:deps/recipe-test-dep",
+        },
+      });
       writeFileSync(
         join(sourceDir, "deps", "recipe-test-dep", "package.json"),
         JSON.stringify({ name: "recipe-test-dep", version: "1.0.0", main: "index.js" })

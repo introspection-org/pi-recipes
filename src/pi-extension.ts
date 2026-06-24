@@ -9,10 +9,12 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import {
   createRecipeChildAgentRunner,
   promptResultText,
+  type RecipeChildToolEvent,
 } from "./child-agent.js";
 import {
   loadRecipeAgentDefinitions,
@@ -68,6 +70,18 @@ const RunRecipeAgentParams = Type.Object({
 
 type RunRecipeAgentParams = Static<typeof RunRecipeAgentParams>;
 type ChildRunStatus = "running" | "completed" | "failed" | "interrupted";
+type ChildToolStatus = "running" | "completed" | "failed";
+
+interface ChildToolActivity {
+  id: string;
+  name: string;
+  args: unknown;
+  status: ChildToolStatus;
+  startedAt: string;
+  completedAt?: string;
+  output?: string;
+  error?: string;
+}
 
 interface RecipeAgentToolDetails {
   action: string;
@@ -80,10 +94,11 @@ interface RecipeAgentToolDetails {
   completedAt?: string;
   output?: string;
   error?: string;
+  tool_calls?: ChildToolActivity[];
   agent_runs?: Array<
     Pick<
       RecipeAgentToolDetails,
-      "id" | "agent" | "label" | "task" | "status" | "startedAt" | "completedAt" | "output" | "error"
+      "id" | "agent" | "label" | "task" | "status" | "startedAt" | "completedAt" | "output" | "error" | "tool_calls"
     >
   >;
   available_agents?: string[];
@@ -101,6 +116,7 @@ interface ChildRun {
   completedAt?: string;
   output?: string;
   error?: string;
+  toolCalls: ChildToolActivity[];
   runner: RecipeChildAgentRunner;
   promise: Promise<ChildRun>;
 }
@@ -180,6 +196,115 @@ function textResult<TDetails>(text: string, details: TDetails) {
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      const record = asRecord(part);
+      return record?.type === "text" && typeof record.text === "string"
+        ? record.text
+        : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function resultText(result: unknown): string {
+  const record = asRecord(result);
+  return contentText(record?.content).trim();
+}
+
+function themeFg(theme: { fg?: (name: any, text: string) => string } | undefined, name: string, text: string): string {
+  return theme?.fg ? theme.fg(name, text) : text;
+}
+
+function themeBold(theme: { bold?: (text: string) => string } | undefined, text: string): string {
+  return theme?.bold ? theme.bold(text) : text;
+}
+
+function truncateLine(text: string, max = 120): string {
+  const singleLine = text.replace(/\s+/g, " ").trim();
+  return singleLine.length > max ? `${singleLine.slice(0, max - 3)}...` : singleLine;
+}
+
+function toolArgText(args: unknown, keys: string[]): string | undefined {
+  const record = asRecord(args);
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function describeChildToolCall(call: ChildToolActivity): string {
+  const target =
+    toolArgText(call.args, ["path", "file_path"]) ??
+    toolArgText(call.args, ["command"]) ??
+    toolArgText(call.args, ["pattern", "query"]);
+  return target ? `${call.name} ${truncateLine(target, 80)}` : call.name;
+}
+
+function childToolStatusText(status: ChildToolStatus): string {
+  if (status === "running") return "running";
+  if (status === "failed") return "failed";
+  return "done";
+}
+
+function formatRecipeAgentCall(
+  args: RunRecipeAgentParams,
+  theme: { fg?: (name: any, text: string) => string; bold?: (text: string) => string } | undefined
+): string {
+  const action = args.action ?? "start";
+  const agent = args.name ?? args.id ?? "agent";
+  const label = args.label ? ` ${themeFg(theme, "muted", `(${args.label})`)}` : "";
+  return `${themeFg(theme, "toolTitle", themeBold(theme, `agent ${action}`))} ${themeFg(theme, "accent", agent)}${label}`;
+}
+
+function formatRecipeAgentResult(
+  details: RecipeAgentToolDetails | undefined,
+  text: string,
+  options: { expanded: boolean; isPartial: boolean },
+  theme: { fg?: (name: any, text: string) => string } | undefined
+): string {
+  if (!details?.id) return text;
+
+  const lines: string[] = [
+    themeFg(theme, details.error ? "warning" : "muted", `Status: ${details.status ?? (options.isPartial ? "running" : "completed")}`),
+  ];
+
+  if (details.tool_calls?.length) {
+    lines.push("", themeFg(theme, "muted", "Tool calls:"));
+    for (const call of details.tool_calls) {
+      const label = describeChildToolCall(call);
+      const status = childToolStatusText(call.status);
+      lines.push(`  - ${themeFg(theme, call.status === "failed" ? "warning" : "toolOutput", label)} ${themeFg(theme, "muted", `[${status}]`)}`);
+      if (options.expanded && call.output) {
+        lines.push(`    ${themeFg(theme, "toolOutput", truncateLine(call.output))}`);
+      }
+      if (call.error) {
+        lines.push(`    ${themeFg(theme, "warning", truncateLine(call.error))}`);
+      }
+    }
+  }
+
+  if (details.error) {
+    lines.push("", themeFg(theme, "warning", `Error: ${details.error}`));
+  } else if (details.output?.trim()) {
+    lines.push("", themeFg(theme, "muted", "Output:"), themeFg(theme, "toolOutput", details.output.trim()));
+  } else if (!options.isPartial && text.trim()) {
+    lines.push("", themeFg(theme, "toolOutput", text.trim()));
+  }
+
+  return lines.join("\n");
+}
+
 function describeRun(run: ChildRun): string {
   const suffix = run.error ? `: ${run.error}` : run.output ? `: ${run.output}` : "";
   return `${run.id} ${run.agent}: ${run.status}${suffix}`;
@@ -197,6 +322,7 @@ function runDetails(run: ChildRun, action = "status"): RecipeAgentToolDetails {
     completedAt: run.completedAt,
     output: run.output,
     error: run.error,
+    tool_calls: run.toolCalls,
   };
 }
 
@@ -312,6 +438,57 @@ function emitRunUpdate(run: ChildRun, onUpdate: RecipeAgentToolUpdate | undefine
     content: [{ type: "text", text: runBlock(run) }],
     details: runDetails(run, "update"),
   });
+}
+
+function applyChildToolEvent(run: ChildRun, event: RecipeChildToolEvent): void {
+  const existing = run.toolCalls.find((call) => call.id === event.id);
+  if (event.type === "start") {
+    if (existing) {
+      existing.name = event.name;
+      existing.args = event.args;
+      existing.status = "running";
+      existing.completedAt = undefined;
+      existing.output = undefined;
+      existing.error = undefined;
+      return;
+    }
+    run.toolCalls.push({
+      id: event.id,
+      name: event.name,
+      args: event.args,
+      status: "running",
+      startedAt: new Date().toISOString(),
+    });
+    return;
+  }
+
+  const call =
+    existing ??
+    (() => {
+      const created: ChildToolActivity = {
+        id: event.id,
+        name: event.name,
+        args: event.args,
+        status: "running",
+        startedAt: new Date().toISOString(),
+      };
+      run.toolCalls.push(created);
+      return created;
+    })();
+
+  call.name = event.name;
+  call.args = event.args;
+  if (event.type === "update") {
+    const text = resultText(event.partialResult);
+    if (text) call.output = text;
+    return;
+  }
+
+  call.completedAt = new Date().toISOString();
+  call.status = event.isError ? "failed" : "completed";
+  const text = resultText(event.result);
+  if (text) call.output = text;
+  if (event.isError) call.error = text || "Tool failed";
 }
 
 function resolvePackage(specifier: string): string | undefined {
@@ -516,6 +693,7 @@ export function createPiRecipesExtension(
     launchState: RecipeLaunchState,
     agentName: string,
     task: string,
+    label: string | undefined,
     onUpdate?: RecipeAgentToolUpdate
   ): Promise<ChildRun> {
     const id = `recipe-agent-${++childRunIndex}`;
@@ -534,13 +712,20 @@ export function createPiRecipesExtension(
         }
         emitRunUpdate(run, onUpdate);
       },
+      onToolEvent(event) {
+        if (!run) return;
+        applyChildToolEvent(run, event);
+        emitRunUpdate(run, onUpdate);
+      },
     });
     run = {
       id,
       agent: agentName,
+      label,
       task,
       status: "running",
       startedAt: new Date().toISOString(),
+      toolCalls: [],
       runner,
       promise: Promise.resolve(undefined as never),
     };
@@ -666,9 +851,7 @@ export function createPiRecipesExtension(
       };
     }
 
-    const run = await runChildAgent(state, agent.name, params.task, onUpdate);
-    run.label = params.label;
-    emitRunUpdate(run, onUpdate);
+    const run = await runChildAgent(state, agent.name, params.task, params.label, onUpdate);
     if (params.wait !== false) {
       await waitForRun(run, signal, onUpdate);
       return textResult(runBlock(run), runDetails(run, action));
@@ -690,8 +873,26 @@ export function createPiRecipesExtension(
     });
 
     pi.registerCommand("recipe", {
-      description: "Inspect the active recipe",
-      handler: async (_args, ctx) => {
+      description: "Inspect or reload the active recipe",
+      handler: async (args, ctx) => {
+        const action = args.trim();
+        if (action === "reload") {
+          const launchState = loadState(pi, ctx.cwd);
+          if (!launchState) {
+            ctx.ui.notify("No recipe is active. Launch Pi with --recipe <recipe>.", "info");
+            return;
+          }
+          state = null;
+          childRuns.clear();
+          await ctx.waitForIdle();
+          await ctx.reload();
+          ctx.ui.notify(`Recipe reload requested: ${launchState.manifest.name}@${launchState.manifest.version}`, "info");
+          return;
+        }
+        if (action) {
+          ctx.ui.notify("Usage: /recipe [reload]", "info");
+          return;
+        }
         const launchState = loadState(pi, ctx.cwd);
         if (!launchState) {
           ctx.ui.notify("No recipe is active. Launch Pi with --recipe <recipe>.", "info");
@@ -712,6 +913,18 @@ export function createPiRecipesExtension(
           "This tool is active only when the selected recipe agent has available subagents.",
         ].join("\n"),
         parameters: RunRecipeAgentParams,
+        renderCall(params: RunRecipeAgentParams, theme, context) {
+          const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+          text.setText(formatRecipeAgentCall(params, theme));
+          return text;
+        },
+        renderResult(result, options, theme, context) {
+          const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+          const details = result.details as RecipeAgentToolDetails | undefined;
+          const fallbackText = contentText(result.content);
+          text.setText(formatRecipeAgentResult(details, fallbackText, options, theme));
+          return text;
+        },
         async execute(_runId, params: RunRecipeAgentParams, signal, onUpdate) {
           return await handleAgentTool(params, signal, onUpdate);
         },

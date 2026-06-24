@@ -1,91 +1,48 @@
 # @tfidfwastaken/local-session-tools
 
-Experimental local session tooling with a lightweight recipe CLI and Pi
-extension support.
+Experimental Pi recipe tooling with a `pi-recipes` CLI and Pi extension
+support.
 
-Recipes are folders with a `recipe.yaml` manifest plus agent YAML files,
-prompts, skills, and optional TypeScript runtime extensions. The `recipes` CLI
-installs or registers recipes in a neutral local store. The Pi extension is
-currently the first harness: it resolves an installed recipe into a local
-directory and wires those recipe files into the live Pi session at launch time.
+Recipes are Pi packages: folders with a `package.json` manifest containing a
+`pi` block, plus agent YAML files, prompts, skills, and optional TypeScript
+runtime extensions. The `pi-recipes` CLI installs or registers recipes in a
+local store and ensures the Pi extension is installed before recipes are run.
+The Pi extension resolves an installed recipe into a local directory and wires
+those recipe files into the live Pi session at launch time.
 
-`recipe.yaml` is the recipe manifest: it owns recipe identity and resource
-globs. A root `package.json` is optional and exists only for TypeScript
-extension dependencies and package-manager metadata. New recipes should keep
-those responsibilities separate; Pi still accepts older `package.json` `pi` or
-`recipe` manifest blocks for compatibility.
+`package.json` owns both recipe identity and Node dependency metadata. The
+top-level `name`, `version`, and `description` identify the recipe, while the
+`pi` block declares recipe resources such as agents, extensions, skills,
+prompts, and themes.
 
 ## Documentation
 
-- [Recipe CLI](docs/recipe-cli.md): creating, adding, resolving, publishing, and removing recipes.
+- [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
 
 ## Package Exports
 
 - `@tfidfwastaken/local-session-tools`: extension factory and recipe-loading helpers.
 - `@tfidfwastaken/local-session-tools/pi-extension`: Pi extension entrypoint.
-- `@tfidfwastaken/local-session-tools/recipe-store`: neutral recipe install and resolution helpers.
+- `@tfidfwastaken/local-session-tools/recipe-store`: recipe install and resolution helpers.
 
 ## Quick Start
 
-Install the package into Pi:
+Install the recipe tooling:
 
 ```bash
-pi install npm:@tfidfwastaken/local-session-tools@testing
+npm install -g @tfidfwastaken/local-session-tools
 ```
+
+The first `pi-recipes install ...` run automatically installs the companion Pi
+extension with `pi install npm:@tfidfwastaken/local-session-tools`.
 
 Create a local recipe:
 
-```text
-my-recipe/
-  recipe.yaml
-  SYSTEM.md
-  agents/
-    agent.yaml
-```
-
-`recipe.yaml`:
-
-```yaml
-name: my-recipe
-version: 0.1.0
-description: Demo recipe
-
-agents:
-  - agents/*.yaml
-```
-
-`agents/agent.yaml`:
-
-```yaml
-name: agent
-description: Main coordinator
-model:
-  name: openai/gpt-5.4
-  thinking_level: medium
-tools:
-  - read
-  - bash
-system_instructions:
-  mode: append
-  content: Follow the recipe workflow.
-```
-
-Named variants are agents too:
-
-```yaml
-name: agent-opus
-from: agent
-model:
-  name: openrouter/anthropic/claude-opus-4.8
-```
-
-Validate and register it:
-
 ```bash
-recipes doctor ./my-recipe
-recipes add ./my-recipe
-recipes list
+pi-recipes init ./my-recipe
+pi-recipes doctor ./my-recipe
+pi-recipes install ./my-recipe
 ```
 
 Launch it with Pi:
@@ -95,25 +52,38 @@ pi --recipe my-recipe
 pi --recipe my-recipe --agent agent
 ```
 
+`pi-recipes init` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
+and recipe README. Edit those files as the recipe grows. Named variants are
+agents too:
+
+```yaml
+name: agent-opus
+from: agent
+model:
+  name: openrouter/anthropic/claude-opus-4.8
+```
+
 ## Install Recipes
 
 Install public GitHub recipes:
 
 ```bash
-recipes add github:owner/repo
-recipes add github:owner/repo/path/to/recipe
-recipes add github:owner/repo#v1.0.0
+pi-recipes install github:owner/repo
+pi-recipes install github:owner/repo/path/to/recipe
+pi-recipes install github:owner/repo#v1.0.0
 ```
 
 Install private recipes with normal Git authentication:
 
 ```bash
-recipes add git@github.com:owner/private-recipe.git
-GITHUB_TOKEN=... recipes add github:owner/private-recipe
+pi-recipes install git@github.com:owner/private-recipe.git
+GITHUB_TOKEN=... pi-recipes install github:owner/private-recipe
 ```
 
 No recipe registry is required. Publishing a recipe means committing a recipe
 folder to a Git repository and sharing the GitHub or Git source locator.
+Run `pi-recipes publish ./my-recipe` for a validation pass, publishing checklist,
+and install commands to share.
 
 ## Development
 

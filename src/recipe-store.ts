@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
-  readRecipePackageManifest,
+  readPiPackageManifest,
   validatePiPackageManifest,
   type RecipePackageManifest,
 } from "./recipe-package.js";
@@ -500,10 +500,10 @@ function githubAuthHint(source: GithubRecipeSource): string {
     `Could not install github:${source.owner}/${source.repo}.`,
     "",
     "If this repository is private, use standard git authentication:",
-    `  recipes add git@github.com:${source.owner}/${source.repo}.git`,
+    `  pi-recipes install git@github.com:${source.owner}/${source.repo}.git`,
     "",
     "For CI or noninteractive installs, set GITHUB_TOKEN or GH_TOKEN:",
-    `  GITHUB_TOKEN=... recipes add github:${source.owner}/${source.repo}`,
+    `  GITHUB_TOKEN=... pi-recipes install github:${source.owner}/${source.repo}`,
   ].join("\n");
 }
 
@@ -583,7 +583,7 @@ export async function addRecipe(
   }
 
   const path = recipeDirectoryForSource(source, storeDir);
-  const manifest = readRecipePackageManifest(path);
+  const manifest = readPiPackageManifest(path);
   const validation = validatePiPackageManifest(manifest);
   const errors = validation.findings.filter((finding) => finding.severity === "error");
   if (errors.length > 0) {

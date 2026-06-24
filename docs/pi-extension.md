@@ -1,17 +1,27 @@
 # Pi Recipe Extension
 
-The Pi recipe extension is the first harness for neutral recipes. It resolves a
-recipe directory, selects a recipe agent, and maps recipe resources into the
-live Pi session.
-
-The extension is Pi-specific. The recipe package and `recipes` CLI are not.
+The Pi recipe extension resolves a recipe directory, selects a recipe agent, and
+maps recipe resources into the live Pi session.
 
 ## Install
 
-Install the package into Pi:
+Install the recipe tooling:
 
 ```bash
-pi install npm:@tfidfwastaken/local-session-tools@testing
+npm install -g @tfidfwastaken/local-session-tools
+```
+
+`pi-recipes install ...` automatically installs this companion extension into
+Pi when it is missing. To set it up explicitly:
+
+```bash
+pi-recipes setup
+```
+
+Manual Pi installation is still available:
+
+```bash
+pi install npm:@tfidfwastaken/local-session-tools
 ```
 
 For a local clone:
@@ -35,7 +45,7 @@ pi --recipe /path/to/recipe
 Launch with an installed recipe:
 
 ```bash
-recipes add github:owner/repo
+pi-recipes install github:owner/repo
 pi --recipe owner/repo
 pi --recipe recipe-name
 ```
@@ -61,7 +71,7 @@ PI_RECIPE_DIR=recipe-name PI_AGENT_NAME=reviewer pi
 - an installed canonical source id
 - a repository slug such as `repo`
 
-The extension resolves installed recipes from the neutral `recipes` store. Set
+The extension resolves installed recipes from the `pi-recipes` store. Set
 `AGENT_RECIPES_HOME` if Pi should use a non-default store.
 
 ## Launch Flow
@@ -70,8 +80,7 @@ On session startup, the extension:
 
 1. Reads `--recipe` or `PI_RECIPE_DIR`.
 2. Resolves the value as a local directory or installed recipe.
-3. Loads the recipe manifest from `recipe.yaml`, with a legacy fallback for
-   package.json `pi` or `recipe` manifest blocks.
+3. Loads the recipe manifest from `package.json`.
 4. Selects the active recipe agent.
 5. Loads declared recipe extensions.
 6. Sets the Pi session name.
@@ -84,32 +93,36 @@ The current Pi working directory remains the user's project workspace. The
 recipe directory is available in runtime context, but it does not become the
 workspace.
 
-## Manifest Files
+## Manifest File
 
-`recipe.yaml` is the recipe manifest. It tells Pi what recipe this is and which
-recipe-owned files should be loaded:
+`package.json` is the recipe manifest. Top-level package fields tell Pi what
+recipe this is:
 
 - `name`, `version`, and `description`
+
+The `pi` block tells Pi which recipe-owned files should be loaded:
+
 - agent definition globs
 - extension globs
 - skill, prompt, and theme paths
 
-`package.json` is not the recipe manifest for new recipes. It is optional Node
-package metadata for extension dependencies. Add it when TypeScript extensions
-under `extensions/` import npm packages that are not provided by Pi itself.
+The same file also carries normal Node package metadata for extension
+dependencies. Add `dependencies`, `peerDependencies`, `packageManager`, and a
+lockfile when TypeScript extensions under `extensions/` import npm packages.
 
-This separation keeps the recipe format portable. `recipe.yaml` stays focused
-on harness-neutral recipe resources, while `package.json` stays focused on
-Node's dependency installer and module resolver.
+Minimal example:
 
-When both files exist, Pi reads recipe resources from `recipe.yaml` and resolves
-extension imports through dependencies installed from `package.json`. The two
-names can be different: `recipe.yaml` `name` is the recipe identifier, while
-`package.json` `name` is npm metadata.
-
-For compatibility with older Pi recipes, this extension still accepts
-`package.json` `pi` or `recipe` blocks when `recipe.yaml` is absent. New recipes
-should prefer `recipe.yaml`; keep `package.json` for dependencies.
+```json
+{
+  "name": "my-recipe",
+  "version": "0.1.0",
+  "description": "A short description of what this recipe is for.",
+  "type": "module",
+  "pi": {
+    "agents": ["agents/*.yaml"]
+  }
+}
+```
 
 ## Agent Selection
 
@@ -209,6 +222,7 @@ When a recipe is active, the extension registers:
 
 ```text
 /recipe
+/recipe reload
 ```
 
 `/recipe` shows:
@@ -220,6 +234,10 @@ When a recipe is active, the extension registers:
 - active recipe tools
 - recipe directory
 - project workspace
+
+`/recipe reload` asks Pi to reload extensions, skills, prompts, and themes, and
+clears the cached recipe manifest and agent state first. Use it after editing a
+local recipe's `package.json`, agent files, resources, or extension code.
 
 ## Resources
 
@@ -271,29 +289,32 @@ session.
 
 Recipes can declare Pi extensions:
 
-```yaml
-extensions:
-  - extensions/*.ts
-  - extensions/*/index.ts
+```json
+{
+  "pi": {
+    "extensions": ["extensions/*.ts", "extensions/*/index.ts"]
+  }
+}
 ```
 
 Extensions are loaded during `session_start`. If one extension fails, Pi shows a
-warning and continues loading the rest of the recipe.
+warning and continues loading the rest of the recipe. During local recipe
+development, run `/recipe reload` after editing extension files to reload them
+without restarting Pi.
 
 Extension glob branches are optional, so a recipe can declare both flat and
 nested extension layouts without failing when one branch has no matches.
 
 Extensions are loaded with module resolution rooted at the recipe directory. If
 an extension imports a third-party package, declare that dependency in the
-recipe's optional `package.json` and install/register the recipe with
-`recipes add` so dependencies are installed into the recipe directory. For
-remote Git recipes, commit a lockfile with the recipe.
+recipe's `package.json` and install/register the recipe with `pi-recipes install`
+so dependencies are installed into the recipe directory. For remote Git recipes,
+commit a lockfile with the recipe.
 
 Example layout:
 
 ```text
 my-recipe/
-  recipe.yaml
   package.json
   package-lock.json
   agents/
@@ -306,8 +327,13 @@ Example dependency manifest:
 
 ```json
 {
-  "private": true,
+  "name": "hello-tools",
+  "version": "0.1.0",
   "type": "module",
+  "pi": {
+    "agents": ["agents/*.yaml"],
+    "extensions": ["extensions/*.ts"]
+  },
   "dependencies": {
     "zod": "^4.0.0"
   },
@@ -323,11 +349,11 @@ Generate the lockfile from inside the recipe directory:
 ```bash
 cd my-recipe
 npm install --package-lock-only
-recipes add .
+pi-recipes install .
 ```
 
-For a remote Git recipe, commit `recipe.yaml`, `package.json`, and the lockfile.
-When users run `recipes add github:owner/repo`, the CLI installs production
+For a remote Git recipe, commit `package.json` and the lockfile.
+When users run `pi-recipes install github:owner/repo`, the CLI installs production
 dependencies into that cloned recipe before Pi loads extensions.
 
 Imports of Pi runtime packages such as `@earendil-works/pi-coding-agent`,
@@ -367,11 +393,11 @@ export default extension;
 If Pi cannot find an installed recipe, check the store:
 
 ```bash
-recipes list
-recipes path recipe-name
+pi-recipes list
+pi-recipes path recipe-name
 ```
 
-If Pi and `recipes` are using different stores, set:
+If Pi and `pi-recipes` are using different stores, set:
 
 ```bash
 AGENT_RECIPES_HOME=/path/to/store pi --recipe recipe-name
@@ -385,5 +411,5 @@ that registers the tool is declared in the recipe manifest and loads without a
 warning.
 
 If an extension fails with `Cannot find module`, confirm the dependency is in
-the recipe `package.json`, the recipe was installed with `recipes add`, and the
+the recipe `package.json`, the recipe was installed with `pi-recipes install`, and the
 dependency was written to the recipe's `node_modules`.

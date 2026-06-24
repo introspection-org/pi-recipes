@@ -1,6 +1,6 @@
 {
   "name": "@tfidfwastaken/local-session-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local session tooling for package-based workflows.",
   "license": "UNLICENSED",
   "type": "module",
@@ -13,6 +13,8 @@
     "dist/index.js",
     "dist/pi-extension.d.ts",
     "dist/pi-extension.js",
+    "dist/recipe-dev.d.ts",
+    "dist/recipe-dev.js",
     "dist/recipe-agent.d.ts",
     "dist/recipe-agent.js",
     "dist/recipe-package.d.ts",
@@ -24,12 +26,11 @@
     "package.json"
   ],
   "bin": {
-    "recipe": "dist/cli.js",
-    "recipes": "dist/cli.js"
+    "pi-recipes": "dist/cli.js"
   },
   "publishConfig": {
     "access": "public",
-    "tag": "testing"
+    "tag": "latest"
   },
   "exports": {
     ".": {
@@ -51,7 +52,7 @@
     ]
   },
   "scripts": {
-    "build": "rm -rf dist && tsc",
+    "build": "rm -rf dist && tsc && chmod +x dist/cli.js",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",

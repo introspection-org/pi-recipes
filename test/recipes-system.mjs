@@ -103,11 +103,20 @@ function readYamlFile(path) {
   return parseYaml(readFileSync(path, "utf8")) ?? {};
 }
 
-function hasRecipeManifest(dir) {
-  return (
-    existsSync(join(dir, "recipe.yaml")) ||
-    existsSync(join(dir, "recipe.yml"))
-  );
+function hasPiManifest(dir) {
+  const packagePath = join(dir, "package.json");
+  if (!existsSync(packagePath)) return false;
+  try {
+    const manifest = readJson(readFileSync(packagePath, "utf8"));
+    return Boolean(
+      manifest.pi &&
+        typeof manifest.pi === "object" &&
+        !Array.isArray(manifest.pi) &&
+        Object.keys(manifest.pi).length > 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 function findRecipeDirs(repoDir) {
@@ -115,7 +124,7 @@ function findRecipeDirs(repoDir) {
   function visit(dir) {
     const parts = relative(repoDir, dir).split("/");
     if (parts.includes(".git") || parts.includes("node_modules") || parts.includes("dist")) return;
-    if (hasRecipeManifest(dir)) dirs.add(dir);
+    if (hasPiManifest(dir)) dirs.add(dir);
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) visit(full);
@@ -126,14 +135,12 @@ function findRecipeDirs(repoDir) {
 }
 
 function readManifest(recipeDir) {
-  const recipeYaml = ["recipe.yaml", "recipe.yml"].map((name) => join(recipeDir, name)).find(existsSync);
-  if (recipeYaml) return readYamlFile(recipeYaml);
   return readJson(readFileSync(join(recipeDir, "package.json"), "utf8"));
 }
 
 function recipeConfig(recipeDir) {
   const manifest = readManifest(recipeDir);
-  return manifest.recipe ?? manifest.pi ?? manifest;
+  return manifest.pi ?? {};
 }
 
 function manifestName(recipeDir) {
@@ -539,7 +546,7 @@ async function main() {
     for (const recipe of recipes) {
       console.log(`\n=== ${recipe.source}`);
       console.log(`Installing ${recipe.source}`);
-      const installed = readJson((await run("node", ["dist/cli.js", "add", recipe.source, "--store", storeDir, "--json"], {
+      const installed = readJson((await run("node", ["dist/cli.js", "install", recipe.source, "--store", storeDir, "--json"], {
         timeout: 180_000,
       })).stdout);
       assert(existsSync(installed.path), `Installed path does not exist: ${installed.path}`);

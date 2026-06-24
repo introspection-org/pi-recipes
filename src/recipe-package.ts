@@ -1,6 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { parse } from "yaml";
 
 export interface RecipePackageResources {
   agents: string[];
@@ -35,18 +34,10 @@ export interface RecipeValidationReport {
   findings: RecipeValidationFinding[];
 }
 
-type RecipeYaml = {
-  name?: unknown;
-  version?: unknown;
-  description?: unknown;
-  resources?: Partial<Record<keyof RecipePackageResources, unknown>>;
-} & Partial<Record<keyof RecipePackageResources, unknown>>;
-
 type PackageJson = {
   name?: unknown;
   version?: unknown;
   description?: unknown;
-  recipe?: unknown;
   pi?: unknown;
 };
 
@@ -184,21 +175,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function readYamlFile(path: string): RecipeYaml {
-  try {
-    const parsed = parse(readFileSync(path, "utf8")) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as RecipeYaml)
-      : {};
-  } catch (err) {
-    throw new RecipePackageError(
-      `Recipe package at ${path} has invalid YAML: ${
-        err instanceof Error ? err.message : String(err)
-      }`
-    );
-  }
-}
-
 function readJsonFile(path: string): PackageJson {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
@@ -218,80 +194,42 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function recipeYamlPath(packageDir: string): string | undefined {
-  const yaml = join(packageDir, "recipe.yaml");
-  if (existsSync(yaml)) return yaml;
-  const yml = join(packageDir, "recipe.yml");
-  if (existsSync(yml)) return yml;
-  return undefined;
-}
-
 function packageJsonPath(packageDir: string): string | undefined {
   const packagePath = join(packageDir, "package.json");
   return existsSync(packagePath) ? packagePath : undefined;
 }
 
-function packageJsonManifestBlock(raw: PackageJson): Record<string, unknown> | undefined {
-  const recipe = asRecord(raw.recipe);
-  if (Object.keys(recipe).length > 0) return recipe;
+function piPackageManifestBlock(raw: PackageJson): Record<string, unknown> | undefined {
   const pi = asRecord(raw.pi);
   return Object.keys(pi).length > 0 ? pi : undefined;
 }
 
-function legacyPackageManifestPath(packageDir: string): string | undefined {
+function piPackageManifestPath(packageDir: string): string | undefined {
   const manifestPath = packageJsonPath(packageDir);
   if (!manifestPath) return undefined;
   const raw = readJsonFile(manifestPath);
-  return packageJsonManifestBlock(raw) ? manifestPath : undefined;
-}
-
-export function readRecipePackageManifest(packageDir: string): RecipePackageManifest {
-  const manifestPath = recipeYamlPath(packageDir);
-  if (manifestPath) {
-    const raw = readYamlFile(manifestPath);
-    const resources = emptyResources();
-    for (const key of RESOURCE_KEYS) {
-      resources[key] = stringArray(raw.resources?.[key] ?? raw[key]).map(
-        normalizeResourcePath
-      );
-    }
-
-    return {
-      name: stringValue(raw.name) ?? "local",
-      version: stringValue(raw.version) ?? "0.0.0",
-      ...(stringValue(raw.description) ? { description: stringValue(raw.description) } : {}),
-      path: packageDir,
-      resources,
-    };
-  }
-
-  throw new RecipePackageError(
-    `Recipe package at ${packageDir} is missing recipe.yaml`
-  );
+  return piPackageManifestBlock(raw) ? manifestPath : undefined;
 }
 
 export function readPiPackageManifest(packageDir: string): RecipePackageManifest {
-  const manifestPath = recipeYamlPath(packageDir);
-  if (manifestPath) return readRecipePackageManifest(packageDir);
-
   const packagePath = packageJsonPath(packageDir);
   if (!packagePath) {
     throw new RecipePackageError(
-      `Recipe package at ${packageDir} is missing recipe.yaml or legacy package.json recipe/pi manifest`
+      `Recipe package at ${packageDir} is missing package.json with a pi manifest`
     );
   }
 
   const raw = readJsonFile(packagePath);
-  const recipe = packageJsonManifestBlock(raw);
-  if (!recipe) {
+  const pi = piPackageManifestBlock(raw);
+  if (!pi) {
     throw new RecipePackageError(
-      `Recipe package at ${packageDir} is missing recipe.yaml or legacy package.json recipe/pi manifest`
+      `Recipe package at ${packageDir} is missing package.json pi manifest`
     );
   }
 
   const resources = emptyResources();
   for (const key of RESOURCE_KEYS) {
-    resources[key] = stringArray(recipe[key]).map(normalizeResourcePath);
+    resources[key] = stringArray(pi[key]).map(normalizeResourcePath);
   }
 
   return {
@@ -380,12 +318,12 @@ export function validatePiPackageManifest(
       finding("error", "package.name_missing", "Package is missing name")
     );
   }
-  if (!recipeYamlPath(pkg.path) && !legacyPackageManifestPath(pkg.path)) {
+  if (!piPackageManifestPath(pkg.path)) {
     findings.push(
       finding(
         "error",
         "package.manifest_missing",
-        "Package is missing recipe.yaml or legacy package.json recipe/pi manifest",
+        "Package is missing package.json with a pi manifest",
         pkg.name
       )
     );

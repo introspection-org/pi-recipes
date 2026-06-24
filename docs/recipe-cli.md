@@ -1,16 +1,27 @@
 # Recipe CLI
 
-`recipes` is the neutral recipe package manager. It installs, registers, lists,
-removes, and resolves recipe folders without depending on Pi-specific state.
-Pi is currently the first harness that consumes the store, but the store format
-and package shape are intentionally harness-neutral.
+`pi-recipes` is the Pi recipe manager. It installs, registers, lists, removes,
+validates, scaffolds, and publishes recipe folders for Pi.
 
 ## Install
 
-Install this package into the environment where you run Pi:
+Install the recipe tooling into the environment where you run Pi:
 
 ```bash
-pi install npm:@tfidfwastaken/local-session-tools@testing
+npm install -g @tfidfwastaken/local-session-tools
+```
+
+The first `pi-recipes install ...` run checks whether the companion Pi extension
+is installed. If it is missing, `pi-recipes` runs:
+
+```bash
+pi install npm:@tfidfwastaken/local-session-tools
+```
+
+You can run setup explicitly:
+
+```bash
+pi-recipes setup
 ```
 
 For local development:
@@ -19,12 +30,13 @@ For local development:
 pnpm install
 pnpm build
 pnpm link --global
+pi-recipes setup "$(pwd)" --force
 ```
 
-The CLI binary is `recipes`:
+The CLI binary is `pi-recipes`:
 
 ```bash
-recipes --help
+pi-recipes --help
 ```
 
 ## Store
@@ -38,38 +50,55 @@ Recipes are tracked in a local store:
 Use a different store with either:
 
 ```bash
-AGENT_RECIPES_HOME=/path/to/store recipes list
-recipes list --store /path/to/store
+AGENT_RECIPES_HOME=/path/to/store pi-recipes list
+pi-recipes list --store /path/to/store
 ```
 
 Remote Git recipes are cloned into the store. Local recipes are registered by
 path, so edits to the local directory are immediately visible to the harness.
 If a recipe declares extension runtime dependencies in `package.json`,
-`recipes add` installs them in that recipe directory.
+`pi-recipes install` installs them in that recipe directory.
 
 ## Create a Recipe
 
-A recipe is a directory with a manifest and one or more agent definitions.
+Create a starter recipe with:
 
-Minimal layout:
+```bash
+pi-recipes init ./my-recipe
+```
+
+This writes a working recipe skeleton:
 
 ```text
 my-recipe/
-  recipe.yaml
+  package.json
+  README.md
   SYSTEM.md
   agents/
     agent.yaml
 ```
 
-Minimal `recipe.yaml`:
+Use `--name` when the directory name is not the recipe identifier you want:
 
-```yaml
-name: my-recipe
-version: 0.1.0
-description: A short description of what this recipe is for.
+```bash
+pi-recipes init ./recipes/code-review --name code-review
+```
 
-agents:
-  - agents/*.yaml
+`pi-recipes init` refuses to overwrite existing scaffold files unless `--force` is
+provided. After generating the starter, edit the files to fit your workflow.
+
+Minimal `package.json`:
+
+```json
+{
+  "name": "my-recipe",
+  "version": "0.1.0",
+  "description": "A short description of what this recipe is for.",
+  "type": "module",
+  "pi": {
+    "agents": ["agents/*.yaml"]
+  }
+}
 ```
 
 Minimal `agents/agent.yaml`:
@@ -105,60 +134,75 @@ Objects such as `model` and `extensions` merge by key, while arrays such as
 `SYSTEM.md` is optional. When present, Pi uses it as the recipe-level system
 prompt before applying the selected agent's `system_instructions`.
 
-## `recipe.yaml` and `package.json`
+## Develop a Recipe
 
-New recipes should use `recipe.yaml` as the recipe manifest. It describes the
-portable recipe boundary:
+Validate the current recipe directory:
 
-- recipe identity: `name`, `version`, and `description`
-- recipe-owned resources: agents, extensions, skills, prompts, and themes
-- resource globs that are resolved relative to the recipe directory
+```bash
+pi-recipes doctor .
+```
 
-`package.json` has a different job. It is the Node package manifest for the
-recipe's extension runtime. Add it only when files under `extensions/` import
-external npm packages, or when you need package-manager metadata such as
-`packageManager`.
+`doctor` checks the manifest, resolves declared resources, catches missing
+required agent globs, and warns when no default agent can be inferred.
 
-The two files are intentionally separate because recipe metadata should stay
-harness-neutral and package-manager-neutral. A recipe can be used by Pi today
-and another harness later without pretending to be an npm package. At the same
-time, TypeScript extensions are JavaScript modules, so they still need normal
-Node dependency metadata when they import third-party code.
+Register the local recipe:
 
-When both files exist, keep responsibilities split:
+```bash
+pi-recipes install ./my-recipe
+```
 
-- Put recipe name, recipe version, agent globs, extension globs, skills,
-  prompts, and themes in `recipe.yaml`.
-- Put `dependencies`, `optionalDependencies`, `peerDependencies`, `devDependencies`,
-  `packageManager`, and lockfile-related npm metadata in `package.json`.
-- Do not duplicate the recipe manifest into `package.json` for new recipes.
+Inspect what was registered:
 
-The recipe `name` in `recipe.yaml` is the identifier users pass to
-`pi --recipe` and `recipes path`. A `package.json` `name`, when present, is npm
-metadata for dependency installation and does not define the recipe identity.
+```bash
+pi-recipes list
+pi-recipes path my-recipe
+pi-recipes doctor my-recipe
+```
 
-Older Pi recipes may have used `package.json` blocks such as `pi` or `recipe`
-as the recipe manifest. Pi still accepts those legacy blocks for compatibility,
-but the neutral `recipes` manifest reader expects `recipe.yaml`. Prefer
-migrating legacy recipes by moving resource declarations into `recipe.yaml` and
-leaving `package.json` for extension dependencies.
+Run it in Pi:
+
+```bash
+pi --recipe my-recipe
+pi --recipe my-recipe --agent agent
+```
+
+## `package.json` and `pi`
+
+Recipes use `package.json` as their manifest. Top-level package fields describe
+the recipe identity:
+
+- `name`: the identifier users pass to `pi --recipe` and `pi-recipes path`
+- `version`: the recipe version shown in Pi sessions
+- `description`: a short summary for humans
+
+The `pi` block declares recipe-owned resources:
+
+- `agents`: agent definition globs
+- `extensions`: TypeScript extension globs
+- `skills`: skill paths or globs
+- `prompts`: prompt paths or globs
+- `themes`: theme paths or globs
+
+Normal package-manager fields such as `dependencies`, `optionalDependencies`,
+`peerDependencies`, `devDependencies`, `packageManager`, and lockfile metadata
+live in the same `package.json`. This keeps recipe discovery, publishing, and
+extension dependency installation on one obvious path.
 
 ## Resource Folders
 
-Declare resources in `recipe.yaml` when you want explicit package boundaries:
+Declare resources in `package.json#pi` when you want explicit package
+boundaries:
 
-```yaml
-agents:
-  - agents/*.yaml
-extensions:
-  - extensions/*.ts
-  - extensions/*/index.ts
-skills:
-  - skills/**/SKILL.md
-prompts:
-  - prompts
-themes:
-  - themes/*.json
+```json
+{
+  "pi": {
+    "agents": ["agents/*.yaml"],
+    "extensions": ["extensions/*.ts", "extensions/*/index.ts"],
+    "skills": ["skills/**/SKILL.md"],
+    "prompts": ["prompts"],
+    "themes": ["themes/*.json"]
+  }
+}
 ```
 
 When entries are omitted, conventional folders are used if present:
@@ -172,29 +216,15 @@ When entries are omitted, conventional folders are used if present:
 
 ## Extension Dependencies
 
-Recipes that declare TypeScript extensions can add a `package.json` next to
-`recipe.yaml` when those extensions need third-party runtime dependencies:
+Recipes that declare TypeScript extensions add runtime dependencies to the same
+`package.json`:
 
 ```text
 my-recipe/
-  recipe.yaml
   package.json
   package-lock.json
   extensions/
     tools.ts
-```
-
-Example `recipe.yaml`:
-
-```yaml
-name: zod-tools
-version: 0.1.0
-description: Recipe with an extension that validates inputs with zod.
-
-agents:
-  - agents/*.yaml
-extensions:
-  - extensions/*.ts
 ```
 
 Example extension:
@@ -228,8 +258,14 @@ Example `package.json` for that extension:
 
 ```json
 {
-  "private": true,
+  "name": "zod-tools",
+  "version": "0.1.0",
+  "description": "Recipe with an extension that validates inputs with zod.",
   "type": "module",
+  "pi": {
+    "agents": ["agents/*.yaml"],
+    "extensions": ["extensions/*.ts"]
+  },
   "dependencies": {
     "zod": "^4.0.0"
   },
@@ -250,10 +286,10 @@ npm install --package-lock-only
 Then register or install the recipe:
 
 ```bash
-recipes add .
+pi-recipes install .
 ```
 
-`recipes add` installs production dependencies into the recipe directory so
+`pi-recipes install` installs production dependencies into the recipe directory so
 extension imports resolve from that recipe. For local recipes, this modifies the
 local recipe directory. For remote Git recipes, dependencies are installed into
 the cloned recipe cache.
@@ -266,7 +302,7 @@ also commit a lockfile:
 - `pnpm-lock.yaml`
 - `yarn.lock`
 
-`recipes add` installs production dependencies with lifecycle scripts disabled:
+`pi-recipes install` installs production dependencies with lifecycle scripts disabled:
 
 - npm: `npm ci --omit=dev --ignore-scripts`
 - pnpm: `pnpm install --prod --frozen-lockfile --ignore-scripts`
@@ -278,9 +314,14 @@ matching lockfile:
 
 ```json
 {
-  "private": true,
+  "name": "zod-tools",
+  "version": "0.1.0",
   "type": "module",
   "packageManager": "pnpm@10.0.0",
+  "pi": {
+    "agents": ["agents/*.yaml"],
+    "extensions": ["extensions/*.ts"]
+  },
   "dependencies": {
     "zod": "^4.0.0"
   }
@@ -294,91 +335,62 @@ installation so recipe extensions share the running Pi runtime.
 
 Use `devDependencies` for packages needed only while developing the recipe, such
 as test runners or local build tools. They are not installed when a remote
-recipe is added for runtime use.
+recipe is installed for runtime use.
 
-## Check Locally
-
-Validate the current recipe directory:
-
-```bash
-recipes doctor .
-```
-
-Register the local recipe:
-
-```bash
-recipes add ./my-recipe
-```
-
-Inspect what was registered:
-
-```bash
-recipes list
-recipes path my-recipe
-recipes doctor my-recipe
-```
-
-Run it in Pi:
-
-```bash
-pi --recipe my-recipe
-pi --recipe my-recipe --agent agent
-```
-
-## Add Recipes
+## Install Recipes
 
 Install from a local directory:
 
 ```bash
-recipes add ./my-recipe
+pi-recipes install ./my-recipe
 ```
 
 Install from GitHub shorthand:
 
 ```bash
-recipes add github:owner/repo
-recipes add github:owner/repo/path/to/recipe
-recipes add owner/repo
+pi-recipes install github:owner/repo
+pi-recipes install github:owner/repo/path/to/recipe
+pi-recipes install owner/repo
 ```
 
 Install a pinned ref:
 
 ```bash
-recipes add github:owner/repo#v1.0.0
-recipes add github:owner/repo/path/to/recipe#v1.0.0
+pi-recipes install github:owner/repo#v1.0.0
+pi-recipes install github:owner/repo/path/to/recipe#v1.0.0
 ```
 
 Install from explicit Git URLs:
 
 ```bash
-recipes add git@github.com:owner/private-recipe.git
-recipes add git+https://github.com/owner/recipe.git#v1.0.0
-recipes add file:///path/to/recipe.git#v1.0.0
+pi-recipes install git@github.com:owner/private-recipe.git
+pi-recipes install git+https://github.com/owner/recipe.git#v1.0.0
+pi-recipes install file:///path/to/recipe.git#v1.0.0
 ```
 
 Re-clone an existing remote source:
 
 ```bash
-recipes add github:owner/repo --force
+pi-recipes install github:owner/repo --force
 ```
 
 Print machine-readable output:
 
 ```bash
-recipes add github:owner/repo --json
-recipes list --json
-recipes doctor my-recipe --json
+pi-recipes install github:owner/repo --json
+pi-recipes list --json
+pi-recipes doctor my-recipe --json
 ```
 
 ## Resolve Recipes
 
-`recipes path <identifier>` resolves an installed recipe directory:
+`pi-recipes path <identifier>` resolves an installed recipe directory:
 
 ```bash
-recipes path my-recipe
-recipes path github:owner/repo
-recipes path owner/repo
-recipes path repo
+pi-recipes path my-recipe
+pi-recipes path github:owner/repo
+pi-recipes path owner/repo
+pi-recipes path repo
 ```
 
 Identifiers can match:
@@ -396,23 +408,33 @@ The Pi extension uses the same resolution rules for `--recipe`.
 Remove a recipe record from the store:
 
 ```bash
-recipes remove my-recipe
-recipes rm github:owner/repo
+pi-recipes remove my-recipe
+pi-recipes rm github:owner/repo
 ```
 
 This removes the store record. Remote clone contents may remain in the store
-cache and can be reused by a later add unless `--force` is used.
+cache and can be reused by a later install unless `--force` is used.
 
 ## Publish Recipes
 
 Publishing does not require a recipe registry.
+
+Before sharing, ask the CLI for the publish checklist and install locators:
+
+```bash
+pi-recipes publish ./my-recipe
+```
+
+`pi-recipes publish` runs the same development validation as `doctor`, then prints
+the files to commit and example `pi-recipes install` commands for public, tagged, and
+SSH installs.
 
 For a standalone public recipe:
 
 ```bash
 mkdir my-recipe
 cd my-recipe
-# add recipe.yaml, SYSTEM.md, agents/, skills/, extensions/ as needed
+# add package.json, SYSTEM.md, agents/, skills/, extensions/ as needed
 git init
 git add .
 git commit -m "initial recipe"
@@ -422,20 +444,20 @@ gh repo create owner/my-recipe --private=false --source . --push
 Users install it with:
 
 ```bash
-recipes add github:owner/my-recipe
+pi-recipes install github:owner/my-recipe
 ```
 
 For a private recipe, use normal GitHub access control. Users can install via
 SSH:
 
 ```bash
-recipes add git@github.com:owner/private-recipe.git
+pi-recipes install git@github.com:owner/private-recipe.git
 ```
 
 For CI or noninteractive GitHub installs, set a token:
 
 ```bash
-GITHUB_TOKEN=... recipes add github:owner/private-recipe
+GITHUB_TOKEN=... pi-recipes install github:owner/private-recipe
 ```
 
 For reproducible releases, tag the Git repository and tell users to install the
@@ -444,7 +466,7 @@ tag:
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
-recipes add github:owner/my-recipe#v1.0.0
+pi-recipes install github:owner/my-recipe#v1.0.0
 ```
 
 For monorepos or recipe collections, put each recipe in a subdirectory:
@@ -452,16 +474,16 @@ For monorepos or recipe collections, put each recipe in a subdirectory:
 ```text
 recipes/
   code-review/
-    recipe.yaml
+    package.json
   research/
-    recipe.yaml
+    package.json
 ```
 
 Install a subdirectory recipe with:
 
 ```bash
-recipes add github:owner/repo/recipes/code-review
-recipes add github:owner/repo/recipes/research#v1.0.0
+pi-recipes install github:owner/repo/recipes/code-review
+pi-recipes install github:owner/repo/recipes/research#v1.0.0
 ```
 
 ## Troubleshooting
@@ -470,18 +492,18 @@ If a private GitHub recipe fails to install with `github:owner/repo`, use SSH or
 set a token:
 
 ```bash
-recipes add git@github.com:owner/repo.git
-GITHUB_TOKEN=... recipes add github:owner/repo
+pi-recipes install git@github.com:owner/repo.git
+GITHUB_TOKEN=... pi-recipes install github:owner/repo
 ```
 
 If `doctor` reports missing resources, check that glob paths are relative to the
-recipe directory and that direct paths exist. If `recipes add` reports missing
+recipe directory and that direct paths exist. If `pi-recipes install` reports missing
 extension dependency lockfiles, commit the lockfile generated by your package
 manager.
 
 If Pi cannot find a recipe by name, confirm it is in the same store:
 
 ```bash
-recipes list
+pi-recipes list
 AGENT_RECIPES_HOME=/same/store pi --recipe my-recipe
 ```
