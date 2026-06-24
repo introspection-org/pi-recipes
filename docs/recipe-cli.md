@@ -112,6 +112,8 @@ model:
 tools:
   - read
   - bash
+skills: []
+subagents: []
 system_instructions:
   mode: append
   content: |
