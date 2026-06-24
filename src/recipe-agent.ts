@@ -202,7 +202,7 @@ export function loadRecipeAgentDefinitions(
   }
 
   function resolveName(name: string): string {
-    return aliases.get(name) ?? name;
+    return rawDefinitions.has(name) ? name : aliases.get(name) ?? name;
   }
 
   function mergeModel(
@@ -262,6 +262,7 @@ export function loadRecipeAgentDefinitions(
     definitions.set(name, definition);
   }
   for (const [alias, name] of aliases) {
+    if (definitions.has(alias)) continue;
     const definition = definitions.get(name);
     if (definition) definitions.set(alias, definition);
   }
@@ -297,7 +298,7 @@ export function validateResolvedRecipeAgentDefinition(opts: {
   }
 
   function resolveName(name: string): string {
-    return aliases.get(name) ?? name;
+    return rawDefinitions.has(name) ? name : aliases.get(name) ?? name;
   }
 
   function resolvedFieldProvided(
@@ -337,17 +338,62 @@ export function validateResolvedRecipeAgentDefinition(opts: {
   return findings;
 }
 
+function validateRecipeAgentNames(
+  sources: RecipeAgentSource[]
+): RecipeAgentValidationFinding[] {
+  const findings: RecipeAgentValidationFinding[] = [];
+  const explicitNameCounts = new Map<string, number>();
+  const explicitNames = new Set<string>();
+
+  for (const source of sources) {
+    if (!source.explicitName) continue;
+    explicitNames.add(source.definition.name);
+    explicitNameCounts.set(
+      source.definition.name,
+      (explicitNameCounts.get(source.definition.name) ?? 0) + 1
+    );
+  }
+
+  for (const [name, count] of explicitNameCounts) {
+    if (count <= 1) continue;
+    findings.push({
+      agentName: name,
+      field: "name",
+      message: `Recipe agent name "${name}" is declared by multiple files`,
+    });
+  }
+
+  for (const source of sources) {
+    if (
+      source.fallbackName === source.definition.name ||
+      !explicitNames.has(source.fallbackName)
+    ) {
+      continue;
+    }
+    findings.push({
+      agentName: source.definition.name,
+      field: "name",
+      message: `Recipe agent file alias "${source.fallbackName}" conflicts with an explicit agent name`,
+    });
+  }
+
+  return findings;
+}
+
 export function validateRecipeAgentDefinitions(recipeDir: string): RecipeAgentValidationFinding[] {
-  const agents = loadRecipeAgentDefinitions(recipeDir);
-  const agentNames = [...new Set([...agents.values()].map((agent) => agent.name))].sort();
-  return agentNames.flatMap((agentName) =>
-    validateResolvedRecipeAgentDefinition({
-      recipeDir,
-      agentName,
-      requireExplicitName: true,
-      requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
-    })
-  );
+  const sources = readRecipeAgentSources(recipeDir);
+  const agentNames = [...new Set(sources.map((source) => source.definition.name))].sort();
+  return [
+    ...validateRecipeAgentNames(sources),
+    ...agentNames.flatMap((agentName) =>
+      validateResolvedRecipeAgentDefinition({
+        recipeDir,
+        agentName,
+        requireExplicitName: true,
+        requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+      })
+    ),
+  ];
 }
 
 export function resolveRecipeAgentName(opts: {

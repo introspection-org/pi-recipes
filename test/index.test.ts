@@ -24,6 +24,7 @@ import {
   removeRecipe,
   resolveRecipeAgentDefinition,
   resolveRecipeDirectory,
+  validateRecipeAgentDefinitions,
   validateResolvedRecipeAgentDefinition,
   validateRecipeDirectory,
   validatePiPackageManifest,
@@ -405,6 +406,42 @@ describe("recipe package manifest", () => {
 });
 
 describe("recipe agent definitions", () => {
+  it("keeps explicit agent names from being shadowed by filename aliases", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agent-alias-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "alias-agents",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      writeFileSync(join(root, "agents", "agent.yaml"), fullAgentYaml("main"));
+      writeFileSync(join(root, "agents", "main.yaml"), fullAgentYaml("worker"));
+
+      const definitions = loadRecipeAgentDefinitions(root);
+      const resolved = resolveRecipeAgentDefinition({
+        recipeDir: root,
+        agentName: "main",
+      });
+
+      expect(definitions.get("main")?.name).toBe("main");
+      expect(resolved.agent?.name).toBe("main");
+      expect(validateRecipeAgentDefinitions(root)).toEqual(
+        expect.arrayContaining([
+          {
+            agentName: "worker",
+            field: "name",
+            message: 'Recipe agent file alias "main" conflicts with an explicit agent name',
+          },
+        ])
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("resolves variants through agent from inheritance", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agents-"));
     try {
@@ -980,6 +1017,39 @@ describe("recipe store", () => {
       expect(readPiPackageManifest(installed.path).resources.agents).toEqual(["agents/*.yaml"]);
       expect(removeRecipe("recipe", { storeDir })).toBeUndefined();
       expect(removeRecipe("git-review", { storeDir })).toEqual(installed);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reuse fallback clones after a ref checkout failure", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-git-bad-ref-"));
+    const sourceDir = join(root, "source");
+    const bareDir = join(root, "recipe.git");
+    const storeDir = join(root, "store");
+    try {
+      mkdirSync(join(sourceDir, "agents"), { recursive: true });
+      writePiPackageManifest(sourceDir, {
+        name: "bad-ref-review",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      writeFileSync(join(sourceDir, "agents", "agent.yaml"), fullAgentYaml());
+      await execFileAsync("git", ["init"], { cwd: sourceDir });
+      await execFileAsync("git", ["add", "."], { cwd: sourceDir });
+      await execFileAsync(
+        "git",
+        ["-c", "user.name=Recipe Test", "-c", "user.email=recipe@example.com", "commit", "-m", "recipe"],
+        { cwd: sourceDir }
+      );
+      await execFileAsync("git", ["clone", "--bare", sourceDir, bareDir]);
+
+      const source = `file://${bareDir}#missing-ref`;
+      await expect(addRecipe(source, { storeDir })).rejects.toThrow(/missing-ref/);
+      await expect(addRecipe(source, { storeDir })).rejects.toThrow(/missing-ref/);
+      expect(listRecipes({ storeDir })).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

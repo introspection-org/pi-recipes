@@ -669,6 +669,7 @@ async function cloneGitSource(
       await execFileAsync("git", ["clone", url, target], { env: gitEnv.env });
       await execFileAsync("git", ["checkout", source.ref], { cwd: target, env: gitEnv.env });
     } catch (fallbackErr) {
+      rmSync(target, { recursive: true, force: true });
       const message = source.kind === "github"
         ? `${githubAuthHint(source)}\n\nUnderlying git error:\n${gitErrorText(fallbackErr)}`
         : `Could not install git source ${redactUrl(source.input)}.\n\nUnderlying git error:\n${gitErrorText(fallbackErr)}`;
