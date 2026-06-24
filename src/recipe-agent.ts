@@ -49,6 +49,15 @@ export type RequiredResolvedRecipeAgentField =
   | "subagents"
   | "systemInstructions";
 
+export const REQUIRED_RECIPE_AGENT_FIELDS: RequiredResolvedRecipeAgentField[] = [
+  "model.name",
+  "model.thinkingLevel",
+  "tools",
+  "skills",
+  "subagents",
+  "systemInstructions",
+];
+
 export interface RecipeAgentValidationFinding {
   agentName: string;
   field: "name" | RequiredResolvedRecipeAgentField;
@@ -326,6 +335,19 @@ export function validateResolvedRecipeAgentDefinition(opts: {
   }
 
   return findings;
+}
+
+export function validateRecipeAgentDefinitions(recipeDir: string): RecipeAgentValidationFinding[] {
+  const agents = loadRecipeAgentDefinitions(recipeDir);
+  const agentNames = [...new Set([...agents.values()].map((agent) => agent.name))].sort();
+  return agentNames.flatMap((agentName) =>
+    validateResolvedRecipeAgentDefinition({
+      recipeDir,
+      agentName,
+      requireExplicitName: true,
+      requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+    })
+  );
 }
 
 export function resolveRecipeAgentName(opts: {

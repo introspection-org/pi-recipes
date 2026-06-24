@@ -1,4 +1,14 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -11,6 +21,9 @@ import {
 } from "./recipe-package.js";
 
 const execFileAsync = promisify(execFile);
+const STORE_LOCK_STALE_MS = 30_000;
+const STORE_LOCK_TIMEOUT_MS = 10_000;
+const STORE_LOCK_RETRY_MS = 25;
 
 type PackageManager = "npm" | "pnpm" | "yarn";
 
@@ -68,12 +81,78 @@ interface LocalRecipeSource {
 
 export type RecipeSource = GithubRecipeSource | GitRecipeSource | LocalRecipeSource;
 
+function newDefaultRecipeStoreDir(): string {
+  return join(homedir(), ".pi", "recipes");
+}
+
 export function defaultRecipeStoreDir(env: NodeJS.ProcessEnv = process.env): string {
-  return env.AGENT_RECIPES_HOME ?? join(homedir(), ".agent-recipes");
+  return env.PI_RECIPES_HOME ?? newDefaultRecipeStoreDir();
 }
 
 export function recipeStoreFilePath(storeDir = defaultRecipeStoreDir()): string {
   return join(storeDir, "recipes.json");
+}
+
+function recipeStoreLockPath(storeDir: string): string {
+  return `${recipeStoreFilePath(storeDir)}.lock`;
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function removeStaleRecipeStoreLock(lockPath: string): boolean {
+  try {
+    const stats = statSync(lockPath);
+    if (Date.now() - stats.mtimeMs < STORE_LOCK_STALE_MS) return false;
+    rmSync(lockPath, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireRecipeStoreLock(storeDir: string): () => void {
+  const lockPath = recipeStoreLockPath(storeDir);
+  const startedAt = Date.now();
+  mkdirSync(dirname(lockPath), { recursive: true });
+
+  while (true) {
+    try {
+      mkdirSync(lockPath);
+      try {
+        writeFileSync(
+          join(lockPath, "owner"),
+          JSON.stringify({
+            pid: process.pid,
+            createdAt: new Date().toISOString(),
+          })
+        );
+      } catch (err) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw err;
+      }
+      return () => {
+        rmSync(lockPath, { recursive: true, force: true });
+      };
+    } catch (err) {
+      const code = err && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
+      if (code !== "EEXIST") throw err;
+      if (!removeStaleRecipeStoreLock(lockPath) && Date.now() - startedAt > STORE_LOCK_TIMEOUT_MS) {
+        throw new Error(`Timed out waiting for recipe store lock: ${lockPath}`);
+      }
+      sleepSync(STORE_LOCK_RETRY_MS);
+    }
+  }
+}
+
+function withRecipeStoreLock<T>(storeDir: string, fn: () => T): T {
+  const release = acquireRecipeStoreLock(storeDir);
+  try {
+    return fn();
+  } finally {
+    release();
+  }
 }
 
 function sanitizeSegment(value: string): string {
@@ -341,14 +420,21 @@ function copyRecipeDirectory(
 
 export function readRecipeStore(storeDir = defaultRecipeStoreDir()): RecipeStoreFile {
   const path = recipeStoreFilePath(storeDir);
-  if (!existsSync(path)) return { version: 1, recipes: [] };
-  return JSON.parse(readFileSync(path, "utf8")) as RecipeStoreFile;
+  if (existsSync(path)) {
+    return JSON.parse(readFileSync(path, "utf8")) as RecipeStoreFile;
+  }
+  return { version: 1, recipes: [] };
 }
 
 function writeRecipeStore(store: RecipeStoreFile, storeDir: string): void {
   const path = recipeStoreFilePath(storeDir);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`);
+  const tempPath = join(
+    dirname(path),
+    `.${basename(path)}.${process.pid}.${Date.now()}.tmp`
+  );
+  writeFileSync(tempPath, `${JSON.stringify(store, null, 2)}\n`);
+  renameSync(tempPath, path);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -634,12 +720,14 @@ export async function addRecipe(
 
   const id = recipeSourceId(source);
   const installed = installedRecipeFromManifest(id, input, path, manifest);
-  const store = readRecipeStore(storeDir);
-  store.recipes = [
-    ...store.recipes.filter((recipe) => recipe.id !== id && recipe.name !== manifest.name),
-    installed,
-  ].sort((a, b) => a.name.localeCompare(b.name));
-  writeRecipeStore(store, storeDir);
+  withRecipeStoreLock(storeDir, () => {
+    const store = readRecipeStore(storeDir);
+    store.recipes = [
+      ...store.recipes.filter((recipe) => recipe.id !== id && recipe.name !== manifest.name),
+      installed,
+    ].sort((a, b) => a.name.localeCompare(b.name));
+    writeRecipeStore(store, storeDir);
+  });
   return installed;
 }
 
@@ -648,36 +736,54 @@ export function listRecipes(opts: RecipeStoreOptions = {}): InstalledRecipe[] {
   return readRecipeStore(storeDir).recipes;
 }
 
-function recipeSourceSlug(value: string): string | undefined {
-  const withoutRef = value.replace(/^git:/, "").split("#")[0] ?? "";
-  const withoutGit = stripGitSuffix(withoutRef.replace(/\/+$/g, ""));
-  const sshMatch = withoutGit.match(/^[^@]+@[^:]+:.+\/([^/]+)$/);
-  if (sshMatch?.[1]) return sshMatch[1];
-  const parts = withoutGit.split("/").filter(Boolean);
-  const repo = parts.at(-1);
-  if (!repo) return undefined;
-  if (repo.includes(":")) return undefined;
-  return repo;
+export function recipeScopedIdentifier(recipe: InstalledRecipe): string {
+  return recipe.name.startsWith("@") ? recipe.name.slice(1) : recipe.name;
 }
 
-function installedRecipeMatches(recipe: InstalledRecipe, identifier: string): boolean {
-  return [
-    recipe.name,
-    recipe.id,
-    recipe.source,
-    recipeSourceSlug(recipe.source),
-    recipeSourceSlug(recipe.id),
-  ].some((value) => value === identifier);
+export function recipePreferredIdentifier(recipe: InstalledRecipe): string {
+  const scoped = recipeScopedIdentifier(recipe);
+  return scoped.split("/").at(-1) ?? scoped;
+}
+
+function findInstalledRecipeByIdentifier(
+  recipes: InstalledRecipe[],
+  identifier: string
+): InstalledRecipe | undefined {
+  const matches = identifier.includes("/")
+    ? recipes.filter((recipe) => recipeScopedIdentifier(recipe) === identifier)
+    : recipes.filter((recipe) => recipePreferredIdentifier(recipe) === identifier);
+
+  if (matches.length > 1) {
+    throw new Error(
+      [
+        `Recipe name "${identifier}" is ambiguous.`,
+        "Use one of these scoped recipe names:",
+        ...matches.map((recipe) => `  ${recipeScopedIdentifier(recipe)}`),
+      ].join("\n")
+    );
+  }
+
+  return matches[0];
+}
+
+export function findInstalledRecipe(
+  identifier: string,
+  opts: RecipeStoreOptions = {}
+): InstalledRecipe | undefined {
+  const storeDir = opts.storeDir ?? defaultRecipeStoreDir(opts.env);
+  return findInstalledRecipeByIdentifier(readRecipeStore(storeDir).recipes, identifier);
 }
 
 export function removeRecipe(identifier: string, opts: RecipeStoreOptions = {}): InstalledRecipe | undefined {
   const storeDir = opts.storeDir ?? defaultRecipeStoreDir(opts.env);
-  const store = readRecipeStore(storeDir);
-  const removed = store.recipes.find((recipe) => installedRecipeMatches(recipe, identifier));
-  if (!removed) return undefined;
-  store.recipes = store.recipes.filter((recipe) => recipe !== removed);
-  writeRecipeStore(store, storeDir);
-  return removed;
+  return withRecipeStoreLock(storeDir, () => {
+    const store = readRecipeStore(storeDir);
+    const removed = findInstalledRecipeByIdentifier(store.recipes, identifier);
+    if (!removed) return undefined;
+    store.recipes = store.recipes.filter((recipe) => recipe !== removed);
+    writeRecipeStore(store, storeDir);
+    return removed;
+  });
 }
 
 export async function customizeRecipe(
@@ -685,8 +791,9 @@ export async function customizeRecipe(
   opts: RecipeStoreOptions & { force?: boolean } = {}
 ): Promise<CustomizedRecipe> {
   const storeDir = opts.storeDir ?? defaultRecipeStoreDir(opts.env);
-  const store = readRecipeStore(storeDir);
-  const original = store.recipes.find((recipe) => installedRecipeMatches(recipe, identifier));
+  const original = withRecipeStoreLock(storeDir, () =>
+    findInstalledRecipeByIdentifier(readRecipeStore(storeDir).recipes, identifier)
+  );
   if (!original) throw new Error(`Recipe not found: ${identifier}`);
 
   const targetPath = localRecipeDirectoryForName(original.name, storeDir);
@@ -708,16 +815,8 @@ export function resolveRecipeDirectory(input: string, opts: RecipeStoreOptions =
 
   const storeDir = opts.storeDir ?? defaultRecipeStoreDir(opts.env);
   const store = readRecipeStore(storeDir);
-  const direct = store.recipes.find((recipe) => installedRecipeMatches(recipe, input));
+  const direct = findInstalledRecipeByIdentifier(store.recipes, input);
   if (direct) return direct.path;
-
-  try {
-    const id = recipeSourceId(parseRecipeSource(input, opts));
-    const parsed = store.recipes.find((recipe) => recipe.id === id);
-    if (parsed) return parsed.path;
-  } catch {
-    // Return the original path-shaped value below for the existing error paths.
-  }
 
   return localPath;
 }

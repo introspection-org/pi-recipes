@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   loadRecipeSystemPrompt,
+  REQUIRED_RECIPE_AGENT_FIELDS,
   resolveRecipeAgentDefinition,
   validateResolvedRecipeAgentDefinition,
   type RecipeSystemInstructions,
@@ -258,14 +259,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       recipeDir: this.opts.recipeDir,
       agentName,
       requireExplicitName: true,
-      requiredFields: [
-        "model.name",
-        "model.thinkingLevel",
-        "tools",
-        "skills",
-        "subagents",
-        "systemInstructions",
-      ],
+      requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
     });
     if (validationFindings.length > 0) {
       throw new Error(

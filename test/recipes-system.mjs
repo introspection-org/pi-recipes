@@ -529,7 +529,7 @@ async function main() {
   const storeDir = join(root, "store");
   const sessionDir = join(root, "sessions");
   mkdirSync(sessionDir, { recursive: true });
-  env.AGENT_RECIPES_HOME = storeDir;
+  env.PI_RECIPES_HOME = storeDir;
   env.GITHUB_TOKEN = env.GITHUB_TOKEN || env.GH_TOKEN || (await run("gh", ["auth", "token"])).stdout.trim();
   env.GH_TOKEN = env.GH_TOKEN || env.GITHUB_TOKEN;
 

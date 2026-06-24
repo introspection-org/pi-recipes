@@ -6,20 +6,26 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
-  createRecipePublishGuide,
   createRecipeScaffold,
   validateRecipeDirectory,
   type RecipeDevelopmentReport,
-  type RecipePublishGuide,
 } from "./recipe-dev.js";
+import {
+  publishRecipe,
+  type PublishedRecipe,
+  type RecipePublishVisibility,
+} from "./recipe-publish.js";
 import {
   addRecipe,
   customizeRecipe,
   defaultRecipeStoreDir,
   listRecipes,
   recipeDisplayName,
+  recipePreferredIdentifier,
+  recipeScopedIdentifier,
   removeRecipe,
   resolveRecipeDirectory,
+  type InstalledRecipe,
 } from "./recipe-store.js";
 import {
   readPiPackageManifest,
@@ -35,6 +41,9 @@ interface ParsedArgs {
   storeDir?: string;
   name?: string;
   setupSource?: string;
+  github?: string;
+  message?: string;
+  visibility?: RecipePublishVisibility;
   local: boolean;
   noSetup: boolean;
   force: boolean;
@@ -47,21 +56,25 @@ function usage(commandName = "pi-recipes"): string {
     "",
     "Commands:",
     "  setup [source]     Install the Pi recipes extension into Pi",
-    "  init <dir>         Create a starter recipe directory",
+    "  create <dir>       Create a starter recipe directory",
     "  install <source>   Install or register a recipe source",
-    "  add <source>       Alias for install",
     "  customize <recipe> Copy an installed recipe into an editable local copy",
     "  list               List installed recipes",
-    "  remove <name|id>   Remove an installed recipe record",
-    "  path <name|source>  Print the resolved recipe directory",
+    "  remove <recipe>     Remove an installed recipe record",
+    "  path <recipe|path>  Print the resolved recipe directory",
     "  doctor <target>    Validate a recipe directory or installed recipe",
-    "  publish <target>   Validate and print publishing instructions",
+    "  publish <target>   Publish a recipe to a GitHub repository",
     "",
     "Options:",
     "  --store <dir>      Use a custom recipe store",
-    "  --name <name>      Recipe name for init",
+    "  --name <name>      Recipe name for create",
     "  --setup-source <source>",
     "                     Pi extension source for auto-setup",
+    "  --github <owner/repo>",
+    "                     Create or update a GitHub recipe repository during publish",
+    "  --message <text>   Commit message for publish",
+    "  --visibility <public|private>",
+    "                     Required with --github; controls GitHub repository visibility",
     "  --local            Install the Pi extension into project settings during setup",
     "  --no-setup         Skip automatic Pi extension setup",
     "  --force            Re-clone an existing remote source",
@@ -72,14 +85,13 @@ function usage(commandName = "pi-recipes"): string {
     `  ${commandName} install github:owner/repo`,
     "",
     "Create and try a recipe:",
-    `  ${commandName} init ./my-recipe`,
+    `  ${commandName} create ./my-recipe`,
     `  ${commandName} doctor ./my-recipe`,
     `  ${commandName} install ./my-recipe`,
     "  pi --recipe my-recipe",
     "",
     "Publish a recipe:",
-    `  ${commandName} publish ./my-recipe`,
-    "  git add ./my-recipe && git commit -m \"add my recipe\"",
+    `  ${commandName} publish ./my-recipe --github owner/my-recipe --visibility private`,
     "",
     "Source examples:",
     "  ./local-recipe",
@@ -96,6 +108,9 @@ function parseArgs(argv: string[]): ParsedArgs {
   let storeDir: string | undefined;
   let name: string | undefined;
   let setupSource: string | undefined;
+  let github: string | undefined;
+  let message: string | undefined;
+  let visibility: RecipePublishVisibility | undefined;
   let local = false;
   let noSetup = false;
   let force = false;
@@ -117,6 +132,20 @@ function parseArgs(argv: string[]): ParsedArgs {
       const value = argv[++index];
       if (!value) throw new Error("--setup-source requires a value");
       setupSource = value;
+    } else if (arg === "--github") {
+      const value = argv[++index];
+      if (!value) throw new Error("--github requires owner/repo");
+      github = value;
+    } else if (arg === "--message" || arg === "-m") {
+      const value = argv[++index];
+      if (!value) throw new Error("--message requires text");
+      message = value;
+    } else if (arg === "--visibility") {
+      const value = argv[++index];
+      if (value !== "public" && value !== "private") {
+        throw new Error("--visibility requires public or private");
+      }
+      visibility = value;
     } else if (arg === "--local" || arg === "-l") {
       local = true;
     } else if (arg === "--no-setup") {
@@ -138,6 +167,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     storeDir,
     name,
     setupSource,
+    github,
+    message,
+    visibility,
     local,
     noSetup,
     force,
@@ -261,25 +293,54 @@ function printDoctorReport(report: RecipeDevelopmentReport): void {
   }
 }
 
-function printPublishGuide(guide: RecipePublishGuide): void {
-  process.stdout.write(`${guide.manifest.name}@${guide.manifest.version}\n`);
-  for (const finding of guide.report.findings) {
-    process.stdout.write(`${finding.severity}: ${finding.code}: ${finding.message}\n`);
-  }
-  if (!guide.report.valid) {
-    process.stdout.write("\nFix doctor errors before publishing.\n");
+function printPublishedRecipe(result: PublishedRecipe): void {
+  process.stdout.write(
+    [
+      `Published ${result.packageName}@${result.recipe.version}`,
+      result.recipeDir,
+      "",
+      `GitHub: ${result.github}`,
+      `Recipe name: ${result.shortName}`,
+      ...(result.scopedName !== result.shortName ? [`Scoped name: ${result.scopedName}`] : []),
+      `Repository: ${result.createdRepository ? "created" : "existing"}`,
+      `Commit: ${result.committed ? "created" : "no changes"}`,
+      "Push: ok",
+      "",
+      "Use:",
+      `  pi --recipe ${result.shortName}`,
+      ...(result.scopedName !== result.shortName ? [`  pi --recipe ${result.scopedName}`] : []),
+      "",
+    ].join("\n")
+  );
+}
+
+function recipeInstallSource(recipe: InstalledRecipe): string {
+  if (recipe.id.startsWith("github:")) return `GitHub ${recipe.id.slice("github:".length)}`;
+  if (recipe.id.startsWith("local:")) return "local editable copy";
+  if (recipe.id.startsWith("git:")) return `Git ${recipe.id.slice("git:".length)}`;
+  if (recipe.source.startsWith("github:")) return `GitHub ${recipe.source.slice("github:".length)}`;
+  return recipe.source;
+}
+
+function printRecipeList(recipes: InstalledRecipe[], storeDir: string): void {
+  if (recipes.length === 0) {
+    process.stdout.write(`No recipes installed in ${storeDir}\n`);
     return;
   }
-  if (guide.report.findings.length === 0) process.stdout.write("doctor: ok\n");
 
-  process.stdout.write("\nPublish checklist:\n");
-  for (const item of guide.checklist) {
-    process.stdout.write(`  - ${item}\n`);
-  }
-
-  process.stdout.write("\nShare one of these install commands:\n");
-  for (const source of guide.sourceExamples) {
-    process.stdout.write(`  ${source}\n`);
+  process.stdout.write(`Installed recipes (${recipes.length})\n`);
+  process.stdout.write(`Store: ${storeDir}\n\n`);
+  for (const [index, recipe] of recipes.entries()) {
+    const identifier = recipePreferredIdentifier(recipe);
+    const scopedIdentifier = recipeScopedIdentifier(recipe);
+    process.stdout.write(`${identifier}\n`);
+    if (scopedIdentifier !== identifier) {
+      process.stdout.write(`  Scoped name: ${scopedIdentifier}\n`);
+    }
+    process.stdout.write(`  Version: ${recipe.version}\n`);
+    process.stdout.write(`  Installed from: ${recipeInstallSource(recipe)}\n`);
+    process.stdout.write(`  Local files: ${recipe.path}\n`);
+    if (index < recipes.length - 1) process.stdout.write("\n");
   }
 }
 
@@ -304,7 +365,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  if (args.command === "init" || args.command === "new" || args.command === "create") {
+  if (args.command === "create") {
     const target = requireOne(args, "<dir>");
     const result = createRecipeScaffold(target, {
       cwd: opts.cwd,
@@ -333,7 +394,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  if (args.command === "install" || args.command === "add") {
+  if (args.command === "install") {
     const source = requireOne(args, "<source>");
     await ensurePiExtension(args);
     const recipe = await addRecipe(source, { ...opts, force: args.force });
@@ -345,26 +406,26 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  if (args.command === "customize" || args.command === "fork") {
+  if (args.command === "customize") {
     const identifier = requireOne(args, "<recipe>");
     const result = await customizeRecipe(identifier, { ...opts, force: args.force });
     if (args.json) {
       printJson(result);
     } else {
+      const identifier = recipePreferredIdentifier(result.recipe);
       const heading = result.overwritten
-        ? `Updated editable recipe ${recipeDisplayName(result.recipe)}`
-        : `Editable recipe ${recipeDisplayName(result.recipe)}`;
+        ? `Updated editable copy for ${identifier}`
+        : `Created editable copy for ${identifier}`;
       process.stdout.write(
         [
           heading,
-          result.path,
           "",
-          `Original source: ${result.original.source}`,
-          `Registered as: ${result.recipe.name}`,
+          "Edit this folder:",
+          `  ${result.path}`,
           "",
-          "Edit the files there, then try:",
-          `  ${commandName} doctor ${result.recipe.name}`,
-          `  pi --recipe ${result.recipe.name}`,
+          "Then check and run it:",
+          `  ${commandName} doctor ${identifier}`,
+          `  pi --recipe ${identifier}`,
           "",
         ].join("\n")
       );
@@ -372,22 +433,18 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  if (args.command === "list" || args.command === "ls") {
+  if (args.command === "list") {
     const recipes = listRecipes(opts);
     if (args.json) {
       printJson(recipes);
-    } else if (recipes.length === 0) {
-      process.stdout.write(`No recipes installed in ${args.storeDir ?? defaultRecipeStoreDir()}\n`);
     } else {
-      for (const recipe of recipes) {
-        process.stdout.write(`${recipeDisplayName(recipe)}  ${recipe.id}\n`);
-      }
+      printRecipeList(recipes, args.storeDir ?? defaultRecipeStoreDir(process.env));
     }
     return 0;
   }
 
-  if (args.command === "remove" || args.command === "rm") {
-    const identifier = requireOne(args, "<name|id>");
+  if (args.command === "remove") {
+    const identifier = requireOne(args, "<recipe>");
     const recipe = removeRecipe(identifier, opts);
     if (!recipe) throw new Error(`Recipe not found: ${identifier}`);
     if (args.json) {
@@ -399,7 +456,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (args.command === "path") {
-    const identifier = requireOne(args, "<name|source>");
+    const identifier = requireOne(args, "<recipe|path>");
     const path = resolveRecipeDirectory(identifier, opts);
     if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
     if (args.json) {
@@ -425,15 +482,25 @@ async function main(argv: string[]): Promise<number> {
 
   if (args.command === "publish") {
     const identifier = args.values[0] ?? ".";
-    const path = resolveRecipeDirectory(identifier, opts);
-    if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
-    const guide = createRecipePublishGuide(path);
-    if (args.json) {
-      printJson(guide);
-    } else {
-      printPublishGuide(guide);
+    if (!args.github) {
+      throw new Error("publish requires --github owner/repo");
     }
-    return guide.report.valid ? 0 : 1;
+    if (!args.visibility) {
+      throw new Error("publish requires --visibility public or --visibility private");
+    }
+    const result = await publishRecipe(identifier, {
+      ...opts,
+      github: args.github,
+      message: args.message,
+      visibility: args.visibility,
+      force: args.force,
+    });
+    if (args.json) {
+      printJson(result);
+    } else {
+      printPublishedRecipe(result);
+    }
+    return 0;
   }
 
   throw new Error(`Unknown command: ${args.command}\n\n${usage(commandName)}`);

@@ -17,6 +17,7 @@ prompts, and themes.
 
 ## Documentation
 
+- [Recipe Flow](docs/recipe-flow.md): quick user-facing guide to installing, customizing, creating, and publishing recipes.
 - [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
 
@@ -40,7 +41,7 @@ extension with `pi install npm:@tfidfwastaken/local-session-tools`.
 Create a local recipe:
 
 ```bash
-pi-recipes init ./my-recipe
+pi-recipes create ./my-recipe
 pi-recipes doctor ./my-recipe
 pi-recipes install ./my-recipe
 ```
@@ -52,7 +53,7 @@ pi --recipe my-recipe
 pi --recipe my-recipe --agent agent
 ```
 
-`pi-recipes init` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
+`pi-recipes create` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
 and recipe README. Edit those files as the recipe grows. Named variants are
 agents too:
 
@@ -80,10 +81,12 @@ pi-recipes install git@github.com:owner/private-recipe.git
 GITHUB_TOKEN=... pi-recipes install github:owner/private-recipe
 ```
 
-No recipe registry is required. Publishing a recipe means committing a recipe
-folder to a Git repository and sharing the GitHub or Git source locator.
-Run `pi-recipes publish ./my-recipe` for a validation pass, publishing checklist,
-and install commands to share.
+No recipe registry is required. Publishing a recipe creates or updates a GitHub
+repository and pushes the local recipe:
+
+```bash
+pi-recipes publish ./my-recipe --github owner/my-recipe --visibility private
+```
 
 Customize an installed recipe into an editable local copy:
 

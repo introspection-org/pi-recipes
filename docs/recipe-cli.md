@@ -44,13 +44,13 @@ pi-recipes --help
 Recipes are tracked in a local store:
 
 ```text
-~/.agent-recipes/recipes.json
+~/.pi/recipes/recipes.json
 ```
 
 Use a different store with either:
 
 ```bash
-AGENT_RECIPES_HOME=/path/to/store pi-recipes list
+PI_RECIPES_HOME=/path/to/store pi-recipes list
 pi-recipes list --store /path/to/store
 ```
 
@@ -64,7 +64,7 @@ If a recipe declares extension runtime dependencies in `package.json`,
 Create a starter recipe with:
 
 ```bash
-pi-recipes init ./my-recipe
+pi-recipes create ./my-recipe
 ```
 
 This writes a working recipe skeleton:
@@ -81,10 +81,10 @@ my-recipe/
 Use `--name` when the directory name is not the recipe identifier you want:
 
 ```bash
-pi-recipes init ./recipes/code-review --name code-review
+pi-recipes create ./recipes/code-review --name code-review
 ```
 
-`pi-recipes init` refuses to overwrite existing scaffold files unless `--force` is
+`pi-recipes create` refuses to overwrite existing scaffold files unless `--force` is
 provided. After generating the starter, edit the files to fit your workflow.
 
 Minimal `package.json`:
@@ -417,10 +417,8 @@ pi-recipes path repo
 
 Identifiers can match:
 
-- manifest `name`
-- installed source
-- canonical source id
-- repository slug
+- short recipe name, such as `my-recipe`
+- scoped recipe name, such as `owner/my-recipe`
 - local directory path
 
 The Pi extension uses the same resolution rules for `--recipe`.
@@ -431,7 +429,7 @@ Remove a recipe record from the store:
 
 ```bash
 pi-recipes remove my-recipe
-pi-recipes rm github:owner/repo
+pi-recipes remove owner/my-recipe
 ```
 
 This removes the store record. Remote clone contents may remain in the store
@@ -439,17 +437,15 @@ cache and can be reused by a later install unless `--force` is used.
 
 ## Publish Recipes
 
-Publishing does not require a recipe registry.
-
-Before sharing, ask the CLI for the publish checklist and install locators:
+Publish a recipe to GitHub:
 
 ```bash
-pi-recipes publish ./my-recipe
+pi-recipes publish ./my-recipe --github owner/my-recipe --visibility public
 ```
 
-`pi-recipes publish` runs the same development validation as `doctor`, then prints
-the files to commit and example `pi-recipes install` commands for public, tagged, and
-SSH installs.
+`pi-recipes publish` runs the same development validation as `doctor`, updates
+`package.json#name` to `@owner/my-recipe`, commits local changes, creates the
+GitHub repository when needed, pushes `main`, and re-registers the local recipe.
 
 For a standalone public recipe:
 
@@ -527,5 +523,5 @@ If Pi cannot find a recipe by name, confirm it is in the same store:
 
 ```bash
 pi-recipes list
-AGENT_RECIPES_HOME=/same/store pi --recipe my-recipe
+PI_RECIPES_HOME=/same/store pi --recipe my-recipe
 ```

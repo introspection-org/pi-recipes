@@ -66,13 +66,11 @@ PI_RECIPE_DIR=recipe-name PI_AGENT_NAME=reviewer pi
 `--recipe` accepts:
 
 - an existing local directory
-- an installed manifest name
-- an installed source
-- an installed canonical source id
-- a repository slug such as `repo`
+- an installed short recipe name
+- an installed scoped recipe name
 
 The extension resolves installed recipes from the `pi-recipes` store. Set
-`AGENT_RECIPES_HOME` if Pi should use a non-default store.
+`PI_RECIPES_HOME` if Pi should use a non-default store.
 
 ## Launch Flow
 
@@ -400,7 +398,7 @@ pi-recipes path recipe-name
 If Pi and `pi-recipes` are using different stores, set:
 
 ```bash
-AGENT_RECIPES_HOME=/path/to/store pi --recipe recipe-name
+PI_RECIPES_HOME=/path/to/store pi --recipe recipe-name
 ```
 
 If an agent selects a model but Pi reports the model is unavailable, confirm the

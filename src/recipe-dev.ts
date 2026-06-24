@@ -8,6 +8,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   loadRecipeAgentDefinitions,
   resolveRecipeAgentDefinition,
+  validateRecipeAgentDefinitions,
 } from "./recipe-agent.js";
 import {
   packageResourcePaths,
@@ -161,6 +162,8 @@ export function createRecipeScaffold(
         "tools:",
         "  - read",
         "  - bash",
+        "skills: []",
+        "subagents: []",
         "system_instructions:",
         "  mode: append",
         "  content: |",
@@ -234,6 +237,16 @@ export function validateRecipeDirectory(recipeDir: string): RecipeDevelopmentRep
         )
       );
     } else {
+      for (const agentFinding of validateRecipeAgentDefinitions(recipeDir)) {
+        findings.push(
+          finding(
+            "error",
+            `agent.${agentFinding.field}_missing`,
+            agentFinding.message,
+            manifest.name
+          )
+        );
+      }
       try {
         resolveRecipeAgentDefinition({ recipeDir });
       } catch (err) {
@@ -269,20 +282,24 @@ export function validateRecipeDirectory(recipeDir: string): RecipeDevelopmentRep
 export function createRecipePublishGuide(recipeDir: string): RecipePublishGuide {
   const report = validateRecipeDirectory(recipeDir);
   const name = report.manifest.name;
+  const repositoryName = name.startsWith("@")
+    ? name.slice(1).split("/").at(-1) ?? name.slice(1)
+    : name;
   return {
     manifest: report.manifest,
     report,
     checklist: [
       "Run `pi-recipes doctor .` and fix any errors.",
+      `Run \`pi-recipes publish . --github owner/${repositoryName} --visibility private\` to create, commit, and push a GitHub repository.`,
       "Commit package.json, agents, prompts, skills, themes, extensions, and SYSTEM.md.",
       "If extensions have runtime dependencies, commit the package lockfile.",
       "Push the recipe to a Git repository.",
       "Tag releases when users should install a stable version.",
     ],
     sourceExamples: [
-      `pi-recipes install github:owner/${name}`,
-      `pi-recipes install github:owner/${name}#v${report.manifest.version}`,
-      `pi-recipes install git@github.com:owner/${name}.git`,
+      `pi-recipes install github:owner/${repositoryName}`,
+      `pi-recipes install github:owner/${repositoryName}#v${report.manifest.version}`,
+      `pi-recipes install git@github.com:owner/${repositoryName}.git`,
     ],
   };
 }

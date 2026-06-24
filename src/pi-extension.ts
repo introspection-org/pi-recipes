@@ -23,6 +23,7 @@ import {
   loadRecipeAgentDefinitions,
   loadRecipeSystemPrompt,
   resolveRecipeAgentDefinition,
+  validateRecipeAgentDefinitions,
   type RecipeAgentDefinition,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
@@ -644,6 +645,17 @@ export function createPiRecipesExtension(
     if (errors.length > 0) {
       throw new RecipeLaunchError(
         recipeLoadErrorMessage(flag, errors.map((finding) => finding.message).join("\n"))
+      );
+    }
+
+    const agentFindings = validateRecipeAgentDefinitions(recipeDir);
+    if (agentFindings.length > 0) {
+      throw new RecipeLaunchError(
+        [
+          `Recipe "${manifest.name}" has invalid agents.`,
+          ...agentFindings.map((finding) => `- ${finding.message}`),
+          "Add the missing fields to each agent, even if empty.",
+        ].join("\n")
       );
     }
 

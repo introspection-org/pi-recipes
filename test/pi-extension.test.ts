@@ -53,6 +53,7 @@ function writeRecipe(root: string) {
       "tools:",
       "  - read",
       "  - bash",
+      "skills: []",
       "subagents:",
       "  - explorer",
       "system_instructions:",
@@ -60,7 +61,22 @@ function writeRecipe(root: string) {
       "  content: Agent-specific prompt",
     ].join("\n")
   );
-  writeFileSync(join(recipeDir, "defs", "explorer.yaml"), "name: explorer\n");
+  writeFileSync(
+    join(recipeDir, "defs", "explorer.yaml"),
+    [
+      "name: explorer",
+      "model:",
+      "  name: openai/gpt-4.1",
+      "  thinking_level: low",
+      "tools: []",
+      "skills: []",
+      "subagents: []",
+      "system_instructions:",
+      "  mode: append",
+      "  content: Explorer prompt",
+      "",
+    ].join("\n")
+  );
   writeFileSync(join(recipeDir, "skills", "repo-index", "SKILL.md"), "---\ndescription: Index repo\n---\n");
   writeFileSync(join(recipeDir, "prompts", "review.md"), "Review this\n");
   writeFileSync(join(recipeDir, "themes", "demo.json"), "{}\n");
@@ -126,6 +142,61 @@ describe("Pi recipes launch extension", () => {
         ctx
       );
       expect(resourceResults).toEqual([{}]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid recipe agents before enabling a recipe session", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-invalid-agent-"));
+    try {
+      const recipeDir = join(root, "recipe");
+      mkdirSync(join(recipeDir, "agents"), { recursive: true });
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "invalid-agent-recipe",
+            version: "1.0.0",
+            pi: {
+              agents: ["agents/*.yaml"],
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      writeFileSync(
+        join(recipeDir, "agents", "agent.yaml"),
+        [
+          "name: agent",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
+          "",
+        ].join("\n")
+      );
+      const pi = createMockExtensionAPI();
+      const notify = vi.fn();
+      const ctx = extensionContext(root, notify);
+      pi.flagValues.set("recipe", recipeDir);
+
+      createPiRecipesExtension()(pi);
+      await pi.emitExtensionEvent({ type: "session_start", reason: "startup" } as any, ctx);
+
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining('Recipe "invalid-agent-recipe" has invalid agents.'),
+        "warning"
+      );
+      const message = notify.mock.calls[0]?.[0] as string;
+      expect(message).toContain('Recipe agent "agent" must declare skills');
+      expect(message).toContain('Recipe agent "agent" must declare subagents');
+      expect(pi.sessionName).toBeUndefined();
+      expect(pi.activeTools).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -296,7 +367,11 @@ describe("Pi recipes launch extension", () => {
         join(recipeDir, "defs", "main.yaml"),
         [
           "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
           "tools: []",
+          "skills: []",
           "subagents: []",
           "system_instructions:",
           "  mode: replace",
@@ -343,9 +418,16 @@ describe("Pi recipes launch extension", () => {
         join(recipeDir, "defs", "main.yaml"),
         [
           "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
           "tools:",
           "  - setup_git",
+          "skills: []",
           "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
         ].join("\n")
       );
       writeFileSync(
@@ -424,9 +506,16 @@ describe("Pi recipes launch extension", () => {
         join(recipeDir, "defs", "main.yaml"),
         [
           "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
           "tools:",
           "  - setup_git",
+          "skills: []",
           "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
           "extensions:",
           "  include:",
           "    - \"*\"",

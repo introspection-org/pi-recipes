@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -11,11 +11,15 @@ import {
   createRecipePublishGuide,
   createRecipeScaffold,
   customizeRecipe,
+  defaultRecipeStoreDir,
   listRecipes,
   loadRecipeAgentDefinitions,
   packageResourcePaths,
   parseRecipeSource,
+  publishRecipe,
   readPiPackageManifest,
+  recipePreferredIdentifier,
+  recipeStoreFilePath,
   RecipePackageError,
   removeRecipe,
   resolveRecipeAgentDefinition,
@@ -26,6 +30,22 @@ import {
 } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
+
+function fullAgentYaml(name = "agent"): string {
+  return [
+    `name: ${name}`,
+    "model:",
+    "  name: test/provider-model",
+    "  thinking_level: low",
+    "tools: []",
+    "skills: []",
+    "subagents: []",
+    "system_instructions:",
+    "  mode: append",
+    "  content: Test instructions",
+    "",
+  ].join("\n");
+}
 
 function writePiPackageManifest(
   root: string,
@@ -321,6 +341,54 @@ describe("recipe package manifest", () => {
     }
   });
 
+  it("reports agents missing required launch fields during recipe validation", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agent-validation-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "strict-agents",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      writeFileSync(
+        join(root, "agents", "agent.yaml"),
+        [
+          "name: agent",
+          "model:",
+          "  name: test/provider-model",
+          "  thinking_level: low",
+          "tools: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
+          "",
+        ].join("\n")
+      );
+
+      const report = validateRecipeDirectory(root);
+
+      expect(report.valid).toBe(false);
+      expect(report.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            severity: "error",
+            code: "agent.skills_missing",
+            message: 'Recipe agent "agent" must declare skills directly or inherit it with from',
+          }),
+          expect.objectContaining({
+            severity: "error",
+            code: "agent.subagents_missing",
+            message: 'Recipe agent "agent" must declare subagents directly or inherit it with from',
+          }),
+        ])
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("creates a publish guide from a valid recipe", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-publish-guide-"));
     try {
@@ -565,6 +633,13 @@ describe("recipe child agents", () => {
 });
 
 describe("recipe store", () => {
+  it("defaults recipe storage to ~/.pi/recipes", () => {
+    expect(defaultRecipeStoreDir({})).toBe(join(homedir(), ".pi", "recipes"));
+    expect(defaultRecipeStoreDir({ PI_RECIPES_HOME: "/tmp/pi-recipes-home" })).toBe(
+      "/tmp/pi-recipes-home"
+    );
+  });
+
   it("parses explicit git and github recipe sources", () => {
     expect(parseRecipeSource("github:owner/repo/path#v1")).toMatchObject({
       kind: "github",
@@ -642,6 +717,34 @@ describe("recipe store", () => {
     }
   });
 
+  it("recovers from stale recipe store locks during mutations", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-store-lock-"));
+    const storeDir = join(root, "store");
+    const recipeDir = join(root, "recipe");
+    try {
+      mkdirSync(join(recipeDir, "agents"), { recursive: true });
+      writePiPackageManifest(recipeDir, {
+        name: "locked-review",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      const lockDir = `${recipeStoreFilePath(storeDir)}.lock`;
+      mkdirSync(lockDir, { recursive: true });
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(lockDir, old, old);
+
+      const installed = await addRecipe(recipeDir, { storeDir });
+
+      expect(installed.name).toBe("locked-review");
+      expect(listRecipes({ storeDir })).toEqual([installed]);
+      expect(existsSync(lockDir)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("customizes installed recipes into editable local copies", async () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-customize-"));
     const storeDir = join(root, "store");
@@ -682,6 +785,164 @@ describe("recipe store", () => {
     }
   });
 
+  it("publishes an installed git recipe by customizing it into a local editable repo", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-"));
+    const sourceDir = join(root, "source");
+    const bareDir = join(root, "recipe.git");
+    const storeDir = join(root, "store");
+    const commands: string[] = [];
+    try {
+      mkdirSync(join(sourceDir, "agents"), { recursive: true });
+      writePiPackageManifest(sourceDir, {
+        name: "upstream-review",
+        version: "0.1.0",
+        description: "Publishable recipe",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      writeFileSync(join(sourceDir, "agents", "agent.yaml"), fullAgentYaml());
+      await execFileAsync("git", ["init"], { cwd: sourceDir });
+      await execFileAsync("git", ["add", "."], { cwd: sourceDir });
+      await execFileAsync(
+        "git",
+        ["-c", "user.name=Recipe Test", "-c", "user.email=recipe@example.com", "commit", "-m", "recipe"],
+        { cwd: sourceDir }
+      );
+      await execFileAsync("git", ["clone", "--bare", sourceDir, bareDir]);
+      await addRecipe(`file://${bareDir}`, { storeDir });
+
+      const result = await publishRecipe("upstream-review", {
+        storeDir,
+        github: "acme/upstream-review",
+        visibility: "public",
+        commandRunner: async (command, args) => {
+          commands.push([command, ...args].join(" "));
+          if (
+            command === "git" &&
+            args.join(" ") === "rev-parse --verify HEAD"
+          ) {
+            throw new Error("no commits");
+          }
+          if (
+            command === "git" &&
+            args.join(" ") === "diff --cached --quiet"
+          ) {
+            throw new Error("has changes");
+          }
+          if (
+            command === "gh" &&
+            args.slice(0, 3).join(" ") === "repo view acme/upstream-review"
+          ) {
+            throw new Error("not found");
+          }
+          if (
+            command === "git" &&
+            args.join(" ") === "remote get-url origin"
+          ) {
+            throw new Error("no origin");
+          }
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      expect(result).toMatchObject({
+        recipeDir: join(storeDir, "local", "upstream-review"),
+        github: "acme/upstream-review",
+        packageName: "@acme/upstream-review",
+        shortName: "upstream-review",
+        scopedName: "acme/upstream-review",
+        createdRepository: true,
+        committed: true,
+        pushed: true,
+      });
+      expect(readPiPackageManifest(result.recipeDir).name).toBe("@acme/upstream-review");
+      expect(readFileSync(join(result.recipeDir, ".gitignore"), "utf8")).toContain("node_modules/");
+      expect(resolveRecipeDirectory("upstream-review", { storeDir })).toBe(result.recipeDir);
+      expect(resolveRecipeDirectory("acme/upstream-review", { storeDir })).toBe(result.recipeDir);
+      expect(commands).toEqual(
+        expect.arrayContaining([
+          "git init",
+          "git branch -M main",
+          "git add -A",
+          "git commit -m Publish @acme/upstream-review",
+          "gh repo create acme/upstream-review --public",
+          "git remote add origin https://github.com/acme/upstream-review.git",
+          "git push -u origin main",
+        ])
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the package manifest basename as the short recipe name and scope for precision", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-manifest-name-"));
+    const storeDir = join(root, "store");
+    const sourceDir = join(root, "source");
+    try {
+      mkdirSync(join(sourceDir, "agents"), { recursive: true });
+      writePiPackageManifest(sourceDir, {
+        name: "@introspection/pi-codex-recipe",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+
+      const installed = await addRecipe(sourceDir, { storeDir });
+
+      expect(recipePreferredIdentifier(installed)).toBe("pi-codex-recipe");
+      expect(resolveRecipeDirectory("pi-codex-recipe", { storeDir })).toBe(sourceDir);
+      expect(resolveRecipeDirectory("introspection/pi-codex-recipe", { storeDir })).toBe(sourceDir);
+      expect(resolveRecipeDirectory("@introspection/pi-codex-recipe", { storeDir, cwd: root })).toBe(
+        join(root, "@introspection/pi-codex-recipe")
+      );
+
+      const customized = await customizeRecipe("pi-codex-recipe", { storeDir });
+
+      expect(customized.path).toBe(join(storeDir, "local", "introspection-pi-codex-recipe"));
+      expect(resolveRecipeDirectory("pi-codex-recipe", { storeDir })).toBe(customized.path);
+      expect(resolveRecipeDirectory("introspection/pi-codex-recipe", { storeDir })).toBe(customized.path);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires scoped recipe names when short names are ambiguous", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-name-ambiguity-"));
+    const storeDir = join(root, "store");
+    const firstDir = join(root, "first");
+    const secondDir = join(root, "second");
+    try {
+      for (const [dir, name] of [
+        [firstDir, "@alpha/shared-review"],
+        [secondDir, "@beta/shared-review"],
+      ] as const) {
+        mkdirSync(join(dir, "agents"), { recursive: true });
+        writePiPackageManifest(dir, {
+          name,
+          version: "0.1.0",
+          pi: {
+            agents: ["agents/*.yaml"],
+          },
+        });
+        await addRecipe(dir, { storeDir });
+      }
+
+      expect(resolveRecipeDirectory("alpha/shared-review", { storeDir })).toBe(firstDir);
+      expect(resolveRecipeDirectory("beta/shared-review", { storeDir })).toBe(secondDir);
+      expect(() => resolveRecipeDirectory("shared-review", { storeDir })).toThrow(
+        /Recipe name "shared-review" is ambiguous/
+      );
+      expect(() => removeRecipe("shared-review", { storeDir })).toThrow(
+        /Use one of these scoped recipe names/
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("installs recipes from explicit git URLs", async () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-git-store-"));
     const sourceDir = join(root, "source");
@@ -715,9 +976,10 @@ describe("recipe store", () => {
         version: "0.3.0",
       });
       expect(resolveRecipeDirectory("git-review", { storeDir })).toBe(installed.path);
-      expect(resolveRecipeDirectory("recipe", { storeDir })).toBe(installed.path);
+      expect(resolveRecipeDirectory("recipe", { storeDir, cwd: root })).toBe(join(root, "recipe"));
       expect(readPiPackageManifest(installed.path).resources.agents).toEqual(["agents/*.yaml"]);
-      expect(removeRecipe("recipe", { storeDir })).toEqual(installed);
+      expect(removeRecipe("recipe", { storeDir })).toBeUndefined();
+      expect(removeRecipe("git-review", { storeDir })).toEqual(installed);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
