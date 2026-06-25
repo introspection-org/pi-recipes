@@ -1377,6 +1377,119 @@ describe("package boundary", () => {
   });
 });
 
+describe("install telemetry", () => {
+  type Ping = { url: string; body: unknown };
+
+  function recordingFetch(pings: Ping[], impl?: () => Promise<Response>) {
+    return (async (url: string | URL | Request, init?: RequestInit) => {
+      pings.push({
+        url: String(url),
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      return impl ? impl() : new Response(null, { status: 202 });
+    }) as unknown as typeof fetch;
+  }
+
+  async function buildBareRecipe(root: string, name: string): Promise<string> {
+    const sourceDir = join(root, "source");
+    const bareDir = join(root, `${name}.git`);
+    mkdirSync(join(sourceDir, "agents"), { recursive: true });
+    writePiPackageManifest(sourceDir, {
+      name,
+      version: "1.2.3",
+      description: "Telemetry recipe",
+      pi: { agents: ["agents/*.yaml"] },
+    });
+    writeFileSync(join(sourceDir, "agents", "agent.yaml"), fullAgentYaml());
+    await execFileAsync("git", ["init"], { cwd: sourceDir });
+    await execFileAsync("git", ["add", "."], { cwd: sourceDir });
+    await execFileAsync(
+      "git",
+      ["-c", "user.name=Recipe Test", "-c", "user.email=recipe@example.com", "commit", "-m", "recipe"],
+      { cwd: sourceDir }
+    );
+    await execFileAsync("git", ["clone", "--bare", sourceDir, bareDir]);
+    return bareDir;
+  }
+
+  it("sends one anonymous ping with the canonical id for a remote install", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-telemetry-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const bareDir = await buildBareRecipe(root, "telemetry-recipe");
+      const installed = await addRecipe(`file://${bareDir}`, {
+        storeDir,
+        env: { PI_RECIPES_TELEMETRY_ENDPOINT: "https://example.test/api/installs" },
+        fetchImpl: recordingFetch(pings),
+      });
+      expect(pings).toHaveLength(1);
+      expect(pings[0].url).toBe("https://example.test/api/installs");
+      expect(pings[0].body).toEqual({
+        event: "install",
+        id: installed.id,
+        name: "telemetry-recipe",
+        version: "1.2.3",
+      });
+      expect(installed.id).toBe(`git:file://${bareDir}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not ping for local recipe registration", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-telemetry-local-"));
+    const storeDir = join(root, "store");
+    const recipeDir = join(root, "recipe");
+    const pings: Ping[] = [];
+    try {
+      mkdirSync(join(recipeDir, "agents"), { recursive: true });
+      writePiPackageManifest(recipeDir, {
+        name: "local-only",
+        version: "0.1.0",
+        pi: { agents: ["agents/*.yaml"] },
+      });
+      writeFileSync(join(recipeDir, "agents", "agent.yaml"), fullAgentYaml());
+      await addRecipe(recipeDir, { storeDir, fetchImpl: recordingFetch(pings) });
+      expect(pings).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("is suppressed by DO_NOT_TRACK", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-telemetry-optout-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const bareDir = await buildBareRecipe(root, "opt-out-recipe");
+      await addRecipe(`file://${bareDir}`, {
+        storeDir,
+        env: { DO_NOT_TRACK: "1" },
+        fetchImpl: recordingFetch(pings),
+      });
+      expect(pings).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never throws when the telemetry request fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-telemetry-error-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const bareDir = await buildBareRecipe(root, "resilient-recipe");
+      const failing = recordingFetch(pings, () => Promise.reject(new Error("network down")));
+      const installed = await addRecipe(`file://${bareDir}`, { storeDir, fetchImpl: failing });
+      expect(installed.name).toBe("resilient-recipe");
+      expect(pings).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 async function collectFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const files: string[] = [];

@@ -24,6 +24,8 @@
     "dist/recipe-publish.js",
     "dist/recipe-store.d.ts",
     "dist/recipe-store.js",
+    "dist/recipe-telemetry.d.ts",
+    "dist/recipe-telemetry.js",
     "docs",
     "README.md",
     "package.json"

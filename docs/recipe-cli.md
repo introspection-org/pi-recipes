@@ -506,6 +506,35 @@ recipes install github:owner/repo/recipes/code-review
 recipes install github:owner/repo/recipes/research#v1.0.0
 ```
 
+## Telemetry
+
+When you install a recipe from a remote source (`github:` or a Git URL),
+`recipes install` sends a single anonymous ping to the public recipe directory
+at [pi.recipes](https://pi.recipes) so it can rank recipes by install count.
+
+The ping contains only the recipe's canonical id, name, and version:
+
+```json
+{ "event": "install", "id": "github:owner/repo", "name": "my-recipe", "version": "1.0.0" }
+```
+
+No paths, machine identifiers, or other personal data are sent. Local recipe
+registration (`recipes install ./my-recipe`) is never reported. The ping is
+best-effort and never blocks or fails an install.
+
+Opt out by setting either environment variable to a truthy value:
+
+```bash
+DO_NOT_TRACK=1 recipes install github:owner/repo
+PI_RECIPES_NO_TELEMETRY=1 recipes install github:owner/repo
+```
+
+Point the ping at a different collector with:
+
+```bash
+PI_RECIPES_TELEMETRY_ENDPOINT=https://example.com/api/installs recipes install github:owner/repo
+```
+
 ## Troubleshooting
 
 If a private GitHub recipe fails to install with `github:owner/repo`, use SSH or

@@ -19,6 +19,7 @@ import {
   validatePiPackageManifest,
   type RecipePackageManifest,
 } from "./recipe-package.js";
+import { sendInstallTelemetry, type FetchImpl } from "./recipe-telemetry.js";
 
 const execFileAsync = promisify(execFile);
 const STORE_LOCK_STALE_MS = 30_000;
@@ -31,6 +32,9 @@ export interface RecipeStoreOptions {
   storeDir?: string;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  // Injectable fetch implementation for anonymous install telemetry. Defaults
+  // to the global fetch; tests pass a fake to assert the ping without network.
+  fetchImpl?: FetchImpl;
 }
 
 export interface InstalledRecipe {
@@ -774,6 +778,11 @@ export async function addRecipe(
     ].sort((a, b) => a.name.localeCompare(b.name));
     writeRecipeStore(store, storeDir);
   });
+  // Anonymous, best-effort install ping for the public directory. Only remote
+  // (github/git) installs are counted; local recipe registration is private.
+  if (source.kind === "github" || source.kind === "git") {
+    await sendInstallTelemetry(installed, { env: opts.env, fetchImpl: opts.fetchImpl });
+  }
   return installed;
 }
 
