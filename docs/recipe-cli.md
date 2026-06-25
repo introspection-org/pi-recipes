@@ -133,6 +133,9 @@ model:
 Objects such as `model` and `extensions` merge by key, while arrays such as
 `tools`, `skills`, and `subagents` replace the inherited array.
 
+Use `system_instructions.content: ""` when an agent intentionally adds no
+instructions beyond `SYSTEM.md` but still needs to declare the field explicitly.
+
 `SYSTEM.md` is optional. When present, Pi uses it as the recipe-level system
 prompt before applying the selected agent's `system_instructions`.
 

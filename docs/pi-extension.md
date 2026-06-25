@@ -171,6 +171,9 @@ Objects such as `model` and `extensions` merge by key. Arrays such as `tools`,
 - `append`: append to the current prompt
 - `replace`: replace the current prompt
 
+Use `content: ""` when an agent intentionally adds no instructions beyond
+`SYSTEM.md` but still needs to declare the field explicitly.
+
 ## Session Prompt
 
 The session prompt is assembled from:

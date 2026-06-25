@@ -108,13 +108,12 @@ function parseSystemInstructions(
   data: Record<string, unknown>
 ): RecipeSystemInstructions | undefined {
   const raw = asRecord(data.system_instructions ?? data.systemInstructions);
-  const content = typeof raw.content === "string" ? raw.content.trim() : "";
-  if (!content) {
-    const prompt = typeof data.prompt === "string" ? data.prompt.trim() : "";
-    return prompt ? { mode: "append", content: prompt } : undefined;
+  if (Object.hasOwn(raw, "content") && typeof raw.content === "string") {
+    const mode = raw.mode === "replace" ? "replace" : "append";
+    return { mode, content: raw.content.trim() };
   }
-  const mode = raw.mode === "replace" ? "replace" : "append";
-  return { mode, content };
+  const prompt = typeof data.prompt === "string" ? data.prompt.trim() : "";
+  return prompt ? { mode: "append", content: prompt } : undefined;
 }
 
 function parseExtensions(data: Record<string, unknown>): RecipeAgentExtensions | undefined {
