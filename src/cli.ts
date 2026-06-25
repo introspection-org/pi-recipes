@@ -32,7 +32,7 @@ import {
 } from "./recipe-package.js";
 
 const execFileAsync = promisify(execFile);
-const PACKAGE_NAME = "@tfidfwastaken/local-session-tools";
+const PACKAGE_NAME = "@introspection-ai/pi-recipes";
 const DEFAULT_PI_EXTENSION_SOURCE = `npm:${PACKAGE_NAME}`;
 
 interface ParsedArgs {
@@ -50,7 +50,7 @@ interface ParsedArgs {
   json: boolean;
 }
 
-function usage(commandName = "pi-recipes"): string {
+function usage(commandName = "recipes"): string {
   return [
     `Usage: ${commandName} <command> [args]`,
     "",
@@ -263,7 +263,7 @@ async function installPiExtension(
         message,
         "",
         "Make sure `pi` is installed and available on PATH, then run:",
-        `  pi-recipes setup ${source}`,
+        `  recipes setup ${source}`,
       ].join("\n")
     );
   }
@@ -347,7 +347,7 @@ function printRecipeList(recipes: InstalledRecipe[], storeDir: string): void {
 async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
   const opts = { storeDir: args.storeDir, cwd: process.cwd(), env: process.env };
-  const commandName = "pi-recipes";
+  const commandName = "recipes";
 
   if (args.command === "help") {
     process.stdout.write(`${usage(commandName)}\n`);

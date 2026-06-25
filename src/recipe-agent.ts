@@ -28,13 +28,14 @@ export interface RecipeAgentDefinition {
   tools: string[];
   skills: string[];
   subagents: string[];
+  subagentsDeclared?: boolean;
   extensions?: RecipeAgentExtensions;
   systemInstructions?: RecipeSystemInstructions;
 }
 
 type ParsedRecipeAgentDefinition = Omit<
   RecipeAgentDefinition,
-  "tools" | "skills" | "subagents"
+  "tools" | "skills" | "subagents" | "subagentsDeclared"
 > & {
   tools?: string[];
   skills?: string[];
@@ -60,7 +61,7 @@ export const REQUIRED_RECIPE_AGENT_FIELDS: RequiredResolvedRecipeAgentField[] = 
 
 export interface RecipeAgentValidationFinding {
   agentName: string;
-  field: "name" | RequiredResolvedRecipeAgentField;
+  field: "name" | "from" | RequiredResolvedRecipeAgentField;
   message: string;
 }
 
@@ -249,6 +250,7 @@ export function loadRecipeAgentDefinitions(
       tools: raw.tools ?? base?.tools ?? [],
       skills: raw.skills ?? base?.skills ?? [],
       subagents: raw.subagents ?? base?.subagents ?? [],
+      subagentsDeclared: raw.subagents !== undefined || base?.subagentsDeclared === true,
       extensions: mergeExtensions(base?.extensions, raw.extensions),
       systemInstructions: raw.systemInstructions ?? base?.systemInstructions,
     };
@@ -301,6 +303,43 @@ export function validateResolvedRecipeAgentDefinition(opts: {
     return rawDefinitions.has(name) ? name : aliases.get(name) ?? name;
   }
 
+  function inheritanceFinding(
+    name: string,
+    stack: string[] = []
+  ): RecipeAgentValidationFinding | undefined {
+    const resolvedName = resolveName(name);
+    const definition = rawDefinitions.get(resolvedName);
+    if (!definition) {
+      return {
+        agentName: resolvedName,
+        field: "from",
+        message: `Recipe agent "${resolvedName}" was not found`,
+      };
+    }
+    if (!definition.from) return undefined;
+
+    const resolvedFrom = resolveName(definition.from);
+    if (stack.includes(resolvedFrom)) {
+      return {
+        agentName: resolvedName,
+        field: "from",
+        message: `Recipe agent "${resolvedName}" has cyclic from chain: ${[
+          ...stack,
+          resolvedName,
+          resolvedFrom,
+        ].join(" -> ")}`,
+      };
+    }
+    if (!rawDefinitions.has(resolvedFrom)) {
+      return {
+        agentName: resolvedName,
+        field: "from",
+        message: `Recipe agent "${resolvedName}" inherits from missing agent "${definition.from}"`,
+      };
+    }
+    return inheritanceFinding(definition.from, [...stack, resolvedName]);
+  }
+
   function resolvedFieldProvided(
     name: string,
     field: RequiredResolvedRecipeAgentField,
@@ -325,6 +364,9 @@ export function validateResolvedRecipeAgentDefinition(opts: {
       message: `Recipe agent "${agentName}" must declare name`,
     });
   }
+
+  const inheritance = inheritanceFinding(agentName);
+  if (inheritance) findings.push(inheritance);
 
   for (const field of opts.requiredFields ?? []) {
     if (resolvedFieldProvided(agentName, field)) continue;

@@ -132,8 +132,8 @@ describe("Pi recipes launch extension", () => {
         "warning"
       );
       const message = notify.mock.calls[0]?.[0] as string;
-      expect(message).toContain("pi-recipes list");
-      expect(message).toContain("pi-recipes install <source>");
+      expect(message).toContain("recipes list");
+      expect(message).toContain("recipes install <source>");
       expect(message).not.toContain("RecipePackageError");
       expect(message).not.toContain("at ");
 
@@ -287,6 +287,44 @@ describe("Pi recipes launch extension", () => {
         );
       expect(recipeMessage).not.toContain(join(recipeDir, "skills", "repo-index", "SKILL.md"));
       expect(recipeMessage).not.toContain(join(recipeDir, "prompts"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats an explicit empty subagents list as no visible subagents", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-empty-subagents-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - read",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Agent-specific prompt",
+        ].join("\n")
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        extensionContext(projectDir)
+      );
+
+      expect(pi.activeTools).toEqual(["read"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -487,7 +525,7 @@ describe("Pi recipes launch extension", () => {
       );
 
       expect(pi.tools.has("setup_git")).toBe(true);
-      expect(pi.activeTools.sort()).toEqual(["agent", "setup_git"]);
+      expect(pi.activeTools.sort()).toEqual(["setup_git"]);
       expect(notify).toHaveBeenCalledWith(
         expect.stringContaining("runtime-only extension unavailable"),
         "warning"
@@ -570,7 +608,7 @@ describe("Pi recipes launch extension", () => {
       );
 
       expect(pi.tools.has("setup_git")).toBe(true);
-      expect(pi.activeTools.sort()).toEqual(["agent", "setup_git"]);
+      expect(pi.activeTools.sort()).toEqual(["setup_git"]);
       expect(notify).not.toHaveBeenCalledWith(
         expect.stringContaining("excluded extension loaded"),
         "warning"

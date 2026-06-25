@@ -70,7 +70,6 @@ interface GitRecipeSource {
   input: string;
   url: string;
   ref?: string;
-  subdir?: string;
 }
 
 interface LocalRecipeSource {
@@ -101,6 +100,10 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
 function removeStaleRecipeStoreLock(lockPath: string): boolean {
   try {
     const stats = statSync(lockPath);
@@ -112,8 +115,7 @@ function removeStaleRecipeStoreLock(lockPath: string): boolean {
   }
 }
 
-function acquireRecipeStoreLock(storeDir: string): () => void {
-  const lockPath = recipeStoreLockPath(storeDir);
+function acquireLock(lockPath: string): () => void {
   const startedAt = Date.now();
   mkdirSync(dirname(lockPath), { recursive: true });
 
@@ -142,6 +144,43 @@ function acquireRecipeStoreLock(storeDir: string): () => void {
         throw new Error(`Timed out waiting for recipe store lock: ${lockPath}`);
       }
       sleepSync(STORE_LOCK_RETRY_MS);
+    }
+  }
+}
+
+function acquireRecipeStoreLock(storeDir: string): () => void {
+  return acquireLock(recipeStoreLockPath(storeDir));
+}
+
+async function acquireLockAsync(lockPath: string): Promise<() => void> {
+  const startedAt = Date.now();
+  mkdirSync(dirname(lockPath), { recursive: true });
+
+  while (true) {
+    try {
+      mkdirSync(lockPath);
+      try {
+        writeFileSync(
+          join(lockPath, "owner"),
+          JSON.stringify({
+            pid: process.pid,
+            createdAt: new Date().toISOString(),
+          })
+        );
+      } catch (err) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw err;
+      }
+      return () => {
+        rmSync(lockPath, { recursive: true, force: true });
+      };
+    } catch (err) {
+      const code = err && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
+      if (code !== "EEXIST") throw err;
+      if (!removeStaleRecipeStoreLock(lockPath) && Date.now() - startedAt > STORE_LOCK_TIMEOUT_MS) {
+        throw new Error(`Timed out waiting for recipe store lock: ${lockPath}`);
+      }
+      await sleep(STORE_LOCK_RETRY_MS);
     }
   }
 }
@@ -334,7 +373,6 @@ export function recipeSourceId(source: RecipeSource): string {
     return [
       "git:",
       source.url,
-      source.subdir ? `/${source.subdir}` : "",
       source.ref ? `#${source.ref}` : "",
     ].join("");
   }
@@ -346,7 +384,7 @@ export function recipeSourceId(source: RecipeSource): string {
 }
 
 function cloneDirectoryForSource(source: GithubRecipeSource, storeDir: string): string {
-  const ref = sanitizeSegment(source.ref ?? "HEAD");
+  const ref = hashedCacheSegment(source.ref ?? "HEAD");
   return join(
     storeDir,
     "sources",
@@ -374,7 +412,9 @@ function recipeDirectoryForSource(source: RecipeSource, storeDir: string): strin
     source.kind === "github"
       ? cloneDirectoryForSource(source, storeDir)
       : cloneDirectoryForGitSource(source, storeDir);
-  const recipeDir = source.subdir ? resolve(cloned, source.subdir) : cloned;
+  const recipeDir = source.kind === "github" && source.subdir
+    ? resolve(cloned, source.subdir)
+    : cloned;
   const relativePath = relative(cloned, recipeDir);
   if (
     relativePath === ".." ||
@@ -624,10 +664,10 @@ function githubAuthHint(source: GithubRecipeSource): string {
     `Could not install github:${source.owner}/${source.repo}.`,
     "",
     "If this repository is private, use standard git authentication:",
-    `  pi-recipes install git@github.com:${source.owner}/${source.repo}.git`,
+    `  recipes install git@github.com:${source.owner}/${source.repo}.git`,
     "",
     "For CI or noninteractive installs, set GITHUB_TOKEN or GH_TOKEN:",
-    `  GITHUB_TOKEN=... pi-recipes install github:${source.owner}/${source.repo}`,
+    `  GITHUB_TOKEN=... recipes install github:${source.owner}/${source.repo}`,
   ].join("\n");
 }
 
@@ -640,43 +680,48 @@ async function cloneGitSource(
     source.kind === "github"
       ? cloneDirectoryForSource(source, storeDir)
       : cloneDirectoryForGitSource(source, storeDir);
-  if (opts.force) rmSync(target, { recursive: true, force: true });
-  if (existsSync(target)) return;
-
-  mkdirSync(dirname(target), { recursive: true });
-  const baseEnv = opts.env ?? process.env;
-  const gitEnv =
-    source.kind === "github"
-      ? githubGitEnv(source, baseEnv, dirname(target))
-      : { env: baseEnv, cleanup() {} };
-  const url = source.kind === "github" ? githubCloneUrl(source, gitEnv.env) : source.url;
-  const baseArgs = ["clone", "--depth", "1"];
-  const args = source.ref
-    ? [...baseArgs, "--branch", source.ref, url, target]
-    : [...baseArgs, url, target];
-
+  const release = await acquireLockAsync(`${target}.lock`);
   try {
-    await execFileAsync("git", args, { env: gitEnv.env });
-  } catch (err) {
-    if (!source.ref) {
-      const message = source.kind === "github"
-        ? `${githubAuthHint(source)}\n\nUnderlying git error:\n${gitErrorText(err)}`
-        : `Could not install git source ${redactUrl(source.input)}.\n\nUnderlying git error:\n${gitErrorText(err)}`;
-      throw new Error(message);
-    }
-    rmSync(target, { recursive: true, force: true });
+    if (opts.force) rmSync(target, { recursive: true, force: true });
+    if (existsSync(target)) return;
+
+    mkdirSync(dirname(target), { recursive: true });
+    const baseEnv = opts.env ?? process.env;
+    const gitEnv =
+      source.kind === "github"
+        ? githubGitEnv(source, baseEnv, dirname(target))
+        : { env: baseEnv, cleanup() {} };
+    const url = source.kind === "github" ? githubCloneUrl(source, gitEnv.env) : source.url;
+    const baseArgs = ["clone", "--depth", "1"];
+    const args = source.ref
+      ? [...baseArgs, "--branch", source.ref, url, target]
+      : [...baseArgs, url, target];
+
     try {
-      await execFileAsync("git", ["clone", url, target], { env: gitEnv.env });
-      await execFileAsync("git", ["checkout", source.ref], { cwd: target, env: gitEnv.env });
-    } catch (fallbackErr) {
+      await execFileAsync("git", args, { env: gitEnv.env });
+    } catch (err) {
+      if (!source.ref) {
+        const message = source.kind === "github"
+          ? `${githubAuthHint(source)}\n\nUnderlying git error:\n${gitErrorText(err)}`
+          : `Could not install git source ${redactUrl(source.input)}.\n\nUnderlying git error:\n${gitErrorText(err)}`;
+        throw new Error(message);
+      }
       rmSync(target, { recursive: true, force: true });
-      const message = source.kind === "github"
-        ? `${githubAuthHint(source)}\n\nUnderlying git error:\n${gitErrorText(fallbackErr)}`
-        : `Could not install git source ${redactUrl(source.input)}.\n\nUnderlying git error:\n${gitErrorText(fallbackErr)}`;
-      throw new Error(message);
+      try {
+        await execFileAsync("git", ["clone", url, target], { env: gitEnv.env });
+        await execFileAsync("git", ["checkout", source.ref], { cwd: target, env: gitEnv.env });
+      } catch (fallbackErr) {
+        rmSync(target, { recursive: true, force: true });
+        const message = source.kind === "github"
+          ? `${githubAuthHint(source)}\n\nUnderlying git error:\n${gitErrorText(fallbackErr)}`
+          : `Could not install git source ${redactUrl(source.input)}.\n\nUnderlying git error:\n${gitErrorText(fallbackErr)}`;
+        throw new Error(message);
+      }
+    } finally {
+      gitEnv.cleanup();
     }
   } finally {
-    gitEnv.cleanup();
+    release();
   }
 }
 
@@ -750,6 +795,20 @@ function findInstalledRecipeByIdentifier(
   recipes: InstalledRecipe[],
   identifier: string
 ): InstalledRecipe | undefined {
+  const sourceMatches = recipes.filter(
+    (recipe) => recipe.id === identifier || recipe.source === identifier
+  );
+  if (sourceMatches.length === 1) return sourceMatches[0];
+  if (sourceMatches.length > 1) {
+    throw new Error(
+      [
+        `Recipe source "${identifier}" is ambiguous.`,
+        "Use one of these recipe names:",
+        ...sourceMatches.map((recipe) => `  ${recipeScopedIdentifier(recipe)}`),
+      ].join("\n")
+    );
+  }
+
   const matches = identifier.includes("/")
     ? recipes.filter((recipe) => recipeScopedIdentifier(recipe) === identifier)
     : recipes.filter((recipe) => recipePreferredIdentifier(recipe) === identifier);

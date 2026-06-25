@@ -8,20 +8,20 @@ maps recipe resources into the live Pi session.
 Install the recipe tooling:
 
 ```bash
-npm install -g @tfidfwastaken/local-session-tools
+npm install -g @introspection-ai/pi-recipes
 ```
 
-`pi-recipes install ...` automatically installs this companion extension into
+`recipes install ...` automatically installs this companion extension into
 Pi when it is missing. To set it up explicitly:
 
 ```bash
-pi-recipes setup
+recipes setup
 ```
 
 Manual Pi installation is still available:
 
 ```bash
-pi install npm:@tfidfwastaken/local-session-tools
+pi install npm:@introspection-ai/pi-recipes
 ```
 
 For a local clone:
@@ -45,7 +45,7 @@ pi --recipe /path/to/recipe
 Launch with an installed recipe:
 
 ```bash
-pi-recipes install github:owner/repo
+recipes install github:owner/repo
 pi --recipe owner/repo
 pi --recipe recipe-name
 ```
@@ -69,7 +69,7 @@ PI_RECIPE_DIR=recipe-name PI_AGENT_NAME=reviewer pi
 - an installed short recipe name
 - an installed scoped recipe name
 
-The extension resolves installed recipes from the `pi-recipes` store. Set
+The extension resolves installed recipes from the `recipes` store. Set
 `PI_RECIPES_HOME` if Pi should use a non-default store.
 
 ## Launch Flow
@@ -305,7 +305,7 @@ nested extension layouts without failing when one branch has no matches.
 
 Extensions are loaded with module resolution rooted at the recipe directory. If
 an extension imports a third-party package, declare that dependency in the
-recipe's `package.json` and install/register the recipe with `pi-recipes install`
+recipe's `package.json` and install/register the recipe with `recipes install`
 so dependencies are installed into the recipe directory. For remote Git recipes,
 commit a lockfile with the recipe.
 
@@ -347,11 +347,11 @@ Generate the lockfile from inside the recipe directory:
 ```bash
 cd my-recipe
 npm install --package-lock-only
-pi-recipes install .
+recipes install .
 ```
 
 For a remote Git recipe, commit `package.json` and the lockfile.
-When users run `pi-recipes install github:owner/repo`, the CLI installs production
+When users run `recipes install github:owner/repo`, the CLI installs production
 dependencies into that cloned recipe before Pi loads extensions.
 
 Imports of Pi runtime packages such as `@earendil-works/pi-coding-agent`,
@@ -391,11 +391,11 @@ export default extension;
 If Pi cannot find an installed recipe, check the store:
 
 ```bash
-pi-recipes list
-pi-recipes path recipe-name
+recipes list
+recipes path recipe-name
 ```
 
-If Pi and `pi-recipes` are using different stores, set:
+If Pi and `recipes` are using different stores, set:
 
 ```bash
 PI_RECIPES_HOME=/path/to/store pi --recipe recipe-name
@@ -409,5 +409,5 @@ that registers the tool is declared in the recipe manifest and loads without a
 warning.
 
 If an extension fails with `Cannot find module`, confirm the dependency is in
-the recipe `package.json`, the recipe was installed with `pi-recipes install`, and the
+the recipe `package.json`, the recipe was installed with `recipes install`, and the
 dependency was written to the recipe's `node_modules`.

@@ -233,7 +233,7 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
   }
 
   return {
-    name: stringValue(raw.name) ?? "local",
+    name: stringValue(raw.name) ?? "",
     version: stringValue(raw.version) ?? "0.0.0",
     ...(stringValue(raw.description) ? { description: stringValue(raw.description) } : {}),
     path: packageDir,

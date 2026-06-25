@@ -172,7 +172,7 @@ function recipeNotFoundMessage(input: string, resolvedPath: string): string {
     lines.push("Make sure that directory exists and contains package.json with a pi block.");
   } else {
     lines.push(`No installed recipe matched "${input}", and no local directory exists at: ${resolvedPath}`);
-    lines.push("Run `pi-recipes list` to see installed recipes, or `pi-recipes install <source>` first.");
+    lines.push("Run `recipes list` to see installed recipes, or `recipes install <source>` first.");
   }
   lines.push("Then launch again with `pi --recipe <recipe>`.");
   return lines.join("\n");
@@ -182,7 +182,7 @@ function recipeLoadErrorMessage(input: string, reason: string): string {
   return [
     `Recipe "${input}" could not be loaded.`,
     reason,
-    "Run `pi-recipes doctor <recipe>` for a validation report.",
+    "Run `recipes doctor <recipe>` for a validation report.",
   ].join("\n");
 }
 
@@ -224,7 +224,7 @@ function runtimeContextPrompt(
 
 function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
   const definitions = loadRecipeAgentDefinitions(state.recipeDir);
-  const names = state.agent.subagents.length
+  const names = state.agent.subagentsDeclared
     ? state.agent.subagents
     : [...new Set([...definitions.values()].map((agent) => agent.name))]
         .filter((name) => name !== state.agentName);

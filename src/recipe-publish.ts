@@ -272,9 +272,6 @@ export async function publishRecipe(
   mkdirSync(dirname(recipeDir), { recursive: true });
   readPiPackageManifest(recipeDir);
 
-  writePackageName(recipeDir, github.packageName);
-  ensureGitignore(recipeDir);
-
   const report = validateRecipeDirectory(recipeDir);
   const errors = report.findings.filter((finding) => finding.severity === "error");
   if (errors.length > 0) {
@@ -285,6 +282,9 @@ export async function publishRecipe(
       ].join("\n")
     );
   }
+
+  writePackageName(recipeDir, github.packageName);
+  ensureGitignore(recipeDir);
 
   const env = opts.env ?? process.env;
   await ensureGitRepository(recipeDir, env, opts.commandRunner);
@@ -302,7 +302,7 @@ export async function publishRecipe(
     opts.commandRunner
   );
   await setOrigin(github, recipeDir, env, opts.commandRunner);
-  await runCommand("git", ["push", "-u", "origin", "main"], { cwd: recipeDir, env }, opts.commandRunner);
+  await runCommand("git", ["push", "-u", "origin", "HEAD:main"], { cwd: recipeDir, env }, opts.commandRunner);
 
   const recipe = await addRecipe(recipeDir, opts);
   return {

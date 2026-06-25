@@ -180,8 +180,8 @@ export function createRecipeScaffold(
         "## Develop",
         "",
         "```bash",
-        "pi-recipes doctor .",
-        "pi-recipes install .",
+        "recipes doctor .",
+        "recipes install .",
         `pi --recipe ${name}`,
         "```",
         "",
@@ -190,7 +190,7 @@ export function createRecipeScaffold(
         "Commit this directory to Git and share the repository locator:",
         "",
         "```bash",
-        `pi-recipes install github:owner/${name}`,
+        `recipes install github:owner/${name}`,
         "```",
         "",
       ].join("\n"),
@@ -236,17 +236,18 @@ export function validateRecipeDirectory(recipeDir: string): RecipeDevelopmentRep
           manifest.name
         )
       );
-    } else {
-      for (const agentFinding of validateRecipeAgentDefinitions(recipeDir)) {
-        findings.push(
-          finding(
-            "error",
-            `agent.${agentFinding.field}_missing`,
-            agentFinding.message,
-            manifest.name
-          )
-        );
-      }
+    }
+    for (const agentFinding of validateRecipeAgentDefinitions(recipeDir)) {
+      findings.push(
+        finding(
+          "error",
+          `agent.${agentFinding.field}_missing`,
+          agentFinding.message,
+          manifest.name
+        )
+      );
+    }
+    if (uniqueAgents.size > 0) {
       try {
         resolveRecipeAgentDefinition({ recipeDir });
       } catch (err) {
@@ -289,17 +290,17 @@ export function createRecipePublishGuide(recipeDir: string): RecipePublishGuide 
     manifest: report.manifest,
     report,
     checklist: [
-      "Run `pi-recipes doctor .` and fix any errors.",
-      `Run \`pi-recipes publish . --github owner/${repositoryName} --visibility private\` to create, commit, and push a GitHub repository.`,
+      "Run `recipes doctor .` and fix any errors.",
+      `Run \`recipes publish . --github owner/${repositoryName} --visibility private\` to create, commit, and push a GitHub repository.`,
       "Commit package.json, agents, prompts, skills, themes, extensions, and SYSTEM.md.",
       "If extensions have runtime dependencies, commit the package lockfile.",
       "Push the recipe to a Git repository.",
       "Tag releases when users should install a stable version.",
     ],
     sourceExamples: [
-      `pi-recipes install github:owner/${repositoryName}`,
-      `pi-recipes install github:owner/${repositoryName}#v${report.manifest.version}`,
-      `pi-recipes install git@github.com:owner/${repositoryName}.git`,
+      `recipes install github:owner/${repositoryName}`,
+      `recipes install github:owner/${repositoryName}#v${report.manifest.version}`,
+      `recipes install git@github.com:owner/${repositoryName}.git`,
     ],
   };
 }

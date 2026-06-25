@@ -1,9 +1,10 @@
 {
-  "name": "@tfidfwastaken/local-session-tools",
-  "version": "0.1.1",
+  "name": "@introspection-ai/pi-recipes",
+  "version": "0.1.0-beta.0",
   "description": "Local session tooling for package-based workflows.",
   "license": "UNLICENSED",
   "type": "module",
+  "packageManager": "pnpm@10.33.0",
   "files": [
     "dist/child-agent.d.ts",
     "dist/child-agent.js",
@@ -19,6 +20,8 @@
     "dist/recipe-agent.js",
     "dist/recipe-package.d.ts",
     "dist/recipe-package.js",
+    "dist/recipe-publish.d.ts",
+    "dist/recipe-publish.js",
     "dist/recipe-store.d.ts",
     "dist/recipe-store.js",
     "docs",
@@ -26,8 +29,16 @@
     "package.json"
   ],
   "bin": {
-    "pi-recipes": "dist/cli.js"
+    "recipes": "dist/cli.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/introspection-org/pi-recipes.git"
+  },
+  "bugs": {
+    "url": "https://github.com/introspection-org/pi-recipes/issues"
+  },
+  "homepage": "https://github.com/introspection-org/pi-recipes#readme",
   "publishConfig": {
     "access": "public",
     "tag": "latest"
@@ -56,7 +67,6 @@
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
-    "test:system": "node test/recipes-system.mjs",
     "clean": "rm -rf dist .turbo node_modules"
   },
   "dependencies": {

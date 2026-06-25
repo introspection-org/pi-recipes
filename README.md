@@ -1,11 +1,11 @@
-# @tfidfwastaken/local-session-tools
+# @introspection-ai/pi-recipes
 
-Experimental Pi recipe tooling with a `pi-recipes` CLI and Pi extension
+Experimental Pi recipe tooling with a `recipes` CLI and Pi extension
 support.
 
 Recipes are Pi packages: folders with a `package.json` manifest containing a
 `pi` block, plus agent YAML files, prompts, skills, and optional TypeScript
-runtime extensions. The `pi-recipes` CLI installs or registers recipes in a
+runtime extensions. The `recipes` CLI installs or registers recipes in a
 local store and ensures the Pi extension is installed before recipes are run.
 The Pi extension resolves an installed recipe into a local directory and wires
 those recipe files into the live Pi session at launch time.
@@ -23,27 +23,27 @@ prompts, and themes.
 
 ## Package Exports
 
-- `@tfidfwastaken/local-session-tools`: extension factory and recipe-loading helpers.
-- `@tfidfwastaken/local-session-tools/pi-extension`: Pi extension entrypoint.
-- `@tfidfwastaken/local-session-tools/recipe-store`: recipe install and resolution helpers.
+- `@introspection-ai/pi-recipes`: extension factory and recipe-loading helpers.
+- `@introspection-ai/pi-recipes/pi-extension`: Pi extension entrypoint.
+- `@introspection-ai/pi-recipes/recipe-store`: recipe install and resolution helpers.
 
 ## Quick Start
 
 Install the recipe tooling:
 
 ```bash
-npm install -g @tfidfwastaken/local-session-tools
+npm install -g @introspection-ai/pi-recipes
 ```
 
-The first `pi-recipes install ...` run automatically installs the companion Pi
-extension with `pi install npm:@tfidfwastaken/local-session-tools`.
+The first `recipes install ...` run automatically installs the companion Pi
+extension with `pi install npm:@introspection-ai/pi-recipes`.
 
 Create a local recipe:
 
 ```bash
-pi-recipes create ./my-recipe
-pi-recipes doctor ./my-recipe
-pi-recipes install ./my-recipe
+recipes create ./my-recipe
+recipes doctor ./my-recipe
+recipes install ./my-recipe
 ```
 
 Launch it with Pi:
@@ -53,7 +53,7 @@ pi --recipe my-recipe
 pi --recipe my-recipe --agent agent
 ```
 
-`pi-recipes create` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
+`recipes create` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
 and recipe README. Edit those files as the recipe grows. Named variants are
 agents too:
 
@@ -69,30 +69,30 @@ model:
 Install public GitHub recipes:
 
 ```bash
-pi-recipes install github:owner/repo
-pi-recipes install github:owner/repo/path/to/recipe
-pi-recipes install github:owner/repo#v1.0.0
+recipes install github:owner/repo
+recipes install github:owner/repo/path/to/recipe
+recipes install github:owner/repo#v1.0.0
 ```
 
 Install private recipes with normal Git authentication:
 
 ```bash
-pi-recipes install git@github.com:owner/private-recipe.git
-GITHUB_TOKEN=... pi-recipes install github:owner/private-recipe
+recipes install git@github.com:owner/private-recipe.git
+GITHUB_TOKEN=... recipes install github:owner/private-recipe
 ```
 
 No recipe registry is required. Publishing a recipe creates or updates a GitHub
 repository and pushes the local recipe:
 
 ```bash
-pi-recipes publish ./my-recipe --github owner/my-recipe --visibility private
+recipes publish ./my-recipe --github owner/my-recipe --visibility private
 ```
 
 Customize an installed recipe into an editable local copy:
 
 ```bash
-pi-recipes customize pi-codex
-pi-recipes doctor pi-codex
+recipes customize pi-codex
+recipes doctor pi-codex
 pi --recipe pi-codex
 ```
 

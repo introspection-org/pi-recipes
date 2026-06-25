@@ -1,6 +1,6 @@
 # Recipe CLI
 
-`pi-recipes` is the Pi recipe manager. It installs, registers, lists, removes,
+`recipes` is the Pi recipe manager. It installs, registers, lists, removes,
 validates, scaffolds, and publishes recipe folders for Pi.
 
 ## Install
@@ -8,20 +8,20 @@ validates, scaffolds, and publishes recipe folders for Pi.
 Install the recipe tooling into the environment where you run Pi:
 
 ```bash
-npm install -g @tfidfwastaken/local-session-tools
+npm install -g @introspection-ai/pi-recipes
 ```
 
-The first `pi-recipes install ...` run checks whether the companion Pi extension
-is installed. If it is missing, `pi-recipes` runs:
+The first `recipes install ...` run checks whether the companion Pi extension
+is installed. If it is missing, `recipes` runs:
 
 ```bash
-pi install npm:@tfidfwastaken/local-session-tools
+pi install npm:@introspection-ai/pi-recipes
 ```
 
 You can run setup explicitly:
 
 ```bash
-pi-recipes setup
+recipes setup
 ```
 
 For local development:
@@ -30,13 +30,13 @@ For local development:
 pnpm install
 pnpm build
 pnpm link --global
-pi-recipes setup "$(pwd)" --force
+recipes setup "$(pwd)" --force
 ```
 
-The CLI binary is `pi-recipes`:
+The CLI binary is `recipes`:
 
 ```bash
-pi-recipes --help
+recipes --help
 ```
 
 ## Store
@@ -50,21 +50,21 @@ Recipes are tracked in a local store:
 Use a different store with either:
 
 ```bash
-PI_RECIPES_HOME=/path/to/store pi-recipes list
-pi-recipes list --store /path/to/store
+PI_RECIPES_HOME=/path/to/store recipes list
+recipes list --store /path/to/store
 ```
 
 Remote Git recipes are cloned into the store. Local recipes are registered by
 path, so edits to the local directory are immediately visible to the harness.
 If a recipe declares extension runtime dependencies in `package.json`,
-`pi-recipes install` installs them in that recipe directory.
+`recipes install` installs them in that recipe directory.
 
 ## Create a Recipe
 
 Create a starter recipe with:
 
 ```bash
-pi-recipes create ./my-recipe
+recipes create ./my-recipe
 ```
 
 This writes a working recipe skeleton:
@@ -81,10 +81,10 @@ my-recipe/
 Use `--name` when the directory name is not the recipe identifier you want:
 
 ```bash
-pi-recipes create ./recipes/code-review --name code-review
+recipes create ./recipes/code-review --name code-review
 ```
 
-`pi-recipes create` refuses to overwrite existing scaffold files unless `--force` is
+`recipes create` refuses to overwrite existing scaffold files unless `--force` is
 provided. After generating the starter, edit the files to fit your workflow.
 
 Minimal `package.json`:
@@ -141,7 +141,7 @@ prompt before applying the selected agent's `system_instructions`.
 Validate the current recipe directory:
 
 ```bash
-pi-recipes doctor .
+recipes doctor .
 ```
 
 `doctor` checks the manifest, resolves declared resources, catches missing
@@ -150,15 +150,15 @@ required agent globs, and warns when no default agent can be inferred.
 Register the local recipe:
 
 ```bash
-pi-recipes install ./my-recipe
+recipes install ./my-recipe
 ```
 
 Inspect what was registered:
 
 ```bash
-pi-recipes list
-pi-recipes path my-recipe
-pi-recipes doctor my-recipe
+recipes list
+recipes path my-recipe
+recipes doctor my-recipe
 ```
 
 Run it in Pi:
@@ -173,7 +173,7 @@ pi --recipe my-recipe --agent agent
 Recipes use `package.json` as their manifest. Top-level package fields describe
 the recipe identity:
 
-- `name`: the identifier users pass to `pi --recipe` and `pi-recipes path`
+- `name`: the identifier users pass to `pi --recipe` and `recipes path`
 - `version`: the recipe version shown in Pi sessions
 - `description`: a short summary for humans
 
@@ -288,10 +288,10 @@ npm install --package-lock-only
 Then register or install the recipe:
 
 ```bash
-pi-recipes install .
+recipes install .
 ```
 
-`pi-recipes install` installs production dependencies into the recipe directory so
+`recipes install` installs production dependencies into the recipe directory so
 extension imports resolve from that recipe. For local recipes, this modifies the
 local recipe directory. For remote Git recipes, dependencies are installed into
 the cloned recipe cache.
@@ -304,7 +304,7 @@ also commit a lockfile:
 - `pnpm-lock.yaml`
 - `yarn.lock`
 
-`pi-recipes install` installs production dependencies with lifecycle scripts disabled:
+`recipes install` installs production dependencies with lifecycle scripts disabled:
 
 - npm: `npm ci --omit=dev --ignore-scripts`
 - pnpm: `pnpm install --prod --frozen-lockfile --ignore-scripts`
@@ -344,44 +344,44 @@ recipe is installed for runtime use.
 Install from a local directory:
 
 ```bash
-pi-recipes install ./my-recipe
+recipes install ./my-recipe
 ```
 
 Install from GitHub shorthand:
 
 ```bash
-pi-recipes install github:owner/repo
-pi-recipes install github:owner/repo/path/to/recipe
-pi-recipes install owner/repo
+recipes install github:owner/repo
+recipes install github:owner/repo/path/to/recipe
+recipes install owner/repo
 ```
 
 Install a pinned ref:
 
 ```bash
-pi-recipes install github:owner/repo#v1.0.0
-pi-recipes install github:owner/repo/path/to/recipe#v1.0.0
+recipes install github:owner/repo#v1.0.0
+recipes install github:owner/repo/path/to/recipe#v1.0.0
 ```
 
 Install from explicit Git URLs:
 
 ```bash
-pi-recipes install git@github.com:owner/private-recipe.git
-pi-recipes install git+https://github.com/owner/recipe.git#v1.0.0
-pi-recipes install file:///path/to/recipe.git#v1.0.0
+recipes install git@github.com:owner/private-recipe.git
+recipes install git+https://github.com/owner/recipe.git#v1.0.0
+recipes install file:///path/to/recipe.git#v1.0.0
 ```
 
 Re-clone an existing remote source:
 
 ```bash
-pi-recipes install github:owner/repo --force
+recipes install github:owner/repo --force
 ```
 
 Print machine-readable output:
 
 ```bash
-pi-recipes install github:owner/repo --json
-pi-recipes list --json
-pi-recipes doctor my-recipe --json
+recipes install github:owner/repo --json
+recipes list --json
+recipes doctor my-recipe --json
 ```
 
 ## Customize Recipes
@@ -390,7 +390,7 @@ When you want to make a small local change to a recipe installed from elsewhere,
 copy it into an editable local recipe:
 
 ```bash
-pi-recipes customize pi-codex
+recipes customize pi-codex
 ```
 
 This creates a copy under the recipe store's `local/` directory, registers that
@@ -398,7 +398,7 @@ copy under the same recipe name, and leaves remote clone caches alone. Edit the
 printed directory, then run:
 
 ```bash
-pi-recipes doctor pi-codex
+recipes doctor pi-codex
 pi --recipe pi-codex
 ```
 
@@ -408,13 +408,13 @@ while copying from another registered source.
 
 ## Resolve Recipes
 
-`pi-recipes path <identifier>` resolves an installed recipe directory:
+`recipes path <identifier>` resolves an installed recipe directory:
 
 ```bash
-pi-recipes path my-recipe
-pi-recipes path github:owner/repo
-pi-recipes path owner/repo
-pi-recipes path repo
+recipes path my-recipe
+recipes path github:owner/repo
+recipes path owner/repo
+recipes path repo
 ```
 
 Identifiers can match:
@@ -430,8 +430,8 @@ The Pi extension uses the same resolution rules for `--recipe`.
 Remove a recipe record from the store:
 
 ```bash
-pi-recipes remove my-recipe
-pi-recipes remove owner/my-recipe
+recipes remove my-recipe
+recipes remove owner/my-recipe
 ```
 
 This removes the store record. Remote clone contents may remain in the store
@@ -442,10 +442,10 @@ cache and can be reused by a later install unless `--force` is used.
 Publish a recipe to GitHub:
 
 ```bash
-pi-recipes publish ./my-recipe --github owner/my-recipe --visibility public
+recipes publish ./my-recipe --github owner/my-recipe --visibility public
 ```
 
-`pi-recipes publish` runs the same development validation as `doctor`, updates
+`recipes publish` runs the same development validation as `doctor`, updates
 `package.json#name` to `@owner/my-recipe`, commits local changes, creates the
 GitHub repository when needed, pushes `main`, and re-registers the local recipe.
 
@@ -464,20 +464,20 @@ gh repo create owner/my-recipe --private=false --source . --push
 Users install it with:
 
 ```bash
-pi-recipes install github:owner/my-recipe
+recipes install github:owner/my-recipe
 ```
 
 For a private recipe, use normal GitHub access control. Users can install via
 SSH:
 
 ```bash
-pi-recipes install git@github.com:owner/private-recipe.git
+recipes install git@github.com:owner/private-recipe.git
 ```
 
 For CI or noninteractive GitHub installs, set a token:
 
 ```bash
-GITHUB_TOKEN=... pi-recipes install github:owner/private-recipe
+GITHUB_TOKEN=... recipes install github:owner/private-recipe
 ```
 
 For reproducible releases, tag the Git repository and tell users to install the
@@ -486,7 +486,7 @@ tag:
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
-pi-recipes install github:owner/my-recipe#v1.0.0
+recipes install github:owner/my-recipe#v1.0.0
 ```
 
 For monorepos or recipe collections, put each recipe in a subdirectory:
@@ -502,8 +502,8 @@ recipes/
 Install a subdirectory recipe with:
 
 ```bash
-pi-recipes install github:owner/repo/recipes/code-review
-pi-recipes install github:owner/repo/recipes/research#v1.0.0
+recipes install github:owner/repo/recipes/code-review
+recipes install github:owner/repo/recipes/research#v1.0.0
 ```
 
 ## Troubleshooting
@@ -512,18 +512,18 @@ If a private GitHub recipe fails to install with `github:owner/repo`, use SSH or
 set a token:
 
 ```bash
-pi-recipes install git@github.com:owner/repo.git
-GITHUB_TOKEN=... pi-recipes install github:owner/repo
+recipes install git@github.com:owner/repo.git
+GITHUB_TOKEN=... recipes install github:owner/repo
 ```
 
 If `doctor` reports missing resources, check that glob paths are relative to the
-recipe directory and that direct paths exist. If `pi-recipes install` reports missing
+recipe directory and that direct paths exist. If `recipes install` reports missing
 extension dependency lockfiles, commit the lockfile generated by your package
 manager.
 
 If Pi cannot find a recipe by name, confirm it is in the same store:
 
 ```bash
-pi-recipes list
+recipes list
 PI_RECIPES_HOME=/same/store pi --recipe my-recipe
 ```
