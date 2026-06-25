@@ -419,6 +419,47 @@ describe("recipe package manifest", () => {
     }
   });
 
+  it("accepts explicitly blank agent system instructions", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agent-blank-instructions-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "blank-instructions",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      writeFileSync(
+        join(root, "agents", "agent.yaml"),
+        [
+          "name: agent",
+          "model:",
+          "  name: test/provider-model",
+          "  thinking_level: low",
+          "tools: []",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          '  content: ""',
+          "",
+        ].join("\n")
+      );
+
+      const report = validateRecipeDirectory(root);
+      const agent = resolveRecipeAgentDefinition({ recipeDir: root }).agent;
+
+      expect(report.valid).toBe(true);
+      expect(agent?.systemInstructions).toEqual({
+        mode: "append",
+        content: "",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports agents with missing inherited bases during recipe validation", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agent-from-validation-"));
     try {
