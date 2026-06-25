@@ -1,0 +1,92 @@
+{
+  "name": "@introspection-ai/pi-recipes",
+  "version": "0.1.0-beta.0",
+  "description": "Local session tooling for package-based workflows.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "files": [
+    "dist/child-agent.d.ts",
+    "dist/child-agent.js",
+    "dist/cli.d.ts",
+    "dist/cli.js",
+    "dist/index.d.ts",
+    "dist/index.js",
+    "dist/pi-extension.d.ts",
+    "dist/pi-extension.js",
+    "dist/recipe-dev.d.ts",
+    "dist/recipe-dev.js",
+    "dist/recipe-agent.d.ts",
+    "dist/recipe-agent.js",
+    "dist/recipe-package.d.ts",
+    "dist/recipe-package.js",
+    "dist/recipe-publish.d.ts",
+    "dist/recipe-publish.js",
+    "dist/recipe-store.d.ts",
+    "dist/recipe-store.js",
+    "docs",
+    "README.md",
+    "package.json"
+  ],
+  "bin": {
+    "recipes": "dist/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/introspection-org/pi-recipes.git"
+  },
+  "bugs": {
+    "url": "https://github.com/introspection-org/pi-recipes/issues"
+  },
+  "homepage": "https://github.com/introspection-org/pi-recipes#readme",
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./pi-extension": {
+      "types": "./dist/pi-extension.d.ts",
+      "import": "./dist/pi-extension.js"
+    },
+    "./recipe-store": {
+      "types": "./dist/recipe-store.d.ts",
+      "import": "./dist/recipe-store.js"
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./dist/pi-extension.js"
+    ]
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc && chmod +x dist/cli.js",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo node_modules"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-agent-core": "0.75.4",
+    "@earendil-works/pi-ai": "0.75.4",
+    "@earendil-works/pi-coding-agent": "0.75.4",
+    "@earendil-works/pi-tui": "0.75.5",
+    "@types/node": "^22.10.0",
+    "typebox": "^1.0.56",
+    "typescript": "^5.7.3",
+    "vitest": "^4.0.18"
+  }
+}
