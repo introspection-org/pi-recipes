@@ -4,3 +4,4 @@ export * from "./recipe-dev.js";
 export * from "./recipe-package.js";
 export * from "./recipe-publish.js";
 export * from "./recipe-store.js";
+export * from "./recipe-telemetry.js";
