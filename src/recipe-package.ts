@@ -6,7 +6,6 @@ export interface RecipePackageResources {
   extensions: string[];
   skills: string[];
   prompts: string[];
-  themes: string[];
 }
 
 export interface RecipePackageManifest {
@@ -46,7 +45,6 @@ const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "extensions",
   "skills",
   "prompts",
-  "themes",
 ];
 
 function stringArray(value: unknown): string[] {
@@ -61,7 +59,6 @@ function emptyResources(): RecipePackageResources {
     extensions: [],
     skills: [],
     prompts: [],
-    themes: [],
   };
 }
 
@@ -288,7 +285,6 @@ export function defaultPiPackageResourcePaths(
     agents: [join(pkg.path, "agents")],
     skills: [join(pkg.path, "skills")],
     prompts: [join(pkg.path, "prompts")],
-    themes: [join(pkg.path, "themes")],
   };
   return (defaults[key] ?? []).filter((path) => existsSync(path));
 }
@@ -302,8 +298,7 @@ export function packageResourcePaths(
       allowEmptyGlobMatches:
         key === "extensions" ||
         key === "skills" ||
-        key === "prompts" ||
-        key === "themes",
+        key === "prompts",
     });
   }
   return defaultPiPackageResourcePaths(pkg, key);

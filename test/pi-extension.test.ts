@@ -24,7 +24,6 @@ function writeRecipe(root: string) {
   mkdirSync(join(recipeDir, "defs"), { recursive: true });
   mkdirSync(join(recipeDir, "skills", "repo-index"), { recursive: true });
   mkdirSync(join(recipeDir, "prompts"), { recursive: true });
-  mkdirSync(join(recipeDir, "themes"), { recursive: true });
   writeFileSync(
     join(recipeDir, "package.json"),
     `${JSON.stringify(
@@ -35,7 +34,6 @@ function writeRecipe(root: string) {
           agents: ["defs/*.yaml"],
           skills: ["skills/**/SKILL.md"],
           prompts: ["prompts"],
-          themes: ["themes/*.json"],
         },
       },
       null,
@@ -79,7 +77,6 @@ function writeRecipe(root: string) {
   );
   writeFileSync(join(recipeDir, "skills", "repo-index", "SKILL.md"), "---\ndescription: Index repo\n---\n");
   writeFileSync(join(recipeDir, "prompts", "review.md"), "Review this\n");
-  writeFileSync(join(recipeDir, "themes", "demo.json"), "{}\n");
   return recipeDir;
 }
 
@@ -234,7 +231,6 @@ describe("Pi recipes launch extension", () => {
         expect.objectContaining({
           skillPaths: [join(recipeDir, "skills", "repo-index", "SKILL.md")],
           promptPaths: [join(recipeDir, "prompts")],
-          themePaths: [join(recipeDir, "themes", "demo.json")],
         }),
       ]);
 

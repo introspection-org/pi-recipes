@@ -137,7 +137,6 @@ interface RecipeLaunchState {
   agent: RecipeAgentDefinition;
   skillPaths: string[];
   promptPaths: string[];
-  themePaths: string[];
   extensionPaths: string[];
   extensionsLoaded: boolean;
   configured: boolean;
@@ -691,7 +690,6 @@ export function createPiRecipesExtension(
       agent: resolved.agent,
       skillPaths: packageResourcePaths(manifest, "skills"),
       promptPaths: packageResourcePaths(manifest, "prompts"),
-      themePaths: packageResourcePaths(manifest, "themes"),
       extensionPaths,
       extensionsLoaded: false,
       configured: false,
@@ -1051,7 +1049,6 @@ export function createPiRecipesExtension(
       return {
         skillPaths: launchState.skillPaths,
         promptPaths: launchState.promptPaths,
-        themePaths: launchState.themePaths,
       };
     });
 

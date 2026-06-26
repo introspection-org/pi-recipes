@@ -1,7 +1,7 @@
 # Pi Recipes: Install, Customize, Publish
 
 A recipe is a shareable Pi workflow package: it can add agents, instructions,
-skills, prompts, themes, and optional runtime extensions.
+skills, prompts, and optional runtime extensions.
 
 Use `recipes` to install recipes, make local edits, validate them, and
 publish your own.
