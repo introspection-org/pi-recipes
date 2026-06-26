@@ -88,6 +88,10 @@ repository and pushes the local recipe:
 recipes publish ./my-recipe --github owner/my-recipe --visibility private
 ```
 
+Use `--visibility public` to submit the recipe's public GitHub metadata to the
+marketplace catalog after a successful push. Catalog submissions are
+best-effort; private publishes are not listed.
+
 Customize an installed recipe into an editable local copy:
 
 ```bash
