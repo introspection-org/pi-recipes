@@ -305,6 +305,7 @@ function printPublishedRecipe(result: PublishedRecipe): void {
       `Repository: ${result.createdRepository ? "created" : "existing"}`,
       `Commit: ${result.committed ? "created" : "no changes"}`,
       "Push: ok",
+      `Catalog: ${result.catalogued ? "submitted" : "skipped"}`,
       "",
       "Use:",
       `  pi --recipe ${result.shortName}`,

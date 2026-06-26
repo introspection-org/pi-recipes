@@ -451,6 +451,8 @@ recipes publish ./my-recipe --github owner/my-recipe --visibility public
 `recipes publish` runs the same development validation as `doctor`, updates
 `package.json#name` to `@owner/my-recipe`, commits local changes, creates the
 GitHub repository when needed, pushes `main`, and re-registers the local recipe.
+When `--visibility public` is used, it also submits the public package metadata
+to the recipe catalog so the marketplace can add or refresh the listing.
 
 For a standalone public recipe:
 
@@ -525,6 +527,10 @@ No paths, machine identifiers, or other personal data are sent. Local recipe
 registration (`recipes install ./my-recipe`) is never reported. The ping is
 best-effort and never blocks or fails an install.
 
+When you publish with `--visibility public`, `recipes publish` sends the
+recipe's public GitHub source, package name, version, description, install
+command, homepage, and resource counts so it can appear in the catalog.
+
 Opt out by setting either environment variable to a truthy value:
 
 ```bash
@@ -532,10 +538,11 @@ DO_NOT_TRACK=1 recipes install github:owner/repo
 PI_RECIPES_NO_TELEMETRY=1 recipes install github:owner/repo
 ```
 
-Point the ping at a different collector with:
+Point install pings or catalog submissions at different collectors with:
 
 ```bash
 PI_RECIPES_TELEMETRY_ENDPOINT=https://example.com/api/installs recipes install github:owner/repo
+PI_RECIPES_CATALOG_ENDPOINT=https://example.com/api/catalog/recipes recipes publish . --github owner/my-recipe --visibility public
 ```
 
 ## Troubleshooting

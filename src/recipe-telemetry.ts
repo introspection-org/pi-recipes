@@ -1,11 +1,13 @@
-// Anonymous, fire-and-forget install telemetry for the recipes directory at
-// https://pi.recipes. We send only the canonical recipe id, name, and version
-// so the directory can rank recipes by install count. No paths, no user
-// identifiers, no PII. Telemetry never blocks or fails an install.
+// Best-effort telemetry for the recipes directory at https://pi.recipes.
+// Installs send only anonymous counters. Public publishes submit public package
+// metadata so the directory can catalogue recipes. Telemetry never blocks or
+// fails a recipe command.
 
 import type { InstalledRecipe } from "./recipe-store.js";
+import type { RecipePackageResources } from "./recipe-package.js";
 
 export const DEFAULT_TELEMETRY_ENDPOINT = "https://pi.recipes/api/installs";
+export const DEFAULT_CATALOG_ENDPOINT = "https://pi.recipes/api/catalog/recipes";
 
 const TELEMETRY_TIMEOUT_MS = 1500;
 
@@ -16,8 +18,24 @@ export interface InstallTelemetryOptions {
   fetchImpl?: FetchImpl;
 }
 
+export interface PublishTelemetryOptions extends InstallTelemetryOptions {
+  endpoint?: string;
+}
+
+export interface PublishTelemetryRecipe {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  github: string;
+  source: string;
+  installCommand: string;
+  homepage: string;
+  resources: Record<keyof RecipePackageResources, number>;
+}
+
 /**
- * Returns true when the user has opted out of anonymous install telemetry.
+ * Returns true when the user has opted out of recipe telemetry.
  * Honors the cross-tool `DO_NOT_TRACK` convention plus a package-specific
  * `PI_RECIPES_NO_TELEMETRY` escape hatch.
  */
@@ -30,6 +48,11 @@ export function telemetryEndpoint(env: NodeJS.ProcessEnv): string {
   return configured && configured.length > 0 ? configured : DEFAULT_TELEMETRY_ENDPOINT;
 }
 
+export function catalogEndpoint(env: NodeJS.ProcessEnv): string {
+  const configured = env.PI_RECIPES_CATALOG_ENDPOINT?.trim();
+  return configured && configured.length > 0 ? configured : DEFAULT_CATALOG_ENDPOINT;
+}
+
 /**
  * Send a single anonymous install ping. Resolves once the request settles or
  * the timeout elapses; all network and serialization errors are swallowed so a
@@ -38,6 +61,35 @@ export function telemetryEndpoint(env: NodeJS.ProcessEnv): string {
 export async function sendInstallTelemetry(
   recipe: InstalledRecipe,
   opts: InstallTelemetryOptions = {}
+): Promise<void> {
+  await postTelemetry(telemetryEndpoint(opts.env ?? process.env), {
+    event: "install",
+    id: recipe.id,
+    name: recipe.name,
+    version: recipe.version,
+  }, opts);
+}
+
+/**
+ * Submit a public recipe for marketplace cataloguing. The backend owns
+ * trust/moderation fields such as `official`; clients submit only public
+ * package metadata derived from the GitHub repository and recipe manifest.
+ */
+export async function sendPublishTelemetry(
+  recipe: PublishTelemetryRecipe,
+  opts: PublishTelemetryOptions = {}
+): Promise<void> {
+  const env = opts.env ?? process.env;
+  await postTelemetry(opts.endpoint ?? catalogEndpoint(env), {
+    event: "publish",
+    ...recipe,
+  }, opts);
+}
+
+async function postTelemetry(
+  endpoint: string,
+  body: Record<string, unknown>,
+  opts: InstallTelemetryOptions
 ): Promise<void> {
   const env = opts.env ?? process.env;
   if (telemetryDisabled(env)) return;
@@ -48,15 +100,10 @@ export async function sendInstallTelemetry(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TELEMETRY_TIMEOUT_MS);
   try {
-    await fetchImpl(telemetryEndpoint(env), {
+    await fetchImpl(endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        event: "install",
-        id: recipe.id,
-        name: recipe.name,
-        version: recipe.version,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
   } catch {

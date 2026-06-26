@@ -21,6 +21,7 @@ import {
   recipePreferredIdentifier,
   recipeStoreFilePath,
   RecipePackageError,
+  type RecipePublishCommandRunner,
   removeRecipe,
   resolveRecipeAgentDefinition,
   resolveRecipeDirectory,
@@ -963,12 +964,13 @@ describe("recipe store", () => {
         { cwd: sourceDir }
       );
       await execFileAsync("git", ["clone", "--bare", sourceDir, bareDir]);
-      await addRecipe(`file://${bareDir}`, { storeDir });
+      await addRecipe(`file://${bareDir}`, { storeDir, env: { DO_NOT_TRACK: "1" } });
 
       const result = await publishRecipe("upstream-review", {
         storeDir,
         github: "acme/upstream-review",
         visibility: "public",
+        env: { DO_NOT_TRACK: "1" },
         commandRunner: async (command, args) => {
           commands.push([command, ...args].join(" "));
           if (
@@ -1487,6 +1489,178 @@ describe("install telemetry", () => {
       const failing = recordingFetch(pings, () => Promise.reject(new Error("network down")));
       const installed = await addRecipe(`file://${bareDir}`, { storeDir, fetchImpl: failing });
       expect(installed.name).toBe("resilient-recipe");
+      expect(pings).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("publish telemetry", () => {
+  type Ping = { url: string; body: unknown };
+
+  function recordingFetch(pings: Ping[], impl?: () => Promise<Response>) {
+    return (async (url: string | URL | Request, init?: RequestInit) => {
+      pings.push({
+        url: String(url),
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      return impl ? impl() : new Response(null, { status: 202 });
+    }) as unknown as typeof fetch;
+  }
+
+  function createPublishableRecipe(root: string, name: string): string {
+    const recipeDir = join(root, "recipe");
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(join(recipeDir, "skills", "helper"), { recursive: true });
+    writePiPackageManifest(recipeDir, {
+      name,
+      version: "2.3.4",
+      description: "Catalogued recipe",
+      pi: {
+        agents: ["agents/*.yaml"],
+        skills: ["skills/**/SKILL.md"],
+      },
+    });
+    writeFileSync(join(recipeDir, "agents", "agent.yaml"), fullAgentYaml());
+    writeFileSync(join(recipeDir, "skills", "helper", "SKILL.md"), "# Helper\n");
+    return recipeDir;
+  }
+
+  function publishingCommandRunner(): RecipePublishCommandRunner {
+    return async (command, args) => {
+      if (
+        command === "git" &&
+        args.join(" ") === "rev-parse --verify HEAD"
+      ) {
+        throw new Error("no commits");
+      }
+      if (
+        command === "git" &&
+        args.join(" ") === "diff --cached --quiet"
+      ) {
+        throw new Error("has changes");
+      }
+      if (
+        command === "gh" &&
+        args.slice(0, 2).join(" ") === "repo view"
+      ) {
+        throw new Error("not found");
+      }
+      if (
+        command === "git" &&
+        args.join(" ") === "remote get-url origin"
+      ) {
+        throw new Error("no origin");
+      }
+      return { stdout: "", stderr: "" };
+    };
+  }
+
+  it("submits public publishes to the recipe catalog", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-catalog-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const recipeDir = createPublishableRecipe(root, "catalog-review");
+
+      const result = await publishRecipe(recipeDir, {
+        storeDir,
+        github: "acme/catalog-review",
+        visibility: "public",
+        env: { PI_RECIPES_CATALOG_ENDPOINT: "https://example.test/api/catalog/recipes" },
+        fetchImpl: recordingFetch(pings),
+        commandRunner: publishingCommandRunner(),
+      });
+
+      expect(result.catalogued).toBe(true);
+      expect(pings).toHaveLength(1);
+      expect(pings[0].url).toBe("https://example.test/api/catalog/recipes");
+      expect(pings[0].body).toEqual({
+        event: "publish",
+        id: "github:acme/catalog-review",
+        name: "@acme/catalog-review",
+        version: "2.3.4",
+        description: "Catalogued recipe",
+        github: "acme/catalog-review",
+        source: "github:acme/catalog-review",
+        installCommand: "recipes install github:acme/catalog-review",
+        homepage: "https://github.com/acme/catalog-review",
+        resources: {
+          agents: 1,
+          extensions: 0,
+          skills: 1,
+          prompts: 0,
+          themes: 0,
+        },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not catalogue private publishes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-private-catalog-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const recipeDir = createPublishableRecipe(root, "private-review");
+
+      const result = await publishRecipe(recipeDir, {
+        storeDir,
+        github: "acme/private-review",
+        visibility: "private",
+        fetchImpl: recordingFetch(pings),
+        commandRunner: publishingCommandRunner(),
+      });
+
+      expect(result.catalogued).toBe(false);
+      expect(pings).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("honors telemetry opt-out for public publish catalog submissions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-catalog-optout-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const recipeDir = createPublishableRecipe(root, "optout-review");
+
+      const result = await publishRecipe(recipeDir, {
+        storeDir,
+        github: "acme/optout-review",
+        visibility: "public",
+        env: { DO_NOT_TRACK: "1" },
+        fetchImpl: recordingFetch(pings),
+        commandRunner: publishingCommandRunner(),
+      });
+
+      expect(result.catalogued).toBe(false);
+      expect(pings).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never throws when catalog submission fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-catalog-error-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const recipeDir = createPublishableRecipe(root, "resilient-catalog-review");
+      const failing = recordingFetch(pings, () => Promise.reject(new Error("network down")));
+
+      const result = await publishRecipe(recipeDir, {
+        storeDir,
+        github: "acme/resilient-catalog-review",
+        visibility: "public",
+        fetchImpl: failing,
+        commandRunner: publishingCommandRunner(),
+      });
+
+      expect(result.catalogued).toBe(true);
       expect(pings).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
