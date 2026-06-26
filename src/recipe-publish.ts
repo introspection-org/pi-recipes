@@ -14,6 +14,7 @@ import {
   type InstalledRecipe,
   type RecipeStoreOptions,
 } from "./recipe-store.js";
+import { sendPublishTelemetry, telemetryDisabled } from "./recipe-telemetry.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -48,6 +49,7 @@ export interface PublishedRecipe {
   createdRepository: boolean;
   committed: boolean;
   pushed: boolean;
+  catalogued: boolean;
 }
 
 interface GithubTarget {
@@ -146,6 +148,18 @@ function ensureGitignore(recipeDir: string): boolean {
     `${existing.join("\n").replace(/\n*$/, "")}${prefix}${missing.join("\n")}\n`
   );
   return true;
+}
+
+function resourceCounts(
+  resources: ReturnType<typeof validateRecipeDirectory>["resources"]
+): Record<"agents" | "extensions" | "skills" | "prompts" | "themes", number> {
+  return {
+    agents: resources.agents?.length ?? 0,
+    extensions: resources.extensions?.length ?? 0,
+    skills: resources.skills?.length ?? 0,
+    prompts: resources.prompts?.length ?? 0,
+    themes: resources.themes?.length ?? 0,
+  };
 }
 
 function localPathForInput(input: string, cwd: string): string {
@@ -304,7 +318,26 @@ export async function publishRecipe(
   await setOrigin(github, recipeDir, env, opts.commandRunner);
   await runCommand("git", ["push", "-u", "origin", "HEAD:main"], { cwd: recipeDir, env }, opts.commandRunner);
 
+  const publishedManifest = readPiPackageManifest(recipeDir);
   const recipe = await addRecipe(recipeDir, opts);
+  const catalogued = opts.visibility === "public" && !telemetryDisabled(env);
+  if (catalogued) {
+    const source = `github:${github.fullName}`;
+    await sendPublishTelemetry(
+      {
+        id: source,
+        name: publishedManifest.name,
+        version: publishedManifest.version,
+        ...(publishedManifest.description ? { description: publishedManifest.description } : {}),
+        github: github.fullName,
+        source,
+        installCommand: `recipes install ${source}`,
+        homepage: `https://github.com/${github.fullName}`,
+        resources: resourceCounts(report.resources),
+      },
+      { env: opts.env, fetchImpl: opts.fetchImpl }
+    );
+  }
   return {
     recipe,
     recipeDir,
@@ -315,5 +348,6 @@ export async function publishRecipe(
     createdRepository,
     committed,
     pushed: true,
+    catalogued,
   };
 }
