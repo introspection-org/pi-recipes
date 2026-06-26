@@ -150,7 +150,6 @@ describe("recipe package manifest", () => {
           extensions: ["extensions/*.ts"],
           skills: ["skills/**/SKILL.md"],
           prompts: ["prompts/*.md"],
-          themes: ["themes/*.json"],
         },
       });
 
@@ -167,7 +166,6 @@ describe("recipe package manifest", () => {
         extensions: ["extensions/*.ts"],
         skills: ["skills/**/SKILL.md"],
         prompts: ["prompts/*.md"],
-        themes: ["themes/*.json"],
       });
       expect(report).toEqual({ valid: true, findings: [] });
     } finally {
@@ -269,7 +267,6 @@ describe("recipe package manifest", () => {
           agents: ["agents/*.yaml"],
           extensions: ["extensions/*.ts", "extensions/*/index.ts"],
           skills: ["skills/**/SKILL.md"],
-          themes: ["themes/*.json"],
         },
       });
 
@@ -281,7 +278,6 @@ describe("recipe package manifest", () => {
       expect(packageResourcePaths(manifest, "extensions")).toEqual([
         join(root, "extensions", "tools.ts"),
       ]);
-      expect(packageResourcePaths(manifest, "themes")).toEqual([]);
       expect(() => resolvePiPackageResourcePaths(manifest, "agents")).toThrow(
         RecipePackageError
       );

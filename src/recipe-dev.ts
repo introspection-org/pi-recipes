@@ -50,7 +50,6 @@ const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "extensions",
   "skills",
   "prompts",
-  "themes",
 ];
 
 function recipeNameFromTarget(target: string): string {
@@ -292,7 +291,7 @@ export function createRecipePublishGuide(recipeDir: string): RecipePublishGuide 
     checklist: [
       "Run `recipes doctor .` and fix any errors.",
       `Run \`recipes publish . --github owner/${repositoryName} --visibility private\` to create, commit, and push a GitHub repository.`,
-      "Commit package.json, agents, prompts, skills, themes, extensions, and SYSTEM.md.",
+      "Commit package.json, agents, prompts, skills, extensions, and SYSTEM.md.",
       "If extensions have runtime dependencies, commit the package lockfile.",
       "Push the recipe to a Git repository.",
       "Tag releases when users should install a stable version.",

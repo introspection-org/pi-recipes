@@ -186,7 +186,6 @@ The `pi` block declares recipe-owned resources:
 - `extensions`: TypeScript extension globs
 - `skills`: skill paths or globs
 - `prompts`: prompt paths or globs
-- `themes`: theme paths or globs
 
 Normal package-manager fields such as `dependencies`, `optionalDependencies`,
 `peerDependencies`, `devDependencies`, `packageManager`, and lockfile metadata
@@ -204,8 +203,7 @@ boundaries:
     "agents": ["agents/*.yaml"],
     "extensions": ["extensions/*.ts", "extensions/*/index.ts"],
     "skills": ["skills/**/SKILL.md"],
-    "prompts": ["prompts"],
-    "themes": ["themes/*.json"]
+    "prompts": ["prompts"]
   }
 }
 ```
@@ -215,7 +213,6 @@ When entries are omitted, conventional folders are used if present:
 - `agents`
 - `skills`
 - `prompts`
-- `themes`
 
 `extensions` are only loaded when declared.
 

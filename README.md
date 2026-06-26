@@ -13,7 +13,7 @@ those recipe files into the live Pi session at launch time.
 `package.json` owns both recipe identity and Node dependency metadata. The
 top-level `name`, `version`, and `description` identify the recipe, while the
 `pi` block declares recipe resources such as agents, extensions, skills,
-prompts, and themes.
+and prompts.
 
 ## Documentation
 

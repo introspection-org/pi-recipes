@@ -84,7 +84,7 @@ On session startup, the extension:
 6. Sets the Pi session name.
 7. Sets the model and thinking level from the selected agent when specified.
 8. Selects active tools from the selected agent.
-9. Returns recipe resources for skills, prompts, and themes.
+9. Returns recipe resources for skills and prompts.
 10. Composes the runtime system prompt from Pi defaults, `SYSTEM.md`, selected agent instructions, and recipe runtime context.
 
 The current Pi working directory remains the user's project workspace. The
@@ -102,7 +102,7 @@ The `pi` block tells Pi which recipe-owned files should be loaded:
 
 - agent definition globs
 - extension globs
-- skill, prompt, and theme paths
+- skill and prompt paths
 
 The same file also carries normal Node package metadata for extension
 dependencies. Add `dependencies`, `peerDependencies`, `packageManager`, and a
@@ -236,7 +236,7 @@ When a recipe is active, the extension registers:
 - recipe directory
 - project workspace
 
-`/recipe reload` asks Pi to reload extensions, skills, prompts, and themes, and
+`/recipe reload` asks Pi to reload extensions, skills, and prompts, and
 clears the cached recipe manifest and agent state first. Use it after editing a
 local recipe's `package.json`, agent files, resources, or extension code.
 
@@ -246,17 +246,15 @@ The extension responds to Pi `resources_discover` with:
 
 - `skillPaths`
 - `promptPaths`
-- `themePaths`
 
 Declared manifest paths are used first. When omitted, conventional folders are
 used if present:
 
 - `skills`
 - `prompts`
-- `themes`
 
-Skills become Pi `/skill:name` commands. Prompt templates and themes are
-surfaced through Pi's normal resource system.
+Skills become Pi `/skill:name` commands. Prompt templates are surfaced through
+Pi's normal resource system.
 
 ## Subagents
 
