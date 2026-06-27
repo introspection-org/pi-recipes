@@ -8,12 +8,26 @@ export interface RecipePackageResources {
   prompts: string[];
 }
 
+export interface RecipePackageMcpServer {
+  id: string;
+  required: boolean;
+  tools: {
+    allow: string[];
+  };
+}
+
+export interface RecipePackageMcpConfig {
+  manifests: string[];
+  servers: RecipePackageMcpServer[];
+}
+
 export interface RecipePackageManifest {
   name: string;
   version: string;
   description?: string;
   path: string;
   resources: RecipePackageResources;
+  mcp: RecipePackageMcpConfig;
 }
 
 export type PiPackageResources = RecipePackageResources;
@@ -59,6 +73,13 @@ function emptyResources(): RecipePackageResources {
     extensions: [],
     skills: [],
     prompts: [],
+  };
+}
+
+function emptyMcpConfig(): RecipePackageMcpConfig {
+  return {
+    manifests: [],
+    servers: [],
   };
 }
 
@@ -191,6 +212,40 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
+  if (typeof value === "string") {
+    return { ...emptyMcpConfig(), manifests: stringArray([value]).map(normalizeResourcePath) };
+  }
+  if (Array.isArray(value)) {
+    return { ...emptyMcpConfig(), manifests: stringArray(value).map(normalizeResourcePath) };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return emptyMcpConfig();
+
+  const data = value as Record<string, unknown>;
+  const manifests = [
+    ...(stringValue(data.manifest) ? [stringValue(data.manifest)!] : []),
+    ...stringArray(data.manifests),
+  ].map(normalizeResourcePath);
+
+  const seen = new Set<string>();
+  const servers: RecipePackageMcpServer[] = [];
+  for (const raw of Array.isArray(data.servers) ? data.servers : []) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const server = raw as Record<string, unknown>;
+    const id = stringValue(server.id);
+    if (!id || seen.has(id)) continue;
+    const tools = asRecord(server.tools);
+    seen.add(id);
+    servers.push({
+      id,
+      required: server.required === true,
+      tools: { allow: stringArray(tools.allow) },
+    });
+  }
+
+  return { manifests, servers };
+}
+
 function packageJsonPath(packageDir: string): string | undefined {
   const packagePath = join(packageDir, "package.json");
   return existsSync(packagePath) ? packagePath : undefined;
@@ -235,7 +290,61 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
     ...(stringValue(raw.description) ? { description: stringValue(raw.description) } : {}),
     path: packageDir,
     resources,
+    mcp: parseMcpConfig(pi.mcp),
   };
+}
+
+export function resolvePiPackageMcpManifestPaths(
+  pkg: RecipePackageManifest,
+  opts: { allowEmptyGlobMatches?: boolean } = {}
+): string[] {
+  const globs = pkg.mcp.manifests;
+  const resolved = new Set<string>();
+  const entries = globs.some(hasGlob) ? listPackageEntries(pkg.path) : [];
+
+  for (const glob of globs) {
+    if (!glob.trim()) continue;
+    if (isAbsolute(glob) || hasTraversalSegment(glob)) {
+      throw new RecipePackageError(
+        `Recipe ${pkg.name} declares mcp manifest outside the package: ${glob}`
+      );
+    }
+    const target = resolve(pkg.path, glob);
+    const relativePath = relative(resolve(pkg.path), target);
+    if (
+      relativePath === ".." ||
+      relativePath.startsWith("../") ||
+      relativePath.startsWith("..\\") ||
+      isAbsolute(relativePath)
+    ) {
+      throw new RecipePackageError(
+        `Recipe ${pkg.name} declares mcp manifest outside the package: ${glob}`
+      );
+    }
+    if (!hasGlob(glob)) {
+      if (!existsSync(target)) {
+        throw new RecipePackageError(
+          `Recipe ${pkg.name} declares missing mcp manifest: ${glob}`
+        );
+      }
+      resolved.add(target);
+      continue;
+    }
+
+    const matcher = globToRegExp(glob);
+    const matches = entries
+      .filter((entry) => matcher.test(normalizeResourcePath(entry)))
+      .map((entry) => resolve(pkg.path, entry));
+    if (matches.length === 0) {
+      if (opts.allowEmptyGlobMatches) continue;
+      throw new RecipePackageError(
+        `Recipe ${pkg.name} declares mcp manifest glob with no matches: ${glob}`
+      );
+    }
+    for (const match of matches) resolved.add(match);
+  }
+
+  return [...resolved].sort();
 }
 
 export function resolvePiPackageResourcePaths(

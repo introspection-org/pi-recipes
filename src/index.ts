@@ -1,3 +1,4 @@
+export * from "./mcp.js";
 export * from "./pi-extension.js";
 export * from "./recipe-agent.js";
 export * from "./recipe-dev.js";

@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createPiRecipesExtension } from "../src/pi-extension.js";
@@ -321,6 +321,191 @@ describe("Pi recipes launch extension", () => {
       );
 
       expect(pi.activeTools).toEqual(["read"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes recipe MCP manifests for CLI-only use", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-mcp-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - bash",
+          "  - mcp:partner-mcp/get_value",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Agent-specific prompt",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "mcp.json"),
+        JSON.stringify(
+          {
+            servers: [
+              {
+                id: "partner-mcp",
+                name: "Partner MCP",
+                host: "host.docker.internal",
+                base_url: "http://host.docker.internal:3200/api/mcp",
+                transport: "streamable_http",
+                tools: [
+                  {
+                    name: "get_value",
+                    description: "Read a value.",
+                    input_schema: {
+                      type: "object",
+                      properties: { key: { type: "string" } },
+                    },
+                  },
+                  { name: "set_value", description: "Store a value." },
+                ],
+              },
+            ],
+          },
+          null,
+          2
+        )
+      );
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: {
+              agents: ["defs/*.yaml"],
+              mcp: {
+                manifest: "mcp.json",
+                servers: [
+                  {
+                    id: "partner-mcp",
+                    required: true,
+                    tools: { allow: ["get_value"] },
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      const env: NodeJS.ProcessEnv = {};
+      const notify = vi.fn();
+      const ctx = extensionContext(projectDir, notify);
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension({ env })(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(pi.activeTools.sort()).toEqual(["bash"]);
+      expect(pi.tools.has("mcp")).toBe(false);
+      expect(notify).toHaveBeenCalledWith(
+        "Recipe MCP: 1 tool(s) from 1 server(s)",
+        "info"
+      );
+      expect(env.PI_RECIPES_MCP_MANIFEST).toBe(join(projectDir, ".pi", "mcp.json"));
+      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(projectDir, ".pi", "bin"));
+      expect(env.PATH?.split(delimiter)[0]).toBe(join(projectDir, ".pi", "bin"));
+      expect(existsSync(join(projectDir, ".pi", "bin", "mcp"))).toBe(true);
+      const materialized = JSON.parse(readFileSync(env.PI_RECIPES_MCP_MANIFEST!, "utf8"));
+      expect(materialized.servers[0].tools.map((tool: { name: string }) => tool.name)).toEqual([
+        "get_value",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("installs the session MCP CLI even when endpoint discovery finds no tools", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-mcp-empty-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - bash",
+          "  - mcp:slack/slack_list_threads",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Agent-specific prompt",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: {
+              agents: ["defs/*.yaml"],
+              mcp: {
+                servers: [
+                  {
+                    id: "slack",
+                    required: false,
+                    tools: { allow: ["slack_list_threads"] },
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      const env: NodeJS.ProcessEnv = {};
+      const notify = vi.fn();
+      const ctx = extensionContext(projectDir, notify);
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension({ env })(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(pi.activeTools.sort()).toEqual(["bash"]);
+      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(projectDir, ".pi", "bin"));
+      expect(env.PATH?.split(delimiter)[0]).toBe(join(projectDir, ".pi", "bin"));
+      expect(existsSync(join(projectDir, ".pi", "bin", "mcp"))).toBe(true);
+      expect(env.PI_RECIPES_MCP_MANIFEST).toBeUndefined();
+      expect(notify).not.toHaveBeenCalledWith(
+        expect.stringContaining("Recipe MCP:"),
+        "info"
+      );
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("Recipe MCP: no tools discovered"),
+        "warning"
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

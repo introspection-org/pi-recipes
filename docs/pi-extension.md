@@ -217,6 +217,74 @@ extensions:
 Omitting `extensions` or `extensions.include` loads all declared recipe
 extensions. `exclude` subtracts matching extension names.
 
+## MCP
+
+Recipes can expose MCP endpoint tools through a generated `mcp` CLI manifest.
+The recipe declares MCP server policy in `package.json#pi.mcp`, and agents opt
+into concrete tools with `mcp:<server-id>/<tool-name>` entries in their `tools`
+list.
+
+Example `package.json`:
+
+```json
+{
+  "pi": {
+    "agents": ["agents/*.yaml"],
+    "mcp": {
+      "manifest": "mcp.json",
+      "servers": [
+        {
+          "id": "contacts",
+          "required": true,
+          "tools": {
+            "allow": ["search_contacts", "get_contact"]
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Example agent:
+
+```yaml
+tools:
+  - bash
+  - mcp:contacts/search_contacts
+  - mcp:contacts/get_contact
+```
+
+The `mcp:*` entries are policy references, not Pi tool names. When the selected
+agent declares MCP refs, the extension writes a session-local shim at
+`.pi/bin/mcp` and prepends `.pi/bin` to `PATH` for commands run from that Pi
+session. When configured endpoints expose matching allowed tools, the extension
+also writes the filtered manifest to `.pi/mcp.json` in the workspace. Agents can
+use:
+
+```bash
+mcp tools sources
+mcp tools search "contact"
+mcp tools describe contacts search_contacts
+mcp call contacts search_contacts '{"query":"staff engineer"}'
+```
+
+The package bundles the CLI implementation, but does not publish `mcp` as a
+normal global command. The launched Pi session owns setup for the command.
+
+The session records the generated paths in `PI_RECIPES_MCP_MANIFEST` and
+`PI_RECIPES_MCP_BIN_DIR`.
+
+For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
+directory. To override that path, set `PI_RECIPES_MCP_LOCAL_CONFIG`. Header
+values can reference environment variables such as `${CONTACTS_MCP_TOKEN}`.
+
+`recipes install` creates the recipe-local `.pi/mcp.local.json` template for MCP
+recipes if it is missing and prints the env vars that need values. The extension
+does not translate or adapt MCP tool names. The server must expose the tool names
+declared by the selected recipe agent, or `mcp call` fails with the underlying
+MCP error.
+
 ## Commands
 
 When a recipe is active, the extension registers:

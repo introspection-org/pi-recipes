@@ -20,6 +20,14 @@ import {
   type RecipeChildToolEvent,
 } from "./child-agent.js";
 import {
+  configureMcpLocalConfigPath,
+  executableRecipeToolNames,
+  formatMcpDiscoveryDiagnostics,
+  materializeSessionMcpCli,
+  materializeRecipeMcpManifest,
+  parseAgentMcpToolRef,
+} from "./mcp.js";
+import {
   loadRecipeAgentDefinitions,
   loadRecipeSystemPrompt,
   resolveRecipeAgentDefinition,
@@ -76,6 +84,7 @@ const RunRecipeAgentParams = Type.Object({
 });
 
 type RunRecipeAgentParams = Static<typeof RunRecipeAgentParams>;
+
 type ChildRunStatus = "running" | "completed" | "failed" | "interrupted";
 type ChildToolStatus = "running" | "completed" | "failed";
 
@@ -138,6 +147,8 @@ interface RecipeLaunchState {
   skillPaths: string[];
   promptPaths: string[];
   extensionPaths: string[];
+  mcpServerCount: number;
+  mcpToolCount: number;
   extensionsLoaded: boolean;
   configured: boolean;
 }
@@ -211,12 +222,30 @@ function runtimeContextPrompt(
   base: string,
   state: RecipeLaunchState
 ): string {
+  const mcpRefs = state.agent.tools
+    .map((tool) => parseAgentMcpToolRef(tool))
+    .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
+  const mcpLines = mcpRefs.length > 0
+    ? [
+        "",
+        "## Recipe MCP CLI",
+        "- MCP tool policy refs are not directly callable tool names.",
+        "- Use the session-local `mcp` command through `bash` for MCP endpoint tools.",
+        "- The extension puts `mcp` on PATH; if lookup fails, use `$PI_RECIPES_MCP_BIN_DIR/mcp`.",
+        "- Inspect configured sources with `mcp tools sources`.",
+        "- Search tools with `mcp tools search \"query\"`.",
+        "- Describe a tool with `mcp tools describe <server> <tool>`.",
+        "- Call a tool with `mcp call <server> <tool> '<json-args>'`.",
+        "- Configured MCP policy refs: " + mcpRefs.map((tool) => `${tool.serverId}/${tool.toolName}`).join(", "),
+      ]
+    : [];
   return [
     base,
     [
       "## Recipe Runtime Context",
       "- Current workspace: " + state.cwd,
       "- Recipe directory: " + state.recipeDir,
+      ...mcpLines,
     ].join("\n"),
   ].filter(Boolean).join("\n\n");
 }
@@ -398,7 +427,7 @@ function activeRecipeTools(
   activeTools: string[]
 ): string[] {
   const active = new Set(activeTools);
-  const recipeTools = new Set(state.agent.tools);
+  const recipeTools = new Set(executableRecipeToolNames(state.agent.tools));
   if (visibleSubagents(state).length > 0) recipeTools.add("agent");
   return [...recipeTools]
     .filter((tool) => active.has(tool))
@@ -691,6 +720,8 @@ export function createPiRecipesExtension(
       skillPaths: packageResourcePaths(manifest, "skills"),
       promptPaths: packageResourcePaths(manifest, "prompts"),
       extensionPaths,
+      mcpServerCount: 0,
+      mcpToolCount: 0,
       extensionsLoaded: false,
       configured: false,
     };
@@ -776,10 +807,68 @@ export function createPiRecipesExtension(
       pi.setThinkingLevel(thinkingLevel as ThinkingLevel);
     }
 
-    const activeTools = new Set(launchState.agent.tools);
+    const activeTools = new Set(executableRecipeToolNames(launchState.agent.tools));
     if (visibleSubagents(launchState).length > 0) activeTools.add("agent");
     pi.setActiveTools([...activeTools]);
     launchState.configured = true;
+  }
+
+  async function configureMcp(
+    launchState: RecipeLaunchState,
+    ctx: Pick<ExtensionContext, "ui">
+  ): Promise<void> {
+    const hasMcpRefs = launchState.agent.tools.some((tool) => parseAgentMcpToolRef(tool));
+    if (hasMcpRefs) {
+      configureMcpLocalConfigPath({
+        cwd: launchState.cwd,
+        recipeDir: launchState.recipeDir,
+        env,
+      });
+      await materializeSessionMcpCli({
+        cwd: launchState.cwd,
+        env,
+      });
+    }
+
+    const manifest = await materializeRecipeMcpManifest({
+      cwd: launchState.cwd,
+      recipeDir: launchState.recipeDir,
+      manifest: launchState.manifest,
+      agentTools: launchState.agent.tools,
+      env,
+      fetch: globalThis.fetch,
+    });
+    launchState.mcpServerCount = manifest.servers?.length ?? 0;
+    launchState.mcpToolCount = (manifest.servers ?? []).reduce(
+      (count, server) => count + (server.tools?.length ?? 0),
+      0
+    );
+    if (launchState.mcpToolCount > 0) {
+      ctx.ui.notify(
+        `Recipe MCP: ${launchState.mcpToolCount} tool(s) from ${launchState.mcpServerCount} server(s)`,
+        "info"
+      );
+      const detail = formatMcpDiscoveryDiagnostics(manifest.diagnostics ?? []);
+      if (detail) {
+        ctx.ui.notify(
+          [
+            "Recipe MCP: some configured endpoints or tools were not available.",
+            "",
+            detail,
+          ].join("\n"),
+          "warning"
+        );
+      }
+    } else if (hasMcpRefs) {
+      const detail = formatMcpDiscoveryDiagnostics(manifest.diagnostics ?? []);
+      ctx.ui.notify(
+        [
+          "Recipe MCP: no tools discovered. Check .pi/mcp.local.json, endpoint auth, and whether the MCP server supports tools/list.",
+          ...(detail ? ["", detail] : []),
+        ].join("\n"),
+        "warning"
+      );
+    }
   }
 
   async function runChildAgent(
@@ -1036,6 +1125,15 @@ export function createPiRecipesExtension(
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return;
       await loadRecipeExtensions(pi, ctx, launchState);
+      try {
+        await configureMcp(launchState, ctx);
+      } catch (err) {
+        ctx.ui.notify(
+          `Recipe MCP failed to configure: ${err instanceof Error ? err.message : String(err)}`,
+          "warning"
+        );
+        return;
+      }
       await configureSession(pi, ctx, launchState);
       ctx.ui.notify(
         `Recipe: ${launchState.manifest.name}@${launchState.manifest.version} (${basename(launchState.recipeDir)})`,

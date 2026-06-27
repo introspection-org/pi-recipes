@@ -12,10 +12,14 @@
     "dist/cli.js",
     "dist/index.d.ts",
     "dist/index.js",
+    "dist/mcp.d.ts",
+    "dist/mcp.js",
     "dist/pi-extension.d.ts",
     "dist/pi-extension.js",
     "dist/recipe-dev.d.ts",
     "dist/recipe-dev.js",
+    "dist/recipe-mcp-config.d.ts",
+    "dist/recipe-mcp-config.js",
     "dist/recipe-agent.d.ts",
     "dist/recipe-agent.js",
     "dist/recipe-package.d.ts",
@@ -65,7 +69,7 @@
     ]
   },
   "scripts": {
-    "build": "rm -rf dist && tsc && chmod +x dist/cli.js",
+    "build": "rm -rf dist && tsc && chmod +x dist/cli.js dist/mcp.js",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",

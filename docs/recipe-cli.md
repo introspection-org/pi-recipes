@@ -39,6 +39,19 @@ The CLI binary is `recipes`:
 recipes --help
 ```
 
+The package also bundles MCP CLI implementation code for recipe sessions, but
+does not install `mcp` as a global binary. When a Pi session launches a recipe
+whose selected agent declares MCP refs, the extension creates a session-local
+`.pi/bin/mcp` shim and prepends that directory to the Pi session's bash `PATH`.
+The generated paths are recorded in `PI_RECIPES_MCP_MANIFEST` and
+`PI_RECIPES_MCP_BIN_DIR`.
+
+When `recipes install` installs a recipe that declares `pi.mcp`, it also creates
+`.pi/mcp.local.json` in the installed recipe if that file is missing. If the
+recipe ships `.pi/mcp.local.example.json`, install copies it; otherwise install
+generates a template from `pi.mcp.servers`. The install output prints the config
+path and the environment variables referenced by the template.
+
 ## Store
 
 Recipes are tracked in a local store:
@@ -186,6 +199,7 @@ The `pi` block declares recipe-owned resources:
 - `extensions`: TypeScript extension globs
 - `skills`: skill paths or globs
 - `prompts`: prompt paths or globs
+- `mcp`: MCP server policy and optional manifest paths
 
 Normal package-manager fields such as `dependencies`, `optionalDependencies`,
 `peerDependencies`, `devDependencies`, `packageManager`, and lockfile metadata
@@ -215,6 +229,61 @@ When entries are omitted, conventional folders are used if present:
 - `prompts`
 
 `extensions` are only loaded when declared.
+
+## MCP Manifests
+
+Recipes can declare MCP endpoint policy with `package.json#pi.mcp`:
+
+```json
+{
+  "pi": {
+    "mcp": {
+      "manifest": "mcp.json",
+      "servers": [
+        {
+          "id": "contacts",
+          "required": true,
+          "tools": {
+            "allow": ["search_contacts", "get_contact"]
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Agents opt into MCP tools in their YAML `tools` list:
+
+```yaml
+tools:
+  - bash
+  - mcp:contacts/search_contacts
+```
+
+The extension writes `.pi/bin/mcp` and makes that shim available on `PATH` for
+bash commands run inside the launched Pi session. When configured endpoints
+expose matching allowed tools, it filters the manifest for the active agent and
+writes a workspace-local `.pi/mcp.json`. Agents use:
+
+```bash
+mcp tools sources
+mcp tools search "contact"
+mcp tools describe contacts search_contacts
+mcp call contacts search_contacts '{"query":"staff engineer"}'
+```
+
+Outside the Pi session, `mcp` is not a normal package-level command; the
+launched session owns the CLI setup.
+
+For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
+directory. Workspace config wins over recipe config. To override that path, set
+`PI_RECIPES_MCP_LOCAL_CONFIG`. Header values can reference environment variables
+such as `${CONTACTS_MCP_TOKEN}`.
+
+The extension does not translate or adapt MCP tool names. The server must expose
+the tool names declared by the selected recipe agent, or `mcp call` fails with
+the underlying MCP error.
 
 ## Extension Dependencies
 

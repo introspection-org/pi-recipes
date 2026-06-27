@@ -30,6 +30,7 @@ import {
   validateRecipeDirectory,
   validatePiPackageManifest,
 } from "../src/index.js";
+import { materializeRecipeMcpLocalConfig } from "../src/recipe-mcp-config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -151,6 +152,16 @@ describe("recipe package manifest", () => {
           extensions: ["extensions/*.ts"],
           skills: ["skills/**/SKILL.md"],
           prompts: ["prompts/*.md"],
+          mcp: {
+            manifest: "mcp.json",
+            servers: [
+              {
+                id: "partner-mcp",
+                required: true,
+                tools: { allow: ["get_value"] },
+              },
+            ],
+          },
         },
       });
 
@@ -168,7 +179,152 @@ describe("recipe package manifest", () => {
         skills: ["skills/**/SKILL.md"],
         prompts: ["prompts/*.md"],
       });
+      expect(manifest.mcp).toEqual({
+        manifests: ["mcp.json"],
+        servers: [
+          {
+            id: "partner-mcp",
+            required: true,
+            tools: { allow: ["get_value"] },
+          },
+        ],
+      });
       expect(report).toEqual({ valid: true, findings: [] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("copies an MCP local config example for installed recipes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-mcp-install-"));
+    try {
+      mkdirSync(join(root, ".pi"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "mcp-recipe",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [
+              {
+                id: "partner",
+                tools: { allow: ["search"] },
+              },
+            ],
+          },
+        },
+      });
+      writeFileSync(
+        join(root, ".pi", "mcp.local.example.json"),
+        [
+          "{",
+          '  "servers": [',
+          '    { "id": "partner", "url": "${PARTNER_URL}", "headers": { "Authorization": "Bearer ${PARTNER_TOKEN}" } }',
+          "  ]",
+          "}",
+          "",
+        ].join("\n")
+      );
+
+      const result = await materializeRecipeMcpLocalConfig(
+        root,
+        readPiPackageManifest(root)
+      );
+
+      expect(result).toEqual({
+        path: join(root, ".pi", "mcp.local.json"),
+        created: true,
+        source: "example",
+        envVars: ["PARTNER_TOKEN", "PARTNER_URL"],
+      });
+      expect(readFileSync(join(root, ".pi", "mcp.local.json"), "utf8")).toContain(
+        "${PARTNER_TOKEN}"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("generates an MCP local config template from recipe server policy", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-mcp-install-"));
+    try {
+      writePiPackageManifest(root, {
+        name: "mcp-recipe",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [
+              {
+                id: "partner-mcp",
+                tools: { allow: ["search"] },
+              },
+            ],
+          },
+        },
+      });
+
+      const result = await materializeRecipeMcpLocalConfig(
+        root,
+        readPiPackageManifest(root)
+      );
+
+      expect(result).toMatchObject({
+        path: join(root, ".pi", "mcp.local.json"),
+        created: true,
+        source: "generated",
+        envVars: ["PARTNER_MCP_TOKEN", "PARTNER_MCP_URL"],
+      });
+      expect(JSON.parse(readFileSync(join(root, ".pi", "mcp.local.json"), "utf8"))).toEqual({
+        servers: [
+          {
+            id: "partner-mcp",
+            transport: "streamable_http",
+            url: "${PARTNER_MCP_URL}",
+            headers: {
+              Authorization: "Bearer ${PARTNER_MCP_TOKEN}",
+            },
+          },
+        ],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not overwrite an existing MCP local config", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-mcp-install-"));
+    try {
+      mkdirSync(join(root, ".pi"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "mcp-recipe",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [
+              {
+                id: "partner",
+                tools: { allow: ["search"] },
+              },
+            ],
+          },
+        },
+      });
+      writeFileSync(join(root, ".pi", "mcp.local.json"), "custom ${CUSTOM_TOKEN}\n");
+      writeFileSync(join(root, ".pi", "mcp.local.example.json"), "example ${EXAMPLE_TOKEN}\n");
+
+      const result = await materializeRecipeMcpLocalConfig(
+        root,
+        readPiPackageManifest(root)
+      );
+
+      expect(result).toEqual({
+        path: join(root, ".pi", "mcp.local.json"),
+        created: false,
+        source: "existing",
+        envVars: ["CUSTOM_TOKEN"],
+      });
+      expect(readFileSync(join(root, ".pi", "mcp.local.json"), "utf8")).toBe(
+        "custom ${CUSTOM_TOKEN}\n"
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1349,14 +1505,17 @@ describe("package boundary", () => {
   it("publishes all runtime modules imported by public entrypoints", () => {
     const pkg = JSON.parse(
       readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")
-    ) as { files?: string[] };
+    ) as { bin?: Record<string, string>; files?: string[] };
 
     expect(pkg.files).toEqual(
       expect.arrayContaining([
         "dist/recipe-publish.d.ts",
         "dist/recipe-publish.js",
+        "dist/recipe-mcp-config.d.ts",
+        "dist/recipe-mcp-config.js",
       ])
     );
+    expect(pkg.bin).toEqual({ recipes: "dist/cli.js" });
   });
 
   it("keeps the package free of Introspection runtime dependencies", async () => {
