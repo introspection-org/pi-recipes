@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { validateRecipeDirectory } from "./recipe-dev.js";
-import { readPiPackageManifest } from "./recipe-package.js";
+import { readPiPackageManifest, type RecipePackageResources } from "./recipe-package.js";
 import {
   addRecipe,
   customizeRecipe,
@@ -152,13 +152,12 @@ function ensureGitignore(recipeDir: string): boolean {
 
 function resourceCounts(
   resources: ReturnType<typeof validateRecipeDirectory>["resources"]
-): Record<"agents" | "extensions" | "skills" | "prompts" | "themes", number> {
+): Record<keyof RecipePackageResources, number> {
   return {
     agents: resources.agents?.length ?? 0,
     extensions: resources.extensions?.length ?? 0,
     skills: resources.skills?.length ?? 0,
     prompts: resources.prompts?.length ?? 0,
-    themes: resources.themes?.length ?? 0,
   };
 }
 

@@ -1587,7 +1587,6 @@ describe("publish telemetry", () => {
           extensions: 0,
           skills: 1,
           prompts: 0,
-          themes: 0,
         },
       });
     } finally {
