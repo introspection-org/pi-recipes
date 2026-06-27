@@ -30,6 +30,10 @@ import {
 import {
   readPiPackageManifest,
 } from "./recipe-package.js";
+import {
+  materializeRecipeMcpLocalConfig,
+  type RecipeMcpLocalConfigResult,
+} from "./recipe-mcp-config.js";
 
 const execFileAsync = promisify(execFile);
 const PACKAGE_NAME = "@introspection-ai/pi-recipes";
@@ -323,6 +327,19 @@ function recipeInstallSource(recipe: InstalledRecipe): string {
   return recipe.source;
 }
 
+function printRecipeMcpInstallNotes(result: RecipeMcpLocalConfigResult): void {
+  process.stdout.write("\nMCP config:\n");
+  process.stdout.write(`  ${result.created ? "created" : "using existing"}: ${result.path}\n`);
+  if (result.envVars.length > 0) {
+    process.stdout.write("  Set these environment variables before launching Pi:\n");
+    for (const name of result.envVars) {
+      process.stdout.write(`    ${name}\n`);
+    }
+  } else {
+    process.stdout.write("  Fill in endpoint URLs and tokens before launching Pi.\n");
+  }
+}
+
 function printRecipeList(recipes: InstalledRecipe[], storeDir: string): void {
   if (recipes.length === 0) {
     process.stdout.write(`No recipes installed in ${storeDir}\n`);
@@ -399,10 +416,16 @@ async function main(argv: string[]): Promise<number> {
     const source = requireOne(args, "<source>");
     await ensurePiExtension(args);
     const recipe = await addRecipe(source, { ...opts, force: args.force });
+    const mcpLocalConfig = await materializeRecipeMcpLocalConfig(
+      recipe.path,
+      readPiPackageManifest(recipe.path)
+    );
     if (args.json) {
-      printJson(recipe);
+      printJson({ ...recipe, ...(mcpLocalConfig ? { mcpLocalConfig } : {}) });
     } else {
       process.stdout.write(`Installed ${recipeDisplayName(recipe)}\n${recipe.path}\n`);
+      if (mcpLocalConfig) printRecipeMcpInstallNotes(mcpLocalConfig);
+      process.stdout.write(`\nRun:\n  pi --recipe ${recipePreferredIdentifier(recipe)}\n`);
     }
     return 0;
   }

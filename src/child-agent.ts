@@ -17,6 +17,7 @@ import {
   validateResolvedRecipeAgentDefinition,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
+import { executableRecipeToolNames, parseAgentMcpToolRef } from "./mcp.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
   recipeDir: string;
@@ -116,11 +117,33 @@ function applySystemInstructions(
   return [base, instructions.content].filter(Boolean).join("\n\n");
 }
 
-function runtimeContextPrompt(workspaceDir: string, recipeDir: string): string {
+function runtimeContextPrompt(
+  workspaceDir: string,
+  recipeDir: string,
+  tools: readonly string[]
+): string {
+  const mcpRefs = tools
+    .map((tool) => parseAgentMcpToolRef(tool))
+    .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
+  const mcpLines = mcpRefs.length > 0
+    ? [
+        "",
+        "## Recipe MCP CLI",
+        "- MCP tool policy refs are not directly callable tool names.",
+        "- Use the session-local `mcp` command through `bash` for MCP endpoint tools.",
+        "- The extension puts `mcp` on PATH; if lookup fails, use `$PI_RECIPES_MCP_BIN_DIR/mcp`.",
+        "- Inspect configured sources with `mcp tools sources`.",
+        "- Search tools with `mcp tools search \"query\"`.",
+        "- Describe a tool with `mcp tools describe <server> <tool>`.",
+        "- Call a tool with `mcp call <server> <tool> '<json-args>'`.",
+        "- Configured MCP policy refs: " + mcpRefs.map((tool) => `${tool.serverId}/${tool.toolName}`).join(", "),
+      ]
+    : [];
   return [
     "## Recipe Runtime Context",
     "- Current workspace: " + workspaceDir,
     "- Recipe directory: " + recipeDir,
+    ...mcpLines,
   ].join("\n");
 }
 
@@ -290,17 +313,18 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
           ),
         appendSystemPromptOverride: (base) => [
           ...base,
-          runtimeContextPrompt(this.opts.workspaceDir, this.opts.recipeDir),
+          runtimeContextPrompt(this.opts.workspaceDir, this.opts.recipeDir, agent.tools),
         ],
       },
     });
 
+    const executableTools = executableRecipeToolNames(agent.tools);
     const created = await createAgentSessionFromServices({
       services,
       sessionManager: SessionManager.inMemory(this.opts.workspaceDir),
       model,
       thinkingLevel: (agent.model?.thinkingLevel ?? "low") as ThinkingLevel,
-      tools: agent.tools.length > 0 ? agent.tools : undefined,
+      tools: executableTools.length > 0 ? executableTools : undefined,
     });
     this.session = created.session;
     await this.session.bindExtensions({});

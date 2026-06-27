@@ -69,7 +69,7 @@ Example output:
 Created editable copy for pi-codex
 
 Edit this folder:
-  /Users/atharva/.pi/recipes/local/tfidfwastaken-pi-codex
+  ~/.pi/recipes/local/tfidfwastaken-pi-codex
 
 Then check and run it:
   recipes doctor pi-codex
