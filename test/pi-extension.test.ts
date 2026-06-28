@@ -434,6 +434,150 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
+  it("includes visible child-agent MCP refs in the session manifest", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-child-mcp-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "explorer.yaml"),
+        [
+          "name: explorer",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - bash",
+          "  - mcp:partner-mcp/get_value",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Explorer prompt",
+          "",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "mcp.json"),
+        JSON.stringify({
+          servers: [
+            {
+              id: "partner-mcp",
+              base_url: "http://host.docker.internal:3200/api/mcp",
+              tools: [
+                { name: "get_value", description: "Read a value." },
+                { name: "set_value", description: "Store a value." },
+              ],
+            },
+          ],
+        })
+      );
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: {
+              agents: ["defs/*.yaml"],
+              mcp: {
+                manifest: "mcp.json",
+                servers: [
+                  {
+                    id: "partner-mcp",
+                    required: true,
+                    tools: { allow: ["get_value"] },
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      const env: NodeJS.ProcessEnv = {};
+      const notify = vi.fn();
+      const ctx = extensionContext(projectDir, notify);
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension({ env })(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(projectDir, ".pi", "bin"));
+      expect(env.PI_RECIPES_MCP_MANIFEST).toBe(join(projectDir, ".pi", "mcp.json"));
+      const materialized = JSON.parse(readFileSync(env.PI_RECIPES_MCP_MANIFEST!, "utf8"));
+      expect(materialized.servers[0].tools.map((tool: { name: string }) => tool.name)).toEqual([
+        "get_value",
+      ]);
+      expect(notify).toHaveBeenCalledWith(
+        "Recipe MCP: 1 tool(s) from 1 server(s)",
+        "info"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips MCP discovery when no active recipe agent opts into MCP refs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-no-mcp-"));
+    const originalFetch = globalThis.fetch;
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(join(projectDir, ".pi"), { recursive: true });
+      const staleManifest = join(projectDir, ".pi", "mcp.json");
+      writeFileSync(staleManifest, JSON.stringify({ servers: [{ id: "old", tools: [] }] }));
+      const env: NodeJS.ProcessEnv = {
+        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
+          endpoints: [
+            {
+              kind: "mcp",
+              id: "bootstrap",
+              base_url: "http://127.0.0.1:3201/mcp",
+            },
+          ],
+        }),
+        INTROSPECTION_TOKEN: "session-token",
+        PI_RECIPES_MCP_MANIFEST: staleManifest,
+      };
+      const fetchImpl = vi.fn(async () =>
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { tools: [] } }), {
+          headers: { "content-type": "application/json" },
+        })
+      ) as unknown as typeof fetch;
+      globalThis.fetch = fetchImpl;
+      const notify = vi.fn();
+      const ctx = extensionContext(projectDir, notify);
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension({ env })(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(env.PI_RECIPES_MCP_MANIFEST).toBeUndefined();
+      expect(existsSync(staleManifest)).toBe(false);
+      expect(notify).not.toHaveBeenCalledWith(
+        expect.stringContaining("Recipe MCP:"),
+        expect.any(String)
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("installs the session MCP CLI even when endpoint discovery finds no tools", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-mcp-empty-"));
     try {

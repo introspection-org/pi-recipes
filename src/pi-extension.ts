@@ -20,6 +20,7 @@ import {
   type RecipeChildToolEvent,
 } from "./child-agent.js";
 import {
+  clearRecipeMcpManifest,
   configureMcpLocalConfigPath,
   executableRecipeToolNames,
   formatMcpDiscoveryDiagnostics,
@@ -259,6 +260,12 @@ function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
   return names
     .map((name) => definitions.get(name))
     .filter((agent): agent is RecipeAgentDefinition => Boolean(agent));
+}
+
+function scopedMcpToolRefs(state: RecipeLaunchState): string[] {
+  return [state.agent, ...visibleSubagents(state)].flatMap((agent) =>
+    agent.tools.filter((tool) => parseAgentMcpToolRef(tool))
+  );
 }
 
 function textResult<TDetails>(text: string, details: TDetails) {
@@ -817,24 +824,29 @@ export function createPiRecipesExtension(
     launchState: RecipeLaunchState,
     ctx: Pick<ExtensionContext, "ui">
   ): Promise<void> {
-    const hasMcpRefs = launchState.agent.tools.some((tool) => parseAgentMcpToolRef(tool));
-    if (hasMcpRefs) {
-      configureMcpLocalConfigPath({
-        cwd: launchState.cwd,
-        recipeDir: launchState.recipeDir,
-        env,
-      });
-      await materializeSessionMcpCli({
-        cwd: launchState.cwd,
-        env,
-      });
+    const mcpToolRefs = scopedMcpToolRefs(launchState);
+    if (mcpToolRefs.length === 0) {
+      launchState.mcpServerCount = 0;
+      launchState.mcpToolCount = 0;
+      await clearRecipeMcpManifest(env, launchState.cwd);
+      return;
     }
+
+    configureMcpLocalConfigPath({
+      cwd: launchState.cwd,
+      recipeDir: launchState.recipeDir,
+      env,
+    });
+    await materializeSessionMcpCli({
+      cwd: launchState.cwd,
+      env,
+    });
 
     const manifest = await materializeRecipeMcpManifest({
       cwd: launchState.cwd,
       recipeDir: launchState.recipeDir,
       manifest: launchState.manifest,
-      agentTools: launchState.agent.tools,
+      agentTools: mcpToolRefs,
       env,
       fetch: globalThis.fetch,
     });
@@ -859,7 +871,7 @@ export function createPiRecipesExtension(
           "warning"
         );
       }
-    } else if (hasMcpRefs) {
+    } else {
       const detail = formatMcpDiscoveryDiagnostics(manifest.diagnostics ?? []);
       ctx.ui.notify(
         [

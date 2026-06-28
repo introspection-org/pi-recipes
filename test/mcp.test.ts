@@ -370,6 +370,82 @@ describe("mcp CLI", () => {
     }
   });
 
+  it("scrubs filtered MCP tool names from materialized tool descriptions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-description-filter-"));
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(cwd, { recursive: true });
+      mkdirSync(recipeDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "mcp.json"),
+        JSON.stringify({
+          servers: [
+            {
+              id: "slack",
+              base_url: "https://mcp.slack.com/mcp",
+              tools: [
+                {
+                  name: "slack_read_channel",
+                  description:
+                    "Reads messages. Use slack_search_channels to find a channel ID by name. Use slack_read_thread for replies.",
+                },
+                {
+                  name: "slack_search_channels",
+                  description: "Find channels.",
+                },
+                {
+                  name: "slack_read_thread",
+                  description: "Read replies.",
+                },
+              ],
+            },
+          ],
+        })
+      );
+
+      const env: NodeJS.ProcessEnv = {};
+      const manifest = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: globalThis.fetch,
+        agentTools: ["mcp:slack/slack_read_channel"],
+        manifest: {
+          name: "demo",
+          version: "1.0.0",
+          path: recipeDir,
+          resources: {
+            agents: [],
+            extensions: [],
+            skills: [],
+            prompts: [],
+          },
+          mcp: {
+            manifests: [],
+            servers: [
+              {
+                id: "slack",
+                required: false,
+                tools: { allow: ["slack_read_channel"] },
+              },
+            ],
+          },
+        },
+      });
+
+      const description = manifest.servers?.[0]?.tools?.[0]?.description ?? "";
+      expect(manifest.servers?.[0]?.tools?.map((tool) => tool.name)).toEqual([
+        "slack_read_channel",
+      ]);
+      expect(description).not.toContain("slack_search_channels");
+      expect(description).not.toContain("slack_read_thread");
+      expect(description).toContain("[unavailable MCP tool]");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("calls MCP tools with the session token", async () => {
     const { dir, path } = writeManifest();
     const calls: Array<{ method?: string; auth?: string; protocol?: string; session?: string }> = [];
