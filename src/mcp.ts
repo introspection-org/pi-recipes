@@ -671,6 +671,58 @@ function filterTools(
   });
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function serverToolPrefix(serverId: string): string {
+  return serverId.replace(/-/g, "_");
+}
+
+function referencedToolNames(serverId: string, tools: readonly McpManifestTool[]): Set<string> {
+  const names = new Set(tools.map((tool) => tool.name.trim()).filter(Boolean));
+  const prefix = escapeRegExp(serverToolPrefix(serverId));
+  const pattern = new RegExp(`\\b${prefix}_[A-Za-z0-9_]+\\b`, "g");
+  for (const tool of tools) {
+    for (const match of tool.description?.matchAll(pattern) ?? []) {
+      names.add(match[0]);
+    }
+  }
+  return names;
+}
+
+function scrubUnavailableToolReferences(
+  description: string | undefined,
+  unavailableToolNames: readonly string[]
+): string | undefined {
+  if (!description || unavailableToolNames.length === 0) return description;
+  let scrubbed = description;
+  for (const name of unavailableToolNames) {
+    const pattern = new RegExp(
+      `(^|[^A-Za-z0-9_-])${escapeRegExp(name)}(?=$|[^A-Za-z0-9_-])`,
+      "g"
+    );
+    scrubbed = scrubbed.replace(pattern, "$1[unavailable MCP tool]");
+  }
+  return scrubbed;
+}
+
+function scrubFilteredToolDescriptions(
+  serverId: string,
+  allTools: readonly McpManifestTool[],
+  tools: readonly McpManifestTool[]
+): McpManifestTool[] {
+  const available = new Set(tools.map((tool) => tool.name.trim()).filter(Boolean));
+  const unavailable = [...referencedToolNames(serverId, allTools)]
+    .filter((name) => !available.has(name))
+    .sort((a, b) => b.length - a.length);
+  if (unavailable.length === 0) return [...tools];
+  return tools.map((tool) => ({
+    ...tool,
+    description: scrubUnavailableToolReferences(tool.description, unavailable),
+  }));
+}
+
 function normalizeManifest(manifest: McpManifest, mcp: RecipePackageMcpConfig, agentTools: readonly string[]): McpManifest {
   const recipeAllow = recipeMcpAllow(mcp);
   const agentAllow = agentMcpToolAllowlist(agentTools);
@@ -702,7 +754,7 @@ function normalizeManifest(manifest: McpManifest, mcp: RecipePackageMcpConfig, a
       host: server.host ?? hostForUrl(server.base_url),
       base_url: server.base_url,
       transport: server.transport ?? "streamable_http",
-      tools,
+      tools: scrubFilteredToolDescriptions(serverId, server.tools ?? [], tools),
     });
   }
 
@@ -794,7 +846,7 @@ async function writeMcpManifest(
   }
 }
 
-async function clearDefaultMcpManifest(env: NodeJS.ProcessEnv, cwd: string): Promise<void> {
+export async function clearRecipeMcpManifest(env: NodeJS.ProcessEnv, cwd: string): Promise<void> {
   delete env[MCP_MANIFEST_ENV];
   delete env[LEGACY_MCP_MANIFEST_ENV];
   await rm(defaultMcpManifestPath(cwd), { force: true });
@@ -827,7 +879,7 @@ export async function materializeRecipeMcpManifest(
     if (diagnostics.length === 0) {
       diagnostics = filterDiagnostics(rawManifest, opts.manifest.mcp, opts.agentTools);
     }
-    await clearDefaultMcpManifest(env, opts.cwd);
+    await clearRecipeMcpManifest(env, opts.cwd);
     return { ...mcpManifest, diagnostics };
   }
 
