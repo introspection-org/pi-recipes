@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-beta.2](https://github.com/introspection-org/pi-recipes/compare/v0.1.0-beta.1...v0.1.0-beta.2) (2026-06-28)
+
+
+### Features
+
+* add session-scoped MCP support ([2bb532a](https://github.com/introspection-org/pi-recipes/commit/2bb532a309bff3f96180921e3caab9474ddb4ec6))
+
+
+### Bug Fixes
+
+* keep recipe MCP manifests scoped to exposed tools ([2d0ca2c](https://github.com/introspection-org/pi-recipes/commit/2d0ca2c91cd857e08336b54dbce22ff772a6a917))
+
 ## [0.1.0-beta.1](https://github.com/introspection-org/pi-recipes/compare/v0.1.0-beta.0...v0.1.0-beta.1) (2026-06-27)
 
 
