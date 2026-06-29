@@ -4,10 +4,7 @@
   "include-component-in-tag": false,
   "packages": {
     ".": {
-      "release-type": "node",
-      "versioning": "prerelease",
-      "prerelease": true,
-      "prerelease-type": "beta"
+      "release-type": "node"
     }
   }
 }
