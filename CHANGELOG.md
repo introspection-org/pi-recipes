@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0](https://github.com/introspection-org/pi-recipes/compare/v0.1.0-beta.2...v0.1.0) (2026-06-30)
+
+
+### Bug Fixes
+
+* count install telemetry once per recipe ([fe92eaf](https://github.com/introspection-org/pi-recipes/commit/fe92eaf848c010da5c50f96a8a29658aedb68a82))
+
+
+### Miscellaneous Chores
+
+* release 0.1.0 ([c7a2774](https://github.com/introspection-org/pi-recipes/commit/c7a2774fa4766ab81ef626534444effc2838276a))
+
 ## [0.1.0-beta.2](https://github.com/introspection-org/pi-recipes/compare/v0.1.0-beta.1...v0.1.0-beta.2) (2026-06-28)
 
 
