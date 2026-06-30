@@ -770,17 +770,24 @@ export async function addRecipe(
 
   const id = recipeSourceId(source);
   const installed = installedRecipeFromManifest(id, input, path, manifest);
+  let shouldSendInstallTelemetry = false;
   withRecipeStoreLock(storeDir, () => {
     const store = readRecipeStore(storeDir);
+    const alreadyInstalled = store.recipes.some(
+      (recipe) => recipe.id === id || recipe.name === manifest.name
+    );
     store.recipes = [
       ...store.recipes.filter((recipe) => recipe.id !== id && recipe.name !== manifest.name),
       installed,
     ].sort((a, b) => a.name.localeCompare(b.name));
     writeRecipeStore(store, storeDir);
+    shouldSendInstallTelemetry =
+      !alreadyInstalled && (source.kind === "github" || source.kind === "git");
   });
   // Anonymous, best-effort install ping for the public directory. Only remote
-  // (github/git) installs are counted; local recipe registration is private.
-  if (source.kind === "github" || source.kind === "git") {
+  // (github/git) first-time installs are counted; local recipe registration and
+  // repeat installs are private.
+  if (shouldSendInstallTelemetry) {
     await sendInstallTelemetry(installed, { env: opts.env, fetchImpl: opts.fetchImpl });
   }
   return installed;

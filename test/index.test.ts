@@ -1598,6 +1598,31 @@ describe("install telemetry", () => {
     }
   });
 
+  it("does not ping again when a remote recipe is already installed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-telemetry-repeat-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const bareDir = await buildBareRecipe(root, "repeat-telemetry-recipe");
+      await addRecipe(`file://${bareDir}`, {
+        storeDir,
+        fetchImpl: recordingFetch(pings),
+      });
+      await addRecipe(`file://${bareDir}`, {
+        storeDir,
+        fetchImpl: recordingFetch(pings),
+      });
+      expect(pings).toHaveLength(1);
+      expect(pings[0].body).toMatchObject({
+        event: "install",
+        name: "repeat-telemetry-recipe",
+        version: "1.2.3",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not ping for local recipe registration", async () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-telemetry-local-"));
     const storeDir = join(root, "store");
