@@ -5,6 +5,7 @@
 
 import type { InstalledRecipe } from "./recipe-store.js";
 import type { RecipePackageResources } from "./recipe-package.js";
+import { piRecipesPackageMetadata } from "./package-info.js";
 
 export const DEFAULT_TELEMETRY_ENDPOINT = "https://pi.recipes/api/installs";
 export const DEFAULT_CATALOG_ENDPOINT = "https://pi.recipes/api/catalog/recipes";
@@ -23,14 +24,10 @@ export interface PublishTelemetryOptions extends InstallTelemetryOptions {
 }
 
 export interface PublishTelemetryRecipe {
-  id: string;
   name: string;
   version: string;
   description?: string;
-  github: string;
   source: string;
-  installCommand: string;
-  homepage: string;
   resources: Record<keyof RecipePackageResources, number>;
 }
 
@@ -62,11 +59,13 @@ export async function sendInstallTelemetry(
   recipe: InstalledRecipe,
   opts: InstallTelemetryOptions = {}
 ): Promise<void> {
+  const piRecipesVersion = piRecipesPackageMetadata().version;
   await postTelemetry(telemetryEndpoint(opts.env ?? process.env), {
     event: "install",
     id: recipe.id,
     name: recipe.name,
     version: recipe.version,
+    piRecipesVersion,
   }, opts);
 }
 
@@ -80,8 +79,10 @@ export async function sendPublishTelemetry(
   opts: PublishTelemetryOptions = {}
 ): Promise<void> {
   const env = opts.env ?? process.env;
+  const piRecipesVersion = piRecipesPackageMetadata().version;
   await postTelemetry(opts.endpoint ?? catalogEndpoint(env), {
     event: "publish",
+    piRecipesVersion,
     ...recipe,
   }, opts);
 }
