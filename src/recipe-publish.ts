@@ -161,6 +161,94 @@ function resourceCounts(
   };
 }
 
+function isSafeInstallRef(value: string): boolean {
+  return (
+    value.length > 0 &&
+    !/\s/.test(value) &&
+    !value.includes("#") &&
+    !value.includes("\\") &&
+    !value.includes("..") &&
+    !value.includes("@{")
+  );
+}
+
+function preferredTagForHead(tags: string[], manifestVersion: string): string | undefined {
+  const safeTags = tags.filter(isSafeInstallRef);
+  return (
+    safeTags.find((tag) => tag === manifestVersion) ??
+    safeTags.find((tag) => tag === `v${manifestVersion}`) ??
+    safeTags[0]
+  );
+}
+
+async function remoteTagPointsAtHead(
+  recipeDir: string,
+  tag: string,
+  headSha: string,
+  env: NodeJS.ProcessEnv | undefined,
+  runner?: RecipePublishCommandRunner
+): Promise<boolean> {
+  try {
+    const result = await runCommand(
+      "git",
+      ["ls-remote", "--tags", "origin", `refs/tags/${tag}`, `refs/tags/${tag}^{}`],
+      { cwd: recipeDir, env },
+      runner
+    );
+    return result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim().split(/\s+/)[0])
+      .some((sha) => sha === headSha);
+  } catch {
+    return false;
+  }
+}
+
+async function publishedInstallRef(
+  recipeDir: string,
+  manifestVersion: string,
+  env: NodeJS.ProcessEnv | undefined,
+  runner?: RecipePublishCommandRunner
+): Promise<string> {
+  let headSha = "";
+  try {
+    headSha = (await runCommand(
+      "git",
+      ["rev-parse", "HEAD"],
+      { cwd: recipeDir, env },
+      runner
+    )).stdout.trim();
+  } catch {
+    // Telemetry is best-effort; preserve the previous manifest-version fallback.
+  }
+
+  try {
+    const tags = await runCommand(
+      "git",
+      ["tag", "--points-at", "HEAD", "--sort=version:refname"],
+      { cwd: recipeDir, env },
+      runner
+    );
+    const tag = preferredTagForHead(
+      tags.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+      manifestVersion
+    );
+    if (
+      tag &&
+      isSafeInstallRef(headSha) &&
+      await remoteTagPointsAtHead(recipeDir, tag, headSha, env, runner)
+    ) {
+      return tag;
+    }
+  } catch {
+    // The commit SHA below is the stable fallback when tag lookup is unavailable.
+  }
+
+  if (isSafeInstallRef(headSha)) return headSha;
+
+  return manifestVersion;
+}
+
 function localPathForInput(input: string, cwd: string): string {
   const expanded = input === "~"
     ? process.env.HOME ?? input
@@ -322,16 +410,18 @@ export async function publishRecipe(
   const catalogued = opts.visibility === "public" && !telemetryDisabled(env);
   if (catalogued) {
     const source = `github:${github.fullName}`;
+    const installRef = await publishedInstallRef(
+      recipeDir,
+      publishedManifest.version,
+      env,
+      opts.commandRunner
+    );
     await sendPublishTelemetry(
       {
-        id: source,
         name: publishedManifest.name,
-        version: publishedManifest.version,
+        version: installRef,
         ...(publishedManifest.description ? { description: publishedManifest.description } : {}),
-        github: github.fullName,
         source,
-        installCommand: `recipes install ${source}`,
-        homepage: `https://github.com/${github.fullName}`,
         resources: resourceCounts(report.resources),
       },
       { env: opts.env, fetchImpl: opts.fetchImpl }

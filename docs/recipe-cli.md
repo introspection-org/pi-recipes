@@ -630,10 +630,11 @@ When you install a recipe from a remote source (`github:` or a Git URL),
 `recipes install` sends a single anonymous ping to the public recipe directory
 at [pi.recipes](https://pi.recipes) so it can rank recipes by install count.
 
-The ping contains only the recipe's canonical id, name, and version:
+The ping contains only the recipe's canonical id, name, recipe version, and
+`pi-recipes` CLI version:
 
 ```json
-{ "event": "install", "id": "github:owner/repo", "name": "my-recipe", "version": "1.0.0" }
+{ "event": "install", "id": "github:owner/repo", "name": "my-recipe", "version": "1.0.0", "piRecipesVersion": "0.1.0" }
 ```
 
 No paths, machine identifiers, or other personal data are sent. Local recipe
@@ -641,8 +642,12 @@ registration (`recipes install ./my-recipe`) is never reported. The ping is
 best-effort and never blocks or fails an install.
 
 When you publish with `--visibility public`, `recipes publish` sends the
-recipe's public GitHub source, package name, version, description, install
-command, homepage, and resource counts so it can appear in the catalog.
+recipe's public GitHub source, package name, version, description, resource
+counts, and `pi-recipes` CLI version so it can appear in the catalog. `version`
+is the verified Git ref used for public installs: the tag pointing at the pushed
+commit when one is present on the remote, otherwise the pushed commit SHA. The
+catalog derives website-specific fields such as homepage and install command
+from the source and version.
 
 Opt out by setting either environment variable to a truthy value:
 
