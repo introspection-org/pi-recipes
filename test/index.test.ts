@@ -711,6 +711,81 @@ describe("recipe agent definitions", () => {
     }
   });
 
+  it("flags model names that are not <provider>/<model_id>", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agents-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "model-spec-agents",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      writeFileSync(
+        join(root, "agents", "agent.yaml"),
+        fullAgentYaml().replace("test/provider-model", "gpt-5.5")
+      );
+
+      expect(validateRecipeAgentDefinitions(root)).toEqual(
+        expect.arrayContaining([
+          {
+            agentName: "agent",
+            field: "model.name",
+            message:
+              'Recipe agent "agent" has invalid model.name "gpt-5.5" - expected "<provider>/<model_id>"',
+          },
+        ])
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts aggregator model ids containing slashes and rejects colon-form specs", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agents-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "model-spec-agents",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      writeFileSync(
+        join(root, "agents", "agent.yaml"),
+        fullAgentYaml().replace(
+          "test/provider-model",
+          "openrouter/anthropic/claude-opus-4.8"
+        )
+      );
+      writeFileSync(
+        join(root, "agents", "fireworks.yaml"),
+        fullAgentYaml("fireworks").replace(
+          "test/provider-model",
+          "fireworks/accounts/fireworks/models/kimi-k2p6"
+        )
+      );
+      writeFileSync(
+        join(root, "agents", "colon.yaml"),
+        fullAgentYaml("colon").replace("test/provider-model", "openai:gpt-5.5")
+      );
+
+      const findings = validateRecipeAgentDefinitions(root);
+      expect(findings).toEqual([
+        {
+          agentName: "colon",
+          field: "model.name",
+          message:
+            'Recipe agent "colon" has invalid model.name "openai:gpt-5.5" - expected "<provider>/<model_id>"',
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("resolves variants through agent from inheritance", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agents-"));
     try {
