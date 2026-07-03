@@ -1,4 +1,4 @@
-import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai";
+import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
   AuthStorage,
