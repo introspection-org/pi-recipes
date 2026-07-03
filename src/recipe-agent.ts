@@ -379,6 +379,29 @@ export function validateResolvedRecipeAgentDefinition(opts: {
   return findings;
 }
 
+function isValidRecipeModelSpec(spec: string): boolean {
+  const slash = spec.indexOf("/");
+  if (slash <= 0 || slash === spec.length - 1) return false;
+  const provider = spec.slice(0, slash);
+  return !/[\s:]/.test(provider);
+}
+
+function validateRecipeAgentModelSpecs(
+  sources: RecipeAgentSource[]
+): RecipeAgentValidationFinding[] {
+  const findings: RecipeAgentValidationFinding[] = [];
+  for (const source of sources) {
+    const spec = source.definition.model?.name;
+    if (!spec || isValidRecipeModelSpec(spec)) continue;
+    findings.push({
+      agentName: source.definition.name,
+      field: "model.name",
+      message: `Recipe agent "${source.definition.name}" has invalid model.name "${spec}" - expected "<provider>/<model_id>"`,
+    });
+  }
+  return findings;
+}
+
 function validateRecipeAgentNames(
   sources: RecipeAgentSource[]
 ): RecipeAgentValidationFinding[] {
@@ -426,6 +449,7 @@ export function validateRecipeAgentDefinitions(recipeDir: string): RecipeAgentVa
   const agentNames = [...new Set(sources.map((source) => source.definition.name))].sort();
   return [
     ...validateRecipeAgentNames(sources),
+    ...validateRecipeAgentModelSpecs(sources),
     ...agentNames.flatMap((agentName) =>
       validateResolvedRecipeAgentDefinition({
         recipeDir,
