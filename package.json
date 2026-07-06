@@ -20,6 +20,8 @@
     "dist/recipe-dev.js",
     "dist/recipe-evals.d.ts",
     "dist/recipe-evals.js",
+    "dist/recipe-judges.d.ts",
+    "dist/recipe-judges.js",
     "dist/recipe-mcp-config.d.ts",
     "dist/recipe-mcp-config.js",
     "dist/recipe-agent.d.ts",

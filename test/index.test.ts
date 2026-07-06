@@ -14,6 +14,7 @@ import {
   createRecipeScaffold,
   customizeRecipe,
   defaultRecipeStoreDir,
+  judgeConversationFromMessages,
   listRecipes,
   loadRecipeAgentDefinitions,
   packageResourcePaths,
@@ -32,6 +33,8 @@ import {
   validateRecipeDirectory,
   validatePiPackageManifest,
   validateRecipeEvalsConfig,
+  renderJudgeConversation,
+  runRecipeJudges,
 } from "../src/index.js";
 import { isDirectCli, main as recipesCliMain } from "../src/cli.js";
 import { materializeRecipeMcpLocalConfig } from "../src/recipe-mcp-config.js";
@@ -1053,6 +1056,187 @@ describe("recipe package manifest", () => {
     await expect(
       recipesCliMain(["evals", "run", ".", "--model", "openai/gpt-5.4-mini", "--dry-run"])
     ).rejects.toThrow(/--model is not supported/);
+  });
+
+  it("verifies and renders local recipe judge calibration rows", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-judges-"));
+    try {
+      mkdirSync(join(root, "judges"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "judge-recipe",
+        version: "0.1.0",
+        pi: {},
+      });
+      writeFileSync(
+        join(root, "judges", "clarify.yaml"),
+        [
+          "judge: clarify",
+          "on:",
+          "  - event: message",
+          "    match:",
+          "      role: user",
+          "instructions: Grade the reply.",
+          "model:",
+          "  name: openai/gpt-test",
+          "",
+        ].join("\n")
+      );
+      const passConversation = judgeConversationFromMessages({
+        conversationId: "c-pass",
+        messages: [
+          { role: "user", text: "plan a trip" },
+          { role: "assistant", text: "Where are you going and when?" },
+        ],
+      });
+      const failConversation = judgeConversationFromMessages({
+        conversationId: "c-fail",
+        messages: [
+          { role: "user", text: "plan a trip" },
+          { role: "assistant", text: "Searching now." },
+        ],
+      });
+      const dataset = join(root, "calibration.jsonl");
+      writeFileSync(
+        dataset,
+        [
+          JSON.stringify({
+            conversation_id: "c-pass",
+            label: "pass",
+            split: "train",
+            conversation: passConversation,
+          }),
+          JSON.stringify({
+            conversation_id: "c-fail",
+            label: "fail",
+            split: "test",
+            conversation: failConversation,
+          }),
+          "",
+        ].join("\n")
+      );
+
+      const verify = await runRecipeJudges(root, "judge-recipe", {
+        mode: "verify",
+        datasetPath: dataset,
+      });
+      expect(verify).toMatchObject({
+        mode: "verify",
+        rows: 2,
+        errors: [],
+        labels: { pass: 1, fail: 1 },
+        splits: { train: 1, test: 1 },
+      });
+
+      const render = await runRecipeJudges(root, "judge-recipe", {
+        mode: "render",
+        judge: "clarify",
+        datasetPath: dataset,
+        split: "test",
+      });
+      expect(render).toMatchObject({
+        mode: "render",
+        judge: "clarify",
+        rows: [
+          expect.objectContaining({
+            conversationId: "c-fail",
+            label: "fail",
+          }),
+        ],
+      });
+      expect(render.mode === "render" ? render.rows[0]?.transcript : "").toContain("USER:");
+      expect(renderJudgeConversation(passConversation)).toContain("ASSISTANT:");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("evaluates a recipe judge calibration row through an OpenAI-compatible gateway", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-judges-eval-"));
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      expect(body.model).toBe("gpt-test");
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  reasoning: "Asked a relevant clarifying question.",
+                  verdict: "pass",
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      mkdirSync(join(root, "judges"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "judge-eval-recipe",
+        version: "0.1.0",
+        pi: {},
+      });
+      writeFileSync(
+        join(root, "judges", "clarify.yaml"),
+        [
+          "judge: clarify",
+          "instructions: Grade the reply.",
+          "model:",
+          "  name: openai/gpt-test",
+          "",
+        ].join("\n")
+      );
+      const conversation = judgeConversationFromMessages({
+        conversationId: "c-pass",
+        messages: [
+          { role: "user", text: "plan a trip" },
+          { role: "assistant", text: "Where are you going and when?" },
+        ],
+      });
+      const dataset = join(root, "calibration.jsonl");
+      writeFileSync(
+        dataset,
+        `${JSON.stringify({
+          conversation_id: "c-pass",
+          label: "pass",
+          split: "test",
+          conversation,
+        })}\n`
+      );
+
+      const result = await runRecipeJudges(root, "judge-eval-recipe", {
+        mode: "eval",
+        judge: "clarify",
+        datasetPath: dataset,
+        split: "test",
+        env: { OPENAI_API_KEY: "test-key" },
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({
+        mode: "eval",
+        judge: "clarify",
+        rows: [
+          {
+            conversationId: "c-pass",
+            label: "pass",
+            verdict: "pass",
+            reasoning: "Asked a relevant clarifying question.",
+          },
+        ],
+        metrics: {
+          n: 1,
+          tn: 1,
+          error: 0,
+        },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("detects direct CLI execution through package bin symlinks", () => {
