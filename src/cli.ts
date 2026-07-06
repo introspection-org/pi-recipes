@@ -42,6 +42,11 @@ import {
   type RecipeEvalSuiteListResult,
   type RecipeEvalsResult,
 } from "./recipe-evals.js";
+import {
+  runRecipeJudges,
+  type RecipeJudgesResult,
+  type RecipeJudgeMode,
+} from "./recipe-judges.js";
 
 const execFileAsync = promisify(execFile);
 const PACKAGE_NAME = "@introspection-ai/pi-recipes";
@@ -58,6 +63,12 @@ interface ParsedArgs {
   visibility?: RecipePublishVisibility;
   suite?: string;
   datasetPath?: string;
+  dataset?: string;
+  conversationPath?: string;
+  judge?: string;
+  split?: string;
+  model?: string;
+  baseUrl?: string;
   local: boolean;
   noSetup: boolean;
   force: boolean;
@@ -81,6 +92,8 @@ function usage(commandName = "recipes"): string {
     "  path <recipe|path>  Print the resolved recipe directory",
     "  doctor <target>    Validate a recipe directory or installed recipe",
     "  evals              Manage Harbor offline eval suites for a recipe",
+    "  judges <target> <verify|render|eval|run>",
+    "                     Calibrate or run recipe judges from judges/*.yaml",
     "  publish <target>   Publish a recipe to a GitHub repository",
     "",
     "Options:",
@@ -96,6 +109,14 @@ function usage(commandName = "recipes"): string {
     "  --suite <name>     Run one Harbor eval suite",
     "  --dataset-path <dir>",
     "                     Run a local Harbor dataset directory instead of pinned suites",
+    "  --dataset <jsonl>  Calibration JSONL for recipes judges",
+    "  --conversation <json>",
+    "                     Conversation JSON for recipes judges run",
+    "  --judge <name|path>",
+    "                     Select one judge by name or YAML path",
+    "  --split <name>     Filter calibration rows by split",
+    "  --model <model>    Override judge model for recipes judges",
+    "  --base-url <url>   OpenAI-compatible judge gateway URL",
     "  --local            Install the Pi extension into project settings during setup",
     "  --no-setup         Skip automatic Pi extension setup",
     "  --force            Re-clone an existing remote source",
@@ -162,6 +183,12 @@ function parseArgs(argv: string[]): ParsedArgs {
   let visibility: RecipePublishVisibility | undefined;
   let suite: string | undefined;
   let datasetPath: string | undefined;
+  let dataset: string | undefined;
+  let conversationPath: string | undefined;
+  let judge: string | undefined;
+  let split: string | undefined;
+  let model: string | undefined;
+  let baseUrl: string | undefined;
   let local = false;
   let noSetup = false;
   let force = false;
@@ -207,10 +234,30 @@ function parseArgs(argv: string[]): ParsedArgs {
       const value = argv[++index];
       if (!value) throw new Error("--suite requires a name");
       suite = value;
+    } else if (arg === "--dataset") {
+      const value = argv[++index];
+      if (!value) throw new Error("--dataset requires a JSONL path");
+      dataset = value;
+    } else if (arg === "--conversation") {
+      const value = argv[++index];
+      if (!value) throw new Error("--conversation requires a JSON path");
+      conversationPath = value;
+    } else if (arg === "--judge") {
+      const value = argv[++index];
+      if (!value) throw new Error("--judge requires a name or path");
+      judge = value;
+    } else if (arg === "--split") {
+      const value = argv[++index];
+      if (!value) throw new Error("--split requires a name");
+      split = value;
     } else if (arg === "--model") {
-      throw new Error(
-        "--model is not supported by recipes evals; set the model in the recipe agent YAML"
-      );
+      const value = argv[++index];
+      if (!value) throw new Error("--model requires a model name");
+      model = value;
+    } else if (arg === "--base-url") {
+      const value = argv[++index];
+      if (!value) throw new Error("--base-url requires a URL");
+      baseUrl = value;
     } else if (arg === "--dataset-path") {
       const value = argv[++index];
       if (!value) throw new Error("--dataset-path requires a directory");
@@ -243,6 +290,12 @@ function parseArgs(argv: string[]): ParsedArgs {
     visibility,
     suite,
     datasetPath,
+    dataset,
+    conversationPath,
+    judge,
+    split,
+    model,
+    baseUrl,
     local,
     noSetup,
     force,
@@ -469,6 +522,61 @@ function printRecipeEvalsClone(result: RecipeEvalCloneResult): void {
   }
 }
 
+function formatMetric(value: number): string {
+  return Number.isNaN(value) ? "n/a" : value.toFixed(2);
+}
+
+function printRecipeJudgesResult(result: RecipeJudgesResult): void {
+  if (result.mode === "verify") {
+    process.stdout.write(`Judge calibration dataset for ${result.recipe}\n`);
+    process.stdout.write(`Rows: ${result.rows}, invalid: ${result.errors.length}\n`);
+    for (const error of result.errors) process.stdout.write(`  ${error}\n`);
+    process.stdout.write(`Labels: ${JSON.stringify(result.labels)}\n`);
+    process.stdout.write(`Splits: ${JSON.stringify(result.splits)}\n`);
+    return;
+  }
+
+  if (result.mode === "render") {
+    process.stdout.write(`Rendered judge transcripts for ${result.recipe} / ${result.judge}\n`);
+    for (const row of result.rows) {
+      const split = row.split ? ` split=${row.split}` : "";
+      process.stdout.write(`\n=== ${row.conversationId} label=${row.label}${split} ===\n`);
+      process.stdout.write(`${row.transcript ?? "(transcript renders empty -> not_applicable)"}\n`);
+    }
+    return;
+  }
+
+  if (result.mode === "eval") {
+    process.stdout.write(`Judge eval for ${result.recipe} / ${result.judge}\n`);
+    for (const row of result.rows) {
+      const mark =
+        row.verdict === "not_applicable"
+          ? "."
+          : row.verdict === row.label
+            ? "+"
+            : row.verdict === "error"
+              ? "!"
+              : "x";
+      const reasoning = row.reasoning ? ` - ${row.reasoning.slice(0, 120)}` : "";
+      process.stdout.write(`  ${mark} ${row.conversationId}: label=${row.label} verdict=${row.verdict}${reasoning}\n`);
+    }
+    const m = result.metrics;
+    process.stdout.write(
+      `\nscored n=${m.n} acc=${formatMetric(m.acc)} kappa=${formatMetric(m.kappa)} ` +
+        `TPR=${formatMetric(m.tpr)} TNR=${formatMetric(m.tnr)} ` +
+        `(abstain=${m.abstain} error=${m.error})\n`
+    );
+    process.stdout.write(`confusion positive=fail: TP=${m.tp} FP=${m.fp} TN=${m.tn} FN=${m.fn}\n`);
+    return;
+  }
+
+  process.stdout.write(`Judge run for ${result.recipe} / ${result.conversationId}\n`);
+  for (const row of result.rows) {
+    const reasoning = row.reasoning ? ` - ${row.reasoning.slice(0, 120)}` : "";
+    process.stdout.write(`  ${row.judge}: ${row.verdict}${reasoning}\n`);
+  }
+}
+
 function printRecipeList(recipes: InstalledRecipe[], storeDir: string): void {
   if (recipes.length === 0) {
     process.stdout.write(`No recipes installed in ${storeDir}\n`);
@@ -646,6 +754,11 @@ export async function main(argv: string[]): Promise<number> {
       process.stdout.write(`${evalsUsage(commandName)}\n`);
       return 0;
     }
+    if (args.model) {
+      throw new Error(
+        "--model is not supported by recipes evals; set the model in the recipe agent YAML"
+      );
+    }
     if (evalsCommand === "run") {
       const identifier = requireValue(args, 1, "<recipe|path>");
       const path = resolveRecipeDirectory(identifier, opts);
@@ -697,6 +810,33 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
     throw new Error(`Unknown evals command: ${evalsCommand}\n\n${evalsUsage(commandName)}`);
+  }
+
+  if (args.command === "judges") {
+    const identifier = args.values[0] ?? ".";
+    const mode = (args.values[1] ?? "verify") as RecipeJudgeMode;
+    if (!["verify", "render", "eval", "run"].includes(mode)) {
+      throw new Error("recipes judges mode must be verify, render, eval, or run");
+    }
+    const path = resolveRecipeDirectory(identifier, opts);
+    if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
+    const manifest = readPiPackageManifest(path);
+    const result = await runRecipeJudges(path, manifest.name, {
+      mode,
+      judge: args.judge,
+      datasetPath: args.dataset,
+      conversationPath: args.conversationPath,
+      split: args.split,
+      model: args.model,
+      baseUrl: args.baseUrl,
+      env: process.env,
+    });
+    if (args.json) {
+      printJson(result);
+    } else {
+      printRecipeJudgesResult(result);
+    }
+    return result.mode === "verify" && result.errors.length > 0 ? 1 : 0;
   }
 
   if (args.command === "publish") {

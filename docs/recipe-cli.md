@@ -332,6 +332,21 @@ does not expose a model override. Arguments after `--` are passed through to
 the underlying `harbor run` invocation for local filters and environment-specific
 experiments.
 
+## Recipe Judges
+
+Recipes can also carry calibrated judge YAML files in `judges/*.yaml`. Use the
+local judge loop before promoting a judge into online use:
+
+```bash
+recipes judges ./my-recipe verify --dataset ./judges/clarify.calibration.jsonl
+recipes judges ./my-recipe render --judge clarify --dataset ./judges/clarify.calibration.jsonl --split dev
+OPENAI_API_KEY=... recipes judges ./my-recipe eval --judge clarify --dataset ./judges/clarify.calibration.jsonl --split test
+recipes judges ./my-recipe run --judge clarify --conversation ./conversation.json
+```
+
+See [Recipe Judges](recipe-judges.md) for the judge YAML shape, calibration JSONL
+contract, gateway environment variables, and metrics.
+
 ## Extension Dependencies
 
 Recipes that declare TypeScript extensions add runtime dependencies to the same

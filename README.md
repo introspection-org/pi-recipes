@@ -21,6 +21,7 @@ and prompts.
 - [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
 - [Recipe Evals](docs/recipe-evals.md): declaring and running Harbor offline eval suites with exact pins.
+- [Recipe Judges](docs/recipe-judges.md): calibrating and running local judges from recipe `judges/*.yaml`.
 
 ## Package Exports
 
