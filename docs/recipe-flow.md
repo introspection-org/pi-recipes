@@ -144,5 +144,6 @@ pi --recipe my-recipe
 - `list` shows what Pi can run and where the local files are.
 - `customize` creates an editable local copy of an installed recipe.
 - `doctor` validates a recipe before running or publishing it.
+- `evals` runs pinned Harbor offline eval suites for a recipe.
 - `create` starts a new recipe from scratch.
 - `publish` pushes a recipe to GitHub so others can install it.

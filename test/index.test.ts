@@ -1,13 +1,15 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createRecipeChildAgentRunner } from "../src/child-agent.js";
 import {
   addRecipe,
+  buildRecipeEvalInvocations,
   createRecipePublishGuide,
   createRecipeScaffold,
   customizeRecipe,
@@ -29,7 +31,9 @@ import {
   validateResolvedRecipeAgentDefinition,
   validateRecipeDirectory,
   validatePiPackageManifest,
+  validateRecipeEvalsConfig,
 } from "../src/index.js";
+import { isDirectCli, main as recipesCliMain } from "../src/cli.js";
 import { materializeRecipeMcpLocalConfig } from "../src/recipe-mcp-config.js";
 
 const execFileAsync = promisify(execFile);
@@ -192,6 +196,143 @@ describe("recipe package manifest", () => {
       expect(report).toEqual({ valid: true, findings: [] });
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads Harbor eval suite pins from package.json pi blocks", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-evals-"));
+    try {
+      writePiPackageManifest(root, {
+        name: "evals-recipe",
+        version: "0.1.0",
+        pi: {
+          evals: {
+            suites: [
+              {
+                name: "smoke",
+                type: "registry",
+                dataset: "acme/smoke",
+                version: "1.2.3",
+              },
+              {
+                name: "terminal-bench",
+                type: "registry",
+                dataset: "terminal-bench/terminal-bench-2-1",
+                version: "6",
+              },
+              {
+                name: "coding",
+                type: "git",
+                repo: "https://github.com/acme/coding-evals.git",
+                rev: "abcdef1234567890",
+                dataset: "smoke",
+              },
+            ],
+          },
+        },
+      });
+
+      const manifest = readPiPackageManifest(root);
+
+      expect(manifest.evals.suites).toEqual([
+        {
+          name: "smoke",
+          type: "registry",
+          dataset: "acme/smoke",
+          version: "1.2.3",
+        },
+        {
+          name: "terminal-bench",
+          type: "registry",
+          dataset: "terminal-bench/terminal-bench-2-1",
+          version: "6",
+        },
+        {
+          name: "coding",
+          type: "git",
+          repo: "https://github.com/acme/coding-evals.git",
+          rev: "abcdef1234567890",
+          dataset: "smoke",
+        },
+      ]);
+      expect(validateRecipeEvalsConfig(manifest.evals)).toEqual({
+        valid: true,
+        findings: [],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports mutable Harbor eval pins and duplicate suite names", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-bad-evals-"));
+    try {
+      writePiPackageManifest(root, {
+        name: "bad-evals-recipe",
+        version: "0.1.0",
+        pi: {
+          evals: {
+            suites: [
+              {
+                name: "smoke",
+                type: "registry",
+                dataset: "acme/smoke",
+                version: "^1.0",
+              },
+              {
+                name: "latest",
+                type: "registry",
+                dataset: "terminal-bench/terminal-bench-2-1",
+                version: "latest",
+              },
+              {
+                name: "smoke",
+                type: "git",
+                repo: "https://github.com/acme/coding-evals.git",
+                rev: "main",
+              },
+            ],
+          },
+        },
+      });
+
+      const report = validatePiPackageManifest(readPiPackageManifest(root));
+
+      expect(report.valid).toBe(false);
+      expect(report.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "evals.pin_mutable" }),
+          expect.objectContaining({ code: "evals.name_duplicate" }),
+        ])
+      );
+      expect(report.findings.filter((finding) => finding.code === "evals.pin_mutable"))
+        .toHaveLength(3);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports present malformed Harbor eval blocks", () => {
+    for (const evals of [false, null]) {
+      const root = mkdtempSync(join(tmpdir(), "pi-package-malformed-evals-"));
+      try {
+        writePiPackageManifest(root, {
+          name: "malformed-evals-recipe",
+          version: "0.1.0",
+          pi: { evals },
+        });
+
+        const report = validatePiPackageManifest(readPiPackageManifest(root));
+
+        expect(report.valid).toBe(false);
+        expect(report.findings).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ code: "evals.suite_invalid" }),
+          ])
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
   });
 
@@ -519,6 +660,410 @@ describe("recipe package manifest", () => {
           }),
         ])
       );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid Harbor eval suite pins during recipe development validation", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-dev-evals-validation-"));
+    try {
+      writePiPackageManifest(root, {
+        name: "broken-evals-recipe",
+        version: "0.1.0",
+        pi: {
+          evals: {
+            suites: [
+              {
+                name: "smoke",
+                type: "registry",
+                dataset: "acme/smoke",
+                version: "^1.0",
+              },
+            ],
+          },
+        },
+      });
+
+      const report = validateRecipeDirectory(root);
+
+      expect(report.valid).toBe(false);
+      expect(report.resources.evals).toEqual(["smoke"]);
+      expect(report.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            severity: "error",
+            code: "evals.pin_mutable",
+          }),
+        ])
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("builds Harbor eval dry-run commands for registry and git suites", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-evals-commands-"));
+    try {
+      writePiPackageManifest(root, {
+        name: "evals-recipe",
+        version: "0.1.0",
+        pi: {
+          evals: {
+            suites: [
+              {
+                name: "registry-smoke",
+                type: "registry",
+                dataset: "acme/smoke",
+                version: "1.2.3",
+              },
+              {
+                name: "git-smoke",
+                type: "git",
+                repo: "https://github.com/acme/coding-evals.git",
+                rev: "abcdef1",
+                dataset: "smoke",
+              },
+            ],
+          },
+        },
+      });
+
+      const runtime = join(root, "runtime");
+      mkdirSync(runtime);
+      const invocations = buildRecipeEvalInvocations(readPiPackageManifest(root), {
+        recipeSource: root,
+        runtimeSource: runtime,
+        adapterDir: "/tmp/pi-recipes-harbor",
+        env: {},
+        harborArgs: ["--task", "acme/one", "--install-only"],
+      });
+
+      expect(invocations[0]?.command).toEqual([
+        "harbor",
+        "run",
+        "-d",
+        "acme/smoke@1.2.3",
+        "--agent",
+        "pi_recipe_agent:PiRecipeAgent",
+        "--mounts",
+        JSON.stringify([
+          {
+            type: "bind",
+            source: root,
+            target: "/pi-recipe-source",
+            read_only: true,
+          },
+          {
+            type: "bind",
+            source: runtime,
+            target: "/pi-recipe-runtime",
+            read_only: true,
+          },
+        ]),
+        "--task",
+        "acme/one",
+        "--install-only",
+      ]);
+      expect(invocations[1]?.command).toEqual([
+        "harbor",
+        "run",
+        "--registry-path",
+        "<checkout:https://github.com/acme/coding-evals.git@abcdef1>",
+        "-d",
+        "smoke",
+        "--agent",
+        "pi_recipe_agent:PiRecipeAgent",
+        "--mounts",
+        JSON.stringify([
+          {
+            type: "bind",
+            source: root,
+            target: "/pi-recipe-source",
+            read_only: true,
+          },
+          {
+            type: "bind",
+            source: runtime,
+            target: "/pi-recipe-runtime",
+            read_only: true,
+          },
+        ]),
+        "--task",
+        "acme/one",
+        "--install-only",
+      ]);
+      expect(invocations[1]?.gitRegistry).toEqual({
+        repo: "https://github.com/acme/coding-evals.git",
+        rev: "abcdef1",
+        placeholderPath: "<checkout:https://github.com/acme/coding-evals.git@abcdef1>",
+      });
+      for (const invocation of invocations) {
+        expect(invocation.command).not.toContain("-m");
+      }
+      expect(invocations[0]?.env).toMatchObject({
+        PI_RECIPE_SOURCE: "/pi-recipe-source",
+        PI_RECIPE_NAME: "evals-recipe",
+        PI_RECIPE_RUNTIME: "/pi-recipe-runtime",
+        PYTHONPATH: "/tmp/pi-recipes-harbor",
+      });
+      expect(invocations.map((invocation) => invocation.cwd)).toEqual([root, root]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("builds Harbor eval dry-run commands for local dataset dev mode", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-evals-dev-"));
+    try {
+      const dataset = join(root, "dataset");
+      mkdirSync(dataset, { recursive: true });
+      writePiPackageManifest(root, {
+        name: "evals-dev-recipe",
+        version: "0.1.0",
+        pi: {
+          agents: [],
+        },
+      });
+
+      const invocations = buildRecipeEvalInvocations(readPiPackageManifest(root), {
+        datasetPath: dataset,
+        recipeSource: root,
+        adapterDir: "/tmp/pi-recipes-harbor",
+        env: {},
+      });
+
+      expect(invocations).toHaveLength(1);
+      expect(invocations[0]?.mode).toBe("dataset-path");
+      expect(invocations[0]?.command).toEqual([
+        "harbor",
+        "run",
+        "-p",
+        dataset,
+        "--agent",
+        "pi_recipe_agent:PiRecipeAgent",
+        "--mounts",
+        JSON.stringify([
+          {
+            type: "bind",
+            source: root,
+            target: "/pi-recipe-source",
+            read_only: true,
+          },
+        ]),
+      ]);
+      expect(invocations[0]?.cwd).toBe(root);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prints Harbor eval dry-run commands from the recipes CLI", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-evals-cli-"));
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    let stdout = "";
+    write.mockImplementation((chunk: string | Uint8Array) => {
+      stdout += chunk.toString();
+      return true;
+    });
+    try {
+      writePiPackageManifest(root, {
+        name: "evals-cli-recipe",
+        version: "0.1.0",
+        pi: {
+          evals: {
+            suites: [
+              {
+                name: "smoke",
+                type: "registry",
+                dataset: "acme/smoke",
+                version: "1.0.0",
+              },
+            ],
+          },
+        },
+      });
+
+      await expect(
+        recipesCliMain([
+          "evals",
+          "run",
+          root,
+          "--suite",
+          "smoke",
+          "--dry-run",
+          "--",
+          "--task",
+          "acme/one",
+        ])
+      ).resolves.toBe(0);
+
+      expect(stdout).toContain("Harbor eval dry run for evals-cli-recipe");
+      expect(stdout).toContain(
+        "harbor run -d acme/smoke@1.0.0 --agent pi_recipe_agent:PiRecipeAgent"
+      );
+      expect(stdout).toContain("--task acme/one");
+      expect(stdout).toContain("/pi-recipe-source");
+    } finally {
+      write.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prints Harbor eval suite records from the recipes CLI", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-evals-list-"));
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    let stdout = "";
+    write.mockImplementation((chunk: string | Uint8Array) => {
+      stdout += chunk.toString();
+      return true;
+    });
+    try {
+      writePiPackageManifest(root, {
+        name: "evals-list-recipe",
+        version: "0.1.0",
+        pi: {
+          evals: {
+            suites: [
+              {
+                name: "smoke",
+                type: "git",
+                repo: "https://github.com/acme/coding-evals.git",
+                rev: "abcdef1",
+                dataset: "smoke",
+              },
+              {
+                name: "terminal",
+                type: "registry",
+                dataset: "terminal-bench/terminal-bench-2-1",
+                version: "6",
+              },
+            ],
+          },
+        },
+      });
+
+      await expect(recipesCliMain(["evals", "list", root])).resolves.toBe(0);
+
+      expect(stdout).toContain("Harbor eval suites for evals-list-recipe");
+      expect(stdout).toContain("\nsmoke\n");
+      expect(stdout).toContain("  type: git\n");
+      expect(stdout).toContain("  repo: https://github.com/acme/coding-evals.git\n");
+      expect(stdout).toContain("\nterminal\n");
+      expect(stdout).toContain("  type: registry\n");
+      expect(stdout).toContain("recipes evals clone");
+    } finally {
+      write.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("clones git-backed Harbor eval suites from the recipes CLI", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-evals-clone-"));
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    let stdout = "";
+    write.mockImplementation((chunk: string | Uint8Array) => {
+      stdout += chunk.toString();
+      return true;
+    });
+    try {
+      const evalRepo = join(root, "eval-source");
+      mkdirSync(evalRepo, { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: evalRepo });
+      writeFileSync(join(evalRepo, "registry.json"), "[]\n");
+      await execFileAsync("git", ["add", "registry.json"], { cwd: evalRepo });
+      await execFileAsync(
+        "git",
+        [
+          "-c",
+          "user.name=Test User",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "-m",
+          "add registry",
+        ],
+        { cwd: evalRepo }
+      );
+      const { stdout: rev } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+        cwd: evalRepo,
+      });
+
+      writePiPackageManifest(root, {
+        name: "evals-clone-recipe",
+        version: "0.1.0",
+        pi: {
+          evals: {
+            suites: [
+              {
+                name: "smoke",
+                type: "git",
+                repo: evalRepo,
+                rev: rev.trim(),
+                dataset: "smoke",
+              },
+              {
+                name: "smoke-again",
+                type: "git",
+                repo: evalRepo,
+                rev: rev.trim(),
+                dataset: "smoke",
+              },
+            ],
+          },
+        },
+      });
+
+      const destination = join(root, "dev-evals");
+      await expect(recipesCliMain(["evals", "clone", root, destination])).resolves.toBe(0);
+
+      const checkout = join(destination, "eval-source");
+      expect(existsSync(join(checkout, "registry.json"))).toBe(true);
+      await expect(readdir(destination)).resolves.toEqual(["eval-source"]);
+      expect(stdout).toContain("Cloned Harbor eval sources for evals-clone-recipe");
+      expect(stdout).toContain(`  repo: ${evalRepo}\n`);
+      expect(stdout).toContain("  suites: smoke, smoke-again\n");
+    } finally {
+      write.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Harbor passthrough args for non-evals commands", async () => {
+    await expect(
+      recipesCliMain(["doctor", ".", "--", "--task", "acme/one"])
+    ).rejects.toThrow(/only supported by recipes evals/);
+  });
+
+  it("does not treat imported CLI modules as direct invocations", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-cli-imported-"));
+    try {
+      const entry = join(root, "runner.js");
+      const module = join(root, "dist", "cli.js");
+      mkdirSync(join(root, "dist"), { recursive: true });
+      writeFileSync(entry, "");
+      writeFileSync(module, "");
+      expect(isDirectCli(entry, pathToFileURL(module).href)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects model overrides for Harbor recipe evals", async () => {
+    await expect(
+      recipesCliMain(["evals", "run", ".", "--model", "openai/gpt-5.4-mini", "--dry-run"])
+    ).rejects.toThrow(/--model is not supported/);
+  });
+
+  it("detects direct CLI execution through package bin symlinks", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-cli-symlink-"));
+    try {
+      const target = join(root, "cli.js");
+      const link = join(root, "recipes");
+      writeFileSync(target, "");
+      symlinkSync(target, link);
+
+      expect(isDirectCli(link, pathToFileURL(target).href)).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

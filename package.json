@@ -18,6 +18,8 @@
     "dist/pi-extension.js",
     "dist/recipe-dev.d.ts",
     "dist/recipe-dev.js",
+    "dist/recipe-evals.d.ts",
+    "dist/recipe-evals.js",
     "dist/recipe-mcp-config.d.ts",
     "dist/recipe-mcp-config.js",
     "dist/recipe-agent.d.ts",
@@ -30,6 +32,7 @@
     "dist/recipe-store.js",
     "dist/recipe-telemetry.d.ts",
     "dist/recipe-telemetry.js",
+    "harbor",
     "docs",
     "README.md",
     "package.json"

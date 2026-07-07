@@ -259,6 +259,7 @@ describe("mcp CLI", () => {
               },
             ],
           },
+          evals: { suites: [] },
         },
       });
 
@@ -355,6 +356,7 @@ describe("mcp CLI", () => {
               },
             ],
           },
+          evals: { suites: [] },
         },
       });
 
@@ -431,6 +433,7 @@ describe("mcp CLI", () => {
               },
             ],
           },
+          evals: { suites: [] },
         },
       });
 
