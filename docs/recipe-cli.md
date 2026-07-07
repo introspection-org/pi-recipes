@@ -319,10 +319,10 @@ Suites are references, not vendored datasets:
 Run pinned suites with:
 
 ```bash
-recipes evals ./my-recipe
-recipes evals ./my-recipe --suite smoke
-recipes evals ./my-recipe --dry-run
-recipes evals ./my-recipe --suite smoke -- --task acme/one
+recipes evals run ./my-recipe
+recipes evals run ./my-recipe --suite smoke
+recipes evals run ./my-recipe --dry-run
+recipes evals run ./my-recipe --suite smoke -- --task acme/one
 ```
 
 Use `--dataset-path <dir>` while developing a local Harbor dataset before it has

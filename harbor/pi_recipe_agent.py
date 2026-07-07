@@ -373,6 +373,12 @@ class PiRecipeAgent(BaseInstalledAgent):
     async def install(self, environment: Any) -> None:
         recipe_source = _env("PI_RECIPE_SOURCE")
         recipe_runtime = os.environ.get("PI_RECIPE_RUNTIME")
+        recipe_work = "/tmp/pi-recipe-work"
+        setup_source = (
+            f"{recipe_runtime}/node_modules/@introspection-ai/pi-recipes"
+            if recipe_runtime
+            else None
+        )
         root_commands = [
             "command -v curl >/dev/null || (command -v apt-get >/dev/null && apt-get update && apt-get install -y curl ca-certificates gnupg)",
             "node -e \"process.exit(Number(process.versions.node.split('.')[0]) >= 20 ? 0 : 1)\" >/dev/null 2>&1 || (command -v apt-get >/dev/null && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs)",
@@ -391,8 +397,9 @@ class PiRecipeAgent(BaseInstalledAgent):
             "command -v pi >/dev/null || npm i -g @earendil-works/pi-coding-agent",
         ]
         agent_commands = [
-            f"recipes install {_quote(recipe_source)} --no-setup",
-            "recipes setup",
+            f"rm -rf {_quote(recipe_work)} && mkdir -p {_quote(recipe_work)} && cp -a {_quote(recipe_source)}/. {_quote(recipe_work)}/",
+            f"recipes install {_quote(recipe_work)} --no-setup",
+            f"recipes setup {_quote(setup_source)}" if setup_source else "recipes setup",
         ]
 
         for command in root_commands:
