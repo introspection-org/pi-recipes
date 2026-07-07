@@ -1,7 +1,11 @@
 node_modules/
+.pnpm-store/
 dist/
 .turbo/
 coverage/
+__pycache__/
+tmp/
+harbor/jobs/
 .DS_Store
 *.log
 .env
