@@ -35,7 +35,7 @@ export interface RecipeDevelopmentReport {
   valid: boolean;
   manifest: RecipePackageManifest;
   findings: RecipeValidationFinding[];
-  resources: Partial<Record<keyof RecipePackageResources, string[]>>;
+  resources: Partial<Record<keyof RecipePackageResources | "evals", string[]>>;
 }
 
 export interface RecipePublishGuide {
@@ -220,6 +220,7 @@ export function validateRecipeDirectory(recipeDir: string): RecipeDevelopmentRep
       );
     }
   }
+  resources.evals = manifest.evals.suites.map((suite) => suite.name);
 
   try {
     const agents = loadRecipeAgentDefinitions(recipeDir);

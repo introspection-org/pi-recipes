@@ -161,7 +161,8 @@ recipes doctor .
 ```
 
 `doctor` checks the manifest, resolves declared resources, catches missing
-required agent globs, and warns when no default agent can be inferred.
+required agent globs, validates Harbor eval suite pins, and warns when no
+default agent can be inferred.
 
 Register the local recipe:
 
@@ -200,6 +201,7 @@ The `pi` block declares recipe-owned resources:
 - `skills`: skill paths or globs
 - `prompts`: prompt paths or globs
 - `mcp`: MCP server policy and optional manifest paths
+- `evals`: Harbor offline eval suite references
 
 Normal package-manager fields such as `dependencies`, `optionalDependencies`,
 `peerDependencies`, `devDependencies`, `packageManager`, and lockfile metadata
@@ -284,6 +286,51 @@ such as `${CONTACTS_MCP_TOKEN}`.
 The extension does not translate or adapt MCP tool names. The server must expose
 the tool names declared by the selected recipe agent, or `mcp call` fails with
 the underlying MCP error.
+
+## Harbor Evals
+
+Recipes can declare offline Harbor eval suites in `package.json#pi.evals`.
+Suites are references, not vendored datasets:
+
+```json
+{
+  "pi": {
+    "evals": {
+      "suites": [
+        {
+          "name": "smoke",
+          "type": "registry",
+          "dataset": "acme/coding-smoke",
+          "version": "1.0.0"
+        },
+        {
+          "name": "repo-tasks",
+          "type": "git",
+          "repo": "https://github.com/acme/coding-agent-evals.git",
+          "rev": "abcdef1234567890",
+          "dataset": "smoke"
+        }
+      ]
+    }
+  }
+}
+```
+
+Run pinned suites with:
+
+```bash
+recipes evals ./my-recipe
+recipes evals ./my-recipe --suite smoke
+recipes evals ./my-recipe --dry-run
+recipes evals ./my-recipe --suite smoke -- --task acme/one
+```
+
+Use `--dataset-path <dir>` while developing a local Harbor dataset before it has
+a stable pin. See [Recipe Evals](recipe-evals.md) for the exact-pin rules and
+adapter details. The recipe agent YAML owns model selection; `recipes evals`
+does not expose a model override. Arguments after `--` are passed through to
+the underlying `harbor run` invocation for local filters and environment-specific
+experiments.
 
 ## Extension Dependencies
 

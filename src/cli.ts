@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,14 @@ import {
   materializeRecipeMcpLocalConfig,
   type RecipeMcpLocalConfigResult,
 } from "./recipe-mcp-config.js";
+import {
+  cloneRecipeEvalSuites,
+  listRecipeEvalSuites,
+  runRecipeEvals,
+  type RecipeEvalCloneResult,
+  type RecipeEvalSuiteListResult,
+  type RecipeEvalsResult,
+} from "./recipe-evals.js";
 
 const execFileAsync = promisify(execFile);
 const PACKAGE_NAME = "@introspection-ai/pi-recipes";
@@ -48,10 +56,15 @@ interface ParsedArgs {
   github?: string;
   message?: string;
   visibility?: RecipePublishVisibility;
+  suite?: string;
+  datasetPath?: string;
   local: boolean;
   noSetup: boolean;
   force: boolean;
+  help: boolean;
   json: boolean;
+  dryRun: boolean;
+  harborArgs: string[];
 }
 
 function usage(commandName = "recipes"): string {
@@ -67,6 +80,7 @@ function usage(commandName = "recipes"): string {
     "  remove <recipe>     Remove an installed recipe record",
     "  path <recipe|path>  Print the resolved recipe directory",
     "  doctor <target>    Validate a recipe directory or installed recipe",
+    "  evals              Manage Harbor offline eval suites for a recipe",
     "  publish <target>   Publish a recipe to a GitHub repository",
     "",
     "Options:",
@@ -79,10 +93,15 @@ function usage(commandName = "recipes"): string {
     "  --message <text>   Commit message for publish",
     "  --visibility <public|private>",
     "                     Required with --github; controls GitHub repository visibility",
+    "  --suite <name>     Run one Harbor eval suite",
+    "  --dataset-path <dir>",
+    "                     Run a local Harbor dataset directory instead of pinned suites",
     "  --local            Install the Pi extension into project settings during setup",
     "  --no-setup         Skip automatic Pi extension setup",
     "  --force            Re-clone an existing remote source",
+    "  --dry-run          Print Harbor commands without executing them",
     "  --json             Print machine-readable JSON",
+    "  --                 Pass remaining args through to Harbor for evals",
     "",
     "First-time setup:",
     `  npm install -g ${PACKAGE_NAME}`,
@@ -106,6 +125,32 @@ function usage(commandName = "recipes"): string {
   ].join("\n");
 }
 
+function evalsUsage(commandName = "recipes"): string {
+  return [
+    `Usage: ${commandName} evals <command> [args]`,
+    "",
+    "Commands:",
+    "  run <target>       Run Harbor offline eval suites for a recipe",
+    "  list <target>      List Harbor eval suites declared by a recipe",
+    "  clone <target> <dir>",
+    "                     Clone git-backed eval suites into a development directory",
+    "",
+    "Options:",
+    "  --suite <name>     Select one Harbor eval suite",
+    "  --dataset-path <dir>",
+    "                     Run a local Harbor dataset directory instead of pinned suites",
+    "  --force            Replace existing eval checkouts during clone",
+    "  --dry-run          Print Harbor commands without executing them",
+    "  --json             Print machine-readable JSON",
+    "  --                 Pass remaining args through to Harbor for evals run",
+    "",
+    "Examples:",
+    `  ${commandName} evals list ./my-recipe`,
+    `  ${commandName} evals clone ./my-recipe ./evals --suite smoke`,
+    `  ${commandName} evals run ./my-recipe --suite smoke -- --task org/task`,
+  ].join("\n");
+}
+
 function parseArgs(argv: string[]): ParsedArgs {
   const values: string[] = [];
   let command = "";
@@ -115,15 +160,23 @@ function parseArgs(argv: string[]): ParsedArgs {
   let github: string | undefined;
   let message: string | undefined;
   let visibility: RecipePublishVisibility | undefined;
+  let suite: string | undefined;
+  let datasetPath: string | undefined;
   let local = false;
   let noSetup = false;
   let force = false;
+  let help = false;
   let json = false;
+  let dryRun = false;
+  let harborArgs: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
-    if (arg === "--help" || arg === "-h") {
-      command = "help";
+    if (arg === "--") {
+      harborArgs = argv.slice(index + 1);
+      break;
+    } else if (arg === "--help" || arg === "-h") {
+      help = true;
     } else if (arg === "--store") {
       const value = argv[++index];
       if (!value) throw new Error("--store requires a directory");
@@ -150,12 +203,26 @@ function parseArgs(argv: string[]): ParsedArgs {
         throw new Error("--visibility requires public or private");
       }
       visibility = value;
+    } else if (arg === "--suite") {
+      const value = argv[++index];
+      if (!value) throw new Error("--suite requires a name");
+      suite = value;
+    } else if (arg === "--model") {
+      throw new Error(
+        "--model is not supported by recipes evals; set the model in the recipe agent YAML"
+      );
+    } else if (arg === "--dataset-path") {
+      const value = argv[++index];
+      if (!value) throw new Error("--dataset-path requires a directory");
+      datasetPath = value;
     } else if (arg === "--local" || arg === "-l") {
       local = true;
     } else if (arg === "--no-setup") {
       noSetup = true;
     } else if (arg === "--force") {
       force = true;
+    } else if (arg === "--dry-run") {
+      dryRun = true;
     } else if (arg === "--json") {
       json = true;
     } else if (!command) {
@@ -174,15 +241,26 @@ function parseArgs(argv: string[]): ParsedArgs {
     github,
     message,
     visibility,
+    suite,
+    datasetPath,
     local,
     noSetup,
     force,
+    help,
     json,
+    dryRun,
+    harborArgs,
   };
 }
 
 function requireOne(args: ParsedArgs, label: string): string {
   const value = args.values[0];
+  if (!value) throw new Error(`${args.command} requires ${label}`);
+  return value;
+}
+
+function requireValue(args: ParsedArgs, index: number, label: string): string {
+  const value = args.values[index];
   if (!value) throw new Error(`${args.command} requires ${label}`);
   return value;
 }
@@ -340,6 +418,57 @@ function printRecipeMcpInstallNotes(result: RecipeMcpLocalConfigResult): void {
   }
 }
 
+function printRecipeEvalsResult(result: RecipeEvalsResult): void {
+  if (result.dryRun) {
+    process.stdout.write(`Harbor eval dry run for ${result.recipe}\n`);
+  } else {
+    process.stdout.write(`Harbor evals completed for ${result.recipe}\n`);
+  }
+  for (const invocation of result.invocations) {
+    const label =
+      invocation.mode === "dataset-path"
+        ? `dev dataset${invocation.suite ? ` (${invocation.suite})` : ""}`
+        : `${invocation.mode} suite ${invocation.suite}`;
+    process.stdout.write(`\n${label}:\n  ${invocation.displayCommand}\n`);
+  }
+}
+
+function printRecipeEvalsList(result: RecipeEvalSuiteListResult, recipePath: string): void {
+  process.stdout.write(`Harbor eval suites for ${result.recipe}\n`);
+  if (result.suites.length === 0) {
+    process.stdout.write("\nNo Harbor eval suites declared.\n");
+    return;
+  }
+
+  for (const suite of result.suites) {
+    process.stdout.write(`\n${suite.name}\n`);
+    process.stdout.write(`  type: ${suite.type}\n`);
+    if (suite.type === "registry") {
+      process.stdout.write(`  dataset: ${suite.dataset}\n`);
+      process.stdout.write(`  version: ${suite.version}\n`);
+    } else {
+      process.stdout.write(`  repo: ${suite.repo}\n`);
+      process.stdout.write(`  rev: ${suite.rev}\n`);
+      process.stdout.write(`  dataset: ${suite.dataset}\n`);
+    }
+  }
+
+  process.stdout.write(
+    `\nTo edit a git-backed eval task set, run: recipes evals clone ${recipePath} ./evals --suite <name>, then update the recipe manifest to point at the new commit.\n`
+  );
+}
+
+function printRecipeEvalsClone(result: RecipeEvalCloneResult): void {
+  process.stdout.write(`Cloned Harbor eval sources for ${result.recipe}\n`);
+  for (const checkout of result.checkouts) {
+    process.stdout.write(`\n${checkout.path}\n`);
+    process.stdout.write(`  repo: ${checkout.repo}\n`);
+    process.stdout.write(`  rev: ${checkout.rev}\n`);
+    process.stdout.write(`  suites: ${checkout.suites.join(", ")}\n`);
+    process.stdout.write(`  checkout: ${checkout.overwritten ? "replaced" : "created"}\n`);
+  }
+}
+
 function printRecipeList(recipes: InstalledRecipe[], storeDir: string): void {
   if (recipes.length === 0) {
     process.stdout.write(`No recipes installed in ${storeDir}\n`);
@@ -362,12 +491,19 @@ function printRecipeList(recipes: InstalledRecipe[], storeDir: string): void {
   }
 }
 
-async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
   const opts = { storeDir: args.storeDir, cwd: process.cwd(), env: process.env };
   const commandName = "recipes";
 
-  if (args.command === "help") {
+  if (
+    args.harborArgs.length > 0 &&
+    (args.command !== "evals" || args.values[0] !== "run")
+  ) {
+    throw new Error("Harbor passthrough args after -- are only supported by recipes evals run");
+  }
+
+  if (args.command === "help" || args.help && args.command !== "evals") {
     process.stdout.write(`${usage(commandName)}\n`);
     return 0;
   }
@@ -504,6 +640,65 @@ async function main(argv: string[]): Promise<number> {
     return report.valid ? 0 : 1;
   }
 
+  if (args.command === "evals") {
+    const evalsCommand = args.values[0];
+    if (!evalsCommand || args.help) {
+      process.stdout.write(`${evalsUsage(commandName)}\n`);
+      return 0;
+    }
+    if (evalsCommand === "run") {
+      const identifier = requireValue(args, 1, "<recipe|path>");
+      const path = resolveRecipeDirectory(identifier, opts);
+      if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
+      const manifest = readPiPackageManifest(path);
+      const result = await runRecipeEvals(manifest, {
+        suite: args.suite,
+        dryRun: args.dryRun,
+        datasetPath: args.datasetPath,
+        recipeSource: path,
+        env: process.env,
+        harborArgs: args.harborArgs,
+      });
+      if (args.json) {
+        printJson(result);
+      } else {
+        printRecipeEvalsResult(result);
+      }
+      return 0;
+    }
+    if (evalsCommand === "list") {
+      const identifier = requireValue(args, 1, "<recipe|path>");
+      const path = resolveRecipeDirectory(identifier, opts);
+      if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
+      const result = listRecipeEvalSuites(readPiPackageManifest(path), args.suite);
+      if (args.json) {
+        printJson(result);
+      } else {
+        printRecipeEvalsList(result, identifier);
+      }
+      return 0;
+    }
+    if (evalsCommand === "clone") {
+      const identifier = requireValue(args, 1, "<recipe|path>");
+      const destination = requireValue(args, 2, "<dir>");
+      const path = resolveRecipeDirectory(identifier, opts);
+      if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
+      const result = await cloneRecipeEvalSuites(readPiPackageManifest(path), {
+        suite: args.suite,
+        destination,
+        cwd: opts.cwd,
+        force: args.force,
+      });
+      if (args.json) {
+        printJson(result);
+      } else {
+        printRecipeEvalsClone(result);
+      }
+      return 0;
+    }
+    throw new Error(`Unknown evals command: ${evalsCommand}\n\n${evalsUsage(commandName)}`);
+  }
+
   if (args.command === "publish") {
     const identifier = args.values[0] ?? ".";
     if (!args.github) {
@@ -530,13 +725,29 @@ async function main(argv: string[]): Promise<number> {
   throw new Error(`Unknown command: ${args.command}\n\n${usage(commandName)}`);
 }
 
-main(process.argv.slice(2)).then(
-  (code) => {
-    process.exitCode = code;
-  },
-  (err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`${message}\n`);
-    process.exitCode = 1;
+export function isDirectCli(
+  entry = process.argv[1],
+  moduleUrl = import.meta.url
+): boolean {
+  if (!entry) return false;
+
+  const modulePath = fileURLToPath(moduleUrl);
+  try {
+    return realpathSync(entry) === realpathSync(modulePath);
+  } catch {
+    return resolve(entry) === modulePath;
   }
-);
+}
+
+if (isDirectCli()) {
+  main(process.argv.slice(2)).then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`${message}\n`);
+      process.exitCode = 1;
+    }
+  );
+}
