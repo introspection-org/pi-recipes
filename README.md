@@ -43,7 +43,7 @@ Create a local recipe:
 
 ```bash
 recipes create ./my-recipe
-recipes doctor ./my-recipe
+recipes check ./my-recipe
 recipes install ./my-recipe
 ```
 
@@ -97,7 +97,7 @@ Customize an installed recipe into an editable local copy:
 
 ```bash
 recipes customize pi-codex
-recipes doctor pi-codex
+recipes check pi-codex
 pi --recipe pi-codex
 ```
 

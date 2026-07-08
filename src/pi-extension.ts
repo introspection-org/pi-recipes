@@ -204,7 +204,7 @@ function recipeLoadErrorMessage(input: string, reason: string): string {
   return [
     `Recipe "${input}" could not be loaded.`,
     reason,
-    "Run `recipes doctor <recipe>` for a validation report.",
+    "Run `recipes check <recipe>` for a validation report.",
   ].join("\n");
 }
 

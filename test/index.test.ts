@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -37,6 +37,9 @@ import { isDirectCli, main as recipesCliMain } from "../src/cli.js";
 import { materializeRecipeMcpLocalConfig } from "../src/recipe-mcp-config.js";
 
 const execFileAsync = promisify(execFile);
+const PI_RECIPES_VERSION = JSON.parse(
+  readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")
+).version as string;
 
 function fullAgentYaml(name = "agent"): string {
   return [
@@ -1035,6 +1038,58 @@ describe("recipe package manifest", () => {
     ).rejects.toThrow(/only supported by recipes evals/);
   });
 
+  it("passes check profiles through to recipe-check", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-cli-check-profile-"));
+    const previousBin = process.env.PI_RECIPE_CHECK_BIN;
+    const previousArgsPath = process.env.RECIPE_CHECK_ARGS_PATH;
+    try {
+      const checker = join(root, "recipe-check-bin.mjs");
+      const argsPath = join(root, "args.json");
+      writeFileSync(
+        checker,
+        [
+          "#!/usr/bin/env node",
+          "import { writeFileSync } from 'node:fs';",
+          "writeFileSync(process.env.RECIPE_CHECK_ARGS_PATH, JSON.stringify(process.argv.slice(2)));",
+          "process.exit(0);",
+          "",
+        ].join("\n")
+      );
+      chmodSync(checker, 0o755);
+      process.env.PI_RECIPE_CHECK_BIN = checker;
+      process.env.RECIPE_CHECK_ARGS_PATH = argsPath;
+
+      await expect(
+        recipesCliMain(["check", root, "--profile", "ci", "--json"])
+      ).resolves.toBe(0);
+
+      expect(JSON.parse(readFileSync(argsPath, "utf8"))).toEqual([
+        root,
+        "--profile",
+        "ci",
+        "--json",
+      ]);
+    } finally {
+      if (previousBin === undefined) {
+        delete process.env.PI_RECIPE_CHECK_BIN;
+      } else {
+        process.env.PI_RECIPE_CHECK_BIN = previousBin;
+      }
+      if (previousArgsPath === undefined) {
+        delete process.env.RECIPE_CHECK_ARGS_PATH;
+      } else {
+        process.env.RECIPE_CHECK_ARGS_PATH = previousArgsPath;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unknown check profiles", async () => {
+    await expect(
+      recipesCliMain(["check", ".", "--profile", "staging"])
+    ).rejects.toThrow(/--profile requires local, ci, or publish/);
+  });
+
   it("does not treat imported CLI modules as direct invocations", () => {
     const root = mkdtempSync(join(tmpdir(), "recipes-cli-imported-"));
     try {
@@ -1211,7 +1266,7 @@ describe("recipe package manifest", () => {
       const guide = createRecipePublishGuide(recipeDir);
 
       expect(guide.report.valid).toBe(true);
-      expect(guide.checklist).toContain("Run `recipes doctor .` and fix any errors.");
+      expect(guide.checklist).toContain("Run `recipes check .` and fix any errors.");
       expect(guide.sourceExamples).toContain("recipes install github:owner/guide-recipe");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -2133,6 +2188,19 @@ describe("package boundary", () => {
         "dist/recipe-publish.js",
         "dist/recipe-mcp-config.d.ts",
         "dist/recipe-mcp-config.js",
+        "dist/recipe-check.d.ts",
+        "dist/recipe-check.js",
+        "vendor/recipe-check",
+        "harbor/pi_recipe_agent.py",
+      ])
+    );
+    expect(pkg.files).not.toEqual(
+      expect.arrayContaining([
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates/recipe-check/Cargo.toml",
+        "crates/recipe-check/src",
+        "harbor",
       ])
     );
     expect(pkg.bin).toEqual({ recipes: "dist/cli.js" });
@@ -2211,6 +2279,7 @@ describe("install telemetry", () => {
         id: installed.id,
         name: "telemetry-recipe",
         version: "1.2.3",
+        piRecipesVersion: PI_RECIPES_VERSION,
       });
       expect(installed.id).toBe(`git:file://${bareDir}`);
     } finally {
@@ -2237,6 +2306,7 @@ describe("install telemetry", () => {
         event: "install",
         name: "repeat-telemetry-recipe",
         version: "1.2.3",
+        piRecipesVersion: PI_RECIPES_VERSION,
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -2327,7 +2397,9 @@ describe("publish telemetry", () => {
     return recipeDir;
   }
 
-  function publishingCommandRunner(): RecipePublishCommandRunner {
+  function publishingCommandRunner(
+    opts: { headSha?: string; tagsAtHead?: string[]; remoteTagsAtHead?: string[] } = {}
+  ): RecipePublishCommandRunner {
     return async (command, args) => {
       if (
         command === "git" &&
@@ -2352,6 +2424,36 @@ describe("publish telemetry", () => {
         args.join(" ") === "remote get-url origin"
       ) {
         throw new Error("no origin");
+      }
+      if (
+        command === "git" &&
+        args.join(" ") === "tag --points-at HEAD --sort=version:refname"
+      ) {
+        return { stdout: `${(opts.tagsAtHead ?? []).join("\n")}\n`, stderr: "" };
+      }
+      if (
+        command === "git" &&
+        args.join(" ") === "rev-parse HEAD"
+      ) {
+        return {
+          stdout: `${opts.headSha ?? "0123456789abcdef0123456789abcdef01234567"}\n`,
+          stderr: "",
+        };
+      }
+      if (
+        command === "git" &&
+        args[0] === "ls-remote" &&
+        args[1] === "--tags" &&
+        args[2] === "origin"
+      ) {
+        const headSha = opts.headSha ?? "0123456789abcdef0123456789abcdef01234567";
+        const remoteTags = new Set(opts.remoteTagsAtHead ?? []);
+        const lines = args
+          .slice(3)
+          .map((ref) => ref.replace(/^refs\/tags\//, "").replace(/\^\{\}$/, ""))
+          .filter((tag, index, tags) => tags.indexOf(tag) === index && remoteTags.has(tag))
+          .map((tag) => `${headSha}\trefs/tags/${tag}`);
+        return { stdout: lines.length > 0 ? `${lines.join("\n")}\n` : "", stderr: "" };
       }
       return { stdout: "", stderr: "" };
     };
@@ -2378,20 +2480,106 @@ describe("publish telemetry", () => {
       expect(pings[0].url).toBe("https://example.test/api/catalog/recipes");
       expect(pings[0].body).toEqual({
         event: "publish",
-        id: "github:acme/catalog-review",
+        piRecipesVersion: PI_RECIPES_VERSION,
         name: "@acme/catalog-review",
-        version: "2.3.4",
+        version: "0123456789abcdef0123456789abcdef01234567",
         description: "Catalogued recipe",
-        github: "acme/catalog-review",
         source: "github:acme/catalog-review",
-        installCommand: "recipes install github:acme/catalog-review",
-        homepage: "https://github.com/acme/catalog-review",
         resources: {
           agents: 1,
           extensions: 0,
           skills: 1,
           prompts: 0,
         },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a safe tag at the published commit as the catalog install ref", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-catalog-tag-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const recipeDir = createPublishableRecipe(root, "tagged-catalog-review");
+
+      await publishRecipe(recipeDir, {
+        storeDir,
+        github: "acme/tagged-catalog-review",
+        visibility: "public",
+        fetchImpl: recordingFetch(pings),
+        commandRunner: publishingCommandRunner({
+          tagsAtHead: ["release/latest", "v2.3.4"],
+          remoteTagsAtHead: ["v2.3.4"],
+          headSha: "fedcba9876543210fedcba9876543210fedcba98",
+        }),
+      });
+
+      expect(pings).toHaveLength(1);
+      expect(pings[0].body).toMatchObject({
+        event: "publish",
+        version: "v2.3.4",
+        source: "github:acme/tagged-catalog-review",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the commit SHA when a local tag has not been pushed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-catalog-unpushed-tag-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const recipeDir = createPublishableRecipe(root, "unpushed-tag-catalog-review");
+
+      await publishRecipe(recipeDir, {
+        storeDir,
+        github: "acme/unpushed-tag-catalog-review",
+        visibility: "public",
+        fetchImpl: recordingFetch(pings),
+        commandRunner: publishingCommandRunner({
+          tagsAtHead: ["v2.3.4"],
+          remoteTagsAtHead: [],
+          headSha: "1234567890abcdef1234567890abcdef12345678",
+        }),
+      });
+
+      expect(pings).toHaveLength(1);
+      expect(pings[0].body).toMatchObject({
+        event: "publish",
+        version: "1234567890abcdef1234567890abcdef12345678",
+        source: "github:acme/unpushed-tag-catalog-review",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the commit SHA when tags at the published commit are unsafe", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-catalog-unsafe-tag-"));
+    const storeDir = join(root, "store");
+    const pings: Ping[] = [];
+    try {
+      const recipeDir = createPublishableRecipe(root, "unsafe-tag-catalog-review");
+
+      await publishRecipe(recipeDir, {
+        storeDir,
+        github: "acme/unsafe-tag-catalog-review",
+        visibility: "public",
+        fetchImpl: recordingFetch(pings),
+        commandRunner: publishingCommandRunner({
+          tagsAtHead: ["bad tag"],
+          headSha: "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        }),
+      });
+
+      expect(pings).toHaveLength(1);
+      expect(pings[0].body).toMatchObject({
+        event: "publish",
+        version: "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        source: "github:acme/unsafe-tag-catalog-review",
       });
     } finally {
       rmSync(root, { recursive: true, force: true });

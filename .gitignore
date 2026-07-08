@@ -5,6 +5,8 @@ dist/
 coverage/
 __pycache__/
 tmp/
+target/
+vendor/recipe-check/
 harbor/jobs/
 .DS_Store
 *.log

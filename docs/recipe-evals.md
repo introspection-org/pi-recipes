@@ -61,7 +61,7 @@ Git suites use:
 - `rev`: exact 7 to 40 character hex commit SHA.
 - `dataset`: dataset name inside the Harbor registry.
 
-`recipes doctor` validates the schema offline. It rejects registry aliases such
+`recipes check` validates the schema offline. It rejects registry aliases such
 as `latest`, version ranges, wildcard versions, branch-like Git refs, missing
 registry datasets, malformed suite entries, and duplicate suite names. It does
 not contact Git or the Harbor registry; missing repositories or datasets surface
