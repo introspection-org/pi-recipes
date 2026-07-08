@@ -7,6 +7,7 @@ import {
   DEFAULT_RPC_DIALOG_TIMEOUT_MS,
   ELICIT_REASON_CONFIRMATION,
   ELICIT_REASON_INPUT_REQUIRED,
+  ELICIT_REASON_TOOL_CALL,
   elicit,
   suppressInterruptResume,
   type ElicitOutcome,
@@ -99,13 +100,68 @@ describe("elicit", () => {
     );
     expect(result.outcome).toEqual({ type: "answered", answer: "Tea" });
     expect(result.content).toEqual([{ type: "text", text: "Answer: Tea" }]);
-    expect(result.details.interrupt).toBeUndefined();
     expect(calls).toEqual([
       expect.objectContaining({
         kind: "select",
         title: "Which beverage?",
-        options: ["Tea", "Coffee"],
+        options: ["Tea", "Coffee", "Other"],
       }),
+    ]);
+  });
+
+  it("allows a custom input answer from an option question", async () => {
+    const { ctx, calls } = fakeCtx({
+      hasUI: true,
+      selectResults: ["Other"],
+      inputResults: ["  Sparkling  "],
+    });
+    const result = await elicit(
+      { ...question, options: ["Tea", "Coffee"] },
+      { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
+    );
+    expect(result.outcome).toEqual({
+      type: "answered",
+      answer: "Sparkling",
+    });
+    expect(result.content).toEqual([
+      { type: "text", text: "Answer: Sparkling" },
+    ]);
+    expect(calls).toEqual([
+      expect.objectContaining({
+        kind: "select",
+        options: ["Tea", "Coffee", "Other"],
+      }),
+      expect.objectContaining({
+        kind: "input",
+        title: "Answer",
+      }),
+    ]);
+  });
+
+  it("returns option values while preserving structured option details", async () => {
+    const { ctx } = fakeCtx({ hasUI: true, selectResults: ["Tea"] });
+    const result = await elicit(
+      {
+        ...question,
+        options: [
+          {
+            label: "Tea",
+            value: "tea",
+            description: "A calming cup of tea.",
+          },
+          { label: "Coffee", value: "coffee" },
+        ],
+      },
+      { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
+    );
+    expect(result.outcome).toEqual({ type: "answered", answer: "tea" });
+    expect(result.details.interrupt.options).toEqual([
+      {
+        label: "Tea",
+        value: "tea",
+        description: "A calming cup of tea.",
+      },
+      { label: "Coffee", value: "coffee" },
     ]);
   });
 
@@ -199,6 +255,46 @@ describe("elicit", () => {
     expect(bare.content[0].text).toBe("Revision requested.");
   });
 
+  it("formats structured display copy for local approval dialogs", async () => {
+    const approve = fakeCtx({ hasUI: true, selectResults: ["Approve"] });
+    const result = await elicit(
+      {
+        reason: ELICIT_REASON_TOOL_CALL,
+        message: "Approve search proposal: Sydney product leaders?",
+        display: {
+          kind: "search_proposal",
+          title: "Sydney product leaders",
+          body: "Find senior product leaders in Sydney tech companies.",
+          sections: [
+            {
+              title: "Starting angles",
+              items: [
+                "Product leaders in Sydney",
+                "Growth product leaders in Sydney",
+              ],
+            },
+          ],
+        },
+      },
+      { toolCallId: "tool-1", ctx: approve.ctx, signal: undefined, env: {} }
+    );
+
+    expect(result.outcome).toEqual({ type: "approved" });
+    expect(approve.calls[0]).toEqual(
+      expect.objectContaining({
+        kind: "select",
+        title:
+          "Sydney product leaders\n\n" +
+          "Find senior product leaders in Sydney tech companies.\n\n" +
+          "Starting angles:\n" +
+          "- Product leaders in Sydney\n" +
+          "- Growth product leaders in Sydney",
+        options: ["Approve", "Request changes"],
+      })
+    );
+    expect(result.details.interrupt.display?.kind).toBe("search_proposal");
+  });
+
   it("applies the default dialog timeout in RPC mode only", async () => {
     const rpc = fakeCtx({ hasUI: true, mode: "rpc", inputResults: ["yes"] });
     await elicit(question, {
@@ -252,7 +348,7 @@ describe("elicit", () => {
     expect(calls).toEqual([expect.objectContaining({ kind: "input" })]);
   });
 
-  it("emits an interrupt descriptor when the host supports resume", async () => {
+  it("returns a recipe interrupt request when the host supports resume", async () => {
     const { ctx } = fakeCtx({ hasUI: false });
     const result = await elicit(
       {
@@ -273,32 +369,19 @@ describe("elicit", () => {
       { type: "text", text: "Awaiting user response." },
     ]);
     expect(result.details.interrupt).toEqual({
-      id: "question:tool-1",
       reason: "input_required",
       message: "Which beverage?",
-      toolCallId: "tool-1",
-      responseSchema: {
-        type: "object",
-        properties: {
-          answer: {
-            type: "string",
-            title: "Answer",
-            enum: ["Tea", "Coffee"],
-          },
-        },
-        required: ["answer"],
-      },
-      expiresAt: "2026-07-09T00:00:00Z",
+      options: [{ label: "Tea" }, { label: "Coffee" }],
       metadata: {
         kind: "question",
         header: "Beverage",
-        question: "Which beverage?",
-        options: ["Tea", "Coffee"],
       },
+      expiresAt: "2026-07-09T00:00:00Z",
+      outcome: { type: "awaiting_user" },
     });
   });
 
-  it("shapes the confirmation interrupt response schema for approvals", async () => {
+  it("uses the same native approval details before remote resume", async () => {
     const { ctx } = fakeCtx({ hasUI: false });
     const result = await elicit(
       { reason: ELICIT_REASON_CONFIRMATION, message: "Ship the plan?" },
@@ -309,17 +392,51 @@ describe("elicit", () => {
         env: { PI_INTERRUPT_RESUME: "1" },
       }
     );
-    expect(result.details.interrupt).toMatchObject({
-      id: "confirmation:tool-9",
+    expect(result.details.interrupt).toEqual({
       reason: "confirmation",
-      responseSchema: {
-        type: "object",
-        properties: {
-          approved: { type: "boolean", title: "Approve" },
-          feedback: { type: "string", title: "Feedback" },
+      message: "Ship the plan?",
+      outcome: { type: "awaiting_user" },
+    });
+  });
+
+  it("keeps tool-call approvals as native display data before remote resume", async () => {
+    const { ctx } = fakeCtx({ hasUI: false });
+    const display = {
+      kind: "search_proposal",
+      title: "Sydney product leaders",
+      body: "Find senior product leaders in Sydney tech companies.",
+      sections: [
+        {
+          title: "Starting angles",
+          items: ["Product leaders", "Growth product leaders"],
         },
-        required: ["approved"],
+      ],
+    };
+
+    const result = await elicit(
+      {
+        reason: ELICIT_REASON_TOOL_CALL,
+        message: "Approve search proposal: Sydney product leaders?",
+        display,
+        metadata: { kind: "plan_search", proposalId: "proposal-1" },
       },
+      {
+        toolCallId: "tool-9",
+        ctx,
+        signal: undefined,
+        env: { PI_INTERRUPT_RESUME: "1" },
+      }
+    );
+
+    expect(result.details.interrupt).toEqual({
+      reason: "tool_call",
+      message: "Approve search proposal: Sydney product leaders?",
+      metadata: {
+        kind: "plan_search",
+        proposalId: "proposal-1",
+      },
+      display,
+      outcome: { type: "awaiting_user" },
     });
   });
 
@@ -331,7 +448,6 @@ describe("elicit", () => {
       elicit(question, { toolCallId: "tool-1", ctx, signal: undefined, env })
     );
     expect(suppressed.outcome).toEqual({ type: "unavailable" });
-    expect(suppressed.details.interrupt).toBeUndefined();
 
     const outside = await elicit(question, {
       toolCallId: "tool-1",

@@ -11,9 +11,9 @@
  *   2. `ctx.hasUI` (TUI and RPC modes) — walk the built-in dialogs, or the
  *      caller's `interactive` override.
  *   3. `PI_INTERRUPT_RESUME` (host capability flag) — return an "Awaiting
- *      user response." result carrying a `details.interrupt` descriptor; the
- *      host pauses the run and later resumes it by rewriting this tool result
- *      with the user's response envelope.
+ *      user response." result carrying a `details.interrupt` pause
+ *      descriptor; the host pauses the run and later resumes it by rewriting
+ *      this tool result with the user's response envelope.
  *   4. Otherwise — report that interaction is unavailable so the model asks
  *      in its plain chat reply instead. An unrendered question is never
  *      treated as declined.
@@ -23,8 +23,8 @@
  * byte-identical text for the same outcome so recipes cannot tell whether an
  * answer arrived through a local dialog or a remote resume.
  *
- * `details.interrupt` is a reserved key on tool results: any tool result
- * carrying it signals an interrupt-capable host to pause the run.
+ * A `details.interrupt` with `outcome.type === "awaiting_user"` is the pause
+ * signal. Runtime hosts may adapt it to their frontend protocol.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -38,6 +38,8 @@ import type {
 export const ELICIT_REASON_INPUT_REQUIRED = "input_required";
 /** Well-known `reason` for an approve/request-changes decision. */
 export const ELICIT_REASON_CONFIRMATION = "confirmation";
+/** Well-known `reason` for a decision bound to a specific tool call. */
+export const ELICIT_REASON_TOOL_CALL = "tool_call";
 
 /**
  * Default dialog timeout applied in RPC mode only. RPC clients may never
@@ -48,6 +50,7 @@ export const DEFAULT_RPC_DIALOG_TIMEOUT_MS = 120_000;
 
 const APPROVE_OPTION = "Approve";
 const REQUEST_CHANGES_OPTION = "Request changes";
+const CUSTOM_ANSWER_OPTION = "Other";
 
 // Frozen envelope literals — the interaction wire contract. Interrupt-capable
 // hosts synthesize the same literals when resuming a paused run, so recipes
@@ -60,6 +63,29 @@ const UNAVAILABLE_ENVELOPE =
   "User interaction is unavailable in this session; nothing was shown to the user. " +
   "Ask the user in your normal assistant reply instead, and continue after they respond.";
 
+/** Optional structured rendering hints for hosts with richer UI. */
+export interface ElicitDisplay {
+  /** Renderer kind, e.g. `search_proposal`. */
+  kind: string;
+  /** Short title for local dialogs and rich cards. */
+  title?: string;
+  /** Main body copy. Plain text or markdown-style text. */
+  body?: string;
+  /** Optional grouped content for clients that render rows or sections. */
+  sections?: Array<{
+    title: string;
+    body?: string;
+    items?: string[];
+  }>;
+}
+
+/** A selectable answer option. `value` is what the tool receives. */
+export interface ElicitOption {
+  label: string;
+  value?: string;
+  description?: string;
+}
+
 /** What the recipe tool wants from the user. */
 export interface ElicitRequest {
   /**
@@ -70,14 +96,17 @@ export interface ElicitRequest {
   reason: string;
   /** The human-readable prompt shown to the user. */
   message: string;
-  /** Optional fixed choices for a question (rendered as a select / buttons). */
-  options?: readonly string[];
+  /** Optional choices for a question. Hosts may also allow a custom answer. */
+  options?: readonly (string | ElicitOption)[];
   /**
-   * Renderer hints forwarded to hosts on the interrupt descriptor (e.g.
-   * `kind` for a custom web renderer, `header` for the TUI row). Hosts fall
-   * back to a generic rendering when they recognize none of them.
+   * Native renderer or tool hints for hosts that can render richer UI.
    */
   metadata?: Record<string, unknown>;
+  /**
+   * Structured display copy. Local pi dialogs format this for readability;
+   * remote hosts can adapt it into their own frontend protocol.
+   */
+  display?: ElicitDisplay;
   /** Optional ISO-8601 instant after which a host may auto-decline. */
   expiresAt?: string;
 }
@@ -109,7 +138,7 @@ export interface ElicitOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** How the elicitation settled. */
+/** How the interaction settled. */
 export type ElicitOutcome =
   | { type: "answered"; answer: string }
   | { type: "approved"; feedback?: string }
@@ -120,35 +149,20 @@ export type ElicitOutcome =
   /** No interaction channel — the model should ask in plain chat. */
   | { type: "unavailable" };
 
-/**
- * The pause descriptor placed on `details.interrupt`. An exact subset of the
- * AG-UI `InterruptSchema` (`@ag-ui/core`), kept dependency-free here.
- */
-export interface InterruptDescriptor {
-  id: string;
+/** The pi-recipes interrupt request stored in Pi's arbitrary details field. */
+export interface ElicitInterrupt {
   reason: string;
   message: string;
-  toolCallId: string;
-  /**
-   * Flat single-object response schema (the MCP elicitation form subset:
-   * primitive properties, titled enums) describing the expected resume
-   * payload.
-   */
-  responseSchema: Record<string, unknown>;
-  expiresAt?: string;
+  options?: ElicitOption[];
   metadata?: Record<string, unknown>;
+  display?: ElicitDisplay;
+  expiresAt?: string;
+  outcome: ElicitOutcome;
 }
 
 /** Structured details attached to every elicit tool result. */
 export interface ElicitDetails {
-  elicitation: {
-    reason: string;
-    message: string;
-    options?: string[];
-    outcome: ElicitOutcome;
-  };
-  /** Present only for `awaiting_user` — reserved pause signal for hosts. */
-  interrupt?: InterruptDescriptor;
+  interrupt: ElicitInterrupt;
 }
 
 /**
@@ -186,7 +200,7 @@ export async function elicit(
   if (flagEnabled(env.PI_ELICIT_AUTO_APPROVE)) {
     return finishedResult(
       request,
-      request.reason === ELICIT_REASON_CONFIRMATION
+      isApprovalReason(request.reason)
         ? { type: "approved" }
         : { type: "declined" }
     );
@@ -225,6 +239,12 @@ function flagEnabled(value: string | undefined): boolean {
   return normalized !== "" && normalized !== "0" && normalized !== "false";
 }
 
+function isApprovalReason(reason: string): boolean {
+  return (
+    reason === ELICIT_REASON_CONFIRMATION || reason === ELICIT_REASON_TOOL_CALL
+  );
+}
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
   // Dialogs resolve undefined for both a user dismissal and a turn abort;
   // only the signal distinguishes them. A dismissal is a decline, an abort
@@ -245,10 +265,10 @@ async function dialogWalk(
   dialog: ExtensionUIDialogOptions,
   signal: AbortSignal | undefined
 ): Promise<ElicitOutcome> {
-  if (request.reason === ELICIT_REASON_CONFIRMATION) {
+  if (isApprovalReason(request.reason)) {
     // ui.confirm() cannot carry per-option labels, so approvals use a select.
     const choice = await ui.select(
-      request.message,
+      localDialogMessage(request),
       [APPROVE_OPTION, REQUEST_CHANGES_OPTION],
       dialog
     );
@@ -268,19 +288,77 @@ async function dialogWalk(
   }
 
   if (request.options && request.options.length > 0) {
-    const choice = await ui.select(request.message, [...request.options], dialog);
+    const options = normalizeOptions(request.options);
+    const selectOptions = [...options.map((option) => option.label)];
+    if (!selectOptions.includes(CUSTOM_ANSWER_OPTION)) {
+      selectOptions.push(CUSTOM_ANSWER_OPTION);
+    }
+    const choice = await ui.select(
+      localDialogMessage(request),
+      selectOptions,
+      dialog
+    );
     throwIfAborted(signal);
-    return choice === undefined
-      ? { type: "declined" }
-      : { type: "answered", answer: choice };
+    if (choice === undefined) return { type: "declined" };
+    if (choice === CUSTOM_ANSWER_OPTION) {
+      const text = await ui.input(
+        "Answer",
+        "Type your own answer",
+        dialog
+      );
+      throwIfAborted(signal);
+      const trimmed = text?.trim();
+      return trimmed
+        ? { type: "answered", answer: trimmed }
+        : { type: "declined" };
+    }
+    const selected = options.find((option) => option.label === choice);
+    return {
+      type: "answered",
+      answer: selected?.value?.trim() || selected?.label || choice,
+    };
   }
 
-  const text = await ui.input(request.message, undefined, dialog);
+  const text = await ui.input(localDialogMessage(request), undefined, dialog);
   throwIfAborted(signal);
   const trimmed = text?.trim();
   return trimmed
     ? { type: "answered", answer: trimmed }
     : { type: "declined" };
+}
+
+function localDialogMessage(request: ElicitRequest): string {
+  const display = request.display;
+  if (!display) return request.message;
+
+  const lines: string[] = [];
+  const title = display.title?.trim();
+  if (title) {
+    lines.push(title);
+  } else {
+    lines.push(request.message);
+  }
+
+  const body = display.body?.trim();
+  if (body) {
+    lines.push("", body);
+  }
+
+  for (const section of display.sections ?? []) {
+    const sectionTitle = section.title.trim();
+    const sectionBody = section.body?.trim();
+    const items = section.items?.map((item) => item.trim()).filter(Boolean) ?? [];
+
+    if (!sectionTitle && !sectionBody && items.length === 0) continue;
+    lines.push("");
+    if (sectionTitle) lines.push(`${sectionTitle}:`);
+    if (sectionBody) lines.push(sectionBody);
+    for (const item of items) {
+      lines.push(`- ${item}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function envelopeText(outcome: ElicitOutcome): string {
@@ -304,17 +382,41 @@ function envelopeText(outcome: ElicitOutcome): string {
   }
 }
 
-function elicitationDetails(
+function normalizeOptions(
+  options: readonly (string | ElicitOption)[] | undefined
+): ElicitOption[] {
+  return (options ?? []).flatMap((option) => {
+    if (typeof option === "string") {
+      const label = option.trim();
+      return label ? [{ label }] : [];
+    }
+    const label = option.label.trim();
+    if (!label) return [];
+    const value = option.value?.trim();
+    const description = option.description?.trim();
+    return [
+      {
+        label,
+        ...(value ? { value } : {}),
+        ...(description ? { description } : {}),
+      },
+    ];
+  });
+}
+
+function interruptDetails(
   request: ElicitRequest,
   outcome: ElicitOutcome
 ): ElicitDetails {
+  const options = normalizeOptions(request.options);
   return {
-    elicitation: {
+    interrupt: {
       reason: request.reason,
       message: request.message,
-      ...(request.options && request.options.length > 0
-        ? { options: [...request.options] }
-        : {}),
+      ...(options.length > 0 ? { options } : {}),
+      ...(request.metadata ? { metadata: request.metadata } : {}),
+      ...(request.display ? { display: request.display } : {}),
+      ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
       outcome,
     },
   };
@@ -327,65 +429,18 @@ function finishedResult(
   return {
     outcome,
     content: [{ type: "text", text: envelopeText(outcome) }],
-    details: elicitationDetails(request, outcome),
-  };
-}
-
-function responseSchemaFor(request: ElicitRequest): Record<string, unknown> {
-  if (request.reason === ELICIT_REASON_CONFIRMATION) {
-    return {
-      type: "object",
-      properties: {
-        approved: { type: "boolean", title: "Approve" },
-        feedback: { type: "string", title: "Feedback" },
-      },
-      required: ["approved"],
-    };
-  }
-  return {
-    type: "object",
-    properties: {
-      answer: {
-        type: "string",
-        title: "Answer",
-        ...(request.options && request.options.length > 0
-          ? { enum: [...request.options] }
-          : {}),
-      },
-    },
-    required: ["answer"],
+    details: interruptDetails(request, outcome),
   };
 }
 
 function awaitingUserResult(
   request: ElicitRequest,
-  toolCallId: string
+  _toolCallId: string
 ): ElicitResult {
   const outcome: ElicitOutcome = { type: "awaiting_user" };
-  const kind =
-    typeof request.metadata?.kind === "string" && request.metadata.kind
-      ? request.metadata.kind
-      : request.reason;
-  const interrupt: InterruptDescriptor = {
-    id: `${kind}:${toolCallId}`,
-    reason: request.reason,
-    message: request.message,
-    toolCallId,
-    responseSchema: responseSchemaFor(request),
-    ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
-    // `question`/`options` let a host reconstruct the originating tool call
-    // after a restart; caller metadata rides along as renderer hints.
-    metadata: {
-      ...(request.metadata ?? {}),
-      question: request.message,
-      ...(request.options && request.options.length > 0
-        ? { options: [...request.options] }
-        : {}),
-    },
-  };
   return {
     outcome,
     content: [{ type: "text", text: envelopeText(outcome) }],
-    details: { ...elicitationDetails(request, outcome), interrupt },
+    details: interruptDetails(request, outcome),
   };
 }
