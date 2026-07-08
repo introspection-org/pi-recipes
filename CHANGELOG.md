@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/introspection-org/pi-recipes/compare/v0.2.0...v0.3.0) (2026-07-08)
+
+
+### Features
+
+* release recipe interaction helpers ([5937e8a](https://github.com/introspection-org/pi-recipes/commit/5937e8a3ee9fe4d2442254253467ddec7775dde1))
+
 ## [0.2.0](https://github.com/introspection-org/pi-recipes/compare/v0.1.0...v0.2.0) (2026-07-08)
 
 
