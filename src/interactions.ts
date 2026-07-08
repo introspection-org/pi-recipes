@@ -24,7 +24,7 @@
  * answer arrived through a local dialog or a remote resume.
  *
  * A `details.interrupt` with `outcome.type === "awaiting_user"` is the pause
- * signal. Runtime hosts may adapt it to their frontend protocol.
+ * signal. Runtime hosts may adapt it to their own pause/resume state.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -104,7 +104,7 @@ export interface ElicitRequest {
   metadata?: Record<string, unknown>;
   /**
    * Structured display copy. Local pi dialogs format this for readability;
-   * remote hosts can adapt it into their own frontend protocol.
+   * remote hosts can adapt it into their own UI.
    */
   display?: ElicitDisplay;
   /** Optional ISO-8601 instant after which a host may auto-decline. */
