@@ -6,7 +6,7 @@ the local TUI, RPC-driven UIs, headless runs, and hosts that stream tool
 results to a remote frontend and can pause/resume a run.
 
 The module registers no tools. Recipes own their interaction tools — their
-names, schemas, prompts, and rendering — and call `elicit()` from the tool's
+names, schemas, prompts, and rendering — and call `askUser()` from the tool's
 `execute()`. Removing every custom UI still leaves a working system; custom
 UIs are pure enhancements.
 
@@ -16,8 +16,8 @@ UIs are pure enhancements.
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-  ELICIT_REASON_INPUT_REQUIRED,
-  elicit,
+  ASK_USER_REASON_INPUT_REQUIRED,
+  askUser,
 } from "@introspection-ai/pi-recipes/interactions";
 
 export default function (pi: ExtensionAPI) {
@@ -33,9 +33,9 @@ export default function (pi: ExtensionAPI) {
     // otherwise a host pause can strand half-finished parallel tool calls.
     executionMode: "sequential",
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
-      return await elicit(
+      return await askUser(
         {
-          reason: ELICIT_REASON_INPUT_REQUIRED,
+          reason: ASK_USER_REASON_INPUT_REQUIRED,
           message: params.question,
           options: params.options,
           metadata: { kind: "question" },
@@ -47,15 +47,15 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-`elicit()` always returns a finished tool result (`content` + `details`), so
+`askUser()` always returns a finished tool result (`content` + `details`), so
 the tool can return it directly. Pass the tool's own `signal` parameter — not
 `ctx.signal` — so an aborted turn dismisses any open dialog.
 
 ## Channel resolution
 
-`elicit()` picks the best available interaction channel, in order:
+`askUser()` picks the best available interaction channel, in order:
 
-1. **`PI_ELICIT_AUTO_APPROVE`** (env) — headless/CI runs: confirmations
+1. **`PI_ASK_USER_AUTO_APPROVE`** (env) — headless/CI runs: confirmations
    resolve `approved`, everything else resolves `declined`. Deterministic and
    never blocks.
 2. **Interactive UI** (`ctx.hasUI`, TUI and RPC modes) — the built-in dialog
@@ -126,7 +126,7 @@ recipe-specific metadata. Keep it meaningful, for example
 When a tool needs richer UI copy, pass `display`:
 
 ```ts
-await elicit(
+await askUser(
   {
     reason: "tool_call",
     message: "Approve search proposal: Senior product leaders in Sydney?",
@@ -185,17 +185,17 @@ best judgment.
 
 - **`executionMode: "sequential"` is mandatory.** A host pause must never
   race concurrently executing tools.
-- **Never format envelopes yourself.** Return `elicit()`'s result as-is;
+- **Never format envelopes yourself.** Return `askUser()`'s result as-is;
   envelope authorship must not split across layers.
-- **Thread the tool's `signal`** into `elicit()` and check for aborts after
+- **Thread the tool's `signal`** into `askUser()` and check for aborts after
   any custom dialog (`undefined` from a dialog means dismissal *or* abort —
   only the signal distinguishes them).
 - **Custom UIs are enhancements.** A richer TUI walk goes through the
   `interactive` option; remote hosts can adapt `metadata` and `display`.
   Hosts that recognize neither must still work off `reason`, `message`, and
   `options`.
-- **Child agents cannot elicit.** Inside an in-process child agent run the
-  remote-pause branch is suppressed and `elicit()` falls back to plain chat;
+- **Child agents cannot ask the user directly.** Inside an in-process child agent run the
+  remote-pause branch is suppressed and `askUser()` falls back to plain chat;
   the child's final response is where open questions belong.
 
 ## Host checklist (implementing `PI_INTERRUPT_RESUME`)

@@ -5,12 +5,12 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
   DEFAULT_RPC_DIALOG_TIMEOUT_MS,
-  ELICIT_REASON_CONFIRMATION,
-  ELICIT_REASON_INPUT_REQUIRED,
-  ELICIT_REASON_TOOL_CALL,
-  elicit,
+  ASK_USER_REASON_CONFIRMATION,
+  ASK_USER_REASON_INPUT_REQUIRED,
+  ASK_USER_REASON_TOOL_CALL,
+  askUser,
   suppressInterruptResume,
-  type ElicitOutcome,
+  type AskUserOutcome,
 } from "../src/interactions.js";
 
 interface FakeUiCall {
@@ -60,16 +60,16 @@ function fakeCtx(opts: {
 }
 
 const question = {
-  reason: ELICIT_REASON_INPUT_REQUIRED,
+  reason: ASK_USER_REASON_INPUT_REQUIRED,
   message: "Which beverage?",
 };
 
-describe("elicit", () => {
+describe("askUser", () => {
   it("auto-approve declines questions and approves confirmations without dialogs", async () => {
     const { ctx, calls } = fakeCtx({ hasUI: true, selectResults: ["Tea"] });
-    const env = { PI_ELICIT_AUTO_APPROVE: "1" };
+    const env = { PI_ASK_USER_AUTO_APPROVE: "1" };
 
-    const declined = await elicit(question, {
+    const declined = await askUser(question, {
       toolCallId: "tool-1",
       ctx,
       signal: undefined,
@@ -83,8 +83,8 @@ describe("elicit", () => {
       },
     ]);
 
-    const approved = await elicit(
-      { reason: ELICIT_REASON_CONFIRMATION, message: "Ship the plan?" },
+    const approved = await askUser(
+      { reason: ASK_USER_REASON_CONFIRMATION, message: "Ship the plan?" },
       { toolCallId: "tool-2", ctx, signal: undefined, env }
     );
     expect(approved.outcome).toEqual({ type: "approved" });
@@ -94,7 +94,7 @@ describe("elicit", () => {
 
   it("answers an option question through a select dialog", async () => {
     const { ctx, calls } = fakeCtx({ hasUI: true, selectResults: ["Tea"] });
-    const result = await elicit(
+    const result = await askUser(
       { ...question, options: ["Tea", "Coffee"] },
       { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
     );
@@ -115,7 +115,7 @@ describe("elicit", () => {
       selectResults: ["Other"],
       inputResults: ["  Sparkling  "],
     });
-    const result = await elicit(
+    const result = await askUser(
       { ...question, options: ["Tea", "Coffee"] },
       { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
     );
@@ -140,7 +140,7 @@ describe("elicit", () => {
 
   it("returns option values while preserving structured option details", async () => {
     const { ctx } = fakeCtx({ hasUI: true, selectResults: ["Tea"] });
-    const result = await elicit(
+    const result = await askUser(
       {
         ...question,
         options: [
@@ -167,7 +167,7 @@ describe("elicit", () => {
 
   it("answers a free-form question through an input dialog", async () => {
     const { ctx } = fakeCtx({ hasUI: true, inputResults: ["  Chai  "] });
-    const result = await elicit(question, {
+    const result = await askUser(question, {
       toolCallId: "tool-1",
       ctx,
       signal: undefined,
@@ -180,7 +180,7 @@ describe("elicit", () => {
   it("treats empty and dismissed dialog answers as declines", async () => {
     for (const inputResult of ["", "   ", undefined]) {
       const { ctx } = fakeCtx({ hasUI: true, inputResults: [inputResult] });
-      const result = await elicit(question, {
+      const result = await askUser(question, {
         toolCallId: "tool-1",
         ctx,
         signal: undefined,
@@ -198,7 +198,7 @@ describe("elicit", () => {
     const { ctx } = fakeCtx({ hasUI: true, selectResults: [undefined] });
     controller.abort();
     await expect(
-      elicit(
+      askUser(
         { ...question, options: ["Tea", "Coffee"] },
         { toolCallId: "tool-1", ctx, signal: controller.signal, env: {} }
       )
@@ -207,8 +207,8 @@ describe("elicit", () => {
 
   it("walks approvals through select + optional feedback input", async () => {
     const approve = fakeCtx({ hasUI: true, selectResults: ["Approve"] });
-    const approved = await elicit(
-      { reason: ELICIT_REASON_CONFIRMATION, message: "Ship the plan?" },
+    const approved = await askUser(
+      { reason: ASK_USER_REASON_CONFIRMATION, message: "Ship the plan?" },
       { toolCallId: "tool-1", ctx: approve.ctx, signal: undefined, env: {} }
     );
     expect(approved.outcome).toEqual({ type: "approved" });
@@ -225,8 +225,8 @@ describe("elicit", () => {
       selectResults: ["Request changes"],
       inputResults: ["Rename the flag"],
     });
-    const revision = await elicit(
-      { reason: ELICIT_REASON_CONFIRMATION, message: "Ship the plan?" },
+    const revision = await askUser(
+      { reason: ASK_USER_REASON_CONFIRMATION, message: "Ship the plan?" },
       { toolCallId: "tool-2", ctx: revise.ctx, signal: undefined, env: {} }
     );
     expect(revision.outcome).toEqual({
@@ -242,8 +242,8 @@ describe("elicit", () => {
       selectResults: ["Request changes"],
       inputResults: [""],
     });
-    const bare = await elicit(
-      { reason: ELICIT_REASON_CONFIRMATION, message: "Ship the plan?" },
+    const bare = await askUser(
+      { reason: ASK_USER_REASON_CONFIRMATION, message: "Ship the plan?" },
       {
         toolCallId: "tool-3",
         ctx: reviseNoFeedback.ctx,
@@ -257,9 +257,9 @@ describe("elicit", () => {
 
   it("formats structured display copy for local approval dialogs", async () => {
     const approve = fakeCtx({ hasUI: true, selectResults: ["Approve"] });
-    const result = await elicit(
+    const result = await askUser(
       {
-        reason: ELICIT_REASON_TOOL_CALL,
+        reason: ASK_USER_REASON_TOOL_CALL,
         message: "Approve search proposal: Sydney product leaders?",
         display: {
           kind: "search_proposal",
@@ -297,7 +297,7 @@ describe("elicit", () => {
 
   it("applies the default dialog timeout in RPC mode only", async () => {
     const rpc = fakeCtx({ hasUI: true, mode: "rpc", inputResults: ["yes"] });
-    await elicit(question, {
+    await askUser(question, {
       toolCallId: "tool-1",
       ctx: rpc.ctx,
       signal: undefined,
@@ -306,7 +306,7 @@ describe("elicit", () => {
     expect(rpc.calls[0].dialog?.timeout).toBe(DEFAULT_RPC_DIALOG_TIMEOUT_MS);
 
     const tui = fakeCtx({ hasUI: true, mode: "tui", inputResults: ["yes"] });
-    await elicit(question, {
+    await askUser(question, {
       toolCallId: "tool-1",
       ctx: tui.ctx,
       signal: undefined,
@@ -315,7 +315,7 @@ describe("elicit", () => {
     expect(tui.calls[0].dialog?.timeout).toBeUndefined();
 
     const override = fakeCtx({ hasUI: true, mode: "tui", inputResults: ["y"] });
-    await elicit(question, {
+    await askUser(question, {
       toolCallId: "tool-1",
       ctx: override.ctx,
       signal: undefined,
@@ -327,7 +327,7 @@ describe("elicit", () => {
 
   it("prefers a custom interactive walk and falls through on undefined", async () => {
     const { ctx, calls } = fakeCtx({ hasUI: true, inputResults: ["fallback"] });
-    const custom = await elicit(question, {
+    const custom = await askUser(question, {
       toolCallId: "tool-1",
       ctx,
       signal: undefined,
@@ -337,7 +337,7 @@ describe("elicit", () => {
     expect(custom.content[0].text).toBe("Answer: Custom");
     expect(calls).toHaveLength(0);
 
-    const fallthrough = await elicit(question, {
+    const fallthrough = await askUser(question, {
       toolCallId: "tool-1",
       ctx,
       signal: undefined,
@@ -350,7 +350,7 @@ describe("elicit", () => {
 
   it("returns a recipe interrupt request when the host supports resume", async () => {
     const { ctx } = fakeCtx({ hasUI: false });
-    const result = await elicit(
+    const result = await askUser(
       {
         ...question,
         options: ["Tea", "Coffee"],
@@ -383,8 +383,8 @@ describe("elicit", () => {
 
   it("uses the same native approval details before remote resume", async () => {
     const { ctx } = fakeCtx({ hasUI: false });
-    const result = await elicit(
-      { reason: ELICIT_REASON_CONFIRMATION, message: "Ship the plan?" },
+    const result = await askUser(
+      { reason: ASK_USER_REASON_CONFIRMATION, message: "Ship the plan?" },
       {
         toolCallId: "tool-9",
         ctx,
@@ -413,9 +413,9 @@ describe("elicit", () => {
       ],
     };
 
-    const result = await elicit(
+    const result = await askUser(
       {
-        reason: ELICIT_REASON_TOOL_CALL,
+        reason: ASK_USER_REASON_TOOL_CALL,
         message: "Approve search proposal: Sydney product leaders?",
         display,
         metadata: { kind: "plan_search", proposalId: "proposal-1" },
@@ -445,11 +445,11 @@ describe("elicit", () => {
     const env = { PI_INTERRUPT_RESUME: "1" };
 
     const suppressed = await suppressInterruptResume(() =>
-      elicit(question, { toolCallId: "tool-1", ctx, signal: undefined, env })
+      askUser(question, { toolCallId: "tool-1", ctx, signal: undefined, env })
     );
     expect(suppressed.outcome).toEqual({ type: "unavailable" });
 
-    const outside = await elicit(question, {
+    const outside = await askUser(question, {
       toolCallId: "tool-1",
       ctx,
       signal: undefined,
@@ -460,7 +460,7 @@ describe("elicit", () => {
 
   it("reports unavailability when no interaction channel exists", async () => {
     const { ctx } = fakeCtx({ hasUI: false });
-    const result = await elicit(question, {
+    const result = await askUser(question, {
       toolCallId: "tool-1",
       ctx,
       signal: undefined,
@@ -475,7 +475,7 @@ describe("elicit", () => {
     // Shared wire contract with interrupt-capable hosts: the host synthesizes
     // these exact literals when resuming a paused run, so the locally-rendered
     // envelopes must match byte-for-byte.
-    const table: Array<{ outcome: ElicitOutcome; text: string }> = [
+    const table: Array<{ outcome: AskUserOutcome; text: string }> = [
       { outcome: { type: "answered", answer: "Tea" }, text: "Answer: Tea" },
       { outcome: { type: "approved" }, text: "Approved." },
       {
@@ -498,7 +498,7 @@ describe("elicit", () => {
 
     for (const entry of table) {
       const { ctx } = fakeCtx({ hasUI: true });
-      const result = await elicit(question, {
+      const result = await askUser(question, {
         toolCallId: "tool-1",
         ctx,
         signal: undefined,

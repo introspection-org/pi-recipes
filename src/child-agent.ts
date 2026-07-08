@@ -338,9 +338,9 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     await this.start();
     if (!this.session) throw new Error("Recipe child agent did not start");
     // Interrupt-capable hosts only watch the root session's tool results, so
-    // an `elicit()` interrupt emitted inside this child run would pause
+    // an `askUser()` interrupt emitted inside this child run would pause
     // nothing and strand the child on "Awaiting user response.". Suppress the
-    // interrupt branch for the whole run; elicit degrades to plain chat.
+    // interrupt branch for the whole run; askUser degrades to plain chat.
     await suppressInterruptResume(() => this.session!.prompt(task));
     return promptResultText({ messages: [...this.session.messages] });
   }

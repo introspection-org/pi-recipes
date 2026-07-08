@@ -3,10 +3,10 @@
  * approval with one contract that works on every pi host.
  *
  * This module registers no tools. Recipes own their interaction tools and call
- * `elicit()` from the tool's `execute()`; the module resolves the best
+ * `askUser()` from the tool's `execute()`; the module resolves the best
  * available interaction channel and always returns a finished tool result:
  *
- *   1. `PI_ELICIT_AUTO_APPROVE` — headless/CI: confirmations approve,
+ *   1. `PI_ASK_USER_AUTO_APPROVE` — headless/CI: confirmations approve,
  *      questions decline. Deterministic, never blocks.
  *   2. `ctx.hasUI` (TUI and RPC modes) — walk the built-in dialogs, or the
  *      caller's `interactive` override.
@@ -35,11 +35,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 /** Well-known `reason` for a question the model needs answered. */
-export const ELICIT_REASON_INPUT_REQUIRED = "input_required";
+export const ASK_USER_REASON_INPUT_REQUIRED = "input_required";
 /** Well-known `reason` for an approve/request-changes decision. */
-export const ELICIT_REASON_CONFIRMATION = "confirmation";
+export const ASK_USER_REASON_CONFIRMATION = "confirmation";
 /** Well-known `reason` for a decision bound to a specific tool call. */
-export const ELICIT_REASON_TOOL_CALL = "tool_call";
+export const ASK_USER_REASON_TOOL_CALL = "tool_call";
 
 /**
  * Default dialog timeout applied in RPC mode only. RPC clients may never
@@ -64,7 +64,7 @@ const UNAVAILABLE_ENVELOPE =
   "Ask the user in your normal assistant reply instead, and continue after they respond.";
 
 /** Optional structured rendering hints for hosts with richer UI. */
-export interface ElicitDisplay {
+export interface AskUserDisplay {
   /** Renderer kind, e.g. `search_proposal`. */
   kind: string;
   /** Short title for local dialogs and rich cards. */
@@ -80,14 +80,14 @@ export interface ElicitDisplay {
 }
 
 /** A selectable answer option. `value` is what the tool receives. */
-export interface ElicitOption {
+export interface AskUserOption {
   label: string;
   value?: string;
   description?: string;
 }
 
 /** What the recipe tool wants from the user. */
-export interface ElicitRequest {
+export interface AskUserRequest {
   /**
    * Why the run needs the user. Open string; well-known values are
    * `input_required` (a question) and `confirmation` (approve / request
@@ -97,7 +97,7 @@ export interface ElicitRequest {
   /** The human-readable prompt shown to the user. */
   message: string;
   /** Optional choices for a question. Hosts may also allow a custom answer. */
-  options?: readonly (string | ElicitOption)[];
+  options?: readonly (string | AskUserOption)[];
   /**
    * Native renderer or tool hints for hosts that can render richer UI.
    */
@@ -106,13 +106,13 @@ export interface ElicitRequest {
    * Structured display copy. Local pi dialogs format this for readability;
    * remote hosts can adapt it into their own UI.
    */
-  display?: ElicitDisplay;
+  display?: AskUserDisplay;
   /** Optional ISO-8601 instant after which a host may auto-decline. */
   expiresAt?: string;
 }
 
 /** Per-call plumbing from the owning tool's `execute()`. */
-export interface ElicitOptions {
+export interface AskUserOptions {
   /** The executing tool call id (first `execute()` argument). */
   toolCallId: string;
   /** The extension context (last `execute()` argument). */
@@ -131,7 +131,7 @@ export interface ElicitOptions {
   interactive?: (
     ui: ExtensionUIContext,
     dialog: ExtensionUIDialogOptions
-  ) => Promise<ElicitOutcome | undefined>;
+  ) => Promise<AskUserOutcome | undefined>;
   /** Dialog timeout override in milliseconds (defaults: TUI none, RPC 120s). */
   timeoutMs?: number;
   /** Environment override for tests. */
@@ -139,7 +139,7 @@ export interface ElicitOptions {
 }
 
 /** How the interaction settled. */
-export type ElicitOutcome =
+export type AskUserOutcome =
   | { type: "answered"; answer: string }
   | { type: "approved"; feedback?: string }
   | { type: "revision_requested"; feedback?: string }
@@ -150,40 +150,40 @@ export type ElicitOutcome =
   | { type: "unavailable" };
 
 /** The pi-recipes interrupt request stored in Pi's arbitrary details field. */
-export interface ElicitInterrupt {
+export interface AskUserInterrupt {
   reason: string;
   message: string;
-  options?: ElicitOption[];
+  options?: AskUserOption[];
   metadata?: Record<string, unknown>;
-  display?: ElicitDisplay;
+  display?: AskUserDisplay;
   expiresAt?: string;
-  outcome: ElicitOutcome;
+  outcome: AskUserOutcome;
 }
 
-/** Structured details attached to every elicit tool result. */
-export interface ElicitDetails {
-  interrupt: ElicitInterrupt;
+/** Structured details attached to every askUser tool result. */
+export interface AskUserDetails {
+  interrupt: AskUserInterrupt;
 }
 
 /**
  * A finished tool result: return it (or spread it) from the owning tool's
  * `execute()`. The envelope text in `content` is what the model sees.
  */
-export interface ElicitResult {
-  outcome: ElicitOutcome;
+export interface AskUserResult {
+  outcome: AskUserOutcome;
   content: Array<{ type: "text"; text: string }>;
-  details: ElicitDetails;
+  details: AskUserDetails;
 }
 
 const interruptResumeSuppression = new AsyncLocalStorage<boolean>();
 
 /**
- * Run `fn` with the interrupt branch of `elicit()` suppressed.
+ * Run `fn` with the interrupt branch of `askUser()` suppressed.
  *
  * Used by the in-process child agent runner: an interrupt-capable host only
  * observes the root session's tool results, so an interrupt emitted from a
  * child session would never pause anything and the child would stall on
- * "Awaiting user response." forever. Inside this scope `elicit()` skips
+ * "Awaiting user response." forever. Inside this scope `askUser()` skips
  * straight to the plain-chat fallback.
  */
 export function suppressInterruptResume<T>(fn: () => Promise<T>): Promise<T> {
@@ -191,13 +191,13 @@ export function suppressInterruptResume<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** Ask the user, resolving the best available interaction channel. */
-export async function elicit(
-  request: ElicitRequest,
-  opts: ElicitOptions
-): Promise<ElicitResult> {
+export async function askUser(
+  request: AskUserRequest,
+  opts: AskUserOptions
+): Promise<AskUserResult> {
   const env = opts.env ?? process.env;
 
-  if (flagEnabled(env.PI_ELICIT_AUTO_APPROVE)) {
+  if (flagEnabled(env.PI_ASK_USER_AUTO_APPROVE)) {
     return finishedResult(
       request,
       isApprovalReason(request.reason)
@@ -241,7 +241,8 @@ function flagEnabled(value: string | undefined): boolean {
 
 function isApprovalReason(reason: string): boolean {
   return (
-    reason === ELICIT_REASON_CONFIRMATION || reason === ELICIT_REASON_TOOL_CALL
+    reason === ASK_USER_REASON_CONFIRMATION ||
+    reason === ASK_USER_REASON_TOOL_CALL
   );
 }
 
@@ -260,11 +261,11 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
  * the user saw the question and chose not to answer it.
  */
 async function dialogWalk(
-  request: ElicitRequest,
+  request: AskUserRequest,
   ui: ExtensionUIContext,
   dialog: ExtensionUIDialogOptions,
   signal: AbortSignal | undefined
-): Promise<ElicitOutcome> {
+): Promise<AskUserOutcome> {
   if (isApprovalReason(request.reason)) {
     // ui.confirm() cannot carry per-option labels, so approvals use a select.
     const choice = await ui.select(
@@ -327,7 +328,7 @@ async function dialogWalk(
     : { type: "declined" };
 }
 
-function localDialogMessage(request: ElicitRequest): string {
+function localDialogMessage(request: AskUserRequest): string {
   const display = request.display;
   if (!display) return request.message;
 
@@ -361,7 +362,7 @@ function localDialogMessage(request: ElicitRequest): string {
   return lines.join("\n");
 }
 
-function envelopeText(outcome: ElicitOutcome): string {
+function envelopeText(outcome: AskUserOutcome): string {
   switch (outcome.type) {
     case "answered":
       return `Answer: ${outcome.answer}`;
@@ -383,8 +384,8 @@ function envelopeText(outcome: ElicitOutcome): string {
 }
 
 function normalizeOptions(
-  options: readonly (string | ElicitOption)[] | undefined
-): ElicitOption[] {
+  options: readonly (string | AskUserOption)[] | undefined
+): AskUserOption[] {
   return (options ?? []).flatMap((option) => {
     if (typeof option === "string") {
       const label = option.trim();
@@ -405,9 +406,9 @@ function normalizeOptions(
 }
 
 function interruptDetails(
-  request: ElicitRequest,
-  outcome: ElicitOutcome
-): ElicitDetails {
+  request: AskUserRequest,
+  outcome: AskUserOutcome
+): AskUserDetails {
   const options = normalizeOptions(request.options);
   return {
     interrupt: {
@@ -423,9 +424,9 @@ function interruptDetails(
 }
 
 function finishedResult(
-  request: ElicitRequest,
-  outcome: ElicitOutcome
-): ElicitResult {
+  request: AskUserRequest,
+  outcome: AskUserOutcome
+): AskUserResult {
   return {
     outcome,
     content: [{ type: "text", text: envelopeText(outcome) }],
@@ -434,10 +435,10 @@ function finishedResult(
 }
 
 function awaitingUserResult(
-  request: ElicitRequest,
+  request: AskUserRequest,
   _toolCallId: string
-): ElicitResult {
-  const outcome: ElicitOutcome = { type: "awaiting_user" };
+): AskUserResult {
+  const outcome: AskUserOutcome = { type: "awaiting_user" };
   return {
     outcome,
     content: [{ type: "text", text: envelopeText(outcome) }],
