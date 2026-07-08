@@ -37,6 +37,9 @@ import { isDirectCli, main as recipesCliMain } from "../src/cli.js";
 import { materializeRecipeMcpLocalConfig } from "../src/recipe-mcp-config.js";
 
 const execFileAsync = promisify(execFile);
+const PI_RECIPES_VERSION = JSON.parse(
+  readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")
+).version as string;
 
 function fullAgentYaml(name = "agent"): string {
   return [
@@ -2276,7 +2279,7 @@ describe("install telemetry", () => {
         id: installed.id,
         name: "telemetry-recipe",
         version: "1.2.3",
-        piRecipesVersion: "0.1.0",
+        piRecipesVersion: PI_RECIPES_VERSION,
       });
       expect(installed.id).toBe(`git:file://${bareDir}`);
     } finally {
@@ -2303,7 +2306,7 @@ describe("install telemetry", () => {
         event: "install",
         name: "repeat-telemetry-recipe",
         version: "1.2.3",
-        piRecipesVersion: "0.1.0",
+        piRecipesVersion: PI_RECIPES_VERSION,
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -2477,7 +2480,7 @@ describe("publish telemetry", () => {
       expect(pings[0].url).toBe("https://example.test/api/catalog/recipes");
       expect(pings[0].body).toEqual({
         event: "publish",
-        piRecipesVersion: "0.1.0",
+        piRecipesVersion: PI_RECIPES_VERSION,
         name: "@acme/catalog-review",
         version: "0123456789abcdef0123456789abcdef01234567",
         description: "Catalogued recipe",
