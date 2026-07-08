@@ -7,9 +7,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   createRecipeScaffold,
-  validateRecipeDirectory,
-  type RecipeDevelopmentReport,
 } from "./recipe-dev.js";
+import { runRecipeCheck, type RecipeCheckProfile } from "./recipe-check.js";
 import {
   publishRecipe,
   type PublishedRecipe,
@@ -56,6 +55,7 @@ interface ParsedArgs {
   github?: string;
   message?: string;
   visibility?: RecipePublishVisibility;
+  checkProfile?: RecipeCheckProfile;
   suite?: string;
   datasetPath?: string;
   local: boolean;
@@ -79,7 +79,8 @@ function usage(commandName = "recipes"): string {
     "  list               List installed recipes",
     "  remove <recipe>     Remove an installed recipe record",
     "  path <recipe|path>  Print the resolved recipe directory",
-    "  doctor <target>    Validate a recipe directory or installed recipe",
+    "  check <target>     Check a recipe directory or installed recipe",
+    "  doctor <target>    Alias for check",
     "  evals              Manage Harbor offline eval suites for a recipe",
     "  publish <target>   Publish a recipe to a GitHub repository",
     "",
@@ -93,6 +94,8 @@ function usage(commandName = "recipes"): string {
     "  --message <text>   Commit message for publish",
     "  --visibility <public|private>",
     "                     Required with --github; controls GitHub repository visibility",
+    "  --profile <local|ci|publish>",
+    "                     Validation profile for check/doctor",
     "  --suite <name>     Run one Harbor eval suite",
     "  --dataset-path <dir>",
     "                     Run a local Harbor dataset directory instead of pinned suites",
@@ -109,7 +112,7 @@ function usage(commandName = "recipes"): string {
     "",
     "Create and try a recipe:",
     `  ${commandName} create ./my-recipe`,
-    `  ${commandName} doctor ./my-recipe`,
+    `  ${commandName} check ./my-recipe`,
     `  ${commandName} install ./my-recipe`,
     "  pi --recipe my-recipe",
     "",
@@ -160,6 +163,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let github: string | undefined;
   let message: string | undefined;
   let visibility: RecipePublishVisibility | undefined;
+  let checkProfile: RecipeCheckProfile | undefined;
   let suite: string | undefined;
   let datasetPath: string | undefined;
   let local = false;
@@ -203,6 +207,12 @@ function parseArgs(argv: string[]): ParsedArgs {
         throw new Error("--visibility requires public or private");
       }
       visibility = value;
+    } else if (arg === "--profile") {
+      const value = argv[++index];
+      if (value !== "local" && value !== "ci" && value !== "publish") {
+        throw new Error("--profile requires local, ci, or publish");
+      }
+      checkProfile = value;
     } else if (arg === "--suite") {
       const value = argv[++index];
       if (!value) throw new Error("--suite requires a name");
@@ -241,6 +251,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     github,
     message,
     visibility,
+    checkProfile,
     suite,
     datasetPath,
     local,
@@ -357,22 +368,6 @@ async function ensurePiExtension(args: ParsedArgs): Promise<void> {
   const source = args.setupSource ?? DEFAULT_PI_EXTENSION_SOURCE;
   process.stderr.write(`Installing Pi recipes extension with: pi install ${source}\n`);
   await installPiExtension(source, { local: args.local, quiet: true });
-}
-
-function printDoctorReport(report: RecipeDevelopmentReport): void {
-  process.stdout.write(`${report.manifest.name}@${report.manifest.version}\n`);
-  for (const finding of report.findings) {
-    process.stdout.write(`${finding.severity}: ${finding.code}: ${finding.message}\n`);
-  }
-  if (report.findings.length === 0) process.stdout.write("ok\n");
-
-  const resourceEntries = Object.entries(report.resources);
-  if (resourceEntries.length > 0) {
-    process.stdout.write("\nResources:\n");
-    for (const [key, paths] of resourceEntries) {
-      process.stdout.write(`  ${key}: ${paths.length}\n`);
-    }
-  }
 }
 
 function printPublishedRecipe(result: PublishedRecipe): void {
@@ -537,7 +532,7 @@ export async function main(argv: string[]): Promise<number> {
         [
           "",
           "Next steps:",
-          `  ${commandName} doctor ${result.recipeDir}`,
+          `  ${commandName} check ${result.recipeDir}`,
           `  ${commandName} install ${result.recipeDir}`,
           `  pi --recipe ${result.name}`,
           `  ${commandName} publish ${result.recipeDir}`,
@@ -584,7 +579,7 @@ export async function main(argv: string[]): Promise<number> {
           `  ${result.path}`,
           "",
           "Then check and run it:",
-          `  ${commandName} doctor ${identifier}`,
+          `  ${commandName} check ${identifier}`,
           `  pi --recipe ${identifier}`,
           "",
         ].join("\n")
@@ -627,17 +622,11 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  if (args.command === "doctor") {
+  if (args.command === "check" || args.command === "doctor") {
     const identifier = args.values[0] ?? ".";
     const path = resolveRecipeDirectory(identifier, opts);
-    readPiPackageManifest(path);
-    const report = validateRecipeDirectory(path);
-    if (args.json) {
-      printJson(report);
-    } else {
-      printDoctorReport(report);
-    }
-    return report.valid ? 0 : 1;
+    if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
+    return await runRecipeCheck(path, { json: args.json, profile: args.checkProfile });
   }
 
   if (args.command === "evals") {

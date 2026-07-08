@@ -19,6 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -34,4 +36,4 @@ jobs:
 
       - run: pnpm build
 
-      - run: npm pack --dry-run
+      - run: pnpm pack:check

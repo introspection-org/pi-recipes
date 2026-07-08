@@ -179,7 +179,7 @@ export function createRecipeScaffold(
         "## Develop",
         "",
         "```bash",
-        "recipes doctor .",
+        "recipes check .",
         "recipes install .",
         `pi --recipe ${name}`,
         "```",
@@ -290,7 +290,7 @@ export function createRecipePublishGuide(recipeDir: string): RecipePublishGuide 
     manifest: report.manifest,
     report,
     checklist: [
-      "Run `recipes doctor .` and fix any errors.",
+      "Run `recipes check .` and fix any errors.",
       `Run \`recipes publish . --github owner/${repositoryName} --visibility private\` to create, commit, and push a GitHub repository.`,
       "Commit package.json, agents, prompts, skills, extensions, and SYSTEM.md.",
       "If extensions have runtime dependencies, commit the package lockfile.",

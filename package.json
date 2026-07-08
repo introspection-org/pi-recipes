@@ -26,6 +26,8 @@
     "dist/recipe-mcp-config.js",
     "dist/recipe-agent.d.ts",
     "dist/recipe-agent.js",
+    "dist/recipe-check.d.ts",
+    "dist/recipe-check.js",
     "dist/recipe-package.d.ts",
     "dist/recipe-package.js",
     "dist/recipe-publish.d.ts",
@@ -34,7 +36,8 @@
     "dist/recipe-store.js",
     "dist/recipe-telemetry.d.ts",
     "dist/recipe-telemetry.js",
-    "harbor",
+    "harbor/pi_recipe_agent.py",
+    "vendor/recipe-check",
     "docs",
     "README.md",
     "package.json"
@@ -74,11 +77,14 @@
     ]
   },
   "scripts": {
-    "build": "rm -rf dist && tsc && chmod +x dist/cli.js dist/mcp.js",
+    "build": "pnpm build:ts && pnpm build:recipe-check",
+    "build:ts": "rm -rf dist && tsc && chmod +x dist/cli.js dist/mcp.js",
+    "build:recipe-check": "cargo build --release -p recipe-check && node scripts/package-recipe-check.mjs",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "test": "vitest run",
-    "clean": "rm -rf dist .turbo node_modules"
+    "test": "cargo build -p recipe-check && vitest run",
+    "pack:check": "npm pack --dry-run --json | node scripts/check-npm-pack.mjs",
+    "clean": "rm -rf dist .turbo node_modules target vendor/recipe-check"
   },
   "dependencies": {
     "yaml": "^2.9.0"

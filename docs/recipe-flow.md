@@ -72,14 +72,14 @@ Edit this folder:
   ~/.pi/recipes/local/tfidfwastaken-pi-codex
 
 Then check and run it:
-  recipes doctor pi-codex
+  recipes check pi-codex
   pi --recipe pi-codex
 ```
 
 Edit files in the printed folder, then validate and run the customized copy:
 
 ```bash
-recipes doctor pi-codex
+recipes check pi-codex
 pi --recipe pi-codex
 ```
 
@@ -113,7 +113,7 @@ my-recipe/
 Validate and try it locally:
 
 ```bash
-recipes doctor ./my-recipe
+recipes check ./my-recipe
 recipes install ./my-recipe
 pi --recipe my-recipe
 ```
@@ -143,7 +143,7 @@ pi --recipe my-recipe
 - `install` gets a recipe into your local Pi recipe store.
 - `list` shows what Pi can run and where the local files are.
 - `customize` creates an editable local copy of an installed recipe.
-- `doctor` validates a recipe before running or publishing it.
+- `check` validates a recipe before running or publishing it.
 - `evals` runs pinned Harbor offline eval suites for a recipe.
 - `create` starts a new recipe from scratch.
 - `publish` pushes a recipe to GitHub so others can install it.

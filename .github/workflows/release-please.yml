@@ -30,8 +30,50 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  publish:
+  build-recipe-check:
     needs: release-please
+    if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+          - os: macos-13
+            platform: darwin
+            arch: x64
+          - os: macos-14
+            platform: darwin
+            arch: arm64
+          - os: windows-latest
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: cargo build --release -p recipe-check
+
+      - run: node scripts/package-recipe-check.mjs
+        env:
+          RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
+          RECIPE_CHECK_ARCH: ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recipe-check-${{ matrix.platform }}-${{ matrix.arch }}
+          path: vendor/recipe-check/${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - release-please
+      - build-recipe-check
     if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     environment: publish
@@ -43,6 +85,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - uses: pnpm/action-setup@v4
 
@@ -57,6 +101,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm typecheck && pnpm test && pnpm build
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: recipe-check-*
+          path: recipe-check-artifacts
+
+      - name: Prepare packaged recipe-check binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf vendor/recipe-check
+          mkdir -p vendor/recipe-check
+          for artifact in recipe-check-artifacts/recipe-check-*; do
+            platform_id="${artifact##*/recipe-check-}"
+            mkdir -p "vendor/recipe-check/${platform_id}"
+            find "$artifact" -type f -name 'recipe-check*' -exec cp {} "vendor/recipe-check/${platform_id}/" \;
+          done
+          find vendor/recipe-check -type f ! -name '*.exe' -exec chmod 755 {} \;
+          find vendor/recipe-check -maxdepth 3 -type f -print
+
+      - run: pnpm pack:check
 
       - name: Publish
         env:
