@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { validateRecipeDirectory } from "./recipe-dev.js";
+import { readRecipeCheckReport } from "./recipe-check.js";
 import { readPiPackageManifest, type RecipePackageResources } from "./recipe-package.js";
 import {
   addRecipe,
@@ -373,16 +374,20 @@ export async function publishRecipe(
   mkdirSync(dirname(recipeDir), { recursive: true });
   readPiPackageManifest(recipeDir);
 
-  const report = validateRecipeDirectory(recipeDir);
-  const errors = report.findings.filter((finding) => finding.severity === "error");
+  const check = await readRecipeCheckReport(recipeDir, {
+    profile: "publish",
+    env: opts.env,
+  });
+  const errors = check.diagnostics.filter((finding) => finding.severity === "error");
   if (errors.length > 0) {
     throw new Error(
       [
-        `Recipe ${report.manifest.name} is not ready to publish.`,
+        `Recipe ${check.package_name ?? recipeDir} is not ready to publish.`,
         ...errors.map((finding) => `- ${finding.message}`),
       ].join("\n")
     );
   }
+  const report = validateRecipeDirectory(recipeDir);
 
   writePackageName(recipeDir, github.packageName);
   ensureGitignore(recipeDir);

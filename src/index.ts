@@ -1,6 +1,7 @@
 export * from "./mcp.js";
 export * from "./pi-extension.js";
 export * from "./recipe-agent.js";
+export * from "./recipe-check.js";
 export * from "./recipe-dev.js";
 export * from "./recipe-evals.js";
 export * from "./recipe-package.js";

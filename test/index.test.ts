@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -1035,6 +1035,58 @@ describe("recipe package manifest", () => {
     ).rejects.toThrow(/only supported by recipes evals/);
   });
 
+  it("passes check profiles through to recipe-check", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-cli-check-profile-"));
+    const previousBin = process.env.PI_RECIPE_CHECK_BIN;
+    const previousArgsPath = process.env.RECIPE_CHECK_ARGS_PATH;
+    try {
+      const checker = join(root, "recipe-check-bin.mjs");
+      const argsPath = join(root, "args.json");
+      writeFileSync(
+        checker,
+        [
+          "#!/usr/bin/env node",
+          "import { writeFileSync } from 'node:fs';",
+          "writeFileSync(process.env.RECIPE_CHECK_ARGS_PATH, JSON.stringify(process.argv.slice(2)));",
+          "process.exit(0);",
+          "",
+        ].join("\n")
+      );
+      chmodSync(checker, 0o755);
+      process.env.PI_RECIPE_CHECK_BIN = checker;
+      process.env.RECIPE_CHECK_ARGS_PATH = argsPath;
+
+      await expect(
+        recipesCliMain(["check", root, "--profile", "ci", "--json"])
+      ).resolves.toBe(0);
+
+      expect(JSON.parse(readFileSync(argsPath, "utf8"))).toEqual([
+        root,
+        "--profile",
+        "ci",
+        "--json",
+      ]);
+    } finally {
+      if (previousBin === undefined) {
+        delete process.env.PI_RECIPE_CHECK_BIN;
+      } else {
+        process.env.PI_RECIPE_CHECK_BIN = previousBin;
+      }
+      if (previousArgsPath === undefined) {
+        delete process.env.RECIPE_CHECK_ARGS_PATH;
+      } else {
+        process.env.RECIPE_CHECK_ARGS_PATH = previousArgsPath;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unknown check profiles", async () => {
+    await expect(
+      recipesCliMain(["check", ".", "--profile", "staging"])
+    ).rejects.toThrow(/--profile requires local, ci, or publish/);
+  });
+
   it("does not treat imported CLI modules as direct invocations", () => {
     const root = mkdtempSync(join(tmpdir(), "recipes-cli-imported-"));
     try {
@@ -1211,7 +1263,7 @@ describe("recipe package manifest", () => {
       const guide = createRecipePublishGuide(recipeDir);
 
       expect(guide.report.valid).toBe(true);
-      expect(guide.checklist).toContain("Run `recipes doctor .` and fix any errors.");
+      expect(guide.checklist).toContain("Run `recipes check .` and fix any errors.");
       expect(guide.sourceExamples).toContain("recipes install github:owner/guide-recipe");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -2133,6 +2185,19 @@ describe("package boundary", () => {
         "dist/recipe-publish.js",
         "dist/recipe-mcp-config.d.ts",
         "dist/recipe-mcp-config.js",
+        "dist/recipe-check.d.ts",
+        "dist/recipe-check.js",
+        "vendor/recipe-check",
+        "harbor/pi_recipe_agent.py",
+      ])
+    );
+    expect(pkg.files).not.toEqual(
+      expect.arrayContaining([
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates/recipe-check/Cargo.toml",
+        "crates/recipe-check/src",
+        "harbor",
       ])
     );
     expect(pkg.bin).toEqual({ recipes: "dist/cli.js" });
