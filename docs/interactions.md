@@ -6,19 +6,17 @@ the local TUI, RPC-driven UIs, headless runs, and hosts that stream tool
 results to a remote frontend and can pause/resume a run.
 
 The module registers no tools. Recipes own their interaction tools — their
-names, schemas, prompts, and rendering — and call `askUser()` from the tool's
-`execute()`. Removing every custom UI still leaves a working system; custom
-UIs are pure enhancements.
+names, schemas, and prompts — and call `askUserQuestion()` or
+`askUserApproval()` from the tool's `execute()`. Those helpers build the
+`details.interrupt` request, local Pi dialog copy, and host metadata. Use raw
+`askUser()` only when a tool needs a lower-level interaction shape.
 
 ## Quick start
 
 ```ts
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  ASK_USER_REASON_INPUT_REQUIRED,
-  askUser,
-} from "@introspection-ai/pi-recipes/interactions";
+import { askUserQuestion } from "@introspection-ai/pi-recipes/interactions";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -33,12 +31,10 @@ export default function (pi: ExtensionAPI) {
     // otherwise a host pause can strand half-finished parallel tool calls.
     executionMode: "sequential",
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
-      return await askUser(
+      return await askUserQuestion(
         {
-          reason: ASK_USER_REASON_INPUT_REQUIRED,
-          message: params.question,
+          question: params.question,
           options: params.options,
-          metadata: { kind: "question" },
         },
         { toolCallId, ctx, signal }
       );
@@ -47,13 +43,13 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-`askUser()` always returns a finished tool result (`content` + `details`), so
-the tool can return it directly. Pass the tool's own `signal` parameter — not
-`ctx.signal` — so an aborted turn dismisses any open dialog.
+The helpers always return a finished tool result (`content` + `details`), so
+the tool can return them directly. Pass the tool's own `signal` parameter —
+not `ctx.signal` — so an aborted turn dismisses any open dialog.
 
 ## Channel resolution
 
-`askUser()` picks the best available interaction channel, in order:
+The interaction helpers pick the best available channel, in order:
 
 1. **`PI_ASK_USER_AUTO_APPROVE`** (env) — headless/CI runs: confirmations
    resolve `approved`, everything else resolves `declined`. Deterministic and
@@ -123,42 +119,38 @@ frontend-specific rendering.
 recipe-specific metadata. Keep it meaningful, for example
 `Approve search proposal: Senior product leaders in Sydney?`.
 
-When a tool needs richer UI copy, pass `display`:
+When a tool needs richer approval UI copy, pass card fields to
+`askUserApproval()`:
 
 ```ts
-await askUser(
+await askUserApproval(
   {
-    reason: "tool_call",
+    kind: "plan_search",
     message: "Approve search proposal: Senior product leaders in Sydney?",
-    display: {
-      kind: "search_proposal",
-      title: "Senior product leaders in Sydney",
-      body: "Target senior product leaders in Sydney with B2B SaaS or marketplace experience.",
-      sections: [
-        {
-          title: "Starting angles",
-          items: [
-            "Product leadership titles in Sydney",
-            "Growth product leaders in Sydney",
-            "Marketplace product operators",
-          ],
-        },
-      ],
+    title: "Senior product leaders in Sydney",
+    body: "Target senior product leaders in Sydney with B2B SaaS or marketplace experience.",
+    sections: [
+      {
+        title: "Starting angles",
+        items: [
+          "Product leadership titles in Sydney",
+          "Growth product leaders in Sydney",
+          "Marketplace product operators",
+        ],
+      },
+    ],
+    metadata: {
+      proposal: "Target senior product leaders in Sydney with B2B SaaS or marketplace experience.",
     },
-    metadata: { kind: "plan_search" },
   },
   { toolCallId, ctx, signal }
 );
 ```
 
-Local pi dialogs format `display` into readable prompt text. Remote hosts can
-adapt the same object into their own UI. Hosts that do not understand the
-structured display can still render `message` and basic options.
-
-Use `reason: "tool_call"` for approvals that are bound to the current tool call,
-including tools that pause before executing their proposed work. Use
-`reason: "confirmation"` only for free-standing yes/no decisions that are not
-auditing a specific tool call.
+Local pi dialogs format the generated display into readable prompt text.
+Remote hosts can adapt the same object into their own UI. Hosts that do not
+understand the structured display can still render `message` and basic
+options.
 
 ## Response envelopes (frozen)
 
@@ -185,11 +177,13 @@ best judgment.
 
 - **`executionMode: "sequential"` is mandatory.** A host pause must never
   race concurrently executing tools.
-- **Never format envelopes yourself.** Return `askUser()`'s result as-is;
-  envelope authorship must not split across layers.
-- **Thread the tool's `signal`** into `askUser()` and check for aborts after
-  any custom dialog (`undefined` from a dialog means dismissal *or* abort —
-  only the signal distinguishes them).
+- **Prefer the wrappers.** Use `askUserQuestion()` and `askUserApproval()` so
+  recipes do not hand-author interrupt details, reasons, or display metadata.
+- **Never format envelopes yourself.** Return the helper result as-is; envelope
+  authorship must not split across layers.
+- **Thread the tool's `signal`** into the helper and check for aborts after any
+  custom dialog (`undefined` from a dialog means dismissal *or* abort — only
+  the signal distinguishes them).
 - **Custom UIs are enhancements.** A richer TUI walk goes through the
   `interactive` option; remote hosts can adapt `metadata` and `display`.
   Hosts that recognize neither must still work off `reason`, `message`, and

@@ -3,8 +3,9 @@
  * approval with one contract that works on every pi host.
  *
  * This module registers no tools. Recipes own their interaction tools and call
- * `askUser()` from the tool's `execute()`; the module resolves the best
- * available interaction channel and always returns a finished tool result:
+ * `askUserQuestion()` or `askUserApproval()` from the tool's `execute()`;
+ * raw `askUser()` is the lower-level escape hatch. The module resolves the
+ * best available interaction channel and always returns a finished tool result:
  *
  *   1. `PI_ASK_USER_AUTO_APPROVE` — headless/CI: confirmations approve,
  *      questions decline. Deterministic, never blocks.
@@ -107,6 +108,38 @@ export interface AskUserRequest {
    * remote hosts can adapt it into their own UI.
    */
   display?: AskUserDisplay;
+  /** Optional ISO-8601 instant after which a host may auto-decline. */
+  expiresAt?: string;
+}
+
+export interface AskUserQuestionRequest {
+  /** The concise question shown to the user. */
+  question: string;
+  /** Optional short UI heading for hosts that render one. */
+  header?: string;
+  /** Optional answer suggestions. Hosts may also allow a custom answer. */
+  options?: readonly (string | AskUserOption)[];
+  /** Additional renderer or tool hints. */
+  metadata?: Record<string, unknown>;
+  /** Optional structured display copy. */
+  display?: AskUserDisplay;
+  /** Optional ISO-8601 instant after which a host may auto-decline. */
+  expiresAt?: string;
+}
+
+export interface AskUserApprovalRequest {
+  /** Short renderer kind, e.g. `plan_search`; defaults to `approval`. */
+  kind?: string;
+  /** Concise approval prompt. Defaults to `Approve <title>?` when possible. */
+  message?: string;
+  /** Approval card title for local and remote UI. */
+  title?: string;
+  /** Main approval card body. Plain text or markdown-style text. */
+  body?: string;
+  /** Optional grouped content for clients that render rows or sections. */
+  sections?: AskUserDisplay["sections"];
+  /** Additional renderer or tool hints. */
+  metadata?: Record<string, unknown>;
   /** Optional ISO-8601 instant after which a host may auto-decline. */
   expiresAt?: string;
 }
@@ -233,6 +266,65 @@ export async function askUser(
   return finishedResult(request, { type: "unavailable" });
 }
 
+/** Ask a blocking clarification question without hand-authoring interrupt details. */
+export async function askUserQuestion(
+  request: AskUserQuestionRequest,
+  opts: AskUserOptions
+): Promise<AskUserResult> {
+  const metadata = compactRecord({
+    kind: "ask_user_question",
+    ...(request.header ? { header: request.header } : {}),
+    question: request.question,
+    ...(request.metadata ?? {}),
+  });
+  return askUser(
+    {
+      reason: ASK_USER_REASON_INPUT_REQUIRED,
+      message: request.question,
+      options: request.options,
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+      ...(request.display ? { display: request.display } : {}),
+      ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
+    },
+    opts
+  );
+}
+
+/** Request approval without hand-authoring interrupt details or display data. */
+export async function askUserApproval(
+  request: AskUserApprovalRequest,
+  opts: AskUserOptions
+): Promise<AskUserResult> {
+  const kind = request.kind?.trim() || "approval";
+  const title = request.title?.trim();
+  const body = request.body?.trim();
+  const message =
+    request.message?.trim() || (title ? `Approve ${title}?` : "Approve?");
+  const display = compactDisplay({
+    kind,
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {}),
+    ...(request.sections?.length ? { sections: request.sections } : {}),
+  });
+  const metadata = compactRecord({
+    kind,
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {}),
+    ...(display?.sections?.length ? { sections: display.sections } : {}),
+    ...(request.metadata ?? {}),
+  });
+  return askUser(
+    {
+      reason: ASK_USER_REASON_CONFIRMATION,
+      message,
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+      ...(display ? { display } : {}),
+      ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
+    },
+    opts
+  );
+}
+
 function flagEnabled(value: string | undefined): boolean {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
@@ -253,6 +345,44 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     throw new Error("User interaction aborted");
   }
+}
+
+function compactRecord(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).filter(
+      ([, value]) =>
+        value !== undefined &&
+        value !== null &&
+        (!Array.isArray(value) || value.length > 0)
+    )
+  );
+}
+
+function compactDisplay(display: AskUserDisplay): AskUserDisplay | undefined {
+  const title = display.title?.trim();
+  const body = display.body?.trim();
+  const sections = (display.sections ?? [])
+    .map((section) => {
+      const sectionTitle = section.title.trim();
+      const sectionBody = section.body?.trim();
+      const items = section.items?.map((item) => item.trim()).filter(Boolean);
+      if (!sectionTitle && !sectionBody && (!items || items.length === 0)) {
+        return null;
+      }
+      return {
+        title: sectionTitle,
+        ...(sectionBody ? { body: sectionBody } : {}),
+        ...(items && items.length > 0 ? { items } : {}),
+      };
+    })
+    .filter((section): section is NonNullable<typeof section> => Boolean(section));
+  if (!title && !body && sections.length === 0) return undefined;
+  return {
+    kind: display.kind,
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {}),
+    ...(sections.length > 0 ? { sections } : {}),
+  };
 }
 
 /**

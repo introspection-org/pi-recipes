@@ -9,6 +9,8 @@ import {
   ASK_USER_REASON_INPUT_REQUIRED,
   ASK_USER_REASON_TOOL_CALL,
   askUser,
+  askUserApproval,
+  askUserQuestion,
   suppressInterruptResume,
   type AskUserOutcome,
 } from "../src/interactions.js";
@@ -377,6 +379,113 @@ describe("askUser", () => {
         header: "Beverage",
       },
       expiresAt: "2026-07-09T00:00:00Z",
+      outcome: { type: "awaiting_user" },
+    });
+  });
+
+  it("askUserQuestion builds native question interrupt details", async () => {
+    const { ctx } = fakeCtx({ hasUI: false });
+    const result = await askUserQuestion(
+      {
+        question: "Which market?",
+        header: "Market",
+        options: [
+          {
+            label: "Sydney (Recommended)",
+            value: "sydney",
+            description: "Focus the search in Sydney.",
+          },
+          {
+            label: "Melbourne",
+            value: "melbourne",
+            description: "Focus the search in Melbourne.",
+          },
+        ],
+      },
+      {
+        toolCallId: "tool-1",
+        ctx,
+        signal: undefined,
+        env: { PI_INTERRUPT_RESUME: "1" },
+      }
+    );
+
+    expect(result.details.interrupt).toEqual({
+      reason: "input_required",
+      message: "Which market?",
+      options: [
+        {
+          label: "Sydney (Recommended)",
+          value: "sydney",
+          description: "Focus the search in Sydney.",
+        },
+        {
+          label: "Melbourne",
+          value: "melbourne",
+          description: "Focus the search in Melbourne.",
+        },
+      ],
+      metadata: {
+        kind: "ask_user_question",
+        header: "Market",
+        question: "Which market?",
+      },
+      outcome: { type: "awaiting_user" },
+    });
+  });
+
+  it("askUserApproval builds native approval display and metadata", async () => {
+    const { ctx } = fakeCtx({ hasUI: false });
+    const result = await askUserApproval(
+      {
+        kind: "plan_search",
+        message: "Approve search proposal: Sydney product leaders?",
+        title: "Sydney product leaders",
+        body: "Find senior product leaders in Sydney tech companies.",
+        sections: [
+          {
+            title: "Starting angles",
+            items: ["Product leaders", "Growth product leaders"],
+          },
+        ],
+        metadata: {
+          proposal: "Find senior product leaders in Sydney tech companies.",
+        },
+      },
+      {
+        toolCallId: "tool-9",
+        ctx,
+        signal: undefined,
+        env: { PI_INTERRUPT_RESUME: "1" },
+      }
+    );
+
+    expect(result.details.interrupt).toEqual({
+      reason: "confirmation",
+      message: "Approve search proposal: Sydney product leaders?",
+      metadata: {
+        kind: "plan_search",
+        title: "Sydney product leaders",
+        body: "Find senior product leaders in Sydney tech companies.",
+        sections: [
+          {
+            title: "Starting angles",
+            items: ["Product leaders", "Growth product leaders"],
+          },
+        ],
+        proposal: "Find senior product leaders in Sydney tech companies.",
+      },
+      display: {
+        kind: "plan_search",
+        title: "Sydney product leaders",
+        body: "Find senior product leaders in Sydney tech companies.",
+        sections: [
+          {
+            title: "Starting angles",
+            items: ["Product leaders", "Growth product leaders"],
+          },
+        ],
+      },
       outcome: { type: "awaiting_user" },
     });
   });
