@@ -670,6 +670,14 @@ function resolvePackage(specifier: string): string | undefined {
 function recipeExtensionAliases(): Record<string, string> {
   return Object.fromEntries(
     [
+      // Self-alias: recipe extensions importing the interactions module must
+      // resolve to THIS package instance so the interrupt-suppression scope
+      // and envelope constants are shared with the child-agent runner.
+      [
+        "@introspection-ai/pi-recipes/interactions",
+        resolvePackage("@introspection-ai/pi-recipes/interactions") ??
+          new URL("./interactions.js", import.meta.url).href,
+      ],
       ["@earendil-works/pi-coding-agent", resolvePackage("@earendil-works/pi-coding-agent")],
       ["@earendil-works/pi-agent-core", resolvePackage("@earendil-works/pi-agent-core")],
       ["@earendil-works/pi-ai", resolvePackage("@earendil-works/pi-ai")],

@@ -10,6 +10,7 @@ import {
   type AgentSession,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
+import { suppressInterruptResume } from "./interactions.js";
 import {
   loadRecipeSystemPrompt,
   REQUIRED_RECIPE_AGENT_FIELDS,
@@ -336,7 +337,11 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   async prompt(task: string): Promise<string> {
     await this.start();
     if (!this.session) throw new Error("Recipe child agent did not start");
-    await this.session.prompt(task);
+    // Interrupt-capable hosts only watch the root session's tool results, so
+    // an `askUser()` interrupt emitted inside this child run would pause
+    // nothing and strand the child on "Awaiting user response.". Suppress the
+    // interrupt branch for the whole run; askUser degrades to plain chat.
+    await suppressInterruptResume(() => this.session!.prompt(task));
     return promptResultText({ messages: [...this.session.messages] });
   }
 
