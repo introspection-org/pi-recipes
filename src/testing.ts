@@ -12,6 +12,8 @@ export interface MockExtensionAPI extends ExtensionAPI {
   flagValues: Map<string, boolean | string>;
   handlers: Map<string, Array<(event: any, ctx: any) => unknown>>;
   messages: unknown[];
+  sentMessages: Array<{ message: any; options?: any }>;
+  messageRenderers: Map<string, (message: any, options: any, theme: any) => unknown>;
   sessionName?: string;
   activeTools: string[];
   thinkingLevel?: string;
@@ -26,6 +28,8 @@ export function createMockExtensionAPI(): MockExtensionAPI {
   const flagValues = new Map<string, boolean | string>();
   const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
   const messages: unknown[] = [];
+  const sentMessages: Array<{ message: any; options?: any }> = [];
+  const messageRenderers = new Map<string, (message: any, options: any, theme: any) => unknown>();
   const api = {
     commands,
     tools,
@@ -33,6 +37,8 @@ export function createMockExtensionAPI(): MockExtensionAPI {
     flagValues,
     handlers,
     messages,
+    sentMessages,
+    messageRenderers,
     activeTools: [],
     on(event: string, handler: (event: any, ctx: any) => unknown) {
       const list = handlers.get(event) ?? [];
@@ -55,9 +61,12 @@ export function createMockExtensionAPI(): MockExtensionAPI {
     getFlag(name: string) {
       return flagValues.get(name);
     },
-    registerMessageRenderer() {},
-    sendMessage(message: unknown) {
+    registerMessageRenderer(customType: string, renderer: (message: any, options: any, theme: any) => unknown) {
+      messageRenderers.set(customType, renderer);
+    },
+    sendMessage(message: unknown, options?: unknown) {
       messages.push(message);
+      sentMessages.push({ message, options });
     },
     sendUserMessage() {},
     setSessionName(name: string) {
