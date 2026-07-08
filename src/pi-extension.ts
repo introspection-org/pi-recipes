@@ -27,6 +27,12 @@ import {
   type ChildToolStatus,
 } from "./child-agent-store.js";
 import {
+  ChildCompletionQueue,
+  envelopeFromRun,
+  renderCompletionNotice,
+  type ChildCompletionEnvelope,
+} from "./child-agent-completions.js";
+import {
   clearRecipeMcpManifest,
   configureMcpLocalConfigPath,
   executableRecipeToolNames,
@@ -111,6 +117,9 @@ type WaitEndReason = "settled" | "timeout" | "aborted";
 const WAIT_DEFAULT_TIMEOUT_MS = 60_000;
 const WAIT_MIN_TIMEOUT_MS = 1_000;
 const WAIT_MAX_TIMEOUT_MS = 600_000;
+
+/** Mid-turn completion delivery retries on this cadence until the session idles. */
+const COMPLETION_DELIVERY_RETRY_MS = 100;
 
 interface RecipeAgentToolDetails {
   action: string;
@@ -386,6 +395,57 @@ function formatRecipeAgentResult(
   return lines.join("\n");
 }
 
+const RECIPE_AGENT_COMPLETIONS_TYPE = "recipe-agent-completions";
+
+interface RecipeAgentCompletionsDetails {
+  completions: ChildCompletionEnvelope[];
+}
+
+function formatDurationMs(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+/** Compact TUI rendering for a completion wake-up notice (pi-subagents style). */
+function formatCompletionMessage(
+  batch: readonly ChildCompletionEnvelope[],
+  options: { expanded: boolean },
+  theme: { fg?: (name: any, text: string) => string; bold?: (text: string) => string } | undefined
+): string {
+  const blocks = batch.map((envelope) => {
+    const icon =
+      envelope.status === "completed"
+        ? themeFg(theme, "success", "✓")
+        : themeFg(theme, "error", "✗");
+    const label = envelope.label
+      ? ` ${themeFg(theme, "muted", `(${envelope.label})`)}`
+      : "";
+    const duration =
+      envelope.duration_ms !== undefined
+        ? ` ${themeFg(theme, "muted", `· ${formatDurationMs(envelope.duration_ms)}`)}`
+        : "";
+    let text = `${icon} ${themeBold(theme, envelope.agent)} ${themeFg(theme, "muted", envelope.id)}${label} ${themeFg(theme, "muted", envelope.status)}${duration}`;
+    const preview =
+      (envelope.status === "failed"
+        ? envelope.error ?? envelope.output_preview
+        : envelope.output_preview
+      )?.trim() ?? "";
+    const lines = preview.split("\n").filter((line) => line.trim());
+    const shown = options.expanded ? lines : lines.slice(0, 1);
+    for (const line of shown.length > 0 ? shown : ["(no output)"]) {
+      text += `\n  ${themeFg(theme, "muted", `⎿  ${options.expanded ? line : truncateLine(line)}`)}`;
+    }
+    if (!options.expanded && lines.length > 1) {
+      text += `\n  ${themeFg(theme, "muted", "⎿  … (expand for full output)")}`;
+    }
+    return text;
+  });
+  return blocks.join("\n");
+}
+
 function describeRun(run: ChildRunSnapshot): string {
   const suffix = run.error ? `: ${run.error}` : run.output ? `: ${run.output}` : "";
   return `${run.id} ${run.agent}: ${run.status}${suffix}`;
@@ -530,10 +590,17 @@ function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string 
 }
 
 function emitRunUpdate(run: ChildRun, onUpdate: RecipeAgentToolUpdate | undefined): void {
-  onUpdate?.({
-    content: [{ type: "text", text: runBlock(run) }],
-    details: runDetails(run, "update"),
-  });
+  try {
+    onUpdate?.({
+      content: [{ type: "text", text: runBlock(run) }],
+      details: runDetails(run, "update"),
+    });
+  } catch {
+    // A detached run outlives the parent turn that started it; pi rejects
+    // tool updates once that turn has settled ("Agent listener invoked
+    // outside active run"). Late updates are cosmetic — swallow them so the
+    // background child keeps executing and completion delivery still fires.
+  }
 }
 
 function applyChildToolEvent(run: ChildRun, event: RecipeChildToolEvent): void {
@@ -667,6 +734,10 @@ export function createPiRecipesExtension(
   // have no live runner: readable (status/wait) but not controllable.
   const archivedRuns = new Map<string, ChildRunSnapshot>();
   let runStore: { cwd: string; store: ChildAgentRunStore } | null = null;
+  // Background completions pending delivery to the parent model.
+  const completions = new ChildCompletionQueue();
+  // Latest extension context, for the idle check gating completion delivery.
+  let sessionCtx: Pick<ExtensionContext, "isIdle"> | null = null;
 
   function storeFor(cwd: string): ChildAgentRunStore {
     if (runStore?.cwd !== cwd) {
@@ -1030,6 +1101,10 @@ export function createPiRecipesExtension(
         run.completedAt = new Date().toISOString();
         await persistRun(launchState.cwd, run);
         emitRunUpdate(run, onUpdate);
+        // Queue a wake-up notice for the parent model. Synchronous readers
+        // (blocking start, wait, terminal status) acknowledge it back out.
+        const envelope = envelopeFromRun(run);
+        if (envelope) completions.enqueue(envelope);
         await runner.shutdown();
       }
       return run;
@@ -1144,6 +1219,10 @@ export function createPiRecipesExtension(
       if (params.id && runs.length === 0) {
         return { ...textResult(`Unknown recipe agent run: ${params.id}`, { id: params.id }), isError: true };
       }
+      // Terminal outputs shown here are delivered — drop queued notices.
+      completions.acknowledge(
+        runs.filter((run) => run.status !== "running").map((run) => run.id)
+      );
       return textResult(
         runs.length > 0 ? runs.map(describeRun).join("\n") : "No recipe agent runs have been started yet.",
         { action, agent_runs: runs.map((run) => runDetails(run)) }
@@ -1187,6 +1266,10 @@ export function createPiRecipesExtension(
         timeoutMs,
         signal,
       });
+      // Terminal outputs shown here are delivered — drop queued notices.
+      completions.acknowledge(
+        runs.filter((run) => run.status !== "running").map((run) => run.id)
+      );
       const header =
         reason === "settled"
           ? explicitIds
@@ -1265,6 +1348,8 @@ export function createPiRecipesExtension(
           runDetails(run, action)
         );
       }
+      // The model saw this result synchronously — drop any queued notice.
+      completions.acknowledge([run.id]);
       return textResult(runBlock(run), runDetails(run, action));
     }
     return textResult(
@@ -1274,6 +1359,61 @@ export function createPiRecipesExtension(
   }
 
   return (pi) => {
+    // Deliver queued background completions by waking the parent model.
+    // Timer/failure flushes only deliver when the session is idle; a batch
+    // held mid-turn is poked through at the agent_end settle boundary, where
+    // pi queues the message and runs a continuation turn for it.
+    // Deliver queued background completions by waking the parent model with
+    // a triggerTurn message. Delivery only happens when the session is
+    // genuinely idle: a message queued while the parent turn is streaming
+    // (or tearing down at the agent_end boundary) would be stranded in pi's
+    // queues, and holding until idle also gives synchronous readers
+    // (blocking start, wait, terminal status) time to acknowledge results
+    // the model already saw. While mid-turn, retry on a short timer armed by
+    // the agent_end poke.
+    let deliveryRetryTimer: NodeJS.Timeout | null = null;
+    const deliverCompletions = () => {
+      if (deliveryRetryTimer) {
+        clearTimeout(deliveryRetryTimer);
+        deliveryRetryTimer = null;
+      }
+      if (!completions.hasPending()) return;
+      if (!(sessionCtx?.isIdle?.() ?? true)) {
+        deliveryRetryTimer = setTimeout(deliverCompletions, COMPLETION_DELIVERY_RETRY_MS);
+        deliveryRetryTimer.unref?.();
+        return;
+      }
+      const batch = completions.consumeBatch();
+      if (batch.length === 0) return;
+      pi.sendMessage(
+        {
+          customType: RECIPE_AGENT_COMPLETIONS_TYPE,
+          content: renderCompletionNotice(batch),
+          display: true,
+          details: { completions: batch } satisfies RecipeAgentCompletionsDetails,
+        },
+        // followUp keeps a wake race-safe: if a user turn started between
+        // the idle check and here, the notice queues behind it.
+        { triggerTurn: true, deliverAs: "followUp" }
+      );
+    };
+    completions.setDeliverer(deliverCompletions);
+
+    pi.on("agent_end", (_event, ctx) => {
+      sessionCtx = ctx;
+      completions.poke();
+    });
+
+    pi.registerMessageRenderer<RecipeAgentCompletionsDetails>(
+      RECIPE_AGENT_COMPLETIONS_TYPE,
+      (message, options, theme) => {
+        const batch = (message.details as RecipeAgentCompletionsDetails | undefined)
+          ?.completions;
+        if (!batch?.length) return undefined;
+        return new Text(formatCompletionMessage(batch, options, theme), 0, 0);
+      }
+    );
+
     pi.registerFlag("recipe", {
       description: "Recipe folder, installed recipe name, or installed recipe source to use for this Pi session",
       type: "string",
@@ -1298,6 +1438,7 @@ export function createPiRecipesExtension(
           state = null;
           childRuns.clear();
           archivedRuns.clear();
+          completions.clear();
           await ctx.waitForIdle();
           await ctx.reload();
           ctx.ui.notify(`Recipe reload requested: ${launchState.manifest.name}@${launchState.manifest.version}`, "info");
@@ -1350,6 +1491,7 @@ export function createPiRecipesExtension(
     );
 
     pi.on("session_start", async (_event, ctx) => {
+      sessionCtx = ctx;
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return;
       await loadRecipeExtensions(pi, ctx, launchState);
