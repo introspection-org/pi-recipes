@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.0](https://github.com/introspection-org/pi-recipes/compare/v0.1.0...v0.2.0) (2026-07-08)
+
+
+### Features
+
+* add Harbor recipe evals ([9b742c3](https://github.com/introspection-org/pi-recipes/commit/9b742c39595610677c1814ec1f69fe032b9e1c96))
+* add recipe check validator ([af8a76c](https://github.com/introspection-org/pi-recipes/commit/af8a76c74947f7c4f6d964ed737552d34a2daaec))
+* simplify recipe telemetry contract ([6d6154c](https://github.com/introspection-org/pi-recipes/commit/6d6154c3ffb1aa7926669d3d0f7a4b028f6f8f7a))
+* validate recipe model spec format and migrate to pi-ai compat entrypoint ([#18](https://github.com/introspection-org/pi-recipes/issues/18)) ([d129aca](https://github.com/introspection-org/pi-recipes/commit/d129aca97cc5f40df9b4870d9726a74e312855b8))
+
+
+### Bug Fixes
+
+* install Harbor eval recipes from writable copy ([0af06a3](https://github.com/introspection-org/pi-recipes/commit/0af06a38dddc25b772fda5c19ca312ec41793e6f))
+
 ## [0.1.0](https://github.com/introspection-org/pi-recipes/compare/v0.1.0-beta.2...v0.1.0) (2026-06-30)
 
 
