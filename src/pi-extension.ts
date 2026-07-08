@@ -1359,10 +1359,6 @@ export function createPiRecipesExtension(
   }
 
   return (pi) => {
-    // Deliver queued background completions by waking the parent model.
-    // Timer/failure flushes only deliver when the session is idle; a batch
-    // held mid-turn is poked through at the agent_end settle boundary, where
-    // pi queues the message and runs a continuation turn for it.
     // Deliver queued background completions by waking the parent model with
     // a triggerTurn message. Delivery only happens when the session is
     // genuinely idle: a message queued while the parent turn is streaming
@@ -1378,24 +1374,31 @@ export function createPiRecipesExtension(
         deliveryRetryTimer = null;
       }
       if (!completions.hasPending()) return;
-      if (!(sessionCtx?.isIdle?.() ?? true)) {
-        deliveryRetryTimer = setTimeout(deliverCompletions, COMPLETION_DELIVERY_RETRY_MS);
-        deliveryRetryTimer.unref?.();
-        return;
+      // The retry timer can outlive this extension instance across a reload,
+      // where pi API calls throw as stale. Never crash the timer callback;
+      // the reload rebuilds run state and drops the batch with it.
+      try {
+        if (!(sessionCtx?.isIdle?.() ?? true)) {
+          deliveryRetryTimer = setTimeout(deliverCompletions, COMPLETION_DELIVERY_RETRY_MS);
+          deliveryRetryTimer.unref?.();
+          return;
+        }
+        const batch = completions.consumeBatch();
+        if (batch.length === 0) return;
+        pi.sendMessage(
+          {
+            customType: RECIPE_AGENT_COMPLETIONS_TYPE,
+            content: renderCompletionNotice(batch),
+            display: true,
+            details: { completions: batch } satisfies RecipeAgentCompletionsDetails,
+          },
+          // followUp keeps a wake race-safe: if a user turn started between
+          // the idle check and here, the notice queues behind it.
+          { triggerTurn: true, deliverAs: "followUp" }
+        );
+      } catch {
+        // swallow — see above
       }
-      const batch = completions.consumeBatch();
-      if (batch.length === 0) return;
-      pi.sendMessage(
-        {
-          customType: RECIPE_AGENT_COMPLETIONS_TYPE,
-          content: renderCompletionNotice(batch),
-          display: true,
-          details: { completions: batch } satisfies RecipeAgentCompletionsDetails,
-        },
-        // followUp keeps a wake race-safe: if a user turn started between
-        // the idle check and here, the notice queues behind it.
-        { triggerTurn: true, deliverAs: "followUp" }
-      );
     };
     completions.setDeliverer(deliverCompletions);
 
@@ -1467,6 +1470,7 @@ export function createPiRecipesExtension(
           "Start or manage another agent from the active recipe.",
           "Start calls stream the prompted task and subagent assistant output in one tool block.",
           "By default start waits for completion; pass wait=false only when a background run is desired.",
+          "When a background run finishes you are notified automatically with its result — do not poll status in a loop while waiting.",
           'Use action "wait" to join on existing runs: with ids it blocks until ALL listed runs settle, without ids until the FIRST running run settles.',
           "Cancelling a wait detaches from the runs — they keep executing in the background; only interrupt/close stop a run.",
           "This tool is active only when the selected recipe agent has available subagents.",
