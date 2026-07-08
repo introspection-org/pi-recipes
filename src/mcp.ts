@@ -1,9 +1,8 @@
-#!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   resolvePiPackageMcpManifestPaths,
   type RecipePackageManifest,
@@ -51,6 +50,12 @@ interface McpEndpointBinding {
   host: string;
   baseUrl: string;
   headers: Record<string, string>;
+  /**
+   * Header values as written in the local config (`${VAR}` refs intact) so
+   * they can be re-emitted into the mcporter config without persisting
+   * resolved secrets to disk. Empty for session-token bindings.
+   */
+  rawHeaders: Record<string, string>;
   requiresSessionToken: boolean;
 }
 
@@ -116,6 +121,9 @@ const PROTOCOL_VERSION = "2025-03-26";
 const RECIPE_ENV_PREFIX = "PI_RECIPES_";
 const LEGACY_RUNTIME_ENV_PREFIX = "INTRO" + "SPECTION_";
 const MCP_MANIFEST_ENV = `${RECIPE_ENV_PREFIX}MCP_MANIFEST`;
+// mcporter's own config env var — the sandbox `mcp` CLI is mcporter, and the
+// generated config referenced here is the only server catalog it may read.
+const MCPORTER_CONFIG_ENV = "MCPORTER_CONFIG";
 const MCP_LOCAL_CONFIG_ENV = `${RECIPE_ENV_PREFIX}MCP_LOCAL_CONFIG`;
 const MCP_BIN_DIR_ENV = `${RECIPE_ENV_PREFIX}MCP_BIN_DIR`;
 const LEGACY_MCP_MANIFEST_ENV = `${LEGACY_RUNTIME_ENV_PREFIX}MCP_MANIFEST`;
@@ -131,6 +139,14 @@ export function defaultMcpManifestPath(cwd: string): string {
 
 export function fallbackMcpManifestPath(): string {
   return join(tmpdir(), "pi-recipes", "mcp.json");
+}
+
+export function defaultMcporterConfigPath(cwd: string): string {
+  return join(cwd, ".pi", "mcporter.json");
+}
+
+export function fallbackMcporterConfigPath(): string {
+  return join(tmpdir(), "pi-recipes", "mcporter.json");
 }
 
 export function defaultMcpLocalConfigPath(cwd: string): string {
@@ -170,12 +186,16 @@ export function defaultMcpBinDir(cwd: string): string {
   return join(cwd, ".pi", "bin");
 }
 
-export function mcpCliEntrypointPath(): string {
-  return fileURLToPath(import.meta.url);
+export function mcporterCliEntrypointPath(): string {
+  return fileURLToPath(import.meta.resolve("mcporter/cli"));
 }
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function doubleQuoteEscape(value: string): string {
+  return value.replace(/[\\"$`]/g, "\\$&");
 }
 
 function pathKey(env: NodeJS.ProcessEnv): string {
@@ -197,9 +217,16 @@ export async function materializeSessionMcpCli(opts: {
   const env = opts.env ?? process.env;
   const binDir = defaultMcpBinDir(opts.cwd);
   const shimPath = join(binDir, "mcp");
+  // The shim pins MCPORTER_CONFIG to the session-generated config (the
+  // session env normally sets it; the default covers shells that lost the
+  // env). mcporter must never fall through to its own config resolution —
+  // that would import the developer's personal MCP servers (~/.mcporter,
+  // Cursor/Claude/VS Code configs) into a recipe session.
   const script = [
     "#!/bin/sh",
-    `exec ${shellQuote(process.execPath)} ${shellQuote(mcpCliEntrypointPath())} "$@"`,
+    `: "\${${MCPORTER_CONFIG_ENV}:=${doubleQuoteEscape(defaultMcporterConfigPath(opts.cwd))}}"`,
+    `export ${MCPORTER_CONFIG_ENV}`,
+    `exec ${shellQuote(process.execPath)} ${shellQuote(mcporterCliEntrypointPath())} "$@"`,
     "",
   ].join("\n");
   await mkdir(binDir, { recursive: true });
@@ -260,18 +287,6 @@ function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8")) as unknown;
 }
 
-function readManifest(env: NodeJS.ProcessEnv, cwd?: string): McpManifest | string {
-  const path = manifestPath(env, cwd);
-  if (!existsSync(path)) {
-    return `No discovered MCP endpoint tools are available for this task (${path} is missing). Discovery may have failed during Pi session startup; check the Recipe MCP warning.`;
-  }
-  try {
-    return readJson(path) as McpManifest;
-  } catch (err) {
-    return `Failed to read MCP manifest at ${path}: ${err instanceof Error ? err.message : String(err)}`;
-  }
-}
-
 function readLocalMcpServers(env: NodeJS.ProcessEnv, cwd: string): LocalMcpServer[] {
   const path = localMcpConfigPath(env, cwd);
   if (!existsSync(path)) return [];
@@ -302,6 +317,7 @@ function bootstrapBindings(env: NodeJS.ProcessEnv): McpEndpointBinding[] {
         host: endpoint.host ?? hostForUrl(baseUrl),
         baseUrl,
         headers: {},
+        rawHeaders: {},
         requiresSessionToken: true,
       };
     });
@@ -313,8 +329,9 @@ function localBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[
     const baseUrl = server.url ? interpolateEnv(server.url, env) : "";
     if (!baseUrl) return [];
     const label = (server.name ?? server.id ?? hostForUrl(baseUrl)) || "mcp";
+    const rawHeaders = server.headers ?? {};
     const headers = Object.fromEntries(
-      Object.entries(server.headers ?? {}).map(([key, value]) => [
+      Object.entries(rawHeaders).map(([key, value]) => [
         key,
         interpolateEnv(value, env),
       ])
@@ -325,6 +342,7 @@ function localBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[
       host: hostForUrl(baseUrl),
       baseUrl,
       headers,
+      rawHeaders,
       requiresSessionToken: false,
     }];
   });
@@ -342,7 +360,7 @@ function endpointBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBindi
   return bindings;
 }
 
-export function localMcpHeadersForServer(
+function localMcpHeadersForServer(
   serverId: string,
   opts: { env?: NodeJS.ProcessEnv; cwd?: string } = {}
 ): Record<string, string> | null {
@@ -828,10 +846,11 @@ function readConfiguredManifests(recipeDir: string, manifest: RecipePackageManif
   return { servers };
 }
 
-async function writeMcpManifest(
+async function writeWithFallback(
   path: string,
   serialized: string,
-  defaultPath: string
+  defaultPath: string,
+  fallbackPath: string
 ): Promise<string> {
   try {
     await mkdir(dirname(path), { recursive: true });
@@ -839,17 +858,79 @@ async function writeMcpManifest(
     return path;
   } catch (err) {
     if (path !== defaultPath) throw err;
-    const fallback = fallbackMcpManifestPath();
-    await mkdir(dirname(fallback), { recursive: true });
-    await writeFile(fallback, serialized);
-    return fallback;
+    await mkdir(dirname(fallbackPath), { recursive: true });
+    await writeFile(fallbackPath, serialized);
+    return fallbackPath;
   }
+}
+
+export interface McporterServerConfig {
+  baseUrl: string;
+  headers: Record<string, string>;
+  allowedTools: string[];
+}
+
+export interface McporterConfig {
+  imports: string[];
+  mcpServers: Record<string, McporterServerConfig>;
+}
+
+/**
+ * Project the filtered manifest into the config the `mcp` CLI (mcporter)
+ * reads. Header values stay `${VAR}` references — mcporter interpolates them
+ * at config load — so neither session tokens nor local dev secrets are
+ * persisted. `allowedTools` re-applies the recipe/agent tool filter inside
+ * mcporter, and `imports: []` keeps mcporter from discovering host-level
+ * configs (Cursor/Claude/VS Code) in a recipe session.
+ */
+export function buildMcporterConfig(
+  manifest: McpManifest,
+  opts: { env?: NodeJS.ProcessEnv; cwd?: string } = {}
+): McporterConfig {
+  const env = opts.env ?? process.env;
+  const cwd = opts.cwd ?? process.cwd();
+  const bindings = localBindings(env, cwd);
+  const mcpServers: Record<string, McporterServerConfig> = {};
+  for (const server of manifest.servers ?? []) {
+    const binding = bindings.find(
+      (candidate) => candidate.baseUrl === server.base_url
+    );
+    const headers = binding
+      ? binding.rawHeaders
+      : { Authorization: `Bearer \${${TOKEN_ENV}}` };
+    mcpServers[server.id] = {
+      baseUrl: server.base_url,
+      headers,
+      allowedTools: (server.tools ?? []).map((tool) => tool.name),
+    };
+  }
+  return { imports: [], mcpServers };
+}
+
+async function writeMcporterConfig(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  manifest: McpManifest
+): Promise<string> {
+  const config = buildMcporterConfig(manifest, { env, cwd });
+  const writtenPath = await writeWithFallback(
+    defaultMcporterConfigPath(cwd),
+    `${JSON.stringify(config, null, 2)}\n`,
+    defaultMcporterConfigPath(cwd),
+    fallbackMcporterConfigPath()
+  );
+  env[MCPORTER_CONFIG_ENV] = writtenPath;
+  return writtenPath;
 }
 
 export async function clearRecipeMcpManifest(env: NodeJS.ProcessEnv, cwd: string): Promise<void> {
   delete env[MCP_MANIFEST_ENV];
   delete env[LEGACY_MCP_MANIFEST_ENV];
   await rm(defaultMcpManifestPath(cwd), { force: true });
+  // Keep an empty mcporter config (rather than none): a stale `.pi/bin/mcp`
+  // shim from an earlier session must resolve to "no servers", never to
+  // mcporter's host-level config discovery.
+  await writeMcporterConfig(env, cwd, { servers: [] });
 }
 
 export async function materializeRecipeMcpManifest(
@@ -885,27 +966,16 @@ export async function materializeRecipeMcpManifest(
 
   const defaultPath = defaultMcpManifestPath(opts.cwd);
   const target = manifestPath(env, opts.cwd);
-  const writtenPath = await writeMcpManifest(
+  const writtenPath = await writeWithFallback(
     target,
     `${JSON.stringify(mcpManifest, null, 2)}\n`,
-    defaultPath
+    defaultPath,
+    fallbackMcpManifestPath()
   );
   env[MCP_MANIFEST_ENV] = writtenPath;
   env[LEGACY_MCP_MANIFEST_ENV] = writtenPath;
+  await writeMcporterConfig(env, opts.cwd, mcpManifest);
   return { ...mcpManifest, diagnostics };
-}
-
-function serverById(manifest: McpManifest, id: string): McpManifestServer | string {
-  const wanted = safeServerId(id);
-  const server = (manifest.servers ?? []).find(
-    (candidate) => safeServerId(candidate.id) === wanted
-  );
-  return server ?? `Unknown MCP server: ${id}`;
-}
-
-function toolByName(server: McpManifestServer, name: string): McpManifestTool | string {
-  const tool = (server.tools ?? []).find((candidate) => candidate.name === name);
-  return tool ?? `Unknown MCP tool: ${server.id}.${name}`;
 }
 
 function prettyJson(value: unknown): string {
@@ -914,229 +984,4 @@ function prettyJson(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function renderResult(value: unknown): string {
-  const result = value as {
-    content?: unknown;
-    structuredContent?: unknown;
-  };
-  const parts: string[] = [];
-  const content = Array.isArray(result?.content) ? result.content : [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const record = block as Record<string, unknown>;
-    if (record.type === "text" && typeof record.text === "string") {
-      parts.push(record.text);
-    } else {
-      parts.push(prettyJson(record));
-    }
-  }
-  if (result?.structuredContent !== undefined) parts.push(prettyJson(result.structuredContent));
-  return parts.length > 0 ? parts.join("\n\n") : prettyJson(value);
-}
-
-function transportErrorMessage(prefix: string, status: number, body: string, parsed: JsonRpcResponse<unknown> | null): string {
-  const lines = [`${prefix}: HTTP ${status}`];
-  if (parsed?.error) {
-    lines.push(`MCP error: ${prettyJson(parsed.error)}`);
-  } else {
-    const summary = summarizeBody(body);
-    if (summary) lines.push(`Response body: ${summary}`);
-  }
-  return lines.join("\n");
-}
-
-function printHelp(io: CliIO): number {
-  writeLine(
-    io.stdout,
-    `mcp - call MCP endpoint tools configured for this recipe
-
-Usage:
-  mcp tools sources
-  mcp tools search "<query>"
-  mcp tools describe <server> <tool>
-  mcp tools describe <server>.<tool>
-  mcp call <server> <tool> '<json-args>'`
-  );
-  return 0;
-}
-
-function toolsSources(io: CliIO): number {
-  const manifest = readManifest(io.env, io.cwd);
-  if (typeof manifest === "string") {
-    writeLine(io.stderr, manifest);
-    return 1;
-  }
-  for (const server of manifest.servers ?? []) {
-    writeLine(
-      io.stdout,
-      `${server.id}\t${server.name ?? server.id}\t${server.host ?? ""}\t${server.tools?.length ?? 0} tools`
-    );
-  }
-  return 0;
-}
-
-function toolsSearch(io: CliIO, query: string): number {
-  const manifest = readManifest(io.env, io.cwd);
-  if (typeof manifest === "string") {
-    writeLine(io.stderr, manifest);
-    return 1;
-  }
-  const q = query.toLowerCase();
-  for (const server of manifest.servers ?? []) {
-    for (const tool of server.tools ?? []) {
-      const haystack = `${server.id}.${tool.name} ${tool.description ?? ""}`.toLowerCase();
-      if (!q || haystack.includes(q)) {
-        writeLine(
-          io.stdout,
-          `${server.id}.${tool.name}${tool.description ? ` - ${tool.description}` : ""}`
-        );
-      }
-    }
-  }
-  return 0;
-}
-
-function parseDescribeArgs(args: string[]): [string, string] | string {
-  if (args.length >= 2) return [args[0]!, args[1]!];
-  const [combined] = args;
-  if (combined?.includes(".")) {
-    const [server, tool] = combined.split(".", 2);
-    if (server && tool) return [server, tool];
-  }
-  return "Usage: mcp tools describe <server> <tool>";
-}
-
-function toolsDescribe(io: CliIO, args: string[]): number {
-  const parsedArgs = parseDescribeArgs(args);
-  if (typeof parsedArgs === "string") {
-    writeLine(io.stderr, parsedArgs);
-    return 1;
-  }
-  const manifest = readManifest(io.env, io.cwd);
-  if (typeof manifest === "string") {
-    writeLine(io.stderr, manifest);
-    return 1;
-  }
-  const server = serverById(manifest, parsedArgs[0]);
-  if (typeof server === "string") {
-    writeLine(io.stderr, server);
-    return 1;
-  }
-  const tool = toolByName(server, parsedArgs[1]);
-  if (typeof tool === "string") {
-    writeLine(io.stderr, tool);
-    return 1;
-  }
-  writeLine(io.stdout, prettyJson(tool));
-  return 0;
-}
-
-export async function callMcpTool(
-  io: Pick<CliIO, "env" | "fetch" | "stderr"> & { cwd?: string },
-  serverId: string,
-  toolName: string,
-  args: Record<string, unknown> = {}
-): Promise<{ ok: true; text: string; result: unknown } | { ok: false; error: string }> {
-  const manifest = readManifest(io.env, io.cwd);
-  if (typeof manifest === "string") return { ok: false, error: manifest };
-  const server = serverById(manifest, serverId);
-  if (typeof server === "string") return { ok: false, error: server };
-  const tool = toolByName(server, toolName);
-  if (typeof tool === "string") return { ok: false, error: tool };
-
-  const initialized = await initializeSession(io, server);
-  if (initialized.diagnostic) {
-    return {
-      ok: false,
-      error: `MCP initialize failed: ${initialized.diagnostic.message}`,
-    };
-  }
-  const result = await postJsonRpc<unknown>(
-    io,
-    server,
-    {
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: { name: tool.name, arguments: args },
-    },
-    initialized.sessionId
-  );
-  if (typeof result === "string") return { ok: false, error: result };
-  if (result.status < 200 || result.status >= 300) {
-    return {
-      ok: false,
-      error: transportErrorMessage(
-        "MCP call failed",
-        result.status,
-        result.body,
-        result.parsed
-      ),
-    };
-  }
-  if (!result.parsed) return { ok: false, error: "MCP call failed: response was not JSON-RPC." };
-  if (result.parsed.error) return { ok: false, error: `MCP error: ${prettyJson(result.parsed.error)}` };
-  return {
-    ok: true,
-    text: renderResult(result.parsed.result),
-    result: result.parsed.result,
-  };
-}
-
-async function callTool(io: CliIO, args: string[]): Promise<number> {
-  const [serverId, toolName, rawArgs] = args;
-  if (!serverId || !toolName) {
-    writeLine(io.stderr, "Usage: mcp call <server> <tool> '<json-args>'");
-    return 1;
-  }
-
-  let parsedArgs: Record<string, unknown> = {};
-  if (rawArgs) {
-    try {
-      const parsed = JSON.parse(rawArgs) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("expected object");
-      }
-      parsedArgs = parsed as Record<string, unknown>;
-    } catch {
-      writeLine(io.stderr, "Tool arguments must be valid JSON.");
-      return 1;
-    }
-  }
-
-  const result = await callMcpTool(io, serverId, toolName, parsedArgs);
-  if (!result.ok) {
-    writeLine(io.stderr, result.error);
-    return 1;
-  }
-  writeLine(io.stdout, result.text);
-  return 0;
-}
-
-export async function main(
-  argv = process.argv.slice(2),
-  io: CliIO = {
-    stdout: process.stdout,
-    stderr: process.stderr,
-    env: process.env,
-    cwd: process.cwd(),
-    fetch: globalThis.fetch,
-  }
-): Promise<number> {
-  const [group, command, ...rest] = argv;
-  if (!group || group === "help" || group === "--help" || group === "-h") {
-    return printHelp(io);
-  }
-  if (group === "tools" && command === "sources") return toolsSources(io);
-  if (group === "tools" && command === "search") return toolsSearch(io, rest.join(" "));
-  if (group === "tools" && command === "describe") return toolsDescribe(io, rest);
-  if (group === "call") return callTool(io, [command ?? "", ...rest]);
-  printHelp(io);
-  return 1;
-}
-
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  process.exitCode = await main();
 }

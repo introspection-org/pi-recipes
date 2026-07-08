@@ -259,21 +259,30 @@ The `mcp:*` entries are policy references, not Pi tool names. When the selected
 agent declares MCP refs, the extension writes a session-local shim at
 `.pi/bin/mcp` and prepends `.pi/bin` to `PATH` for commands run from that Pi
 session. When configured endpoints expose matching allowed tools, the extension
-also writes the filtered manifest to `.pi/mcp.json` in the workspace. Agents can
-use:
+also writes the filtered manifest to `.pi/mcp.json` and an
+[mcporter](https://github.com/openclaw/mcporter) config to `.pi/mcporter.json`
+in the workspace. Agents can use:
 
 ```bash
-mcp tools sources
-mcp tools search "contact"
-mcp tools describe contacts search_contacts
-mcp call contacts search_contacts '{"query":"staff engineer"}'
+mcp list                                 # servers and their tools
+mcp list contacts --schema               # parameter schemas per tool
+mcp call contacts.search_contacts query="staff engineer"
+mcp call 'contacts.search_contacts(query: "staff engineer", limit: 5)'
 ```
 
-The package bundles the CLI implementation, but does not publish `mcp` as a
-normal global command. The launched Pi session owns setup for the command.
+Arguments are `key=value` / `key:value` pairs with automatic type coercion, or
+a function-call expression for nested objects and arrays; `key=@file.md` reads
+a value from a file, and `--output json` prints a machine-parseable result.
 
-The session records the generated paths in `PI_RECIPES_MCP_MANIFEST` and
-`PI_RECIPES_MCP_BIN_DIR`.
+The `mcp` command is mcporter, installed as a package dependency; the shim pins
+`MCPORTER_CONFIG` to the generated session config, so a recipe session only
+ever sees the servers and tools its policy allows — never host-level mcporter
+or editor MCP configs. Header values in the generated config stay `${VAR}`
+environment references; secrets are resolved by mcporter at call time and are
+not written to disk.
+
+The session records the generated paths in `PI_RECIPES_MCP_MANIFEST`,
+`MCPORTER_CONFIG`, and `PI_RECIPES_MCP_BIN_DIR`.
 
 For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
 directory. To override that path, set `PI_RECIPES_MCP_LOCAL_CONFIG`. Header

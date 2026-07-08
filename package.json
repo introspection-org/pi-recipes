@@ -86,7 +86,7 @@
   },
   "scripts": {
     "build": "pnpm build:ts && pnpm build:recipe-check",
-    "build:ts": "rm -rf dist && tsc && chmod +x dist/cli.js dist/mcp.js",
+    "build:ts": "rm -rf dist && tsc && chmod +x dist/cli.js",
     "build:recipe-check": "cargo build --release -p recipe-check && node scripts/package-recipe-check.mjs",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
@@ -95,6 +95,7 @@
     "clean": "rm -rf dist .turbo node_modules target vendor/recipe-check"
   },
   "dependencies": {
+    "mcporter": "0.12.3",
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
