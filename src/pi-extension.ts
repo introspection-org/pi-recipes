@@ -738,7 +738,7 @@ export function createPiRecipesExtension(
 
   function storeFor(cwd: string): ChildAgentRunStore {
     if (runStore?.cwd !== cwd) {
-      runStore = { cwd, store: new ChildAgentRunStore(cwd) };
+      runStore = { cwd, store: new ChildAgentRunStore(cwd, env) };
     }
     return runStore.store;
   }
@@ -756,7 +756,7 @@ export function createPiRecipesExtension(
   }
 
   /**
-   * Restore run snapshots persisted under `.pi/agents/` by a previous Pi
+   * Restore run snapshots persisted by a previous Pi
    * process, so run ids referenced in a resumed conversation stay resolvable.
    * A run persisted as `running` died with the old process — it is flipped to
    * `interrupted` (never silently "resumed"). Returns the number restored.

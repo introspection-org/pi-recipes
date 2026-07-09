@@ -48,6 +48,8 @@
     "dist/recipe-store.js",
     "dist/recipe-telemetry.d.ts",
     "dist/recipe-telemetry.js",
+    "dist/runtime-paths.d.ts",
+    "dist/runtime-paths.js",
     "harbor/pi_recipe_agent.py",
     "vendor/recipe-check",
     "docs",

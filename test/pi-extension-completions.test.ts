@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createPiRecipesExtension } from "../src/pi-extension.js";
+import { childAgentRunsDir, RECIPE_RUNTIME_DIR_ENV } from "../src/runtime-paths.js";
 import { createMockExtensionAPI, type MockExtensionAPI } from "../src/testing.js";
 
 function extensionContext(cwd: string, opts: { isIdle?: () => boolean } = {}) {
@@ -97,11 +98,14 @@ async function startSession(
   const recipeDir = writeRecipe(root);
   const projectDir = join(root, "project");
   mkdirSync(projectDir, { recursive: true });
+  const env: NodeJS.ProcessEnv = {
+    [RECIPE_RUNTIME_DIR_ENV]: join(root, "runtime"),
+  };
   const pi = createMockExtensionAPI();
   pi.flagValues.set("recipe", recipeDir);
   pi.flagValues.set("agent", "main");
   const ctx = extensionContext(projectDir, ctxOpts);
-  createPiRecipesExtension({ createChildAgentRunner: createChildAgentRunner as any })(pi);
+  createPiRecipesExtension({ createChildAgentRunner: createChildAgentRunner as any, env })(pi);
   await pi.emitExtensionEvent({ type: "session_start", reason: "startup" } as any, ctx);
   return { pi, ctx, projectDir };
 }
@@ -121,10 +125,11 @@ function completionMessages(pi: MockExtensionAPI) {
 /** Wait until the run's persisted snapshot reaches a terminal status. */
 async function waitForPersistedStatus(
   projectDir: string,
+  runtimeDir: string,
   id: string,
   status: string
 ): Promise<void> {
-  const path = join(projectDir, ".pi", "agents", id, "status.json");
+  const path = join(childAgentRunsDir(projectDir, { [RECIPE_RUNTIME_DIR_ENV]: runtimeDir }), id, "status.json");
   await vi.waitFor(() => {
     expect(existsSync(path)).toBe(true);
     expect(JSON.parse(readFileSync(path, "utf8")).status).toBe(status);
@@ -147,7 +152,7 @@ describe("recipe child agent completion delivery", () => {
       );
       const id = started?.details?.id as string;
       pool.runs[0]?.finish("background result");
-      await waitForPersistedStatus(projectDir, id, "completed");
+      await waitForPersistedStatus(projectDir, join(root, "runtime"), id, "completed");
 
       // Settle boundary: flush without waiting out the batch window.
       await pi.emitExtensionEvent({ type: "agent_end", messages: [] } as any, ctx);
@@ -247,8 +252,8 @@ describe("recipe child agent completion delivery", () => {
       const secondId = second?.details?.id as string;
       pool.runs[0]?.finish("one done");
       pool.runs[1]?.finish("two done");
-      await waitForPersistedStatus(projectDir, firstId, "completed");
-      await waitForPersistedStatus(projectDir, secondId, "completed");
+      await waitForPersistedStatus(projectDir, join(root, "runtime"), firstId, "completed");
+      await waitForPersistedStatus(projectDir, join(root, "runtime"), secondId, "completed");
 
       await agentTool(pi).execute(
         "call-3",
