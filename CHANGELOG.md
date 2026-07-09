@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/introspection-org/pi-recipes/compare/v0.4.1...v0.5.0) (2026-07-09)
+
+
+### Features
+
+* recipe agent model config (stream options, provider routing) ([1f0afc8](https://github.com/introspection-org/pi-recipes/commit/1f0afc83fab2af303c295b8abbc9ff3dd7a1cdd4))
+* shared mcp CLI prompt section and skillsDeclared flag ([7fe5a08](https://github.com/introspection-org/pi-recipes/commit/7fe5a085c5f322d63015884f5ef8ea91d4cb622c))
+
+
+### Bug Fixes
+
+* build CLI artifacts before tests ([a22e748](https://github.com/introspection-org/pi-recipes/commit/a22e7485ba1848b2bb5bce9d46569c7dfa8ecfe4))
+* detect symlinked mcp CLI entry so pnpm and bin-shim launches run ([67e69d1](https://github.com/introspection-org/pi-recipes/commit/67e69d1d7dcb77389f4a29485f0cbdd38245e035))
+* name bootstrap MCP servers from serverInfo and the endpoint label ([52b60ac](https://github.com/introspection-org/pi-recipes/commit/52b60accdc5cf32159ca91aa6e3ba311eb25059e))
+* validate agent MCP refs against recipe policy ([ed20943](https://github.com/introspection-org/pi-recipes/commit/ed209431163fac21cc7ec16b20b87e0d3285a05c))
+
 ## [0.4.1](https://github.com/introspection-org/pi-recipes/compare/v0.4.0...v0.4.1) (2026-07-09)
 
 
