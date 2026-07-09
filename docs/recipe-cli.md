@@ -277,17 +277,28 @@ tools:
 The extension writes `.pi/bin/mcp` and makes that shim available on `PATH` for
 bash commands run inside the launched Pi session. When configured endpoints
 expose matching allowed tools, it filters the manifest for the active agent and
-writes a workspace-local `.pi/mcp.json`. Agents use:
+writes a workspace-local `.pi/mcp.json` plus an
+[mcporter](https://github.com/openclaw/mcporter) config at `.pi/mcporter.json`.
+Agents use:
 
 ```bash
-mcp tools sources
-mcp tools search "contact"
-mcp tools describe contacts search_contacts
-mcp call contacts search_contacts '{"query":"staff engineer"}'
+mcp search "contact lookup"              # find relevant tool references
+mcp list                                 # servers and their tools
+mcp list contacts --schema               # parameter schemas per tool
+mcp list contacts.search_contacts --schema
+mcp call contacts.search_contacts query="Ada Lovelace"
+mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
+mcp run <<'EOF'                          # multi-step JavaScript workflow
+const result = await tools.contacts.search_contacts({ query: "Ada Lovelace" })
+console.log(JSON.stringify(result, null, 2))
+EOF
 ```
 
-Outside the Pi session, `mcp` is not a normal package-level command; the
-launched session owns the CLI setup.
+The `mcp` command is a pi-recipes wrapper backed by mcporter (a package
+dependency), locked to the generated session config via `MCPORTER_CONFIG` — a
+recipe session never reads host-level mcporter or editor MCP configs. Outside
+the Pi session, `mcp` is not a normal package-level command; the launched
+session owns the CLI setup.
 
 For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
 directory. Workspace config wins over recipe config. To override that path, set

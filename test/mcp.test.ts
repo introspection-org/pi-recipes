@@ -1,78 +1,60 @@
+import { spawn } from "node:child_process";
+import { createServer, type Server } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createDelegatedErrorFilter,
+  rebrandDelegatedOutput,
+  runMcpJavaScript,
+  searchMcpTools,
+} from "../src/mcp-cli.js";
+import {
+  buildMcporterConfig,
+  clearRecipeMcpManifest,
   configureMcpLocalConfigPath,
-  localMcpHeadersForServer,
-  main,
+  defaultMcporterConfigPath,
   materializeRecipeMcpManifest,
-} from "../src/mcp.js";
+  materializeSessionMcpCli,
+  mcpCliEntrypointPath,
+  mcporterCliEntrypointPath,
+  type RecipePackageManifest,
+} from "../src/index.js";
 
 const originalFetch = globalThis.fetch;
 
-function testIo(env: Record<string, string> = {}) {
-  let stdout = "";
-  let stderr = "";
+function recipeManifest(
+  recipeDir: string,
+  servers: Array<{ id: string; required?: boolean; allow?: string[] }>
+): RecipePackageManifest {
   return {
-    io: {
-      stdout: { write: (chunk: string) => void (stdout += chunk) },
-      stderr: { write: (chunk: string) => void (stderr += chunk) },
-      env,
-      cwd: process.cwd(),
-      fetch: globalThis.fetch,
+    name: "demo",
+    version: "1.0.0",
+    path: recipeDir,
+    resources: {
+      agents: [],
+      extensions: [],
+      skills: [],
+      prompts: [],
     },
-    output: () => ({ stdout, stderr }),
+    mcp: {
+      manifests: [],
+      servers: servers.map((server) => ({
+        id: server.id,
+        required: server.required ?? false,
+        tools: { allow: server.allow ?? [] },
+      })),
+    },
+    evals: { suites: [] },
   };
 }
 
-function writeManifest() {
-  const dir = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-"));
-  const path = join(dir, "mcp.json");
-  writeFileSync(
-    path,
-    JSON.stringify({
-      servers: [
-        {
-          id: "partner-mcp",
-          name: "Partner MCP",
-          host: "host.docker.internal",
-          base_url: "http://host.docker.internal:3200/api/mcp",
-          transport: "streamable_http",
-          tools: [
-            {
-              name: "get_value",
-              description: "Read a value.",
-              input_schema: {
-                type: "object",
-                properties: { key: { type: "string" } },
-              },
-            },
-          ],
-        },
-      ],
-    })
-  );
-  return { dir, path };
-}
-
-function writeLocalConfig() {
-  const dir = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-local-"));
-  const path = join(dir, "mcp.local.json");
-  writeFileSync(
-    path,
-    JSON.stringify({
-      servers: [
-        {
-          id: "partner-mcp",
-          transport: "streamable_http",
-          url: "http://127.0.0.1:3200/mcp",
-          headers: { Authorization: "Bearer ${PARTNER_TOKEN}" },
-        },
-      ],
-    })
-  );
-  return { dir, path };
+function writeLocalConfig(dir: string, servers: unknown[]): string {
+  const path = join(dir, ".pi", "mcp.local.json");
+  mkdirSync(join(dir, ".pi"), { recursive: true });
+  writeFileSync(path, JSON.stringify({ servers }));
+  return path;
 }
 
 function jsonResponse(payload: unknown, headers: Record<string, string> = {}): Response {
@@ -82,56 +64,16 @@ function jsonResponse(payload: unknown, headers: Record<string, string> = {}): R
   });
 }
 
-describe("mcp CLI", () => {
+function readMcporterConfig(cwd: string): {
+  imports: string[];
+  mcpServers: Record<string, { baseUrl: string; headers: Record<string, string>; allowedTools: string[] }>;
+} {
+  return JSON.parse(readFileSync(defaultMcporterConfigPath(cwd), "utf8"));
+}
+
+describe("recipe MCP materialization", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
-  });
-
-  it("lists and describes tools from the configured manifest", async () => {
-    const { dir, path } = writeManifest();
-    try {
-      const sources = testIo({ PI_RECIPES_MCP_MANIFEST: path });
-      expect(await main(["tools", "sources"], sources.io)).toBe(0);
-      expect(sources.output().stdout).toContain("partner-mcp");
-      expect(sources.output().stdout).toContain("1 tools");
-
-      const describe = testIo({ PI_RECIPES_MCP_MANIFEST: path });
-      expect(
-        await main(["tools", "describe", "partner-mcp.get_value"], describe.io)
-      ).toBe(0);
-      expect(describe.output().stdout).toContain('"name": "get_value"');
-      expect(describe.output().stdout).toContain('"input_schema"');
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("accepts the legacy manifest env var as an alias", async () => {
-    const { dir, path } = writeManifest();
-    try {
-      const sources = testIo({ INTROSPECTION_MCP_MANIFEST: path });
-      expect(await main(["tools", "sources"], sources.io)).toBe(0);
-      expect(sources.output().stdout).toContain("partner-mcp");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("reads local MCP bindings from the pi-recipes config env var", () => {
-    const { dir, path } = writeLocalConfig();
-    try {
-      expect(
-        localMcpHeadersForServer("partner-mcp", {
-          cwd: dir,
-          env: {
-            PI_RECIPES_MCP_LOCAL_CONFIG: path,
-            PARTNER_TOKEN: "secret",
-          },
-        })
-      ).toEqual({ Authorization: "Bearer secret" });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 
   it("configures the session local MCP config path from workspace or recipe files", () => {
@@ -173,19 +115,19 @@ describe("mcp CLI", () => {
   });
 
   it("accepts the legacy local MCP config env var as an alias", () => {
-    const { dir, path } = writeLocalConfig();
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-legacy-"));
     try {
+      const configured = join(root, "custom.local.json");
+      writeFileSync(configured, JSON.stringify({ servers: [] }));
+      const env: NodeJS.ProcessEnv = {
+        INTROSPECTION_MCP_LOCAL_CONFIG: configured,
+      };
       expect(
-        localMcpHeadersForServer("partner-mcp", {
-          cwd: dir,
-          env: {
-            INTROSPECTION_MCP_LOCAL_CONFIG: path,
-            PARTNER_TOKEN: "secret",
-          },
-        })
-      ).toEqual({ Authorization: "Bearer secret" });
+        configureMcpLocalConfigPath({ cwd: root, recipeDir: root, env })
+      ).toBe(configured);
+      expect(env.PI_RECIPES_MCP_LOCAL_CONFIG).toBe(configured);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -209,20 +151,14 @@ describe("mcp CLI", () => {
           ],
         })
       );
-      const localConfig = join(cwd, ".pi", "mcp.local.json");
-      writeFileSync(
-        localConfig,
-        JSON.stringify({
-          servers: [
-            {
-              id: "slack",
-              transport: "streamable_http",
-              url: "${SLACK_MCP_URL}",
-              headers: { Authorization: "Bearer ${SLACK_MCP_TOKEN}" },
-            },
-          ],
-        })
-      );
+      const localConfig = writeLocalConfig(cwd, [
+        {
+          id: "slack",
+          transport: "streamable_http",
+          url: "${SLACK_MCP_URL}",
+          headers: { Authorization: "Bearer ${SLACK_MCP_TOKEN}" },
+        },
+      ]);
 
       const env: NodeJS.ProcessEnv = {
         PI_RECIPES_MCP_LOCAL_CONFIG: localConfig,
@@ -239,28 +175,9 @@ describe("mcp CLI", () => {
         env,
         fetch: fetchImpl,
         agentTools: ["mcp:slack/slack_list_threads"],
-        manifest: {
-          name: "demo",
-          version: "1.0.0",
-          path: recipeDir,
-          resources: {
-            agents: [],
-            extensions: [],
-            skills: [],
-            prompts: [],
-          },
-          mcp: {
-            manifests: [],
-            servers: [
-              {
-                id: "slack",
-                required: false,
-                tools: { allow: ["slack_list_threads"] },
-              },
-            ],
-          },
-          evals: { suites: [] },
-        },
+        manifest: recipeManifest(recipeDir, [
+          { id: "slack", allow: ["slack_list_threads"] },
+        ]),
       });
 
       expect(env.PI_RECIPES_MCP_MANIFEST).toBeUndefined();
@@ -275,6 +192,11 @@ describe("mcp CLI", () => {
         },
       ]);
       expect(existsSync(staleManifest)).toBe(false);
+
+      // An empty mcporter config is still written so a stale `mcp` shim
+      // resolves to "no servers", never to mcporter's host-level configs.
+      expect(env.MCPORTER_CONFIG).toBe(defaultMcporterConfigPath(cwd));
+      expect(readMcporterConfig(cwd)).toEqual({ imports: [], mcpServers: {} });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -285,26 +207,21 @@ describe("mcp CLI", () => {
     try {
       const cwd = join(root, "workspace");
       const recipeDir = join(root, "recipe");
-      mkdirSync(join(cwd, ".pi"), { recursive: true });
       mkdirSync(recipeDir, { recursive: true });
-      const localConfig = join(cwd, ".pi", "mcp.local.json");
-      writeFileSync(
-        localConfig,
-        JSON.stringify({
-          servers: [
-            {
-              id: "slack",
-              transport: "streamable_http",
-              url: "http://127.0.0.1:3201/mcp",
-              headers: { Authorization: "Bearer ${SLACK_MCP_TOKEN}" },
-            },
-          ],
-        })
-      );
+      const localConfig = writeLocalConfig(cwd, [
+        {
+          id: "slack",
+          transport: "streamable_http",
+          url: "http://127.0.0.1:3201/mcp",
+          headers: { Authorization: "Bearer ${SLACK_MCP_TOKEN}" },
+        },
+      ]);
 
+      const auths: Array<string | undefined> = [];
       const fetchImpl = vi.fn(
         async (_input: RequestInfo | URL, init?: RequestInit) => {
           const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+          auths.push((init?.headers as Record<string, string>).Authorization);
           if (body.method === "initialize") {
             return jsonResponse(
               { jsonrpc: "2.0", id: 1, result: {} },
@@ -336,28 +253,9 @@ describe("mcp CLI", () => {
         },
         fetch: fetchImpl,
         agentTools: ["mcp:slack/slack_list_threads"],
-        manifest: {
-          name: "demo",
-          version: "1.0.0",
-          path: recipeDir,
-          resources: {
-            agents: [],
-            extensions: [],
-            skills: [],
-            prompts: [],
-          },
-          mcp: {
-            manifests: [],
-            servers: [
-              {
-                id: "slack",
-                required: false,
-                tools: { allow: ["slack_list_threads"] },
-              },
-            ],
-          },
-          evals: { suites: [] },
-        },
+        manifest: recipeManifest(recipeDir, [
+          { id: "slack", allow: ["slack_list_threads"] },
+        ]),
       });
 
       expect(manifest.servers).toEqual([]);
@@ -367,6 +265,8 @@ describe("mcp CLI", () => {
       });
       expect(manifest.diagnostics?.[0]?.message).toContain("slack_fetch");
       expect(manifest.diagnostics?.[0]?.message).toContain("slack_list_threads");
+      // Discovery calls interpolate `${VAR}` refs from the environment.
+      expect(auths.every((auth) => auth === "Bearer slack-token")).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -413,28 +313,9 @@ describe("mcp CLI", () => {
         env,
         fetch: globalThis.fetch,
         agentTools: ["mcp:slack/slack_read_channel"],
-        manifest: {
-          name: "demo",
-          version: "1.0.0",
-          path: recipeDir,
-          resources: {
-            agents: [],
-            extensions: [],
-            skills: [],
-            prompts: [],
-          },
-          mcp: {
-            manifests: [],
-            servers: [
-              {
-                id: "slack",
-                required: false,
-                tools: { allow: ["slack_read_channel"] },
-              },
-            ],
-          },
-          evals: { suites: [] },
-        },
+        manifest: recipeManifest(recipeDir, [
+          { id: "slack", allow: ["slack_read_channel"] },
+        ]),
       });
 
       const description = manifest.servers?.[0]?.tools?.[0]?.description ?? "";
@@ -444,115 +325,480 @@ describe("mcp CLI", () => {
       expect(description).not.toContain("slack_search_channels");
       expect(description).not.toContain("slack_read_thread");
       expect(description).toContain("[unavailable MCP tool]");
+
+      // The mcporter config mirrors the filtered manifest: only allowed
+      // tools, session-token header as an env reference (never a value).
+      expect(env.MCPORTER_CONFIG).toBe(defaultMcporterConfigPath(cwd));
+      expect(readMcporterConfig(cwd)).toEqual({
+        imports: [],
+        mcpServers: {
+          slack: {
+            baseUrl: "https://mcp.slack.com/mcp",
+            headers: { Authorization: "Bearer ${INTROSPECTION_TOKEN}" },
+            allowedTools: ["slack_read_channel"],
+          },
+        },
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("calls MCP tools with the session token", async () => {
-    const { dir, path } = writeManifest();
-    const calls: Array<{ method?: string; auth?: string; protocol?: string; session?: string }> = [];
-    globalThis.fetch = vi.fn(
-      async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-        const headers = init?.headers as Record<string, string>;
-        calls.push({
-          method: body.method,
-          auth: headers.Authorization,
-          protocol: headers["MCP-Protocol-Version"],
-          session: headers["Mcp-Session-Id"],
-        });
-        if (body.method === "initialize") {
-          return jsonResponse(
-            { jsonrpc: "2.0", id: 1, result: {} },
-            { "mcp-session-id": "mcp-session-1" }
-          );
-        }
-        if (body.method === "notifications/initialized") {
-          return jsonResponse({ jsonrpc: "2.0", result: {} });
-        }
-        return jsonResponse({
-          jsonrpc: "2.0",
-          id: 2,
-          result: { content: [{ type: "text", text: "teal" }] },
-        });
-      }
-    ) as unknown as typeof fetch;
-
+  it("projects local bindings into the mcporter config with raw header refs", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcporter-local-"));
     try {
-      const cli = testIo({
-        PI_RECIPES_MCP_MANIFEST: path,
-        INTROSPECTION_TOKEN: "session-token",
-      });
-      cli.io.fetch = globalThis.fetch;
-      expect(
-        await main(["call", "partner-mcp", "get_value", '{"key":"color"}'], cli.io)
-      ).toBe(0);
-      expect(cli.output().stdout).toContain("teal");
-      expect(calls).toEqual([
+      const localConfig = writeLocalConfig(root, [
         {
-          method: "initialize",
-          auth: "Bearer session-token",
-          protocol: "2025-03-26",
-          session: undefined,
-        },
-        {
-          method: "notifications/initialized",
-          auth: "Bearer session-token",
-          protocol: "2025-03-26",
-          session: "mcp-session-1",
-        },
-        {
-          method: "tools/call",
-          auth: "Bearer session-token",
-          protocol: "2025-03-26",
-          session: "mcp-session-1",
+          id: "slack",
+          transport: "streamable_http",
+          url: "http://127.0.0.1:3201/mcp",
+          headers: { Authorization: "Bearer ${SLACK_MCP_TOKEN}" },
         },
       ]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("prints HTTP MCP error details from failed tool calls", async () => {
-    const { dir, path } = writeManifest();
-    globalThis.fetch = vi.fn(
-      async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-        if (body.method === "initialize") {
-          return jsonResponse(
-            { jsonrpc: "2.0", id: 1, result: {} },
-            { "mcp-session-id": "mcp-session-1" }
-          );
+      const config = buildMcporterConfig(
+        {
+          servers: [
+            {
+              id: "slack",
+              base_url: "http://127.0.0.1:3201/mcp",
+              tools: [{ name: "slack_search" }],
+            },
+          ],
+        },
+        {
+          cwd: root,
+          env: {
+            PI_RECIPES_MCP_LOCAL_CONFIG: localConfig,
+            SLACK_MCP_TOKEN: "resolved-secret",
+          },
         }
-        if (body.method === "notifications/initialized") {
-          return jsonResponse({ jsonrpc: "2.0", result: {} });
-        }
-        return new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 2,
-            error: { code: -32602, message: "channel_name is required" },
-          }),
-          { status: 400, headers: { "content-type": "application/json" } }
-        );
-      }
-    ) as unknown as typeof fetch;
+      );
 
-    try {
-      const cli = testIo({
-        PI_RECIPES_MCP_MANIFEST: path,
-        INTROSPECTION_TOKEN: "session-token",
+      // The `${VAR}` reference is emitted verbatim — never the resolved
+      // secret — because mcporter interpolates env refs at config load.
+      expect(config).toEqual({
+        imports: [],
+        mcpServers: {
+          slack: {
+            baseUrl: "http://127.0.0.1:3201/mcp",
+            headers: { Authorization: "Bearer ${SLACK_MCP_TOKEN}" },
+            allowedTools: ["slack_search"],
+          },
+        },
       });
-      cli.io.fetch = globalThis.fetch;
-
-      expect(
-        await main(["call", "partner-mcp", "get_value", '{"channel":"support"}'], cli.io)
-      ).toBe(1);
-      expect(cli.output().stderr).toContain("MCP call failed: HTTP 400");
-      expect(cli.output().stderr).toContain("channel_name is required");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("clears to an empty mcporter config so stale shims cannot see host servers", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcporter-clear-"));
+    try {
+      const env: NodeJS.ProcessEnv = {};
+      await clearRecipeMcpManifest(env, root);
+      expect(env.MCPORTER_CONFIG).toBe(defaultMcporterConfigPath(root));
+      expect(readMcporterConfig(root)).toEqual({ imports: [], mcpServers: {} });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes an mcp shim that pins MCPORTER_CONFIG and execs the recipe mcp CLI", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-shim-"));
+    try {
+      const env: NodeJS.ProcessEnv = {};
+      const { binDir, shimPath } = await materializeSessionMcpCli({ cwd: root, env });
+      const script = readFileSync(shimPath, "utf8");
+      expect(script).toContain(mcpCliEntrypointPath());
+      expect(script).toContain(`MCPORTER_CONFIG:=${defaultMcporterConfigPath(root)}`);
+      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(binDir);
+      expect(env.PATH?.split(":")).toContain(binDir);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("searches the allowed MCP catalog and returns tool references", () => {
+    const matches = searchMcpTools(
+      {
+        servers: [
+          {
+            id: "contacts",
+            base_url: "http://example.test/mcp",
+            tools: [
+              {
+                name: "search_contacts",
+                description: "Search contacts by name, company, location, and notes.",
+                input_schema: {
+                  type: "object",
+                  properties: {
+                    q: { type: "string", description: "Natural language contact query" },
+                    city: { type: "string", description: "City filter" },
+                  },
+                  required: ["q"],
+                },
+              },
+              {
+                name: "add_shortlist_entry",
+                description: "Add a person to the shortlist.",
+                input_schema: {
+                  type: "object",
+                  properties: {
+                    personId: { type: "string", description: "Profile identifier" },
+                  },
+                  required: ["personId"],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      "candidate location search",
+      { limit: 1 }
+    );
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.ref).toBe("contacts.search_contacts");
+    expect(matches[0]?.inspect).toBe("mcp list contacts.search_contacts --schema");
+    expect(matches[0]?.call).toBe("mcp call contacts.search_contacts q:'example query'");
+  });
+
+  it("supports regex search over names, descriptions, and argument metadata", () => {
+    const matches = searchMcpTools(
+      {
+        servers: [
+          {
+            id: "linear",
+            base_url: "http://example.test/mcp",
+            tools: [
+              {
+                name: "create_comment",
+                description: "Create an issue comment.",
+                input_schema: {
+                  type: "object",
+                  properties: {
+                    issueId: { type: "string", description: "Linear issue identifier" },
+                    body: { type: "string", description: "Comment markdown" },
+                  },
+                  required: ["issueId", "body"],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      "markdown",
+      { regex: true }
+    );
+
+    expect(matches.map((match) => match.ref)).toEqual(["linear.create_comment"]);
+  });
+
+  it("rebrands delegated mcporter output as the recipe mcp command", () => {
+    expect(
+      rebrandDelegatedOutput(
+        [
+          "mcporter 0.12.3 — Listing 1 server(s)",
+          "Examples:",
+          "  mcporter call contacts.search_contacts q:'Ada Lovelace'",
+        ].join("\n")
+      )
+    ).toBe(
+      [
+        "Listing 1 server(s)",
+        "Examples:",
+        "  mcp call contacts.search_contacts q:'Ada Lovelace'",
+      ].join("\n")
+    );
+  });
+
+  it("rewrites the blocked-by-configuration error into an actionable hint", () => {
+    expect(
+      rebrandDelegatedOutput(
+        "Tool 'search_people' is not accessible on server 'nextplay' (blocked by configuration)."
+      )
+    ).toBe(
+      "Tool 'search_people' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools."
+    );
+  });
+
+  it("appends a bearer-token hint when OAuth metadata discovery fails", () => {
+    const out: string[] = [];
+    const filter = createDelegatedErrorFilter((text) => out.push(text));
+    filter.push("[mcporter] HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server\n");
+    filter.push("Error: HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server\n");
+    filter.flush();
+    expect(out.join("")).toBe(
+      [
+        "[mcp] HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server",
+        "Error: HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server",
+        "Hint: this server is called with a configured bearer token; the token may be invalid or expired.",
+        "",
+      ].join("\n")
+    );
+  });
+
+  it("drops upstream stack frames from delegated stderr but keeps message lines", () => {
+    const out: string[] = [];
+    const filter = createDelegatedErrorFilter((text) => out.push(text));
+    filter.push("[mcporter] Tool 'x' is not accessible on server 'nextplay' (blocked by configuration).\n");
+    filter.push("Error: Tool 'x' is not accessible on server 'nextplay' (blocked by configuration).\n");
+    filter.push("    at McpRuntime.callTool (file:///tmp/mcporter/dist/runtime.js:174:19)\n");
+    filter.push("    at async main (file:///tmp/mcporter/di");
+    filter.push("st/cli.js:365:5)\n");
+    filter.flush();
+    expect(out.join("")).toBe(
+      [
+        "[mcp] Tool 'x' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools.",
+        "Error: Tool 'x' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools.",
+        "",
+      ].join("\n")
+    );
+  });
+});
+
+describe("mcporter CLI end-to-end", () => {
+  function startStubMcpServer(expectedAuth: string): Promise<{ server: Server; url: string }> {
+    const sessions = new Set<string>();
+    const server = createServer((req, res) => {
+      // The MCP SDK streamable-HTTP client also opens a GET SSE stream and
+      // DELETEs the session on close; only POSTs carry JSON-RPC bodies.
+      if (req.method === "GET") {
+        res.writeHead(405).end();
+        return;
+      }
+      if (req.method === "DELETE") {
+        res.writeHead(200).end();
+        return;
+      }
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        if ((req.headers.authorization ?? "") !== expectedAuth) {
+          res.writeHead(401).end(JSON.stringify({ error: "unauthorized" }));
+          return;
+        }
+        const msg = JSON.parse(body) as { id?: number; method?: string; params?: { name?: string; arguments?: unknown } };
+        const headers: Record<string, string> = { "content-type": "application/json" };
+        if (msg.method === "initialize") {
+          const sid = `sess-${sessions.size + 1}`;
+          sessions.add(sid);
+          headers["mcp-session-id"] = sid;
+          res.writeHead(200, headers).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                protocolVersion: "2025-03-26",
+                capabilities: { tools: {} },
+                serverInfo: { name: "stub", version: "1.0.0" },
+              },
+            })
+          );
+          return;
+        }
+        const sid = req.headers["mcp-session-id"];
+        if (typeof sid !== "string" || !sessions.has(sid)) {
+          res.writeHead(400, headers).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id ?? null,
+              error: { code: -32000, message: "No valid session ID" },
+            })
+          );
+          return;
+        }
+        if (msg.method === "notifications/initialized") {
+          res.writeHead(202, headers).end();
+          return;
+        }
+        if (msg.method === "tools/list") {
+          res.writeHead(200, headers).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                tools: [
+                  {
+                    name: "get_value",
+                    description: "Get a value",
+                    inputSchema: {
+                      type: "object",
+                      properties: { key: { type: "string" } },
+                      required: ["key"],
+                    },
+                  },
+                  { name: "hidden_tool", description: "Filtered out", inputSchema: { type: "object", properties: {} } },
+                ],
+              },
+            })
+          );
+          return;
+        }
+        if (msg.method === "tools/call") {
+          const args = msg.params?.arguments as { key?: string } | undefined;
+          const result =
+            args?.key === "explode"
+              ? {
+                  isError: true,
+                  content: [{ type: "text", text: "stub failure: explode" }],
+                }
+              : {
+                  content: [
+                    {
+                      type: "text",
+                      text: `called ${msg.params?.name} with ${JSON.stringify(msg.params?.arguments)}`,
+                    },
+                  ],
+                };
+          res.writeHead(200, headers).end(
+            JSON.stringify({ jsonrpc: "2.0", id: msg.id, result })
+          );
+          return;
+        }
+        res.writeHead(200, headers).end(JSON.stringify({ jsonrpc: "2.0", id: msg.id ?? null, result: {} }));
+      });
+    });
+    return new Promise((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        const port = typeof address === "object" && address ? address.port : 0;
+        resolve({ server, url: `http://127.0.0.1:${port}/mcp` });
+      });
+    });
+  }
+
+  function runMcporter(
+    args: string[],
+    env: Record<string, string>
+  ): Promise<{ code: number | null; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, [mcporterCliEntrypointPath(), ...args], {
+        env: { ...process.env, ...env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => (stdout += chunk));
+      child.stderr.on("data", (chunk) => (stderr += chunk));
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+    });
+  }
+
+  it("drives the real mcporter binary from a generated config", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcporter-e2e-"));
+    const { server, url } = await startStubMcpServer("Bearer stub-token");
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(recipeDir, { recursive: true });
+      const localConfig = writeLocalConfig(cwd, [
+        {
+          id: "stub",
+          transport: "streamable_http",
+          url,
+          headers: { Authorization: "Bearer ${STUB_MCP_TOKEN}" },
+        },
+      ]);
+      const env: NodeJS.ProcessEnv = {
+        PI_RECIPES_MCP_LOCAL_CONFIG: localConfig,
+        STUB_MCP_TOKEN: "stub-token",
+      };
+      const manifest = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: globalThis.fetch,
+        agentTools: ["mcp:stub/get_value"],
+        manifest: recipeManifest(recipeDir, [{ id: "stub", allow: ["get_value"] }]),
+      });
+      expect(manifest.servers).toHaveLength(1);
+      const configEnv = {
+        MCPORTER_CONFIG: env.MCPORTER_CONFIG!,
+        STUB_MCP_TOKEN: "stub-token",
+      };
+
+      const list = await runMcporter(["list", "stub", "--json"], configEnv);
+      expect(list.code).toBe(0);
+      const listed = JSON.parse(list.stdout) as {
+        status: string;
+        tools: Array<{ name: string }>;
+      };
+      expect(listed.status).toBe("ok");
+      expect(listed.tools.map((tool) => tool.name)).toEqual(["get_value"]);
+
+      const call = await runMcporter(["call", "stub.get_value", "key=color"], configEnv);
+      expect(call.code).toBe(0);
+      expect(call.stdout).toContain('called get_value with {"key":"color"}');
+
+      // allowedTools gates calls, not just listings.
+      const blocked = await runMcporter(["call", "stub.hidden_tool"], configEnv);
+      expect(blocked.code).toBe(1);
+    } finally {
+      server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("runs JavaScript with recipe MCP tools injected", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-run-"));
+    const { server, url } = await startStubMcpServer("Bearer stub-token");
+    const previousConfig = process.env.MCPORTER_CONFIG;
+    const previousToken = process.env.STUB_MCP_TOKEN;
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(recipeDir, { recursive: true });
+      const localConfig = writeLocalConfig(cwd, [
+        {
+          id: "stub",
+          transport: "streamable_http",
+          url,
+          headers: { Authorization: "Bearer ${STUB_MCP_TOKEN}" },
+        },
+      ]);
+      const env: NodeJS.ProcessEnv = {
+        PI_RECIPES_MCP_LOCAL_CONFIG: localConfig,
+        STUB_MCP_TOKEN: "stub-token",
+      };
+      await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: globalThis.fetch,
+        agentTools: ["mcp:stub/get_value"],
+        manifest: recipeManifest(recipeDir, [{ id: "stub", allow: ["get_value"] }]),
+      });
+      process.env.MCPORTER_CONFIG = env.MCPORTER_CONFIG;
+      process.env.STUB_MCP_TOKEN = "stub-token";
+      (globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke = undefined;
+
+      await runMcpJavaScript(
+        `
+        const result = await tools.stub.get_value({ key: vars.KEY });
+        let errorMessage = null;
+        try {
+          await tools.stub.get_value({ key: "explode" });
+        } catch (error) {
+          errorMessage = error instanceof Error ? error.message : String(error);
+        }
+        globalThis.__mcpRunSmoke = { result, errorMessage };
+        `,
+        { timeoutMs: 10_000, vars: { KEY: "color" } }
+      );
+
+      expect((globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke).toEqual({
+        result: 'called get_value with {"key":"color"}',
+        errorMessage: "stub failure: explode",
+      });
+    } finally {
+      if (previousConfig === undefined) delete process.env.MCPORTER_CONFIG;
+      else process.env.MCPORTER_CONFIG = previousConfig;
+      if (previousToken === undefined) delete process.env.STUB_MCP_TOKEN;
+      else process.env.STUB_MCP_TOKEN = previousToken;
+      delete (globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke;
+      server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
