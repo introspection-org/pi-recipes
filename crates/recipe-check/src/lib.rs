@@ -74,6 +74,8 @@ struct RawAgent {
     fields: HashSet<AgentField>,
 }
 
+type McpToolPolicy = BTreeMap<String, BTreeSet<String>>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AgentField {
     ModelName,
@@ -190,9 +192,14 @@ pub fn check_recipe(recipe_dir: impl AsRef<Path>, profile: CheckProfile) -> Resu
         let resources = validate_pi_config(&package, &mut ctx);
         validate_mcp_local_example(&mut ctx);
 
+        let mcp_tool_policy = package
+            .pi
+            .as_ref()
+            .and_then(JsonValue::as_object)
+            .and_then(|pi| mcp_tool_policy(pi.get("mcp")));
         let agent_paths = resolve_agents(&resources, &mut ctx);
         ctx.resources.insert("agents".to_owned(), agent_paths.len());
-        validate_agents(&agent_paths, &mut ctx);
+        validate_agents(&agent_paths, mcp_tool_policy.as_ref(), &mut ctx);
         for key in ["extensions", "skills", "prompts"] {
             if let Some(paths) = resources.get(key) {
                 ctx.resources.insert(key.to_owned(), paths.len());
@@ -552,10 +559,14 @@ fn resolve_agents(
     agents.into_iter().collect()
 }
 
-fn validate_agents(agent_paths: &[PathBuf], ctx: &mut CheckContext) {
+fn validate_agents(
+    agent_paths: &[PathBuf],
+    mcp_tool_policy: Option<&McpToolPolicy>,
+    ctx: &mut CheckContext,
+) {
     let mut sources = Vec::new();
     for path in agent_paths {
-        if let Some(agent) = read_agent(path, ctx) {
+        if let Some(agent) = read_agent(path, mcp_tool_policy, ctx) {
             sources.push(agent);
         }
     }
@@ -596,7 +607,11 @@ fn validate_agents(agent_paths: &[PathBuf], ctx: &mut CheckContext) {
     }
 }
 
-fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
+fn read_agent(
+    path: &Path,
+    mcp_tool_policy: Option<&McpToolPolicy>,
+    ctx: &mut CheckContext,
+) -> Option<RawAgent> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(err) => {
@@ -682,14 +697,31 @@ fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
 
     let mut fields = HashSet::new();
     validate_agent_model(map, path, &name, &mut fields, ctx);
-    validate_agent_string_array(map, "tools", AgentField::Tools, path, &mut fields, ctx);
-    validate_agent_string_array(map, "skills", AgentField::Skills, path, &mut fields, ctx);
+    validate_agent_string_array(
+        map,
+        "tools",
+        AgentField::Tools,
+        path,
+        &mut fields,
+        mcp_tool_policy,
+        ctx,
+    );
+    validate_agent_string_array(
+        map,
+        "skills",
+        AgentField::Skills,
+        path,
+        &mut fields,
+        None,
+        ctx,
+    );
     validate_agent_string_array(
         map,
         "subagents",
         AgentField::Subagents,
         path,
         &mut fields,
+        None,
         ctx,
     );
     validate_agent_system_instructions(map, path, &mut fields, ctx);
@@ -766,6 +798,7 @@ fn validate_agent_string_array(
     field: AgentField,
     path: &Path,
     fields: &mut HashSet<AgentField>,
+    mcp_tool_policy: Option<&McpToolPolicy>,
     ctx: &mut CheckContext,
 ) {
     let Some(value) = yaml_value(map, key) else {
@@ -775,7 +808,7 @@ fn validate_agent_string_array(
         Ok(()) => {
             fields.insert(field);
             if key == "tools" {
-                validate_mcp_tool_refs(value, path, ctx);
+                validate_mcp_tool_refs(value, path, mcp_tool_policy, ctx);
             }
         }
         Err(message) => ctx.error(
@@ -1000,7 +1033,12 @@ fn resolve_agent_name(
     }
 }
 
-fn validate_mcp_tool_refs(value: &YamlValue, path: &Path, ctx: &mut CheckContext) {
+fn validate_mcp_tool_refs(
+    value: &YamlValue,
+    path: &Path,
+    mcp_tool_policy: Option<&McpToolPolicy>,
+    ctx: &mut CheckContext,
+) {
     let Some(items) = value.as_sequence() else {
         return;
     };
@@ -1011,12 +1049,36 @@ fn validate_mcp_tool_refs(value: &YamlValue, path: &Path, ctx: &mut CheckContext
         if !tool.starts_with("mcp:") {
             continue;
         }
-        if parse_mcp_tool_ref(tool).is_none() {
+        let Some((server, tool_name)) = parse_mcp_tool_ref(tool) else {
             ctx.error(
                 "agent.mcp_ref_invalid",
                 path,
                 format!("Invalid MCP tool reference '{tool}'"),
                 Some("use mcp:<server-id>/<tool-name>"),
+            );
+            continue;
+        };
+        let Some(policy) = mcp_tool_policy else {
+            continue;
+        };
+        let server_id = safe_mcp_server_id(server);
+        let Some(allowed) = policy.get(&server_id) else {
+            ctx.error(
+                "agent.mcp_server_undeclared",
+                path,
+                format!("Agent MCP tool reference '{tool}' uses undeclared server '{server_id}'"),
+                Some("add the server to package.json#pi.mcp.servers or update the mcp:<server-id>/<tool-name> reference"),
+            );
+            continue;
+        };
+        if !allowed.contains(tool_name) {
+            ctx.error(
+                "agent.mcp_tool_undeclared",
+                path,
+                format!(
+                    "Agent MCP tool reference '{tool}' is not declared in package.json#pi.mcp.servers for server '{server_id}'"
+                ),
+                Some("add the tool to that server's tools.allow list or update the agent reference"),
             );
         }
     }
@@ -1153,6 +1215,40 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             }
         }
     }
+}
+
+fn mcp_tool_policy(value: Option<&JsonValue>) -> Option<McpToolPolicy> {
+    let JsonValue::Object(map) = value? else {
+        return None;
+    };
+    let servers = map.get("servers")?;
+    let JsonValue::Array(servers) = servers else {
+        return None;
+    };
+
+    let mut policy: McpToolPolicy = BTreeMap::new();
+    for server in servers {
+        let JsonValue::Object(server) = server else {
+            continue;
+        };
+        let Some(id) = string_value(server.get("id")) else {
+            continue;
+        };
+        let tools = server
+            .get("tools")
+            .and_then(JsonValue::as_object)
+            .and_then(|tools| tools.get("allow"))
+            .and_then(JsonValue::as_array);
+        let allowed = policy.entry(safe_mcp_server_id(&id)).or_default();
+        if let Some(tools) = tools {
+            for tool in tools {
+                if let Some(tool) = string_value(Some(tool)) {
+                    allowed.insert(tool);
+                }
+            }
+        }
+    }
+    Some(policy)
 }
 
 fn validate_mcp_manifest_pattern(pattern: &str, ctx: &mut CheckContext) {
@@ -1602,6 +1698,26 @@ fn parse_mcp_tool_ref(value: &str) -> Option<(&str, &str)> {
     (!server.is_empty() && !tool.is_empty()).then_some((server, tool))
 }
 
+fn safe_mcp_server_id(value: &str) -> String {
+    let mut id = String::new();
+    let mut previous_dash = false;
+    for ch in value.trim().to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            id.push(ch);
+            previous_dash = false;
+        } else if !previous_dash {
+            id.push('-');
+            previous_dash = true;
+        }
+    }
+    let id = id.trim_matches('-').to_owned();
+    if id.is_empty() {
+        "mcp".to_owned()
+    } else {
+        id
+    }
+}
+
 fn fixed_registry_tag(value: &str) -> bool {
     let tag = value.trim();
     if tag.is_empty() || tag.eq_ignore_ascii_case("latest") {
@@ -1646,6 +1762,134 @@ fn path_to_slashes(path: &Path) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_recipe(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("recipe-check-{name}-{suffix}"));
+        fs::create_dir_all(root.join("agents")).expect("create recipe dirs");
+        root
+    }
+
+    fn write_recipe(root: &Path, server_id: &str, allowed: &[&str], agent_tools: &[&str]) {
+        let package = json!({
+            "name": "mcp-policy-test",
+            "version": "0.1.0",
+            "pi": {
+                "agents": ["agents/*.yaml"],
+                "mcp": {
+                    "servers": [{
+                        "id": server_id,
+                        "tools": { "allow": allowed }
+                    }]
+                }
+            }
+        });
+        fs::write(
+            root.join("package.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&package).expect("serialize package")
+            ),
+        )
+        .expect("write package");
+
+        let tools = agent_tools
+            .iter()
+            .map(|tool| format!("  - {tool}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(
+            root.join("agents").join("agent.yaml"),
+            format!(
+                concat!(
+                    "name: agent\n",
+                    "description: Test agent\n",
+                    "model:\n",
+                    "  name: test/provider-model\n",
+                    "  thinking_level: low\n",
+                    "tools:\n",
+                    "  - read\n",
+                    "{}\n",
+                    "skills: []\n",
+                    "subagents: []\n",
+                    "system_instructions:\n",
+                    "  mode: append\n",
+                    "  content: Test instructions\n",
+                ),
+                tools
+            ),
+        )
+        .expect("write agent");
+    }
+
+    #[test]
+    fn flags_agent_mcp_refs_to_undeclared_servers() {
+        let root = temp_recipe("mcp-server");
+        write_recipe(
+            &root,
+            "slack-mcp",
+            &["slack_read_channel"],
+            &["mcp:slack/slack_read_channel"],
+        );
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.mcp_server_undeclared"
+                && diagnostic.message.contains("mcp:slack/slack_read_channel")
+                && diagnostic.message.contains("slack")
+        }));
+    }
+
+    #[test]
+    fn flags_agent_mcp_refs_to_undeclared_tools() {
+        let root = temp_recipe("mcp-tool");
+        write_recipe(
+            &root,
+            "slack-mcp",
+            &["slack_read_channel"],
+            &["mcp:slack-mcp/slack_send_message"],
+        );
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.mcp_tool_undeclared"
+                && diagnostic
+                    .message
+                    .contains("mcp:slack-mcp/slack_send_message")
+        }));
+    }
+
+    #[test]
+    fn accepts_agent_mcp_refs_declared_in_policy() {
+        let root = temp_recipe("mcp-ok");
+        write_recipe(
+            &root,
+            "Slack MCP",
+            &["slack_read_channel"],
+            &["mcp:slack-mcp/slack_read_channel"],
+        );
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
 }
 
 fn normalize_slashes(value: &str) -> String {
