@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runMcpJavaScript, searchMcpTools } from "../src/mcp-cli.js";
+import { rebrandDelegatedOutput, runMcpJavaScript, searchMcpTools } from "../src/mcp-cli.js";
 import {
   buildMcporterConfig,
   clearRecipeMcpManifest,
@@ -487,6 +487,24 @@ describe("recipe MCP materialization", () => {
     );
 
     expect(matches.map((match) => match.ref)).toEqual(["linear.create_comment"]);
+  });
+
+  it("rebrands delegated mcporter output as the recipe mcp command", () => {
+    expect(
+      rebrandDelegatedOutput(
+        [
+          "mcporter 0.12.3 — Listing 1 server(s)",
+          "Examples:",
+          "  mcporter call nextplay.search_profiles q:'staff engineer'",
+        ].join("\n")
+      )
+    ).toBe(
+      [
+        "mcp 0.12.3 — Listing 1 server(s)",
+        "Examples:",
+        "  mcp call nextplay.search_profiles q:'staff engineer'",
+      ].join("\n")
+    );
   });
 });
 

@@ -365,12 +365,18 @@ async function runCode(args: string[]): Promise<number> {
   return 0;
 }
 
+export function rebrandDelegatedOutput(text: string): string {
+  return text.replace(/\bmcporter\b/g, "mcp");
+}
+
 function delegateToMcporter(args: string[]): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [mcporterCliEntrypointPath(), ...args], {
-      stdio: "inherit",
+      stdio: ["inherit", "pipe", "pipe"],
       env: process.env,
     });
+    child.stdout.on("data", (chunk) => stdout.write(rebrandDelegatedOutput(String(chunk))));
+    child.stderr.on("data", (chunk) => stderr.write(rebrandDelegatedOutput(String(chunk))));
     child.on("close", (code) => resolve(code ?? 1));
   });
 }
