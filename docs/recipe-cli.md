@@ -41,7 +41,7 @@ recipes --help
 
 The package also bundles MCP CLI implementation code for recipe sessions, but
 does not install `mcp` as a global binary. When a Pi session launches a recipe
-whose selected agent declares MCP refs, the extension creates a session-local
+whose selected agent declares MCP access, the extension creates a session-local
 `.pi/bin/mcp` shim and prepends that directory to the Pi session's bash `PATH`.
 The generated paths are recorded in `PI_RECIPES_MCP_MANIFEST` and
 `PI_RECIPES_MCP_BIN_DIR`.
@@ -257,7 +257,8 @@ Recipes can declare MCP endpoint policy with `package.json#pi.mcp`:
           "id": "contacts",
           "required": true,
           "tools": {
-            "allow": ["search_contacts", "get_contact"]
+            "include": ["*"],
+            "exclude": ["delete_workspace", "purge_contacts"]
           }
         }
       ]
@@ -266,15 +267,25 @@ Recipes can declare MCP endpoint policy with `package.json#pi.mcp`:
 }
 ```
 
-Agents opt into MCP tools in their YAML `tools` list:
+Agents opt into MCP tools through a separate YAML `mcp` block:
 
 ```yaml
 tools:
   - bash
-  - mcp:contacts/search_contacts
+mcp:
+  include:
+    - contacts/*
+  exclude:
+    - contacts/delete_contact
 ```
 
-Agents with `mcp:*` entries normally need `bash` or another command-capable
+At the package layer, selectors are `"*"` or bare tool names. At the agent
+layer, selectors are `*`, `<server-id>/*`, or `<server-id>/<tool-name>`.
+Omitting `include` means all, an empty `include` means none, and `exclude`
+always wins. Omitting the agent `mcp` block means no MCP access. Exact includes
+avoid automatically exposing tools that a remote server adds later.
+
+Agents with MCP access normally need `bash` or another command-capable
 tool, because MCP endpoint tools are invoked through the session-local CLI.
 `recipes check` emits a non-blocking warning when `bash` is missing; recipes
 that provide a custom shell wrapper may intentionally ignore it.

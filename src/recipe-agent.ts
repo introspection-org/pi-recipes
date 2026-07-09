@@ -12,7 +12,7 @@ import {
   readPiPackageManifest,
   RecipePackageError,
 } from "./recipe-package.js";
-import { parseAgentMcpToolRef } from "./mcp.js";
+import { parseAgentMcpToolRef, parseAgentMcpToolSelector } from "./mcp.js";
 
 export interface RecipeSystemInstructions {
   mode: "append" | "replace";
@@ -21,6 +21,13 @@ export interface RecipeSystemInstructions {
 
 export interface RecipeAgentExtensions {
   include?: string[];
+  exclude?: string[];
+}
+
+export interface RecipeAgentMcp {
+  /** `*`, `<server>/*`, or `<server>/<tool>` selectors. Omitted means all. */
+  include?: string[];
+  /** Selectors removed after inclusion. */
   exclude?: string[];
 }
 
@@ -39,6 +46,8 @@ export interface RecipeAgentDefinition {
    */
   modelConfig?: RecipeAgentModelConfig;
   tools: string[];
+  /** MCP tool selection, separate from the exact Pi/extension tool allowlist. */
+  mcp?: RecipeAgentMcp;
   skills: string[];
   /** True when `skills:` was declared (directly or inherited) rather than defaulted to []. */
   skillsDeclared?: boolean;
@@ -76,7 +85,7 @@ export const REQUIRED_RECIPE_AGENT_FIELDS: RequiredResolvedRecipeAgentField[] = 
 
 export interface RecipeAgentValidationFinding {
   agentName: string;
-  field: "name" | "from" | "file" | RequiredResolvedRecipeAgentField;
+  field: "name" | "from" | "file" | "mcp" | RequiredResolvedRecipeAgentField;
   code?: string;
   severity?: "error" | "warning";
   message: string;
@@ -94,6 +103,7 @@ const AGENT_YAML_KEYS = new Set([
   "description",
   "model",
   "tools",
+  "mcp",
   "skills",
   "subagents",
   "extensions",
@@ -146,6 +156,29 @@ function parseExtensions(data: Record<string, unknown>): RecipeAgentExtensions |
   if (Object.hasOwn(raw, "include")) extensions.include = stringArray(raw.include);
   if (Object.hasOwn(raw, "exclude")) extensions.exclude = stringArray(raw.exclude);
   return extensions.include || extensions.exclude ? extensions : undefined;
+}
+
+function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
+  if (!Object.hasOwn(data, "mcp")) return undefined;
+  const raw = asRecord(data.mcp);
+  const mcp: RecipeAgentMcp = {};
+  if (Object.hasOwn(raw, "include")) mcp.include = stringArray(raw.include);
+  if (Object.hasOwn(raw, "exclude")) mcp.exclude = stringArray(raw.exclude);
+  return mcp;
+}
+
+function mergeMcp(
+  base: RecipeAgentMcp | undefined,
+  child: RecipeAgentMcp | undefined
+): RecipeAgentMcp | undefined {
+  if (!base) return child;
+  if (!child) return base;
+  return {
+    ...(base.include ? { include: base.include } : {}),
+    ...(base.exclude ? { exclude: base.exclude } : {}),
+    ...(child.include ? { include: child.include } : {}),
+    ...(child.exclude ? { exclude: child.exclude } : {}),
+  };
 }
 
 function readYaml(path: string): Record<string, unknown> {
@@ -225,6 +258,7 @@ function readRecipeAgentSources(
         model: modelProjection(modelConfig),
         modelConfig,
         tools: Object.hasOwn(data, "tools") ? stringArray(data.tools) : undefined,
+        mcp: parseMcp(data),
         skills: Object.hasOwn(data, "skills") ? stringArray(data.skills) : undefined,
         subagents: Object.hasOwn(data, "subagents") ? stringArray(data.subagents) : undefined,
         extensions: parseExtensions(data),
@@ -297,6 +331,7 @@ export function loadRecipeAgentDefinitions(
       model: modelProjection(modelConfig),
       ...(modelConfig ? { modelConfig } : {}),
       tools: raw.tools ?? base?.tools ?? [],
+      mcp: mergeMcp(base?.mcp, raw.mcp),
       skills: raw.skills ?? base?.skills ?? [],
       subagents: raw.subagents ?? base?.subagents ?? [],
       skillsDeclared: raw.skills !== undefined || base?.skillsDeclared === true,
@@ -451,6 +486,20 @@ export function validateResolvedRecipeAgentDefinition(opts: {
       : undefined;
   }
 
+  function resolvedMcp(
+    name: string,
+    stack: string[] = []
+  ): RecipeAgentMcp | undefined {
+    const resolvedName = resolveName(name);
+    if (stack.includes(resolvedName)) return undefined;
+    const definition = rawDefinitions.get(resolvedName);
+    if (!definition) return undefined;
+    const base = definition.from
+      ? resolvedMcp(definition.from, [...stack, resolvedName])
+      : undefined;
+    return mergeMcp(base, definition.mcp);
+  }
+
   const agentName = resolveName(opts.agentName);
   const findings: RecipeAgentValidationFinding[] = [];
   if (opts.requireExplicitName && explicitNames.get(agentName) !== true) {
@@ -474,16 +523,22 @@ export function validateResolvedRecipeAgentDefinition(opts: {
   }
 
   const tools = resolvedTools(agentName);
+  const mcp = resolvedMcp(agentName);
+  const mcpMayIncludeTools = Boolean(
+    mcp &&
+    mcp.include?.length !== 0 &&
+    !mcp.exclude?.includes("*")
+  );
   if (
-    tools?.some((tool) => parseAgentMcpToolRef(tool)) &&
-    !tools.includes("bash")
+    (mcpMayIncludeTools || tools?.some((tool) => parseAgentMcpToolRef(tool))) &&
+    !tools?.includes("bash")
   ) {
     findings.push({
       agentName,
       field: "tools",
       code: "mcp_requires_bash",
       severity: "warning",
-      message: `Recipe agent "${agentName}" declares MCP tools without bash; ensure another active tool can execute the session-local mcp CLI`,
+      message: `Recipe agent "${agentName}" declares MCP access without bash; ensure another active tool can execute the session-local mcp CLI`,
     });
   }
 
@@ -509,6 +564,27 @@ function validateRecipeAgentModelSpecs(
       field: "model.name",
       message: `Recipe agent "${source.definition.name}" has invalid model.name "${spec}" - expected "<provider>/<model_id>"`,
     });
+  }
+  return findings;
+}
+
+function validateRecipeAgentMcpSelectors(
+  sources: RecipeAgentSource[]
+): RecipeAgentValidationFinding[] {
+  const findings: RecipeAgentValidationFinding[] = [];
+  for (const source of sources) {
+    for (const selector of [
+      ...(source.definition.mcp?.include ?? []),
+      ...(source.definition.mcp?.exclude ?? []),
+    ]) {
+      if (parseAgentMcpToolSelector(selector)) continue;
+      findings.push({
+        agentName: source.definition.name,
+        field: "mcp",
+        code: "mcp_selector_invalid",
+        message: `Recipe agent "${source.definition.name}" has invalid MCP selector "${selector}"; expected "*", "<server-id>/*", or "<server-id>/<tool-name>"`,
+      });
+    }
   }
   return findings;
 }
@@ -571,6 +647,7 @@ export function validateRecipeAgentDefinitions(recipeDir: string): RecipeAgentVa
     ...invalidFileFindings,
     ...validateRecipeAgentNames(sources),
     ...validateRecipeAgentModelSpecs(sources),
+    ...validateRecipeAgentMcpSelectors(sources),
     ...agentNames.flatMap((agentName) =>
       validateResolvedRecipeAgentDefinition({
         recipeDir,

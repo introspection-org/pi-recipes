@@ -74,7 +74,13 @@ struct RawAgent {
     fields: HashSet<AgentField>,
 }
 
-type McpToolPolicy = BTreeMap<String, BTreeSet<String>>;
+#[derive(Debug, Clone, Default)]
+struct McpToolSelectors {
+    include: Option<BTreeSet<String>>,
+    exclude: BTreeSet<String>,
+}
+
+type McpToolPolicy = BTreeMap<String, McpToolSelectors>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AgentField {
@@ -706,6 +712,7 @@ fn read_agent(
         mcp_tool_policy,
         ctx,
     );
+    validate_agent_mcp(map, path, mcp_tool_policy, ctx);
     validate_agent_string_array(
         map,
         "skills",
@@ -726,6 +733,7 @@ fn read_agent(
     );
     validate_agent_system_instructions(map, path, &mut fields, ctx);
     validate_agent_extensions(map, path, ctx);
+    validate_mcp_requires_bash(map, path, ctx);
 
     Some(RawAgent {
         name,
@@ -809,7 +817,6 @@ fn validate_agent_string_array(
             fields.insert(field);
             if key == "tools" {
                 validate_mcp_tool_refs(value, path, mcp_tool_policy, ctx);
-                validate_mcp_requires_bash(value, path, ctx);
             }
         }
         Err(message) => ctx.error(
@@ -821,24 +828,127 @@ fn validate_agent_string_array(
     }
 }
 
-fn validate_mcp_requires_bash(value: &YamlValue, path: &Path, ctx: &mut CheckContext) {
-    let Some(items) = value.as_sequence() else {
-        return;
-    };
-    let has_mcp = items
-        .iter()
-        .filter_map(YamlValue::as_str)
-        .any(|tool| parse_mcp_tool_ref(tool).is_some());
-    let has_bash = items
-        .iter()
-        .filter_map(YamlValue::as_str)
-        .any(|tool| tool == "bash");
-    if has_mcp && !has_bash {
+fn validate_mcp_requires_bash(map: &serde_yaml::Mapping, path: &Path, ctx: &mut CheckContext) {
+    let tool_items = yaml_value(map, "tools").and_then(YamlValue::as_sequence);
+    let has_legacy_mcp = tool_items.is_some_and(|items| {
+        items
+            .iter()
+            .filter_map(YamlValue::as_str)
+            .any(|tool| parse_mcp_tool_ref(tool).is_some())
+    });
+    let has_agent_mcp = yaml_value(map, "mcp")
+        .and_then(YamlValue::as_mapping)
+        .is_some_and(|mcp| {
+            let include_has_tools =
+                match yaml_value(mcp, "include").and_then(YamlValue::as_sequence) {
+                    Some(items) => !items.is_empty(),
+                    None => true,
+                };
+            let excludes_all = yaml_value(mcp, "exclude")
+                .and_then(YamlValue::as_sequence)
+                .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("*")));
+            include_has_tools && !excludes_all
+        });
+    let has_bash = tool_items.is_some_and(|items| {
+        items
+            .iter()
+            .filter_map(YamlValue::as_str)
+            .any(|tool| tool == "bash")
+    });
+    if (has_legacy_mcp || has_agent_mcp) && !has_bash {
         ctx.warning(
             "agent.mcp_requires_bash",
             path,
-            "Agent declares MCP tools without bash",
+            "Agent declares MCP access without bash",
             Some("add bash or ensure another active tool can execute the session-local mcp CLI"),
+        );
+    }
+}
+
+fn validate_agent_mcp(
+    map: &serde_yaml::Mapping,
+    path: &Path,
+    mcp_tool_policy: Option<&McpToolPolicy>,
+    ctx: &mut CheckContext,
+) {
+    let Some(value) = yaml_value(map, "mcp") else {
+        return;
+    };
+    let Some(mcp) = value.as_mapping() else {
+        ctx.error(
+            "agent.mcp_invalid",
+            path,
+            "Agent mcp must be an object",
+            None::<String>,
+        );
+        return;
+    };
+
+    for key in ["include", "exclude"] {
+        let Some(value) = yaml_value(mcp, key) else {
+            continue;
+        };
+        if let Err(message) = yaml_string_array(value) {
+            ctx.error(
+                "agent.mcp_invalid",
+                path,
+                format!("mcp.{key}: {message}"),
+                None::<String>,
+            );
+            continue;
+        }
+        let Some(items) = value.as_sequence() else {
+            continue;
+        };
+        for item in items {
+            let Some(selector) = item.as_str() else {
+                continue;
+            };
+            validate_agent_mcp_selector(selector, key, path, mcp_tool_policy, ctx);
+        }
+    }
+}
+
+fn validate_agent_mcp_selector(
+    selector: &str,
+    list: &str,
+    path: &Path,
+    mcp_tool_policy: Option<&McpToolPolicy>,
+    ctx: &mut CheckContext,
+) {
+    if selector == "*" {
+        return;
+    }
+    let Some((server, tool)) = parse_agent_mcp_selector(selector) else {
+        ctx.error(
+            "agent.mcp_selector_invalid",
+            path,
+            format!("Invalid agent MCP selector '{selector}'"),
+            Some("use *, <server-id>/*, or <server-id>/<tool-name>"),
+        );
+        return;
+    };
+    let Some(policy) = mcp_tool_policy else {
+        return;
+    };
+    let server_id = safe_mcp_server_id(server);
+    let Some(server_policy) = policy.get(&server_id) else {
+        ctx.error(
+            "agent.mcp_server_undeclared",
+            path,
+            format!("Agent MCP selector '{selector}' uses undeclared server '{server_id}'"),
+            Some("add the server to package.json#pi.mcp.servers or update the selector"),
+        );
+        return;
+    };
+    if list == "include" && tool != "*" && !mcp_package_policy_allows(server_policy, tool) {
+        ctx.error(
+            "agent.mcp_tool_undeclared",
+            path,
+            format!(
+                "Agent MCP selector '{selector}' is not included by package.json#pi.mcp.servers for server '{server_id}'"
+            ),
+            Some("include the tool in the package MCP policy or update the agent selector"),
         );
     }
 }
@@ -1085,7 +1195,7 @@ fn validate_mcp_tool_refs(
             continue;
         };
         let server_id = safe_mcp_server_id(server);
-        let Some(allowed) = policy.get(&server_id) else {
+        let Some(server_policy) = policy.get(&server_id) else {
             ctx.error(
                 "agent.mcp_server_undeclared",
                 path,
@@ -1094,14 +1204,14 @@ fn validate_mcp_tool_refs(
             );
             continue;
         };
-        if !allowed.contains(tool_name) {
+        if !mcp_package_policy_allows(server_policy, tool_name) {
             ctx.error(
                 "agent.mcp_tool_undeclared",
                 path,
                 format!(
-                    "Agent MCP tool reference '{tool}' is not declared in package.json#pi.mcp.servers for server '{server_id}'"
+                    "Agent MCP tool reference '{tool}' is not included by package.json#pi.mcp.servers for server '{server_id}'"
                 ),
-                Some("add the tool to that server's tools.allow list or update the agent reference"),
+                Some("include the tool in that server's tools policy or update the agent reference"),
             );
         }
     }
@@ -1228,13 +1338,38 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 );
                 continue;
             };
-            if let Some(allow) = tools.get("allow") {
+            if tools.contains_key("allow") && tools.contains_key("include") {
+                ctx.error(
+                    "pi.mcp_invalid",
+                    &package_path,
+                    format!("package.json#pi.mcp.servers[{index}].tools cannot declare both allow and include"),
+                    Some("use include and exclude; allow is a legacy alias for include"),
+                );
+            }
+            for key in ["include", "exclude", "allow"] {
+                let Some(selectors) = tools.get(key) else {
+                    continue;
+                };
                 validate_json_string_array(
-                    allow,
-                    &format!("package.json#pi.mcp.servers[{index}].tools.allow"),
+                    selectors,
+                    &format!("package.json#pi.mcp.servers[{index}].tools.{key}"),
                     "pi.mcp_invalid",
                     ctx,
                 );
+                if let Some(selectors) = selectors.as_array() {
+                    for selector in selectors.iter().filter_map(|item| string_value(Some(item))) {
+                        if selector != "*" && selector.contains('/') {
+                            ctx.error(
+                                "pi.mcp_selector_invalid",
+                                &package_path,
+                                format!(
+                                    "package.json#pi.mcp.servers[{index}].tools.{key} selector '{selector}' must be '*' or a bare tool name"
+                                ),
+                                None::<String>,
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -1257,19 +1392,16 @@ fn mcp_tool_policy(value: Option<&JsonValue>) -> Option<McpToolPolicy> {
         let Some(id) = string_value(server.get("id")) else {
             continue;
         };
-        let tools = server
-            .get("tools")
-            .and_then(JsonValue::as_object)
-            .and_then(|tools| tools.get("allow"))
-            .and_then(JsonValue::as_array);
-        let allowed = policy.entry(safe_mcp_server_id(&id)).or_default();
-        if let Some(tools) = tools {
-            for tool in tools {
-                if let Some(tool) = string_value(Some(tool)) {
-                    allowed.insert(tool);
-                }
-            }
-        }
+        let tools = server.get("tools").and_then(JsonValue::as_object);
+        let include = tools.and_then(|tools| tools.get("include").or_else(|| tools.get("allow")));
+        let exclude = tools.and_then(|tools| tools.get("exclude"));
+        policy.insert(
+            safe_mcp_server_id(&id),
+            McpToolSelectors {
+                include: include.and_then(json_string_set),
+                exclude: exclude.and_then(json_string_set).unwrap_or_default(),
+            },
+        );
     }
     Some(policy)
 }
@@ -1721,6 +1853,31 @@ fn parse_mcp_tool_ref(value: &str) -> Option<(&str, &str)> {
     (!server.is_empty() && !tool.is_empty()).then_some((server, tool))
 }
 
+fn parse_agent_mcp_selector(value: &str) -> Option<(&str, &str)> {
+    let (server, tool) = value.trim().split_once('/')?;
+    let server = server.trim();
+    let tool = tool.trim();
+    (!server.is_empty() && !tool.is_empty() && !tool.contains('/')).then_some((server, tool))
+}
+
+fn json_string_set(value: &JsonValue) -> Option<BTreeSet<String>> {
+    let items = value.as_array()?;
+    Some(
+        items
+            .iter()
+            .filter_map(|item| string_value(Some(item)))
+            .collect(),
+    )
+}
+
+fn mcp_package_policy_allows(policy: &McpToolSelectors, tool: &str) -> bool {
+    let included = match &policy.include {
+        Some(include) => include.contains("*") || include.contains(tool),
+        None => true,
+    };
+    included && !policy.exclude.contains("*") && !policy.exclude.contains(tool)
+}
+
 fn safe_mcp_server_id(value: &str) -> String {
     let mut id = String::new();
     let mut previous_dash = false;
@@ -1863,6 +2020,61 @@ mod tests {
         .expect("write agent");
     }
 
+    fn write_selector_recipe(
+        root: &Path,
+        package_tools: JsonValue,
+        agent_mcp: &str,
+        include_bash: bool,
+    ) {
+        let package = json!({
+            "name": "mcp-selector-test",
+            "version": "0.1.0",
+            "pi": {
+                "agents": ["agents/*.yaml"],
+                "mcp": {
+                    "servers": [{
+                        "id": "salesforce",
+                        "tools": package_tools
+                    }]
+                }
+            }
+        });
+        fs::write(
+            root.join("package.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&package).expect("serialize package")
+            ),
+        )
+        .expect("write package");
+
+        let bash = if include_bash { "  - bash\n" } else { "" };
+        fs::write(
+            root.join("agents").join("agent.yaml"),
+            format!(
+                concat!(
+                    "name: agent\n",
+                    "description: Test agent\n",
+                    "model:\n",
+                    "  name: test/provider-model\n",
+                    "  thinking_level: low\n",
+                    "tools:\n",
+                    "  - read\n",
+                    "{}",
+                    "mcp:\n",
+                    "{}",
+                    "skills: []\n",
+                    "subagents: []\n",
+                    "system_instructions:\n",
+                    "  mode: append\n",
+                    "  content: Test instructions\n",
+                ),
+                bash, agent_mcp
+            ),
+        )
+        .expect("write agent");
+    }
+
     #[test]
     fn flags_agent_mcp_refs_to_undeclared_servers() {
         let root = temp_recipe("mcp-server");
@@ -1943,6 +2155,73 @@ mod tests {
         assert!(report.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "agent.mcp_requires_bash" && diagnostic.severity == Severity::Warning
         }));
+    }
+
+    #[test]
+    fn accepts_package_and_agent_mcp_include_exclude_selectors() {
+        let root = temp_recipe("mcp-selectors");
+        write_selector_recipe(
+            &root,
+            json!({
+                "include": ["*"],
+                "exclude": ["delete_org"]
+            }),
+            concat!(
+                "  include:\n",
+                "    - salesforce/*\n",
+                "  exclude:\n",
+                "    - salesforce/export_all\n",
+            ),
+            true,
+        );
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn rejects_agent_exact_selector_excluded_by_package_policy() {
+        let root = temp_recipe("mcp-selector-excluded");
+        write_selector_recipe(
+            &root,
+            json!({
+                "include": ["*"],
+                "exclude": ["delete_org"]
+            }),
+            "  include:\n    - salesforce/delete_org\n",
+            true,
+        );
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.mcp_tool_undeclared"
+                && diagnostic.message.contains("salesforce/delete_org")
+        }));
+    }
+
+    #[test]
+    fn rejects_malformed_agent_mcp_selectors() {
+        let root = temp_recipe("mcp-selector-invalid");
+        write_selector_recipe(
+            &root,
+            json!({ "include": ["*"] }),
+            "  include:\n    - salesforce\n",
+            true,
+        );
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.mcp_selector_invalid"));
     }
 }
 

@@ -166,7 +166,10 @@ describe("recipe package manifest", () => {
               {
                 id: "partner-mcp",
                 required: true,
-                tools: { allow: ["get_value"] },
+                tools: {
+                  include: ["*"],
+                  exclude: ["delete_value"],
+                },
               },
             ],
           },
@@ -193,11 +196,73 @@ describe("recipe package manifest", () => {
           {
             id: "partner-mcp",
             required: true,
-            tools: { allow: ["get_value"] },
+            tools: {
+              include: ["*"],
+              exclude: ["delete_value"],
+            },
           },
         ],
       });
       expect(report).toEqual({ valid: true, findings: [] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes legacy package MCP tools.allow to include", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-allow-"));
+    try {
+      writePiPackageManifest(root, {
+        name: "legacy-mcp-policy",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [
+              {
+                id: "partner-mcp",
+                tools: { allow: ["get_value"] },
+              },
+            ],
+          },
+        },
+      });
+
+      expect(readPiPackageManifest(root).mcp.servers[0]?.tools).toEqual({
+        include: ["get_value"],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects server-qualified selectors in package MCP tool policy", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-selector-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "invalid-package-mcp-selector",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [
+              {
+                id: "salesforce",
+                tools: { exclude: ["salesforce/delete_org"] },
+              },
+            ],
+          },
+        },
+      });
+
+      expect(validatePiPackageManifest(readPiPackageManifest(root))).toMatchObject({
+        valid: false,
+        findings: [
+          expect.objectContaining({
+            code: "pi.mcp_selector_invalid",
+            severity: "error",
+          }),
+        ],
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1418,6 +1483,11 @@ describe("recipe agent definitions", () => {
           "    - \"*\"",
           "  exclude:",
           "    - optional-runtime",
+          "mcp:",
+          "  include:",
+          "    - salesforce/*",
+          "  exclude:",
+          "    - salesforce/delete_org",
           "system_instructions:",
           "  mode: append",
           "  content: Base prompt",
@@ -1437,6 +1507,10 @@ describe("recipe agent definitions", () => {
           "  exclude:",
           "    - optional-runtime",
           "    - tracing",
+          "mcp:",
+          "  exclude:",
+          "    - salesforce/delete_org",
+          "    - salesforce/purge_records",
           "",
         ].join("\n")
       );
@@ -1460,6 +1534,10 @@ describe("recipe agent definitions", () => {
           extensions: {
             include: ["*"],
             exclude: ["optional-runtime", "tracing"],
+          },
+          mcp: {
+            include: ["salesforce/*"],
+            exclude: ["salesforce/delete_org", "salesforce/purge_records"],
           },
           systemInstructions: {
             mode: "append",
@@ -1580,7 +1658,9 @@ describe("recipe child agents", () => {
           "  thinking_level: low",
           "tools:",
           "  - bash",
-          "  - mcp:contacts/search_contacts",
+          "mcp:",
+          "  include:",
+          "    - contacts/search_contacts",
           "skills: []",
           "subagents: []",
           "system_instructions:",
@@ -1595,7 +1675,7 @@ describe("recipe child agents", () => {
           "name: worker",
           "from: base",
           "tools:",
-          "  - mcp:contacts/search_contacts",
+          "  - read",
           "",
         ].join("\n")
       );
@@ -1620,7 +1700,7 @@ describe("recipe child agents", () => {
           code: "mcp_requires_bash",
           severity: "warning",
           message:
-            'Recipe agent "worker" declares MCP tools without bash; ensure another active tool can execute the session-local mcp CLI',
+            'Recipe agent "worker" declares MCP access without bash; ensure another active tool can execute the session-local mcp CLI',
         },
       ]);
 
@@ -1687,6 +1767,50 @@ describe("recipe child agents", () => {
           message: 'Recipe agent "worker" must declare name',
         },
       ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed agent MCP selectors", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agent-mcp-selector-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "invalid-mcp-selector",
+        version: "0.1.0",
+        pi: { agents: ["agents/*.yaml"] },
+      });
+      writeFileSync(
+        join(root, "agents", "agent.yaml"),
+        [
+          "name: agent",
+          "model:",
+          "  name: test/provider-model",
+          "  thinking_level: low",
+          "tools:",
+          "  - bash",
+          "mcp:",
+          "  include:",
+          "    - salesforce",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Test instructions",
+          "",
+        ].join("\n")
+      );
+
+      expect(validateRecipeAgentDefinitions(root)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            agentName: "agent",
+            field: "mcp",
+            code: "mcp_selector_invalid",
+          }),
+        ])
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

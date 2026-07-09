@@ -36,12 +36,13 @@ import {
   clearRecipeMcpManifest,
   classifyMcpToolAvailability,
   configureMcpLocalConfigPath,
+  exactAgentMcpToolRefs,
   executableRecipeToolNames,
   formatMcpDiscoveryDiagnostics,
   materializeSessionMcpCli,
   materializeRecipeMcpManifest,
   mcpCliPromptLines,
-  parseAgentMcpToolRef,
+  resolveAgentMcpSelection,
 } from "./mcp.js";
 import {
   loadRecipeAgentDefinitions,
@@ -240,10 +241,9 @@ function runtimeContextPrompt(
   base: string,
   state: RecipeLaunchState
 ): string {
-  const mcpRefs = state.agent.tools
-    .map((tool) => parseAgentMcpToolRef(tool))
-    .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
-  const mcpPrompt = mcpRefs.length > 0
+  const selections = mcpSelectionsForAgent(state.agent);
+  const mcpRefs = exactAgentMcpToolRefs(selections);
+  const mcpPrompt = selections.length > 0
     ? mcpCliPromptLines(mcpRefs, {
           availableTools: state.mcpAvailableTools,
           unavailableTools: state.mcpUnavailableTools,
@@ -271,10 +271,13 @@ function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
     .filter((agent): agent is RecipeAgentDefinition => Boolean(agent));
 }
 
-function scopedMcpToolRefs(state: RecipeLaunchState): string[] {
-  return [state.agent, ...visibleSubagents(state)].flatMap((agent) =>
-    agent.tools.filter((tool) => parseAgentMcpToolRef(tool))
-  );
+function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
+  const selection = resolveAgentMcpSelection(agent.mcp, agent.tools);
+  return selection ? [selection] : [];
+}
+
+function scopedMcpSelections(state: RecipeLaunchState) {
+  return [state.agent, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
 }
 
 function textResult<TDetails>(text: string, details: TDetails) {
@@ -993,8 +996,8 @@ export function createPiRecipesExtension(
     launchState: RecipeLaunchState,
     ctx: Pick<ExtensionContext, "ui">
   ): Promise<void> {
-    const mcpToolRefs = scopedMcpToolRefs(launchState);
-    if (mcpToolRefs.length === 0) {
+    const mcpSelections = scopedMcpSelections(launchState);
+    if (mcpSelections.length === 0) {
       launchState.mcpServerCount = 0;
       launchState.mcpToolCount = 0;
       launchState.mcpAvailableTools = undefined;
@@ -1017,7 +1020,7 @@ export function createPiRecipesExtension(
       cwd: launchState.cwd,
       recipeDir: launchState.recipeDir,
       manifest: launchState.manifest,
-      agentTools: mcpToolRefs,
+      agentMcp: mcpSelections,
       env,
       fetch: globalThis.fetch,
     });
@@ -1026,9 +1029,7 @@ export function createPiRecipesExtension(
       (count, server) => count + (server.tools?.length ?? 0),
       0
     );
-    const configuredRefs = mcpToolRefs
-      .map((tool) => parseAgentMcpToolRef(tool))
-      .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
+    const configuredRefs = exactAgentMcpToolRefs(mcpSelections);
     const availability = classifyMcpToolAvailability(configuredRefs, manifest);
     launchState.mcpAvailableTools = availability.availableTools;
     launchState.mcpUnavailableTools = availability.unavailableTools;

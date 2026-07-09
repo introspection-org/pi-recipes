@@ -28,7 +28,13 @@ const originalFetch = globalThis.fetch;
 
 function recipeManifest(
   recipeDir: string,
-  servers: Array<{ id: string; required?: boolean; allow?: string[] }>
+  servers: Array<{
+    id: string;
+    required?: boolean;
+    allow?: string[];
+    include?: string[];
+    exclude?: string[];
+  }>
 ): RecipePackageManifest {
   return {
     name: "demo",
@@ -45,7 +51,12 @@ function recipeManifest(
       servers: servers.map((server) => ({
         id: server.id,
         required: server.required ?? false,
-        tools: { allow: server.allow ?? [] },
+        tools: {
+          ...((server.include ?? server.allow) !== undefined
+            ? { include: server.include ?? server.allow }
+            : {}),
+          ...(server.exclude !== undefined ? { exclude: server.exclude } : {}),
+        },
       })),
     },
     evals: { suites: [] },
@@ -176,7 +187,7 @@ describe("recipe MCP materialization", () => {
         recipeDir,
         env,
         fetch: fetchImpl,
-        agentTools: [],
+        agentMcp: [{}],
         manifest: recipeManifest(recipeDir, []),
       });
 
@@ -398,6 +409,64 @@ describe("recipe MCP materialization", () => {
           },
         },
       });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies package and agent MCP include/exclude selectors with exclusion precedence", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-selectors-"));
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(cwd, { recursive: true });
+      mkdirSync(recipeDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "mcp.json"),
+        JSON.stringify({
+          servers: [
+            {
+              id: "salesforce",
+              base_url: "https://salesforce.example/mcp",
+              tools: [
+                { name: "search_accounts" },
+                { name: "update_account" },
+                { name: "export_all" },
+                { name: "delete_org" },
+              ],
+            },
+          ],
+        })
+      );
+
+      const manifest = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        agentMcp: [
+          {
+            exclude: ["salesforce/export_all"],
+          },
+        ],
+        manifest: recipeManifest(recipeDir, [
+          {
+            id: "salesforce",
+            exclude: ["delete_org"],
+          },
+        ]),
+      });
+
+      expect(manifest.servers?.[0]?.tools?.map((tool) => tool.name)).toEqual([
+        "search_accounts",
+        "update_account",
+      ]);
+
+      const none = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        agentMcp: [{ include: [] }],
+        manifest: recipeManifest(recipeDir, [{ id: "salesforce" }]),
+      });
+      expect(none.servers).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

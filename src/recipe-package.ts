@@ -11,9 +11,14 @@ export interface RecipePackageResources {
 export interface RecipePackageMcpServer {
   id: string;
   required: boolean;
-  tools: {
-    allow: string[];
-  };
+  tools: RecipeMcpToolSelection;
+}
+
+export interface RecipeMcpToolSelection {
+  /** Selectors to admit. Omitted means all; an empty array means none. */
+  include?: string[];
+  /** Selectors removed after inclusion. */
+  exclude?: string[];
 }
 
 export interface RecipePackageMcpConfig {
@@ -251,11 +256,22 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
     const id = stringValue(server.id);
     if (!id || seen.has(id)) continue;
     const tools = asRecord(server.tools);
+    const include = Object.hasOwn(tools, "include")
+      ? stringArray(tools.include)
+      : Object.hasOwn(tools, "allow")
+        ? stringArray(tools.allow)
+        : undefined;
+    const exclude = Object.hasOwn(tools, "exclude")
+      ? stringArray(tools.exclude)
+      : undefined;
     seen.add(id);
     servers.push({
       id,
       required: server.required === true,
-      tools: { allow: stringArray(tools.allow) },
+      tools: {
+        ...(include !== undefined ? { include } : {}),
+        ...(exclude !== undefined ? { exclude } : {}),
+      },
     });
   }
 
@@ -690,6 +706,25 @@ export function validatePiPackageManifest(
         pkg.name
       )
     );
+  }
+  for (const server of pkg.mcp.servers) {
+    for (const [list, selectors] of [
+      ["include", server.tools.include],
+      ["exclude", server.tools.exclude],
+    ] as const) {
+      for (const selector of selectors ?? []) {
+        const trimmed = selector.trim();
+        if (trimmed && (trimmed === "*" || !trimmed.includes("/"))) continue;
+        findings.push(
+          finding(
+            "error",
+            "pi.mcp_selector_invalid",
+            `MCP server "${server.id}" tools.${list} selector "${selector}" must be "*" or a bare tool name`,
+            pkg.name
+          )
+        );
+      }
+    }
   }
   findings.push(...validateRecipeEvalsConfig(pkg.evals, pkg.name).findings);
 
