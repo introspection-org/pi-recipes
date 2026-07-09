@@ -280,9 +280,12 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       requireExplicitName: true,
       requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
     });
-    if (validationFindings.length > 0) {
+    const validationErrors = validationFindings.filter(
+      (finding) => finding.severity !== "warning"
+    );
+    if (validationErrors.length > 0) {
       throw new Error(
-        validationFindings.map((finding) => finding.message).join("\n")
+        validationErrors.map((finding) => finding.message).join("\n")
       );
     }
 

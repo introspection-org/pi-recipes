@@ -684,7 +684,7 @@ export function mcpCliPromptLines(
   return [
     "## Recipe MCP CLI",
     "- MCP tool policy refs are not directly callable tool names.",
-    "- Use the session-local `mcp` command through `bash` for MCP endpoint tools.",
+    "- Use the session-local `mcp` command through an active command-execution tool for MCP endpoint tools. This is normally `bash`, but a recipe may provide a custom shell wrapper.",
     ...(binDirHint
       ? [
           "- The extension puts `mcp` on PATH; if lookup fails, use `$PI_RECIPES_MCP_BIN_DIR/mcp`.",

@@ -94,4 +94,61 @@ describe("recipe child agent tools", () => {
     );
     await runner.shutdown();
   });
+
+  it("allows a custom shell wrapper to execute MCP commands", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-child-mcp-shell-"));
+    roots.push(root);
+    const recipeDir = join(root, "recipe");
+    const workspaceDir = join(root, "workspace");
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(workspaceDir, { recursive: true });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "child-mcp-shell-test",
+        version: "0.1.0",
+        pi: { agents: ["agents/*.yaml"] },
+      })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "worker.yaml"),
+      [
+        "name: worker",
+        "model:",
+        "  name: openai/test-model",
+        "  thinking_level: low",
+        "tools:",
+        "  - shell",
+        "  - mcp:nextplay/search",
+        "skills: []",
+        "subagents: []",
+        "system_instructions:",
+        "  mode: append",
+        "  content: Test worker",
+        "",
+      ].join("\n")
+    );
+
+    const session = {
+      agent: {},
+      bindExtensions: vi.fn(async () => undefined),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    mocks.createAgentSessionServices.mockResolvedValue({});
+    mocks.createAgentSessionFromServices.mockResolvedValue({ session });
+
+    const runner = createRecipeChildAgentRunner({
+      recipeDir,
+      workspaceDir,
+      agentName: "worker",
+      env: {},
+    });
+    await runner.start();
+
+    expect(mocks.createAgentSessionFromServices).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: ["shell"] })
+    );
+    await runner.shutdown();
+  });
 });

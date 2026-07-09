@@ -199,6 +199,61 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
+  it("does not reject an MCP agent that uses a custom shell wrapper", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-mcp-shell-"));
+    try {
+      const recipeDir = join(root, "recipe");
+      mkdirSync(join(recipeDir, "agents"), { recursive: true });
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify({
+          name: "mcp-shell-recipe",
+          version: "1.0.0",
+          pi: { agents: ["agents/*.yaml"] },
+        })}\n`
+      );
+      writeFileSync(
+        join(recipeDir, "agents", "agent.yaml"),
+        [
+          "name: agent",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - shell",
+          "  - mcp:nextplay/search",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
+          "",
+        ].join("\n")
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      createPiRecipesExtension()(pi);
+
+      const promptResults = await pi.emitExtensionEvent(
+        {
+          type: "before_agent_start",
+          prompt: "hello",
+          systemPrompt: "Default Pi prompt",
+          systemPromptOptions: {},
+        } as any,
+        extensionContext(root)
+      );
+
+      expect(promptResults).toEqual([
+        {
+          systemPrompt: expect.stringContaining("Main instructions"),
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("configures the launched session from a recipe folder", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {

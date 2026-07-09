@@ -18,12 +18,29 @@ import {
   defaultMcporterConfigPath,
   materializeRecipeMcpManifest,
   materializeSessionMcpCli,
+  mcpCliPromptLines,
   mcpCliEntrypointPath,
   mcporterCliEntrypointPath,
   type RecipePackageManifest,
 } from "../src/index.js";
 
 const originalFetch = globalThis.fetch;
+
+describe("recipe MCP prompt", () => {
+  it("allows recipes to use a custom command wrapper", () => {
+    const prompt = mcpCliPromptLines([
+      {
+        serverId: "nextplay",
+        toolName: "search",
+        raw: "mcp:nextplay/search",
+      },
+    ]).join("\n");
+
+    expect(prompt).toContain("active command-execution tool");
+    expect(prompt).toContain("custom shell wrapper");
+    expect(prompt).not.toContain("through `bash`");
+  });
+});
 
 function recipeManifest(
   recipeDir: string,

@@ -836,11 +836,14 @@ export function createPiRecipesExtension(
     }
 
     const agentFindings = validateRecipeAgentDefinitions(recipeDir);
-    if (agentFindings.length > 0) {
+    const agentErrors = agentFindings.filter(
+      (finding) => finding.severity !== "warning"
+    );
+    if (agentErrors.length > 0) {
       throw new RecipeLaunchError(
         [
           `Recipe "${manifest.name}" has invalid agents.`,
-          ...agentFindings.map((finding) => `- ${finding.message}`),
+          ...agentErrors.map((finding) => `- ${finding.message}`),
           "Add the missing fields to each agent, even if empty.",
         ].join("\n")
       );
