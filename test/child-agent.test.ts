@@ -1,0 +1,97 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  createAgentSessionFromServices: vi.fn(),
+  createAgentSessionServices: vi.fn(),
+}));
+
+vi.mock("@earendil-works/pi-ai/compat", () => ({
+  getEnvApiKey: vi.fn(() => "test-key"),
+  getModel: vi.fn(() => ({ provider: "openai", id: "test-model" })),
+}));
+
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  AuthStorage: {
+    inMemory: vi.fn(() => ({ setRuntimeApiKey: vi.fn() })),
+  },
+  createAgentSessionFromServices: mocks.createAgentSessionFromServices,
+  createAgentSessionServices: mocks.createAgentSessionServices,
+  SessionManager: {
+    inMemory: vi.fn(() => ({})),
+  },
+  SettingsManager: {
+    create: vi.fn(() => ({})),
+  },
+}));
+
+import { createRecipeChildAgentRunner } from "../src/child-agent.js";
+
+describe("recipe child agent tools", () => {
+  const roots: string[] = [];
+
+  afterEach(() => {
+    mocks.createAgentSessionFromServices.mockReset();
+    mocks.createAgentSessionServices.mockReset();
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes an explicit empty tool allowlist to Pi", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-child-tools-"));
+    roots.push(root);
+    const recipeDir = join(root, "recipe");
+    const workspaceDir = join(root, "workspace");
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(workspaceDir, { recursive: true });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "child-tools-test",
+        version: "0.1.0",
+        pi: { agents: ["agents/*.yaml"] },
+      })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "worker.yaml"),
+      [
+        "name: worker",
+        "model:",
+        "  name: openai/test-model",
+        "  thinking_level: low",
+        "tools: []",
+        "skills: []",
+        "subagents: []",
+        "system_instructions:",
+        "  mode: append",
+        "  content: Test worker",
+        "",
+      ].join("\n")
+    );
+
+    const session = {
+      agent: {},
+      bindExtensions: vi.fn(async () => undefined),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    mocks.createAgentSessionServices.mockResolvedValue({});
+    mocks.createAgentSessionFromServices.mockResolvedValue({ session });
+
+    const runner = createRecipeChildAgentRunner({
+      recipeDir,
+      workspaceDir,
+      agentName: "worker",
+      env: {},
+    });
+    await runner.start();
+
+    expect(mocks.createAgentSessionFromServices).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: [] })
+    );
+    await runner.shutdown();
+  });
+});

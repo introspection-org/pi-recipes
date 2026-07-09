@@ -23,6 +23,7 @@ import {
   recipePreferredIdentifier,
   recipeStoreFilePath,
   RecipePackageError,
+  REQUIRED_RECIPE_AGENT_FIELDS,
   type RecipePublishCommandRunner,
   removeRecipe,
   resolveRecipeAgentDefinition,
@@ -1554,6 +1555,83 @@ describe("recipe child agents", () => {
           ],
         })
       ).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires bash when resolved agent tools include MCP refs", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agent-mcp-tools-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "child-agent-mcp-tools",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+        },
+      });
+      writeFileSync(
+        join(root, "agents", "base.yaml"),
+        [
+          "name: base",
+          "model:",
+          "  name: test/provider-model",
+          "  thinking_level: low",
+          "tools:",
+          "  - bash",
+          "  - mcp:contacts/search_contacts",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Base instructions",
+          "",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(root, "agents", "worker.yaml"),
+        [
+          "name: worker",
+          "from: base",
+          "tools:",
+          "  - mcp:contacts/search_contacts",
+          "",
+        ].join("\n")
+      );
+
+      expect(
+        validateResolvedRecipeAgentDefinition({
+          recipeDir: root,
+          agentName: "base",
+          requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+        })
+      ).toEqual([]);
+      expect(
+        validateResolvedRecipeAgentDefinition({
+          recipeDir: root,
+          agentName: "worker",
+          requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+        })
+      ).toEqual([
+        {
+          agentName: "worker",
+          field: "tools",
+          code: "mcp_requires_bash",
+          message:
+            'Recipe agent "worker" declares MCP tools but does not allow bash; add "bash" to tools',
+        },
+      ]);
+
+      const report = validateRecipeDirectory(root);
+      expect(report.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            severity: "error",
+            code: "agent.mcp_requires_bash",
+          }),
+        ])
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
