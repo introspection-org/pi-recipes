@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/introspection-org/pi-recipes/compare/v0.4.0...v0.4.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* pack child-agent-completions and guard packed module imports ([#31](https://github.com/introspection-org/pi-recipes/issues/31)) ([3f1ee31](https://github.com/introspection-org/pi-recipes/commit/3f1ee311955dab0087d33bd841cd71f842b0fa76))
+
 ## [0.4.0](https://github.com/introspection-org/pi-recipes/compare/v0.3.0...v0.4.0) (2026-07-09)
 
 
