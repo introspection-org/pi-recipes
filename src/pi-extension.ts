@@ -42,7 +42,7 @@ import {
   materializeSessionMcpCli,
   materializeRecipeMcpManifest,
   mcpCliPromptLines,
-  resolveAgentMcpSelection,
+  resolveAgentMcpSelections,
 } from "./mcp.js";
 import {
   loadRecipeAgentDefinitions,
@@ -272,8 +272,7 @@ function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
 }
 
 function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
-  const selection = resolveAgentMcpSelection(agent.mcp, agent.tools);
-  return selection ? [selection] : [];
+  return resolveAgentMcpSelections(agent.mcp, agent.tools);
 }
 
 function scopedMcpSelections(state: RecipeLaunchState) {

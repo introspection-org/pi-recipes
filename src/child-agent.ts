@@ -27,7 +27,7 @@ import {
   executableRecipeToolNames,
   exactAgentMcpToolRefs,
   mcpCliPromptLines,
-  resolveAgentMcpSelection,
+  resolveAgentMcpSelections,
 } from "./mcp.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
@@ -136,8 +136,7 @@ function runtimeContextPrompt(
   mcp: RecipeAgentMcp | undefined,
   mcpAvailableTools: readonly string[] | undefined
 ): string {
-  const selection = resolveAgentMcpSelection(mcp, tools);
-  const selections = selection ? [selection] : [];
+  const selections = resolveAgentMcpSelections(mcp, tools);
   const mcpRefs = exactAgentMcpToolRefs(selections);
   const mcpPrompt = selections.length > 0
     ? mcpCliPromptLines(mcpRefs, { availableTools: mcpAvailableTools }).join("\n")

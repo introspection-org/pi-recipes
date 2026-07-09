@@ -165,8 +165,9 @@ model:
 
 Objects such as `model`, `extensions`, and `mcp` merge by key. Arrays such as
 `tools`, `skills`, and `subagents` replace the inherited array. Within
-`extensions` and `mcp`, a child agent's `include` or `exclude` replaces that
-selector list while inheriting the other list from its parent.
+`extensions`, a child's `include` or `exclude` replaces that selector list.
+Within `mcp`, servers merge by id, and each child's `include` or `exclude`
+replaces that server's corresponding list while inheriting the other list.
 
 `system_instructions.mode` can be:
 
@@ -255,20 +256,25 @@ Example agent:
 tools:
   - bash
 mcp:
-  include:
-    - contacts/*
-  exclude:
-    - contacts/delete_contact
+  contacts:
+    include:
+      - "*"
+    exclude:
+      - delete_contact
 ```
 
 Package selectors are local to their server: use `"*"` for all tools or a bare
-tool name for one tool. Agent selectors use `*`, `<server-id>/*`, or
-`<server-id>/<tool-name>`. Within either block, omitting `include` means all,
-an empty `include` means none, and `exclude` subtracts after inclusion. The
-agent `mcp` block itself is opt-in: omitting it gives that agent no MCP access.
+tool name for one tool. Agent MCP policy is keyed by server and uses the same
+bare tool names. Every server entry must declare `include`: use `["*"]` for all
+package-permitted tools, an exact list for a subset, or `[]` for none.
+`exclude` subtracts exact names after inclusion. Omitting a server gives the
+agent no access to it; omitting the entire `mcp` block gives it no MCP access.
+Empty package `tools`, agent server (`contacts: {}`), and agent `mcp: {}`
+objects are invalid rather than implicit wildcards.
 
-An explicit wildcard opts into tools that the remote server may add later. Use
-exact includes when that forward-compatible behavior is not desired.
+`"*"` is a reserved whole-toolset sentinel, not a glob. Patterns such as
+`search_*` are invalid. An explicit wildcard opts into tools that the remote
+server may add later; use exact includes when that behavior is not desired.
 
 For compatibility, package `tools.allow` is accepted as an alias for
 `tools.include`, and legacy `mcp:<server>/<tool>` entries in an agent's `tools`

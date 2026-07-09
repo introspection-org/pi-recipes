@@ -273,17 +273,21 @@ Agents opt into MCP tools through a separate YAML `mcp` block:
 tools:
   - bash
 mcp:
-  include:
-    - contacts/*
-  exclude:
-    - contacts/delete_contact
+  contacts:
+    include:
+      - "*"
+    exclude:
+      - delete_contact
 ```
 
-At the package layer, selectors are `"*"` or bare tool names. At the agent
-layer, selectors are `*`, `<server-id>/*`, or `<server-id>/<tool-name>`.
-Omitting `include` means all, an empty `include` means none, and `exclude`
-always wins. Omitting the agent `mcp` block means no MCP access. Exact includes
-avoid automatically exposing tools that a remote server adds later.
+At both layers, `include` is required for each server: `["*"]` enables every
+package-permitted tool, an exact list enables a subset, and `[]` enables none.
+`exclude` removes exact names after inclusion and always wins. `"*"` is a
+whole-toolset sentinel, not a glob; patterns such as `search_*` are invalid.
+Omitting a server or the agent `mcp` block means no access. Exact includes avoid
+automatically exposing tools that a remote server adds later. Empty package
+`tools`, agent server (`contacts: {}`), and agent `mcp: {}` objects are invalid
+rather than implicit wildcards.
 
 Agents with MCP access normally need `bash` or another command-capable
 tool, because MCP endpoint tools are invoked through the session-local CLI.

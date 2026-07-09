@@ -12,7 +12,7 @@ import {
   readPiPackageManifest,
   RecipePackageError,
 } from "./recipe-package.js";
-import { parseAgentMcpToolRef, parseAgentMcpToolSelector } from "./mcp.js";
+import { parseAgentMcpToolRef } from "./mcp.js";
 
 export interface RecipeSystemInstructions {
   mode: "append" | "replace";
@@ -24,12 +24,14 @@ export interface RecipeAgentExtensions {
   exclude?: string[];
 }
 
-export interface RecipeAgentMcp {
-  /** `*`, `<server>/*`, or `<server>/<tool>` selectors. Omitted means all. */
+export interface RecipeAgentMcpServer {
+  /** Exact tool names or the reserved whole-toolset `*` sentinel. */
   include?: string[];
-  /** Selectors removed after inclusion. */
+  /** Exact tool names removed after inclusion. */
   exclude?: string[];
 }
+
+export type RecipeAgentMcp = Record<string, RecipeAgentMcpServer>;
 
 export interface RecipeAgentDefinition {
   name: string;
@@ -162,8 +164,17 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
   if (!Object.hasOwn(data, "mcp")) return undefined;
   const raw = asRecord(data.mcp);
   const mcp: RecipeAgentMcp = {};
-  if (Object.hasOwn(raw, "include")) mcp.include = stringArray(raw.include);
-  if (Object.hasOwn(raw, "exclude")) mcp.exclude = stringArray(raw.exclude);
+  for (const [serverId, value] of Object.entries(raw)) {
+    const selectors = asRecord(value);
+    mcp[serverId] = {
+      ...(Object.hasOwn(selectors, "include")
+        ? { include: stringArray(selectors.include) }
+        : {}),
+      ...(Object.hasOwn(selectors, "exclude")
+        ? { exclude: stringArray(selectors.exclude) }
+        : {}),
+    };
+  }
   return mcp;
 }
 
@@ -173,12 +184,17 @@ function mergeMcp(
 ): RecipeAgentMcp | undefined {
   if (!base) return child;
   if (!child) return base;
-  return {
-    ...(base.include ? { include: base.include } : {}),
-    ...(base.exclude ? { exclude: base.exclude } : {}),
-    ...(child.include ? { include: child.include } : {}),
-    ...(child.exclude ? { exclude: child.exclude } : {}),
-  };
+  const merged: RecipeAgentMcp = { ...base };
+  for (const [serverId, childServer] of Object.entries(child)) {
+    const baseServer = base[serverId];
+    merged[serverId] = {
+      ...(baseServer?.include !== undefined ? { include: baseServer.include } : {}),
+      ...(baseServer?.exclude !== undefined ? { exclude: baseServer.exclude } : {}),
+      ...(childServer.include !== undefined ? { include: childServer.include } : {}),
+      ...(childServer.exclude !== undefined ? { exclude: childServer.exclude } : {}),
+    };
+  }
+  return merged;
 }
 
 function readYaml(path: string): Record<string, unknown> {
@@ -524,10 +540,55 @@ export function validateResolvedRecipeAgentDefinition(opts: {
 
   const tools = resolvedTools(agentName);
   const mcp = resolvedMcp(agentName);
-  const mcpMayIncludeTools = Boolean(
-    mcp &&
-    mcp.include?.length !== 0 &&
-    !mcp.exclude?.includes("*")
+  const rawMcp = rawDefinitions.get(agentName)?.mcp;
+  if (rawMcp && Object.keys(rawMcp).length === 0) {
+    findings.push({
+      agentName,
+      field: "mcp",
+      code: "mcp_empty",
+      message: `Recipe agent "${agentName}" has an empty mcp block; omit it for no MCP access or declare a server with include`,
+    });
+  }
+  for (const [serverId, selection] of Object.entries(mcp ?? {})) {
+    if (!serverId.trim()) {
+      findings.push({
+        agentName,
+        field: "mcp",
+        code: "mcp_server_invalid",
+        message: `Recipe agent "${agentName}" has an empty MCP server id`,
+      });
+    }
+    if (selection.include === undefined) {
+      findings.push({
+        agentName,
+        field: "mcp",
+        code: "mcp_include_missing",
+        message: `Recipe agent "${agentName}" MCP server "${serverId}" must declare include; use ["*"] for all tools or [] for none`,
+      });
+    }
+    for (const selector of selection.include ?? []) {
+      const trimmed = selector.trim();
+      if (trimmed && (trimmed === "*" || !trimmed.includes("*"))) continue;
+      findings.push({
+        agentName,
+        field: "mcp",
+        code: "mcp_selector_invalid",
+        message: `Recipe agent "${agentName}" MCP server "${serverId}" has invalid include entry "${selector}"; use an exact tool name or "*"`,
+      });
+    }
+    for (const selector of selection.exclude ?? []) {
+      const trimmed = selector.trim();
+      if (trimmed && !trimmed.includes("*")) continue;
+      findings.push({
+        agentName,
+        field: "mcp",
+        code: "mcp_selector_invalid",
+        message: `Recipe agent "${agentName}" MCP server "${serverId}" has invalid exclude entry "${selector}"; use an exact tool name`,
+      });
+    }
+  }
+  const mcpMayIncludeTools = Object.values(mcp ?? {}).some(
+    (selection) => (selection.include?.length ?? 0) > 0
   );
   if (
     (mcpMayIncludeTools || tools?.some((tool) => parseAgentMcpToolRef(tool))) &&
@@ -564,27 +625,6 @@ function validateRecipeAgentModelSpecs(
       field: "model.name",
       message: `Recipe agent "${source.definition.name}" has invalid model.name "${spec}" - expected "<provider>/<model_id>"`,
     });
-  }
-  return findings;
-}
-
-function validateRecipeAgentMcpSelectors(
-  sources: RecipeAgentSource[]
-): RecipeAgentValidationFinding[] {
-  const findings: RecipeAgentValidationFinding[] = [];
-  for (const source of sources) {
-    for (const selector of [
-      ...(source.definition.mcp?.include ?? []),
-      ...(source.definition.mcp?.exclude ?? []),
-    ]) {
-      if (parseAgentMcpToolSelector(selector)) continue;
-      findings.push({
-        agentName: source.definition.name,
-        field: "mcp",
-        code: "mcp_selector_invalid",
-        message: `Recipe agent "${source.definition.name}" has invalid MCP selector "${selector}"; expected "*", "<server-id>/*", or "<server-id>/<tool-name>"`,
-      });
-    }
   }
   return findings;
 }
@@ -647,7 +687,6 @@ export function validateRecipeAgentDefinitions(recipeDir: string): RecipeAgentVa
     ...invalidFileFindings,
     ...validateRecipeAgentNames(sources),
     ...validateRecipeAgentModelSpecs(sources),
-    ...validateRecipeAgentMcpSelectors(sources),
     ...agentNames.flatMap((agentName) =>
       validateResolvedRecipeAgentDefinition({
         recipeDir,

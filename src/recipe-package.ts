@@ -15,9 +15,9 @@ export interface RecipePackageMcpServer {
 }
 
 export interface RecipeMcpToolSelection {
-  /** Selectors to admit. Omitted means all; an empty array means none. */
+  /** Exact tool names or the reserved whole-toolset `*` sentinel. Required by validation. */
   include?: string[];
-  /** Selectors removed after inclusion. */
+  /** Exact tool names removed after inclusion. */
   exclude?: string[];
 }
 
@@ -708,18 +708,31 @@ export function validatePiPackageManifest(
     );
   }
   for (const server of pkg.mcp.servers) {
+    if (server.tools.include === undefined) {
+      findings.push(
+        finding(
+          "error",
+          "pi.mcp_include_missing",
+          `MCP server "${server.id}" must declare tools.include; use ["*"] for all tools or [] for none`,
+          pkg.name
+        )
+      );
+    }
     for (const [list, selectors] of [
       ["include", server.tools.include],
       ["exclude", server.tools.exclude],
     ] as const) {
       for (const selector of selectors ?? []) {
         const trimmed = selector.trim();
-        if (trimmed && (trimmed === "*" || !trimmed.includes("/"))) continue;
+        const valid = list === "include"
+          ? Boolean(trimmed) && (trimmed === "*" || !trimmed.includes("*"))
+          : Boolean(trimmed) && !trimmed.includes("*");
+        if (valid) continue;
         findings.push(
           finding(
             "error",
             "pi.mcp_selector_invalid",
-            `MCP server "${server.id}" tools.${list} selector "${selector}" must be "*" or a bare tool name`,
+            `MCP server "${server.id}" tools.${list} entry "${selector}" must be ${list === "include" ? 'an exact tool name or "*"' : "an exact tool name"}`,
             pkg.name
           )
         );

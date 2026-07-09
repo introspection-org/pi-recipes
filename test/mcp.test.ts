@@ -187,7 +187,7 @@ describe("recipe MCP materialization", () => {
         recipeDir,
         env,
         fetch: fetchImpl,
-        agentMcp: [{}],
+        agentMcp: [{ serverId: "nextplay", tools: { include: ["*"] } }],
         manifest: recipeManifest(recipeDir, []),
       });
 
@@ -435,6 +435,11 @@ describe("recipe MCP materialization", () => {
                 { name: "delete_org" },
               ],
             },
+            {
+              id: "hubspot",
+              base_url: "https://hubspot.example/mcp",
+              tools: [{ name: "get_contacts" }],
+            },
           ],
         })
       );
@@ -444,17 +449,24 @@ describe("recipe MCP materialization", () => {
         recipeDir,
         agentMcp: [
           {
-            exclude: ["salesforce/export_all"],
+            serverId: "salesforce",
+            tools: {
+              include: ["*"],
+              exclude: ["export_all"],
+            },
           },
         ],
         manifest: recipeManifest(recipeDir, [
           {
             id: "salesforce",
+            include: ["*"],
             exclude: ["delete_org"],
           },
+          { id: "hubspot", include: ["*"] },
         ]),
       });
 
+      expect(manifest.servers?.map((server) => server.id)).toEqual(["salesforce"]);
       expect(manifest.servers?.[0]?.tools?.map((tool) => tool.name)).toEqual([
         "search_accounts",
         "update_account",
@@ -463,8 +475,10 @@ describe("recipe MCP materialization", () => {
       const none = await materializeRecipeMcpManifest({
         cwd,
         recipeDir,
-        agentMcp: [{ include: [] }],
-        manifest: recipeManifest(recipeDir, [{ id: "salesforce" }]),
+        agentMcp: [{ serverId: "salesforce", tools: { include: [] } }],
+        manifest: recipeManifest(recipeDir, [
+          { id: "salesforce", include: ["*"] },
+        ]),
       });
       expect(none.servers).toEqual([]);
     } finally {

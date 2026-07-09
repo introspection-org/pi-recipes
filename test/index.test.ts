@@ -235,7 +235,35 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("rejects server-qualified selectors in package MCP tool policy", () => {
+  it("requires an explicit package MCP tools.include", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-include-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "missing-package-mcp-include",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [{ id: "salesforce", tools: {} }],
+          },
+        },
+      });
+
+      expect(validatePiPackageManifest(readPiPackageManifest(root))).toMatchObject({
+        valid: false,
+        findings: [
+          expect.objectContaining({
+            code: "pi.mcp_include_missing",
+            severity: "error",
+          }),
+        ],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects glob patterns in package MCP tool policy", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-selector-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -247,7 +275,7 @@ describe("recipe package manifest", () => {
             servers: [
               {
                 id: "salesforce",
-                tools: { exclude: ["salesforce/delete_org"] },
+                tools: { include: ["search_*"], exclude: ["*"] },
               },
             ],
           },
@@ -257,6 +285,10 @@ describe("recipe package manifest", () => {
       expect(validatePiPackageManifest(readPiPackageManifest(root))).toMatchObject({
         valid: false,
         findings: [
+          expect.objectContaining({
+            code: "pi.mcp_selector_invalid",
+            severity: "error",
+          }),
           expect.objectContaining({
             code: "pi.mcp_selector_invalid",
             severity: "error",
@@ -1484,10 +1516,11 @@ describe("recipe agent definitions", () => {
           "  exclude:",
           "    - optional-runtime",
           "mcp:",
-          "  include:",
-          "    - salesforce/*",
-          "  exclude:",
-          "    - salesforce/delete_org",
+          "  salesforce:",
+          "    include:",
+          "      - \"*\"",
+          "    exclude:",
+          "      - delete_org",
           "system_instructions:",
           "  mode: append",
           "  content: Base prompt",
@@ -1508,9 +1541,10 @@ describe("recipe agent definitions", () => {
           "    - optional-runtime",
           "    - tracing",
           "mcp:",
-          "  exclude:",
-          "    - salesforce/delete_org",
-          "    - salesforce/purge_records",
+          "  salesforce:",
+          "    exclude:",
+          "      - delete_org",
+          "      - purge_records",
           "",
         ].join("\n")
       );
@@ -1536,8 +1570,10 @@ describe("recipe agent definitions", () => {
             exclude: ["optional-runtime", "tracing"],
           },
           mcp: {
-            include: ["salesforce/*"],
-            exclude: ["salesforce/delete_org", "salesforce/purge_records"],
+            salesforce: {
+              include: ["*"],
+              exclude: ["delete_org", "purge_records"],
+            },
           },
           systemInstructions: {
             mode: "append",
@@ -1659,8 +1695,9 @@ describe("recipe child agents", () => {
           "tools:",
           "  - bash",
           "mcp:",
-          "  include:",
-          "    - contacts/search_contacts",
+          "  contacts:",
+          "    include:",
+          "      - search_contacts",
           "skills: []",
           "subagents: []",
           "system_instructions:",
@@ -1772,7 +1809,7 @@ describe("recipe child agents", () => {
     }
   });
 
-  it("rejects malformed agent MCP selectors", () => {
+  it("validates explicit per-server agent MCP selections", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agent-mcp-selector-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -1781,31 +1818,50 @@ describe("recipe child agents", () => {
         version: "0.1.0",
         pi: { agents: ["agents/*.yaml"] },
       });
-      writeFileSync(
-        join(root, "agents", "agent.yaml"),
-        [
-          "name: agent",
-          "model:",
-          "  name: test/provider-model",
-          "  thinking_level: low",
-          "tools:",
-          "  - bash",
-          "mcp:",
-          "  include:",
-          "    - salesforce",
-          "skills: []",
-          "subagents: []",
-          "system_instructions:",
-          "  mode: append",
-          "  content: Test instructions",
-          "",
-        ].join("\n")
-      );
+      const writeAgent = (name: string, mcpLines: string[]) =>
+        writeFileSync(
+          join(root, "agents", `${name}.yaml`),
+          [
+            `name: ${name}`,
+            "model:",
+            "  name: test/provider-model",
+            "  thinking_level: low",
+            "tools:",
+            "  - bash",
+            ...mcpLines,
+            "skills: []",
+            "subagents: []",
+            "system_instructions:",
+            "  mode: append",
+            "  content: Test instructions",
+            "",
+          ].join("\n")
+        );
+      writeAgent("missing-include", ["mcp:", "  salesforce: {}"]);
+      writeAgent("empty-mcp", ["mcp: {}"]);
+      writeAgent("invalid-patterns", [
+        "mcp:",
+        "  salesforce:",
+        "    include:",
+        "      - search_*",
+        "    exclude:",
+        "      - \"*\"",
+      ]);
 
       expect(validateRecipeAgentDefinitions(root)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            agentName: "agent",
+            agentName: "missing-include",
+            field: "mcp",
+            code: "mcp_include_missing",
+          }),
+          expect.objectContaining({
+            agentName: "empty-mcp",
+            field: "mcp",
+            code: "mcp_empty",
+          }),
+          expect.objectContaining({
+            agentName: "invalid-patterns",
             field: "mcp",
             code: "mcp_selector_invalid",
           }),

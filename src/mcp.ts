@@ -112,7 +112,7 @@ export interface MaterializeRecipeMcpOptions {
   recipeDir: string;
   manifest: RecipePackageManifest;
   /** MCP selections for the active agent and its visible subagents. */
-  agentMcp?: readonly RecipeMcpToolSelection[];
+  agentMcp?: readonly ScopedMcpToolSelection[];
   /** @deprecated Legacy `mcp:<server>/<tool>` entries from agent `tools`. */
   agentTools?: readonly string[];
   env?: NodeJS.ProcessEnv;
@@ -640,6 +640,11 @@ export interface AgentMcpToolRef {
   raw: string;
 }
 
+export interface ScopedMcpToolSelection {
+  serverId: string;
+  tools: RecipeMcpToolSelection;
+}
+
 export function parseAgentMcpToolRef(value: string): AgentMcpToolRef | null {
   if (!value.startsWith("mcp:")) return null;
   const body = value.slice("mcp:".length).trim();
@@ -663,61 +668,58 @@ export function agentMcpToolAllowlist(tools: readonly string[]): Map<string, Set
   return allow;
 }
 
-export interface AgentMcpToolSelector {
-  serverId?: string;
-  toolName?: string;
-  raw: string;
-}
-
-/** Parse `*`, `<server>/*`, or `<server>/<tool>` from an agent `mcp` block. */
-export function parseAgentMcpToolSelector(value: string): AgentMcpToolSelector | null {
-  const trimmed = value.trim();
-  if (trimmed === "*") return { raw: value };
-  const slash = trimmed.indexOf("/");
-  if (slash <= 0 || slash === trimmed.length - 1) return null;
-  const serverId = trimmed.slice(0, slash).trim();
-  const toolName = trimmed.slice(slash + 1).trim();
-  if (!serverId || !toolName || toolName.includes("/")) return null;
-  return { serverId: safeServerId(serverId), toolName, raw: value };
-}
-
-export function legacyAgentMcpSelection(
+export function legacyAgentMcpSelections(
   tools: readonly string[]
-): RecipeMcpToolSelection | undefined {
-  const include = tools
-    .map((tool) => parseAgentMcpToolRef(tool))
-    .filter((tool): tool is AgentMcpToolRef => Boolean(tool))
-    .map((tool) => `${tool.serverId}/${tool.toolName}`);
-  return include.length > 0 ? { include } : undefined;
+): ScopedMcpToolSelection[] {
+  const byServer = new Map<string, string[]>();
+  for (const raw of tools) {
+    const parsed = parseAgentMcpToolRef(raw);
+    if (!parsed) continue;
+    const include = byServer.get(parsed.serverId) ?? [];
+    include.push(parsed.toolName);
+    byServer.set(parsed.serverId, include);
+  }
+  return [...byServer].map(([serverId, include]) => ({
+    serverId,
+    tools: { include },
+  }));
 }
 
-export function resolveAgentMcpSelection(
-  selection: RecipeMcpToolSelection | undefined,
+export function resolveAgentMcpSelections(
+  mcp: Readonly<Record<string, RecipeMcpToolSelection>> | undefined,
   tools: readonly string[]
-): RecipeMcpToolSelection | undefined {
-  const legacy = legacyAgentMcpSelection(tools);
-  if (!selection) return legacy;
-  if (!legacy) return selection;
-  return {
-    ...(selection.include === undefined
-      ? {}
-      : { include: [...selection.include, ...(legacy.include ?? [])] }),
-    ...(selection.exclude !== undefined ? { exclude: selection.exclude } : {}),
-  };
+): ScopedMcpToolSelection[] {
+  const selections = new Map<string, RecipeMcpToolSelection>();
+  for (const [serverId, selection] of Object.entries(mcp ?? {})) {
+    selections.set(safeServerId(serverId), selection);
+  }
+  for (const legacy of legacyAgentMcpSelections(tools)) {
+    const selection = selections.get(legacy.serverId);
+    selections.set(legacy.serverId, {
+      include: [
+        ...(selection?.include ?? []),
+        ...(legacy.tools.include ?? []),
+      ],
+      ...(selection?.exclude !== undefined ? { exclude: selection.exclude } : {}),
+    });
+  }
+  return [...selections].map(([serverId, selection]) => ({
+    serverId,
+    tools: selection,
+  }));
 }
 
 export function exactAgentMcpToolRefs(
-  selections: readonly RecipeMcpToolSelection[]
+  selections: readonly ScopedMcpToolSelection[]
 ): AgentMcpToolRef[] {
   const refs: AgentMcpToolRef[] = [];
   for (const selection of selections) {
-    for (const raw of selection.include ?? []) {
-      const parsed = parseAgentMcpToolSelector(raw);
-      if (!parsed?.serverId || !parsed.toolName || parsed.toolName === "*") continue;
-      if (!mcpSelectionAllowsAgentTool(selection, parsed.serverId, parsed.toolName)) continue;
+    for (const raw of selection.tools.include ?? []) {
+      const toolName = raw.trim();
+      if (toolName === "*" || !mcpSelectionAllowsTool(selection.tools, toolName)) continue;
       refs.push({
-        serverId: parsed.serverId,
-        toolName: parsed.toolName,
+        serverId: selection.serverId,
+        toolName,
         raw,
       });
     }
@@ -853,54 +855,33 @@ function recipeMcpPolicy(mcp: RecipePackageMcpConfig): {
   };
 }
 
-function selectionAllows(
-  selection: RecipeMcpToolSelection,
-  matches: (selector: string) => boolean
-): boolean {
-  const included = selection.include === undefined || selection.include.some(matches);
-  if (!included) return false;
-  return !(selection.exclude ?? []).some(matches);
-}
-
-function mcpSelectionAllowsPackageTool(
+export function mcpSelectionAllowsTool(
   selection: RecipeMcpToolSelection,
   toolName: string
 ): boolean {
-  return selectionAllows(selection, (selector) => {
+  const included = selection.include?.some((selector) => {
     const trimmed = selector.trim();
     return trimmed === "*" || trimmed === toolName;
-  });
-}
-
-export function mcpSelectionAllowsAgentTool(
-  selection: RecipeMcpToolSelection,
-  serverId: string,
-  toolName: string
-): boolean {
-  const safeId = safeServerId(serverId);
-  return selectionAllows(selection, (selector) => {
-    const parsed = parseAgentMcpToolSelector(selector);
-    if (!parsed) return false;
-    if (!parsed.serverId) return true;
-    return parsed.serverId === safeId &&
-      (parsed.toolName === "*" || parsed.toolName === toolName);
-  });
+  }) ?? false;
+  if (!included) return false;
+  return !(selection.exclude ?? []).some((selector) => selector.trim() === toolName);
 }
 
 function filterTools(
   serverId: string,
   tools: McpManifestTool[],
   recipeTools: Map<string, RecipeMcpToolSelection>,
-  agentSelections: readonly RecipeMcpToolSelection[]
+  agentSelections: readonly ScopedMcpToolSelection[]
 ): McpManifestTool[] {
   const packageSelection = recipeTools.get(serverId);
   return tools.filter((tool) => {
     const name = tool.name.trim();
-    if (packageSelection && !mcpSelectionAllowsPackageTool(packageSelection, name)) {
+    if (packageSelection && !mcpSelectionAllowsTool(packageSelection, name)) {
       return false;
     }
-    return agentSelections.some((selection) =>
-      mcpSelectionAllowsAgentTool(selection, serverId, name)
+    return agentSelections.some(
+      (selection) => selection.serverId === serverId &&
+        mcpSelectionAllowsTool(selection.tools, name)
     );
   });
 }
@@ -960,7 +941,7 @@ function scrubFilteredToolDescriptions(
 function normalizeManifest(
   manifest: McpManifest,
   mcp: RecipePackageMcpConfig,
-  agentSelections: readonly RecipeMcpToolSelection[]
+  agentSelections: readonly ScopedMcpToolSelection[]
 ): McpManifest {
   const recipePolicy = recipeMcpPolicy(mcp);
   const seenServerIds = new Set<string>();
@@ -1023,7 +1004,7 @@ function manifestFromCatalogs(catalogs: McpCatalog[]): McpManifest {
 function filterDiagnostics(
   rawManifest: McpManifest,
   mcp: RecipePackageMcpConfig,
-  agentSelections: readonly RecipeMcpToolSelection[]
+  agentSelections: readonly ScopedMcpToolSelection[]
 ): McpDiscoveryDiagnostic[] {
   const recipePolicy = recipeMcpPolicy(mcp);
   const diagnostics: McpDiscoveryDiagnostic[] = [];
@@ -1035,7 +1016,11 @@ function filterDiagnostics(
 
     const packageSelection = recipePolicy.tools.get(serverId);
     const packageExpected = packageSelection?.include?.map((tool) => `${serverId}/${tool}`) ?? [];
-    const agentExpected = agentSelections.flatMap((selection) => selection.include ?? ["*"]);
+    const agentExpected = agentSelections
+      .filter((selection) => selection.serverId === serverId)
+      .flatMap((selection) =>
+        (selection.tools.include ?? []).map((tool) => `${serverId}/${tool}`)
+      );
     const expected = agentExpected.length > 0 ? agentExpected : packageExpected;
     diagnostics.push({
       serverId,
@@ -1161,10 +1146,10 @@ export async function materializeRecipeMcpManifest(
   const hasConfiguredManifest =
     opts.manifest.mcp.manifests.length > 0 ||
     existsSync(join(opts.recipeDir, "mcp.json"));
-  const legacySelection = legacyAgentMcpSelection(opts.agentTools ?? []);
+  const legacySelections = legacyAgentMcpSelections(opts.agentTools ?? []);
   const agentSelections = [
     ...(opts.agentMcp ?? []),
-    ...(legacySelection ? [legacySelection] : []),
+    ...legacySelections,
   ];
 
   let rawManifest: McpManifest;
