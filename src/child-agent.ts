@@ -18,6 +18,10 @@ import {
   validateResolvedRecipeAgentDefinition,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
+import {
+  applyRecipeAgentModelConfigToModel,
+  applyRecipeAgentModelConfigToSession,
+} from "./recipe-model.js";
 import { executableRecipeToolNames, parseAgentMcpToolRef } from "./mcp.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
@@ -297,7 +301,10 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     if (!modelSpec) {
       throw new Error(`Recipe agent "${agentName}" must declare model.name`);
     }
-    const model = modelFromSpec(modelSpec, this.opts.modelRegistry);
+    const model = applyRecipeAgentModelConfigToModel(
+      modelFromSpec(modelSpec, this.opts.modelRegistry),
+      agent.modelConfig
+    );
     const authStorage = authStorageForChildAgent(model, this.opts);
     const services = await createAgentSessionServices({
       cwd: this.opts.workspaceDir,
@@ -330,6 +337,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       tools: executableTools.length > 0 ? executableTools : undefined,
     });
     this.session = created.session;
+    applyRecipeAgentModelConfigToSession(this.session, agent.modelConfig);
     await this.session.bindExtensions({});
     this.unsubscribe = this.session.subscribe((event) => {
       this.handleSessionEvent(event);

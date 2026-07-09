@@ -49,6 +49,7 @@ import {
   type RecipeAgentDefinition,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
+import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
   packageResourcePaths,
   readPiPackageManifest,
@@ -968,6 +969,10 @@ export function createPiRecipesExtension(
       if (!resolvedModel) {
         throw new Error(`Recipe model is not available: ${modelSpec}`);
       }
+      applyRecipeAgentModelConfigToModel(
+        resolvedModel,
+        launchState.agent.modelConfig
+      );
       const ok = await pi.setModel(resolvedModel);
       if (!ok) {
         throw new Error(`Recipe model has no configured API key: ${modelSpec}`);

@@ -32,6 +32,8 @@
     "dist/recipe-evals.js",
     "dist/recipe-mcp-config.d.ts",
     "dist/recipe-mcp-config.js",
+    "dist/recipe-model.d.ts",
+    "dist/recipe-model.js",
     "dist/recipe-agent.d.ts",
     "dist/recipe-agent.js",
     "dist/recipe-check.d.ts",
