@@ -282,14 +282,14 @@ writes a workspace-local `.pi/mcp.json` plus an
 Agents use:
 
 ```bash
-mcp search "staff engineer"              # find relevant tool references
+mcp search "contact lookup"              # find relevant tool references
 mcp list                                 # servers and their tools
 mcp list contacts --schema               # parameter schemas per tool
 mcp list contacts.search_contacts --schema
-mcp call contacts.search_contacts query="staff engineer"
-mcp call 'contacts.search_contacts(query: "staff engineer", limit: 5)'
+mcp call contacts.search_contacts query="Ada Lovelace"
+mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
-const result = await tools.contacts.search_contacts({ query: "staff engineer" })
+const result = await tools.contacts.search_contacts({ query: "Ada Lovelace" })
 console.log(JSON.stringify(result, null, 2))
 EOF
 ```

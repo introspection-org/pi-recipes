@@ -418,16 +418,16 @@ describe("recipe MCP materialization", () => {
       {
         servers: [
           {
-            id: "nextplay",
+            id: "contacts",
             base_url: "http://example.test/mcp",
             tools: [
               {
-                name: "search_profiles",
-                description: "Search profiles by title, company, location, and experience.",
+                name: "search_contacts",
+                description: "Search contacts by name, company, location, and notes.",
                 input_schema: {
                   type: "object",
                   properties: {
-                    q: { type: "string", description: "Natural language candidate query" },
+                    q: { type: "string", description: "Natural language contact query" },
                     city: { type: "string", description: "City filter" },
                   },
                   required: ["q"],
@@ -453,9 +453,9 @@ describe("recipe MCP materialization", () => {
     );
 
     expect(matches).toHaveLength(1);
-    expect(matches[0]?.ref).toBe("nextplay.search_profiles");
-    expect(matches[0]?.inspect).toBe("mcp list nextplay.search_profiles --schema");
-    expect(matches[0]?.call).toBe("mcp call nextplay.search_profiles q:'example query'");
+    expect(matches[0]?.ref).toBe("contacts.search_contacts");
+    expect(matches[0]?.inspect).toBe("mcp list contacts.search_contacts --schema");
+    expect(matches[0]?.call).toBe("mcp call contacts.search_contacts q:'example query'");
   });
 
   it("supports regex search over names, descriptions, and argument metadata", () => {
@@ -495,14 +495,14 @@ describe("recipe MCP materialization", () => {
         [
           "mcporter 0.12.3 — Listing 1 server(s)",
           "Examples:",
-          "  mcporter call nextplay.search_profiles q:'staff engineer'",
+          "  mcporter call contacts.search_contacts q:'Ada Lovelace'",
         ].join("\n")
       )
     ).toBe(
       [
         "Listing 1 server(s)",
         "Examples:",
-        "  mcp call nextplay.search_profiles q:'staff engineer'",
+        "  mcp call contacts.search_contacts q:'Ada Lovelace'",
       ].join("\n")
     );
   });
