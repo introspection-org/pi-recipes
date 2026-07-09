@@ -43,10 +43,11 @@ function usage(): string {
     "  mcp call '<server>.<tool>(key: \"value\")'",
     "",
     "Run a short workflow:",
-    "  mcp run <<'EOF'",
-    "  const result = await tools.<server>.<tool>({ key: \"value\" })",
+    "  mcp run --var ID=abc123 <<'EOF'",
+    "  const result = await tools.<server>.<tool>({ sessionId: vars.ID, key: \"value\" })",
     "  console.log(JSON.stringify(result, null, 2))",
     "  EOF",
+    "  Keep the heredoc quoted (<<'EOF'); pass dynamic values with --var KEY=value (read as vars.KEY).",
     "",
     "When to use:",
     "  Use search when you do not know the right tool.",
@@ -334,19 +335,19 @@ async function createTools() {
 
 export async function runMcpJavaScript(
   code: string,
-  opts: { timeoutMs?: number } = {}
+  opts: { timeoutMs?: number; vars?: Record<string, string> } = {}
 ): Promise<void> {
   const { runtime, tools } = await createTools();
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
     ...args: string[]
-  ) => (tools: unknown) => Promise<unknown>;
-  const run = new AsyncFunction("tools", code);
+  ) => (tools: unknown, vars: Record<string, string>) => Promise<unknown>;
+  const run = new AsyncFunction("tools", "vars", code);
   const timeoutMs =
     opts.timeoutMs ?? Number(process.env.PI_RECIPES_MCP_RUN_TIMEOUT_MS ?? DEFAULT_RUN_TIMEOUT_MS);
   let timeout: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
-      run(tools),
+      run(tools, opts.vars ?? {}),
       new Promise((_resolve, reject) => {
         timeout = setTimeout(() => {
           reject(new Error(`mcp run timed out after ${timeoutMs}ms`));
@@ -360,13 +361,30 @@ export async function runMcpJavaScript(
 }
 
 async function runCode(args: string[]): Promise<number> {
-  const file = args[0];
-  if (args.length > 1) {
+  const vars: Record<string, string> = {};
+  const positional: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const inline = arg.startsWith("--var=") ? arg.slice("--var=".length) : undefined;
+    const value = inline ?? (arg === "--var" ? args[++index] : undefined);
+    if (arg === "--var" || inline !== undefined) {
+      const eq = value?.indexOf("=") ?? -1;
+      if (value === undefined || eq < 1) {
+        stderr.write("--var expects KEY=value.\n");
+        return 2;
+      }
+      vars[value.slice(0, eq)] = value.slice(eq + 1);
+      continue;
+    }
+    positional.push(arg);
+  }
+  const file = positional[0];
+  if (positional.length > 1) {
     stderr.write("mcp run accepts at most one file path.\n");
     return 2;
   }
   const code = file ? await readFile(file, "utf8") : await readStdin();
-  await runMcpJavaScript(code);
+  await runMcpJavaScript(code, { vars });
   return 0;
 }
 

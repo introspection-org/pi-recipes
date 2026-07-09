@@ -775,7 +775,7 @@ describe("mcporter CLI end-to-end", () => {
 
       await runMcpJavaScript(
         `
-        const result = await tools.stub.get_value({ key: "color" });
+        const result = await tools.stub.get_value({ key: vars.KEY });
         let errorMessage = null;
         try {
           await tools.stub.get_value({ key: "explode" });
@@ -784,7 +784,7 @@ describe("mcporter CLI end-to-end", () => {
         }
         globalThis.__mcpRunSmoke = { result, errorMessage };
         `,
-        { timeoutMs: 10_000 }
+        { timeoutMs: 10_000, vars: { KEY: "color" } }
       );
 
       expect((globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke).toEqual({
