@@ -13,6 +13,7 @@ export interface McpManifestTool {
   name: string;
   description?: string;
   input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
 }
 
 export interface McpManifestServer {
@@ -79,6 +80,7 @@ interface RemoteMcpTool {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
 }
 
 interface WritableLike {
@@ -799,6 +801,7 @@ function manifestFromCatalogs(catalogs: McpCatalog[]): McpManifest {
         name: tool.name,
         description: tool.description ?? "",
         ...(tool.inputSchema ? { input_schema: tool.inputSchema } : {}),
+        ...(tool.outputSchema ? { output_schema: tool.outputSchema } : {}),
       })),
     })),
   };

@@ -388,6 +388,31 @@ async function runCode(args: string[]): Promise<number> {
   return 0;
 }
 
+export function outputSchemaSection(manifest: McpManifest, ref: string): string | null {
+  const dot = ref.indexOf(".");
+  if (dot < 1) return null;
+  const serverId = ref.slice(0, dot);
+  const toolName = ref.slice(dot + 1);
+  const tool = manifest.servers
+    ?.find((server) => server.id === serverId)
+    ?.tools?.find((entry) => entry.name === toolName);
+  if (!tool?.output_schema) return null;
+  const json = JSON.stringify(tool.output_schema, null, 2).replace(/^/gm, "      ");
+  return `\n  Output schema (response shape):\n${json}\n`;
+}
+
+async function appendOutputSchema(args: string[]): Promise<void> {
+  if (args[0] !== "list" || !args.includes("--schema")) return;
+  const ref = args[1];
+  if (!ref || !ref.includes(".") || ref.startsWith("-")) return;
+  try {
+    const section = outputSchemaSection(await readManifest(), ref);
+    if (section) stdout.write(section);
+  } catch {
+    // The manifest is a session artifact; schema display works without it.
+  }
+}
+
 export function rebrandDelegatedOutput(text: string): string {
   return text
     .replace(/^mcporter\s+\d+\.\d+\.\d+\s+—\s+/gm, "")
@@ -463,7 +488,9 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   }
   if (args[0] === "run") return runCode(args.slice(1));
   if (args[0] === "search") return searchCatalog(args.slice(1));
-  return delegateToMcporter(args);
+  const code = await delegateToMcporter(args);
+  await appendOutputSchema(args);
+  return code;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
