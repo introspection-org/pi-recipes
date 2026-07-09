@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import {
   createRecipeScaffold,
 } from "./recipe-dev.js";
+import { isDirectEntry } from "./direct-cli.js";
 import { runRecipeCheck, type RecipeCheckProfile } from "./recipe-check.js";
 import {
   publishRecipe,
@@ -718,14 +719,7 @@ export function isDirectCli(
   entry = process.argv[1],
   moduleUrl = import.meta.url
 ): boolean {
-  if (!entry) return false;
-
-  const modulePath = fileURLToPath(moduleUrl);
-  try {
-    return realpathSync(entry) === realpathSync(modulePath);
-  } catch {
-    return resolve(entry) === modulePath;
-  }
+  return isDirectEntry(moduleUrl, entry);
 }
 
 if (isDirectCli()) {

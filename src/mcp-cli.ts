@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { stdin as input, stderr, stdout } from "node:process";
-import { fileURLToPath } from "node:url";
 import { createCallResult, createRuntime } from "mcporter";
+import { isDirectEntry } from "./direct-cli.js";
 import {
   defaultMcpManifestPath,
   mcporterCliEntrypointPath,
@@ -493,7 +492,7 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   return code;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectEntry(import.meta.url)) {
   main()
     .then((code) => {
       process.exitCode = code;

@@ -14,6 +14,8 @@
     "dist/child-agent-store.js",
     "dist/cli.d.ts",
     "dist/cli.js",
+    "dist/direct-cli.d.ts",
+    "dist/direct-cli.js",
     "dist/index.d.ts",
     "dist/index.js",
     "dist/interactions.d.ts",
