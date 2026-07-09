@@ -643,6 +643,48 @@ export function executableRecipeToolNames(tools: readonly string[]): string[] {
   return tools.filter((tool) => !parseAgentMcpToolRef(tool));
 }
 
+export interface McpCliPromptOptions {
+  /**
+   * Include the PATH lookup hint pointing at `$PI_RECIPES_MCP_BIN_DIR`.
+   * Hosts that install a global `mcp` shim should disable it.
+   */
+  binDirHint?: boolean;
+}
+
+/**
+ * The system-prompt section teaching a model the recipe `mcp` CLI. Callers
+ * decide when the session warrants it (MCP tools configured); `mcpRefs` are
+ * the agent's parsed `mcp:<server>/<tool>` policy entries.
+ */
+export function mcpCliPromptLines(
+  mcpRefs: readonly AgentMcpToolRef[],
+  opts: McpCliPromptOptions = {}
+): string[] {
+  const binDirHint = opts.binDirHint ?? true;
+  return [
+    "## Recipe MCP CLI",
+    "- MCP tool policy refs are not directly callable tool names.",
+    "- Use the session-local `mcp` command through `bash` for MCP endpoint tools.",
+    ...(binDirHint
+      ? [
+          "- The extension puts `mcp` on PATH; if lookup fails, use `$PI_RECIPES_MCP_BIN_DIR/mcp`.",
+        ]
+      : []),
+    '- Find relevant tools with `mcp search "what you need"`; inspect exact arguments with `mcp list <server.tool> --schema`.',
+    "- List servers and their tools with `mcp list`.",
+    "- Show parameter schemas with `mcp list <server> --schema`.",
+    "- Call a tool with `mcp call <server>.<tool> key=value ...` (values auto-coerce).",
+    "- Use function-call syntax for nested arguments: `mcp call '<server>.<tool>(key: \"value\", items: [1, 2])'`.",
+    "- Use `mcp run` for multi-step JavaScript workflows; recipe MCP tools are available as async functions on `tools.<server>.<tool>`.",
+    ...(mcpRefs.length > 0
+      ? [
+          "- Configured MCP policy refs: " +
+            mcpRefs.map((tool) => `${tool.serverId}/${tool.toolName}`).join(", "),
+        ]
+      : []),
+  ];
+}
+
 export function formatMcpDiscoveryDiagnostics(
   diagnostics: readonly McpDiscoveryDiagnostic[],
   limit = 3
