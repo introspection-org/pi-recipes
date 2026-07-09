@@ -522,6 +522,22 @@ describe("recipe MCP materialization", () => {
     );
   });
 
+  it("appends a bearer-token hint when OAuth metadata discovery fails", () => {
+    const out: string[] = [];
+    const filter = createDelegatedErrorFilter((text) => out.push(text));
+    filter.push("[mcporter] HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server\n");
+    filter.push("Error: HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server\n");
+    filter.flush();
+    expect(out.join("")).toBe(
+      [
+        "[mcp] HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server",
+        "Error: HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server",
+        "Hint: this server is called with a configured bearer token; the token may be invalid or expired.",
+        "",
+      ].join("\n")
+    );
+  });
+
   it("drops upstream stack frames from delegated stderr but keeps message lines", () => {
     const out: string[] = [];
     const filter = createDelegatedErrorFilter((text) => out.push(text));

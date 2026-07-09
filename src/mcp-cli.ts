@@ -385,9 +385,13 @@ export function createDelegatedErrorFilter(write: (text: string) => void): {
   flush(): void;
 } {
   let buffer = "";
+  let sawOAuthMetadataError = false;
   const emit = (line: string) => {
     // Drop Node stack frames from upstream errors; keep the message lines.
     if (/^\s+at\s\S/.test(line)) return;
+    // A rejected bearer token makes the upstream client fall back to OAuth
+    // discovery, which fails with an unrelated-looking metadata error.
+    if (/trying to load OAuth metadata/.test(line)) sawOAuthMetadataError = true;
     write(rebrandDelegatedOutput(line));
   };
   return {
@@ -403,6 +407,12 @@ export function createDelegatedErrorFilter(write: (text: string) => void): {
     flush() {
       if (buffer) emit(buffer);
       buffer = "";
+      if (sawOAuthMetadataError) {
+        write(
+          "Hint: this server is called with a configured bearer token; the token may be invalid or expired.\n"
+        );
+        sawOAuthMetadataError = false;
+      }
     },
   };
 }
