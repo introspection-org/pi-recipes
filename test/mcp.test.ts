@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDelegatedErrorFilter,
+  outputSchemaSection,
   rebrandDelegatedOutput,
   runMcpJavaScript,
   searchMcpTools,
@@ -510,6 +511,33 @@ describe("recipe MCP materialization", () => {
         "  mcp call contacts.search_contacts q:'Ada Lovelace'",
       ].join("\n")
     );
+  });
+
+  it("renders an output-schema section for tools that publish one", () => {
+    const manifest = {
+      servers: [
+        {
+          id: "nextplay",
+          base_url: "http://127.0.0.1:3210/mcp",
+          tools: [
+            {
+              name: "verify_shortlist",
+              description: "Verify",
+              output_schema: {
+                type: "object",
+                properties: { checked: { type: "number" } },
+              },
+            },
+            { name: "list_search_sessions", description: "List" },
+          ],
+        },
+      ],
+    };
+    const section = outputSchemaSection(manifest, "nextplay.verify_shortlist");
+    expect(section).toContain("Output schema (response shape):");
+    expect(section).toContain('"checked"');
+    expect(outputSchemaSection(manifest, "nextplay.list_search_sessions")).toBeNull();
+    expect(outputSchemaSection(manifest, "other.verify_shortlist")).toBeNull();
   });
 
   it("rewrites the blocked-by-configuration error into an actionable hint", () => {
