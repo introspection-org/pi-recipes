@@ -98,7 +98,7 @@
     "build:recipe-check": "cargo build --release -p recipe-check && node scripts/package-recipe-check.mjs",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "test": "cargo build -p recipe-check && vitest run",
+    "test": "pnpm build:ts && cargo build -p recipe-check && vitest run",
     "pack:check": "npm pack --dry-run --json | node scripts/check-npm-pack.mjs",
     "clean": "rm -rf dist .turbo node_modules target vendor/recipe-check"
   },
