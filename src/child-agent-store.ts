@@ -1,9 +1,9 @@
 /**
  * Filesystem persistence for recipe child agent runs.
  *
- * Each run owns `<workspace>/.pi/agents/<runId>/status.json` — a rolling
- * snapshot of the run state. Snapshots let a later Pi process in the same
- * workspace rehydrate
+ * Each run owns a status file under Pi's recipe runtime state directory — a
+ * rolling snapshot of the run state. Snapshots let a later Pi process in the
+ * same workspace rehydrate
  * run ids referenced by a resumed conversation: rehydrated runs are readable
  * (status/wait) but not controllable, and a run persisted as `running` died
  * with the previous process, so it is flipped to `interrupted` on rehydrate
@@ -12,6 +12,7 @@
 
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { childAgentRunsDir, legacyChildAgentRunsDir } from "./runtime-paths.js";
 
 export type ChildRunStatus = "running" | "completed" | "failed" | "interrupted";
 export type ChildToolStatus = "running" | "completed" | "failed";
@@ -63,12 +64,14 @@ function isChildRunSnapshot(value: unknown): value is ChildRunSnapshot {
 
 export class ChildAgentRunStore {
   private readonly root: string;
+  private readonly legacyRoot: string;
   // Concurrent writes to one status.json interleave (each truncates on open),
   // so snapshot writes for a run are chained behind the previous one.
   private readonly pendingWrites = new Map<string, Promise<void>>();
 
-  constructor(workspaceDir: string) {
-    this.root = join(workspaceDir, ".pi", "agents");
+  constructor(workspaceDir: string, env: NodeJS.ProcessEnv = process.env) {
+    this.root = childAgentRunsDir(workspaceDir, env);
+    this.legacyRoot = legacyChildAgentRunsDir(workspaceDir);
   }
 
   async writeStatus(snapshot: ChildRunSnapshot): Promise<void> {
@@ -96,13 +99,27 @@ export class ChildAgentRunStore {
 
   /**
    * Status snapshots persisted by any prior process for this workspace, one
-   * per `.pi/agents/<runId>/status.json`. Unreadable or malformed entries are
-   * skipped — rehydration is best-effort.
+   * per `<runId>/status.json`. Unreadable or malformed entries are skipped —
+   * rehydration is best-effort. The legacy workspace-local directory is still
+   * read so existing resumed conversations do not lose old run ids.
    */
   async readPersistedSnapshots(): Promise<ChildRunSnapshot[]> {
+    const seen = new Set<string>();
+    const snapshots: ChildRunSnapshot[] = [];
+    for (const root of [this.root, this.legacyRoot]) {
+      for (const snapshot of await this.readSnapshotsFrom(root)) {
+        if (seen.has(snapshot.id)) continue;
+        seen.add(snapshot.id);
+        snapshots.push(snapshot);
+      }
+    }
+    return snapshots;
+  }
+
+  private async readSnapshotsFrom(root: string): Promise<ChildRunSnapshot[]> {
     let runIds: string[];
     try {
-      runIds = await readdir(this.root);
+      runIds = await readdir(root);
     } catch {
       return [];
     }
@@ -110,7 +127,7 @@ export class ChildAgentRunStore {
     for (const runId of runIds) {
       try {
         const raw = await readFile(
-          join(this.root, runId, "status.json"),
+          join(root, runId, "status.json"),
           "utf8"
         );
         const parsed: unknown = JSON.parse(raw);

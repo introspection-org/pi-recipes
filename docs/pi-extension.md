@@ -256,12 +256,12 @@ tools:
 ```
 
 The `mcp:*` entries are policy references, not Pi tool names. When the selected
-agent declares MCP refs, the extension writes a session-local shim at
-`.pi/bin/mcp` and prepends `.pi/bin` to `PATH` for commands run from that Pi
-session. When configured endpoints expose matching allowed tools, the extension
-also writes the filtered manifest to `.pi/mcp.json` and an
-[mcporter](https://github.com/openclaw/mcporter) config to `.pi/mcporter.json`
-in the workspace. Agents can use:
+agent declares MCP refs, the extension writes a session-local shim in Pi recipe
+runtime storage and prepends that directory to `PATH` for commands run from that
+Pi session. When configured endpoints expose matching allowed tools, the
+extension also writes the filtered manifest and
+[mcporter](https://github.com/openclaw/mcporter) config into the same generated
+runtime area, outside the workspace checkout. Agents can use:
 
 ```bash
 mcp search "contact lookup"              # find relevant tool references
@@ -292,7 +292,10 @@ generated config stay `${VAR}` environment references; secrets are resolved by
 mcporter at call time and are not written to disk.
 
 The session records the generated paths in `PI_RECIPES_MCP_MANIFEST`,
-`MCPORTER_CONFIG`, and `PI_RECIPES_MCP_BIN_DIR`.
+`MCPORTER_CONFIG`, `PI_RECIPES_MCP_BIN_DIR`, and
+`PI_RECIPES_MCP_SESSION_DIR`. Child-agent status snapshots are likewise written
+under Pi recipe runtime storage, keyed by workspace, rather than under the
+recipe repository.
 
 For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
 directory. To override that path, set `PI_RECIPES_MCP_LOCAL_CONFIG`. Header

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createPiRecipesExtension } from "../src/pi-extension.js";
+import { childAgentRunsDir, RECIPE_RUNTIME_DIR_ENV } from "../src/runtime-paths.js";
 import { createMockExtensionAPI, type MockExtensionAPI } from "../src/testing.js";
 
 function extensionContext(cwd: string, notify = vi.fn()) {
@@ -108,17 +109,20 @@ function hangingRunner() {
 async function startSession(
   createChildAgentRunner: (opts?: any) => any,
   root: string
-): Promise<{ pi: MockExtensionAPI; ctx: any; projectDir: string }> {
+): Promise<{ pi: MockExtensionAPI; ctx: any; projectDir: string; env: NodeJS.ProcessEnv }> {
   const recipeDir = writeRecipe(root);
   const projectDir = join(root, "project");
   mkdirSync(projectDir, { recursive: true });
+  const env: NodeJS.ProcessEnv = {
+    [RECIPE_RUNTIME_DIR_ENV]: join(root, "runtime"),
+  };
   const pi = createMockExtensionAPI();
   pi.flagValues.set("recipe", recipeDir);
   pi.flagValues.set("agent", "main");
   const ctx = extensionContext(projectDir);
-  createPiRecipesExtension({ createChildAgentRunner: createChildAgentRunner as any })(pi);
+  createPiRecipesExtension({ createChildAgentRunner: createChildAgentRunner as any, env })(pi);
   await pi.emitExtensionEvent({ type: "session_start", reason: "startup" } as any, ctx);
-  return { pi, ctx, projectDir };
+  return { pi, ctx, projectDir, env };
 }
 
 function agentTool(pi: MockExtensionAPI) {
@@ -380,11 +384,11 @@ describe("recipe child agent run lifecycle", () => {
     }
   });
 
-  it("persists run snapshots under .pi/agents", async () => {
+  it("persists run snapshots under recipe runtime state", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
     try {
       const runner = hangingRunner();
-      const { pi, ctx, projectDir } = await startSession(
+      const { pi, ctx, projectDir, env } = await startSession(
         runner.createChildAgentRunner,
         root
       );
@@ -398,8 +402,9 @@ describe("recipe child agent run lifecycle", () => {
         ctx
       );
       const id = result?.details?.id as string;
-      const statusPath = join(projectDir, ".pi", "agents", id, "status.json");
+      const statusPath = join(childAgentRunsDir(projectDir, env), id, "status.json");
       expect(existsSync(statusPath)).toBe(true);
+      expect(existsSync(join(projectDir, ".pi", "agents", id, "status.json"))).toBe(false);
       const snapshot = JSON.parse(readFileSync(statusPath, "utf8"));
       expect(snapshot).toEqual(
         expect.objectContaining({

@@ -4,6 +4,7 @@ import { delimiter, join } from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createPiRecipesExtension } from "../src/pi-extension.js";
+import { MCP_SESSION_DIR_ENV } from "../src/runtime-paths.js";
 import { createMockExtensionAPI } from "../src/testing.js";
 
 function extensionContext(cwd: string, notify = vi.fn()) {
@@ -421,10 +422,11 @@ describe("Pi recipes launch extension", () => {
         "Recipe MCP: 1 tool(s) from 1 server(s)",
         "info"
       );
-      expect(env.PI_RECIPES_MCP_MANIFEST).toBe(join(projectDir, ".pi", "mcp.json"));
-      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(projectDir, ".pi", "bin"));
-      expect(env.PATH?.split(delimiter)[0]).toBe(join(projectDir, ".pi", "bin"));
-      expect(existsSync(join(projectDir, ".pi", "bin", "mcp"))).toBe(true);
+      expect(env.PI_RECIPES_MCP_MANIFEST).toBe(join(env[MCP_SESSION_DIR_ENV]!, "mcp.json"));
+      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(env[MCP_SESSION_DIR_ENV]!, "bin"));
+      expect(env.PI_RECIPES_MCP_BIN_DIR).not.toContain(join(projectDir, ".pi"));
+      expect(env.PATH?.split(delimiter)[0]).toBe(env.PI_RECIPES_MCP_BIN_DIR);
+      expect(existsSync(join(env.PI_RECIPES_MCP_BIN_DIR!, "mcp"))).toBe(true);
       const materialized = JSON.parse(readFileSync(env.PI_RECIPES_MCP_MANIFEST!, "utf8"));
       expect(materialized.servers[0].tools.map((tool: { name: string }) => tool.name)).toEqual([
         "get_value",
@@ -510,8 +512,9 @@ describe("Pi recipes launch extension", () => {
         ctx
       );
 
-      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(projectDir, ".pi", "bin"));
-      expect(env.PI_RECIPES_MCP_MANIFEST).toBe(join(projectDir, ".pi", "mcp.json"));
+      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(env[MCP_SESSION_DIR_ENV]!, "bin"));
+      expect(env.PI_RECIPES_MCP_BIN_DIR).not.toContain(join(projectDir, ".pi"));
+      expect(env.PI_RECIPES_MCP_MANIFEST).toBe(join(env[MCP_SESSION_DIR_ENV]!, "mcp.json"));
       const materialized = JSON.parse(readFileSync(env.PI_RECIPES_MCP_MANIFEST!, "utf8"));
       expect(materialized.servers[0].tools.map((tool: { name: string }) => tool.name)).toEqual([
         "get_value",
@@ -638,9 +641,10 @@ describe("Pi recipes launch extension", () => {
       );
 
       expect(pi.activeTools.sort()).toEqual(["bash"]);
-      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(projectDir, ".pi", "bin"));
-      expect(env.PATH?.split(delimiter)[0]).toBe(join(projectDir, ".pi", "bin"));
-      expect(existsSync(join(projectDir, ".pi", "bin", "mcp"))).toBe(true);
+      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(env[MCP_SESSION_DIR_ENV]!, "bin"));
+      expect(env.PI_RECIPES_MCP_BIN_DIR).not.toContain(join(projectDir, ".pi"));
+      expect(env.PATH?.split(delimiter)[0]).toBe(env.PI_RECIPES_MCP_BIN_DIR);
+      expect(existsSync(join(env.PI_RECIPES_MCP_BIN_DIR!, "mcp"))).toBe(true);
       expect(env.PI_RECIPES_MCP_MANIFEST).toBeUndefined();
       expect(notify).not.toHaveBeenCalledWith(
         expect.stringContaining("Recipe MCP:"),

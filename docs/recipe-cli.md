@@ -42,9 +42,10 @@ recipes --help
 The package also bundles MCP CLI implementation code for recipe sessions, but
 does not install `mcp` as a global binary. When a Pi session launches a recipe
 whose selected agent declares MCP refs, the extension creates a session-local
-`.pi/bin/mcp` shim and prepends that directory to the Pi session's bash `PATH`.
-The generated paths are recorded in `PI_RECIPES_MCP_MANIFEST` and
-`PI_RECIPES_MCP_BIN_DIR`.
+`mcp` shim in Pi recipe runtime storage and prepends that directory to the Pi
+session's bash `PATH`. The generated paths are recorded in
+`PI_RECIPES_MCP_MANIFEST`, `MCPORTER_CONFIG`, `PI_RECIPES_MCP_BIN_DIR`, and
+`PI_RECIPES_MCP_SESSION_DIR`.
 
 When `recipes install` installs a recipe that declares `pi.mcp`, it also creates
 `.pi/mcp.local.json` in the installed recipe if that file is missing. If the
@@ -274,12 +275,12 @@ tools:
   - mcp:contacts/search_contacts
 ```
 
-The extension writes `.pi/bin/mcp` and makes that shim available on `PATH` for
-bash commands run inside the launched Pi session. When configured endpoints
-expose matching allowed tools, it filters the manifest for the active agent and
-writes a workspace-local `.pi/mcp.json` plus an
-[mcporter](https://github.com/openclaw/mcporter) config at `.pi/mcporter.json`.
-Agents use:
+The extension writes a generated `mcp` shim into Pi recipe runtime storage and
+makes that shim available on `PATH` for bash commands run inside the launched Pi
+session. When configured endpoints expose matching allowed tools, it filters the
+manifest for the active agent and writes the generated manifest plus
+[mcporter](https://github.com/openclaw/mcporter) config into that same runtime
+area, outside the workspace checkout. Agents use:
 
 ```bash
 mcp search "contact lookup"              # find relevant tool references

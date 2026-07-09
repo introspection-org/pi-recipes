@@ -15,9 +15,9 @@ import {
   buildMcporterConfig,
   clearRecipeMcpManifest,
   configureMcpLocalConfigPath,
-  defaultMcporterConfigPath,
   materializeRecipeMcpManifest,
   materializeSessionMcpCli,
+  MCP_SESSION_DIR_ENV,
   mcpCliEntrypointPath,
   mcporterCliEntrypointPath,
   type RecipePackageManifest,
@@ -65,11 +65,11 @@ function jsonResponse(payload: unknown, headers: Record<string, string> = {}): R
   });
 }
 
-function readMcporterConfig(cwd: string): {
+function readMcporterConfig(path: string): {
   imports: string[];
   mcpServers: Record<string, { baseUrl: string; headers: Record<string, string>; allowedTools: string[] }>;
 } {
-  return JSON.parse(readFileSync(defaultMcporterConfigPath(cwd), "utf8"));
+  return JSON.parse(readFileSync(path, "utf8"));
 }
 
 describe("recipe MCP materialization", () => {
@@ -253,8 +253,9 @@ describe("recipe MCP materialization", () => {
 
       // An empty mcporter config is still written so a stale `mcp` shim
       // resolves to "no servers", never to mcporter's host-level configs.
-      expect(env.MCPORTER_CONFIG).toBe(defaultMcporterConfigPath(cwd));
-      expect(readMcporterConfig(cwd)).toEqual({ imports: [], mcpServers: {} });
+      expect(env.MCPORTER_CONFIG).toBeTruthy();
+      expect(env.MCPORTER_CONFIG).not.toContain(join(cwd, ".pi"));
+      expect(readMcporterConfig(env.MCPORTER_CONFIG!)).toEqual({ imports: [], mcpServers: {} });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -386,8 +387,9 @@ describe("recipe MCP materialization", () => {
 
       // The mcporter config mirrors the filtered manifest: only allowed
       // tools, session-token header as an env reference (never a value).
-      expect(env.MCPORTER_CONFIG).toBe(defaultMcporterConfigPath(cwd));
-      expect(readMcporterConfig(cwd)).toEqual({
+      expect(env.MCPORTER_CONFIG).toBeTruthy();
+      expect(env.MCPORTER_CONFIG).not.toContain(join(cwd, ".pi"));
+      expect(readMcporterConfig(env.MCPORTER_CONFIG!)).toEqual({
         imports: [],
         mcpServers: {
           slack: {
@@ -453,9 +455,16 @@ describe("recipe MCP materialization", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcporter-clear-"));
     try {
       const env: NodeJS.ProcessEnv = {};
+      await materializeSessionMcpCli({ cwd: root, env });
+      const sessionManifest = env.PI_RECIPES_MCP_MANIFEST!;
+      writeFileSync(sessionManifest, JSON.stringify({ servers: [{ id: "old" }] }));
       await clearRecipeMcpManifest(env, root);
-      expect(env.MCPORTER_CONFIG).toBe(defaultMcporterConfigPath(root));
-      expect(readMcporterConfig(root)).toEqual({ imports: [], mcpServers: {} });
+      expect(existsSync(join(root, ".pi", "mcp.json"))).toBe(false);
+      expect(existsSync(join(root, ".pi", "mcporter.json"))).toBe(false);
+      expect(existsSync(sessionManifest)).toBe(false);
+      expect(env.MCPORTER_CONFIG).toBeTruthy();
+      expect(env.MCPORTER_CONFIG).not.toContain(join(root, ".pi"));
+      expect(readMcporterConfig(env.MCPORTER_CONFIG!)).toEqual({ imports: [], mcpServers: {} });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -468,8 +477,10 @@ describe("recipe MCP materialization", () => {
       const { binDir, shimPath } = await materializeSessionMcpCli({ cwd: root, env });
       const script = readFileSync(shimPath, "utf8");
       expect(script).toContain(mcpCliEntrypointPath());
-      expect(script).toContain(`MCPORTER_CONFIG:=${defaultMcporterConfigPath(root)}`);
+      expect(script).toContain(`MCPORTER_CONFIG:=${env.MCPORTER_CONFIG}`);
       expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(binDir);
+      expect(binDir).toBe(join(env[MCP_SESSION_DIR_ENV]!, "bin"));
+      expect(binDir).not.toContain(join(root, ".pi"));
       expect(env.PATH?.split(":")).toContain(binDir);
     } finally {
       rmSync(root, { recursive: true, force: true });

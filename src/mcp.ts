@@ -8,6 +8,7 @@ import {
   type RecipePackageManifest,
   type RecipePackageMcpConfig,
 } from "./recipe-package.js";
+import { createMcpSessionDir, ensureMcpSessionDir, workspaceRuntimeDir } from "./runtime-paths.js";
 
 export interface McpManifestTool {
   name: string;
@@ -136,19 +137,19 @@ const TOKEN_ENV = `${LEGACY_RUNTIME_ENV_PREFIX}TOKEN`;
 const AGENT_SESSION_TOKEN_ENV = "AGENT_SESSION_TOKEN";
 
 export function defaultMcpManifestPath(cwd: string): string {
-  return join(cwd, ".pi", "mcp.json");
+  return join(workspaceRuntimeDir(cwd), "mcp", "mcp.json");
 }
 
 export function fallbackMcpManifestPath(): string {
-  return join(tmpdir(), "pi-recipes", "mcp.json");
+  return join(tmpdir(), "pi-recipes", String(process.pid), "mcp.json");
 }
 
 export function defaultMcporterConfigPath(cwd: string): string {
-  return join(cwd, ".pi", "mcporter.json");
+  return join(workspaceRuntimeDir(cwd), "mcp", "mcporter.json");
 }
 
 export function fallbackMcporterConfigPath(): string {
-  return join(tmpdir(), "pi-recipes", "mcporter.json");
+  return join(tmpdir(), "pi-recipes", String(process.pid), "mcporter.json");
 }
 
 export function defaultMcpLocalConfigPath(cwd: string): string {
@@ -185,7 +186,7 @@ export function configureMcpLocalConfigPath(opts: {
 }
 
 export function defaultMcpBinDir(cwd: string): string {
-  return join(cwd, ".pi", "bin");
+  return join(workspaceRuntimeDir(cwd), "mcp", "bin");
 }
 
 export function mcporterCliEntrypointPath(): string {
@@ -216,13 +217,31 @@ function prependPath(env: NodeJS.ProcessEnv, dir: string): void {
   env[key] = [dir, current].filter(Boolean).join(delimiter);
 }
 
+function sessionMcpManifestPath(env: NodeJS.ProcessEnv): string {
+  return join(ensureMcpSessionDir(env), "mcp.json");
+}
+
+function sessionMcporterConfigPath(env: NodeJS.ProcessEnv): string {
+  return join(ensureMcpSessionDir(env), "mcporter.json");
+}
+
+async function cleanupLegacyWorkspaceMcpArtifacts(cwd: string): Promise<void> {
+  await rm(join(cwd, ".pi", "mcp.json"), { force: true });
+  await rm(join(cwd, ".pi", "mcporter.json"), { force: true });
+  await rm(join(cwd, ".pi", "bin", "mcp"), { force: true });
+}
+
 export async function materializeSessionMcpCli(opts: {
   cwd: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<{ binDir: string; shimPath: string }> {
   const env = opts.env ?? process.env;
-  const binDir = defaultMcpBinDir(opts.cwd);
+  await cleanupLegacyWorkspaceMcpArtifacts(opts.cwd);
+  const sessionDir = createMcpSessionDir(env);
+  const binDir = join(sessionDir, "bin");
   const shimPath = join(binDir, "mcp");
+  const manifestPath = join(sessionDir, "mcp.json");
+  const mcporterConfigPath = join(sessionDir, "mcporter.json");
   // The shim pins MCPORTER_CONFIG to the session-generated config (the
   // session env normally sets it; the default covers shells that lost the
   // env). mcporter must never fall through to its own config resolution —
@@ -230,7 +249,9 @@ export async function materializeSessionMcpCli(opts: {
   // Cursor/Claude/VS Code configs) into a recipe session.
   const script = [
     "#!/bin/sh",
-    `: "\${${MCPORTER_CONFIG_ENV}:=${doubleQuoteEscape(defaultMcporterConfigPath(opts.cwd))}}"`,
+    `: "\${${MCP_MANIFEST_ENV}:=${doubleQuoteEscape(manifestPath)}}"`,
+    `export ${MCP_MANIFEST_ENV}`,
+    `: "\${${MCPORTER_CONFIG_ENV}:=${doubleQuoteEscape(mcporterConfigPath)}}"`,
     `export ${MCPORTER_CONFIG_ENV}`,
     `exec ${shellQuote(process.execPath)} ${shellQuote(mcpCliEntrypointPath())} "$@"`,
     "",
@@ -240,6 +261,9 @@ export async function materializeSessionMcpCli(opts: {
   await chmod(shimPath, 0o755);
   env[MCP_BIN_DIR_ENV] = binDir;
   env[LEGACY_MCP_BIN_DIR_ENV] = binDir;
+  env[MCP_MANIFEST_ENV] = manifestPath;
+  env[LEGACY_MCP_MANIFEST_ENV] = manifestPath;
+  env[MCPORTER_CONFIG_ENV] = mcporterConfigPath;
   prependPath(env, binDir);
   return { binDir, shimPath };
 }
@@ -249,7 +273,7 @@ function writeLine(stream: WritableLike, value = ""): void {
 }
 
 function manifestPath(env: NodeJS.ProcessEnv, cwd = process.cwd()): string {
-  return env[MCP_MANIFEST_ENV] || env[LEGACY_MCP_MANIFEST_ENV] || defaultMcpManifestPath(cwd);
+  return env[MCP_MANIFEST_ENV] || env[LEGACY_MCP_MANIFEST_ENV] || sessionMcpManifestPath(env);
 }
 
 function localMcpConfigPath(env: NodeJS.ProcessEnv, cwd = process.cwd()): string {
@@ -982,10 +1006,11 @@ async function writeMcporterConfig(
   manifest: McpManifest
 ): Promise<string> {
   const config = buildMcporterConfig(manifest, { env, cwd });
+  const defaultPath = env[MCPORTER_CONFIG_ENV] || sessionMcporterConfigPath(env);
   const writtenPath = await writeWithFallback(
-    defaultMcporterConfigPath(cwd),
+    defaultPath,
     `${JSON.stringify(config, null, 2)}\n`,
-    defaultMcporterConfigPath(cwd),
+    defaultPath,
     fallbackMcporterConfigPath()
   );
   env[MCPORTER_CONFIG_ENV] = writtenPath;
@@ -993,10 +1018,15 @@ async function writeMcporterConfig(
 }
 
 export async function clearRecipeMcpManifest(env: NodeJS.ProcessEnv, cwd: string): Promise<void> {
+  const currentManifestPath = env[MCP_MANIFEST_ENV] || env[LEGACY_MCP_MANIFEST_ENV];
   delete env[MCP_MANIFEST_ENV];
   delete env[LEGACY_MCP_MANIFEST_ENV];
+  await cleanupLegacyWorkspaceMcpArtifacts(cwd);
+  if (currentManifestPath) {
+    await rm(currentManifestPath, { force: true });
+  }
   await rm(defaultMcpManifestPath(cwd), { force: true });
-  // Keep an empty mcporter config (rather than none): a stale `.pi/bin/mcp`
+  // Keep an empty mcporter config (rather than none): a stale `mcp`
   // shim from an earlier session must resolve to "no servers", never to
   // mcporter's host-level config discovery.
   await writeMcporterConfig(env, cwd, { servers: [] });
@@ -1033,8 +1063,8 @@ export async function materializeRecipeMcpManifest(
     return { ...mcpManifest, diagnostics };
   }
 
-  const defaultPath = defaultMcpManifestPath(opts.cwd);
   const target = manifestPath(env, opts.cwd);
+  const defaultPath = target;
   const writtenPath = await writeWithFallback(
     target,
     `${JSON.stringify(mcpManifest, null, 2)}\n`,
