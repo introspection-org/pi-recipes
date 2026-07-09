@@ -276,7 +276,16 @@ async function searchCatalog(args: string[]): Promise<number> {
     stderr.write("Usage: mcp search \"what you need\" [--limit N] [--json] [--regex]\n");
     return 2;
   }
-  const matches = searchMcpTools(await readManifest(), query, { limit, regex });
+  let matches: ToolSearchMatch[];
+  try {
+    matches = searchMcpTools(await readManifest(), query, { limit, regex });
+  } catch (err) {
+    if (regex && err instanceof SyntaxError) {
+      stderr.write(`Invalid --regex pattern: ${query}\n`);
+      return 2;
+    }
+    throw err;
+  }
   if (json) {
     stdout.write(`${JSON.stringify({ query, matches }, null, 2)}\n`);
     return 0;
