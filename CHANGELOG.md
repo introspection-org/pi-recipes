@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.0.0](https://github.com/introspection-org/pi-recipes/compare/v0.3.0...v1.0.0) (2026-07-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* the `mcp tools sources|search|describe` and JSON-args `mcp call` command surface is replaced by mcporter's CLI. The `main`, `callMcpTool`, `localMcpHeadersForServer`, and `mcpCliEntrypointPath` exports are removed (`mcporterCliEntrypointPath` replaces the latter). `dist/mcp.js` is no longer an executable entrypoint. mcporter declares engines node >=24; Node 24+ is recommended (0.12.3 verified working on Node 22).
+
+### Features
+
+* add mcp search and run helpers ([73a0edb](https://github.com/introspection-org/pi-recipes/commit/73a0edb269d56c6c00725d5cfb04c84e674c0c67))
+* mcp run --var KEY=value for safe dynamic values in code mode ([7a5bfb4](https://github.com/introspection-org/pi-recipes/commit/7a5bfb40b3c7189eae7043713aefdba4e388e34f))
+* replace the bundled mcp CLI with mcporter ([d512d4b](https://github.com/introspection-org/pi-recipes/commit/d512d4b48ed1b0c072cd84852eba7de136cd4f62))
+* show tool output schemas in mcp list --schema ([fb3d151](https://github.com/introspection-org/pi-recipes/commit/fb3d151a4f19d671758ca67a25a23910c4c5bae8))
+
+
+### Bug Fixes
+
+* agent-friendly mcp CLI error paths ([81d476b](https://github.com/introspection-org/pi-recipes/commit/81d476b1ea49b4ec511bb1392b91ebc78ce136f1))
+* brand delegated mcp cli output consistently ([1f93178](https://github.com/introspection-org/pi-recipes/commit/1f931788df6335bba3cfd3d39dd4b5356bba24a2))
+* hide upstream mcp cli version banner ([b5b697a](https://github.com/introspection-org/pi-recipes/commit/b5b697ade53ec7a7a0735e1b25bb43cb642603b7))
+* hint at bearer-token expiry behind OAuth metadata errors ([d2c7f1c](https://github.com/introspection-org/pi-recipes/commit/d2c7f1c28d818563eab3717bb36ad16dddcd71db))
+* report invalid mcp search regex ([dc10369](https://github.com/introspection-org/pi-recipes/commit/dc10369cc701bf537f00c24f3a0587a20f6e4933))
+
 ## [0.3.0](https://github.com/introspection-org/pi-recipes/compare/v0.2.0...v0.3.0) (2026-07-08)
 
 
