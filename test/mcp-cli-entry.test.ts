@@ -52,4 +52,14 @@ describe("mcp CLI entry detection", () => {
     expect(result.status).toBe(0);
     expect(result.output).toContain("mcp");
   });
+
+  it("provides wrapper help for search and run subcommands", () => {
+    const search = runCli(distCli, ["search", "--help"]);
+    expect(search.status).toBe(0);
+    expect(search.output.trim().length).toBeGreaterThan(0);
+
+    const run = runCli(distCli, ["run", "--help"]);
+    expect(run.status).toBe(0);
+    expect(run.output.trim().length).toBeGreaterThan(0);
+  });
 });

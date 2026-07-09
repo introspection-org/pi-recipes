@@ -26,7 +26,7 @@ export interface ToolSearchMatch {
   call: string;
 }
 
-function usage(): string {
+export function mcpCliHelpText(): string {
   return [
     "mcp - use available MCP tools",
     "",
@@ -38,12 +38,12 @@ function usage(): string {
     "  mcp list <server.tool> --schema",
     "",
     "Call one tool:",
-    "  mcp call <server>.<tool> key:value ...",
+    "  mcp call <server>.<tool> key=value ...",
     "  mcp call '<server>.<tool>(key: \"value\")'",
     "",
     "Run a short workflow:",
     "  mcp run --var ID=abc123 <<'EOF'",
-    "  const result = await tools.<server>.<tool>({ sessionId: vars.ID, key: \"value\" })",
+    '  const result = await tools["server"]["tool"]({ sessionId: vars.ID, key: "value" })',
     "  console.log(JSON.stringify(result, null, 2))",
     "  EOF",
     "  Keep the heredoc quoted (<<'EOF'); pass dynamic values with --var KEY=value (read as vars.KEY).",
@@ -54,7 +54,42 @@ function usage(): string {
     "  Use mcp call for a single simple operation.",
     "  Use mcp run for multiple calls, filtering, ranking, or dedupe.",
     "  Use @file for long text and --output json when piping call output.",
+    "",
+    "Availability:",
+    "  Search and list expose only tools callable in this session.",
+    "  Only exact tool names returned by mcp list are callable.",
+    "  Descriptions may mention related tools that are not exposed; mentions do not grant access.",
+    "  If no listed tool supports an action, report that the connected capability is unavailable.",
   ].join("\n");
+}
+
+export function mcpSearchHelpText(): string {
+  return [
+    'Usage: mcp search "what you need" [--limit N] [--json] [--regex]',
+    "",
+    "Searches only MCP tools available in this session.",
+    "Results include the exact tool ref, required fields, an inspection command, and a call example.",
+    "Use broader terms or `mcp list` when no result matches.",
+  ].join("\n");
+}
+
+export function mcpRunHelpText(): string {
+  return [
+    "Usage: mcp run [--var KEY=value] [file]",
+    "",
+    'Runs a short JavaScript workflow with available MCP tools such as `tools["server"]["tool"]`.',
+    "With no file, code is read from stdin. Keep heredocs quoted and pass dynamic values with --var.",
+    "",
+    "Example:",
+    "  mcp run --var ID=abc123 <<'EOF'",
+    '  const result = await tools["server"]["tool"]({ id: vars.ID })',
+    "  console.log(JSON.stringify(result, null, 2))",
+    "  EOF",
+  ].join("\n");
+}
+
+function isHelpArg(value: string | undefined): boolean {
+  return value === "--help" || value === "-h" || value === "help";
 }
 
 function readStdin(): Promise<string> {
@@ -179,10 +214,10 @@ function scoreTool(opts: {
 }
 
 function exampleValue(name: string): string {
-  if (/^(q|query|search)$/i.test(name)) return `:'example query'`;
-  if (/limit|count|max/i.test(name)) return ":10";
-  if (/^(id|.*Id)$/i.test(name)) return ":<id>";
-  return ":<value>";
+  if (/^(q|query|search)$/i.test(name)) return `="example query"`;
+  if (/limit|count|max/i.test(name)) return "=10";
+  if (/^(id|.*Id)$/i.test(name)) return "=<id>";
+  return "=<value>";
 }
 
 function callExample(serverId: string, tool: McpManifestTool): string {
@@ -300,7 +335,7 @@ async function searchCatalog(args: string[]): Promise<number> {
     stdout.write("Try broader terms, or run `mcp list` to inspect available servers.\n");
     return 0;
   }
-  stdout.write(`Found ${matches.length} matching tool${matches.length === 1 ? "" : "s"}\n\n`);
+  stdout.write(`Found ${matches.length} available matching tool${matches.length === 1 ? "" : "s"}\n\n`);
   for (const match of matches) {
     stdout.write(`${match.ref}\n`);
     if (match.description) stdout.write(`  ${match.description}\n`);
@@ -482,11 +517,24 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     args[0] === "-h" ||
     (args[0] === "help" && args.length === 1)
   ) {
-    stdout.write(`${usage()}\n`);
+    stdout.write(`${mcpCliHelpText()}\n`);
+    return 0;
+  }
+  if (args[0] === "search" && isHelpArg(args[1])) {
+    stdout.write(`${mcpSearchHelpText()}\n`);
+    return 0;
+  }
+  if (args[0] === "run" && isHelpArg(args[1])) {
+    stdout.write(`${mcpRunHelpText()}\n`);
     return 0;
   }
   if (args[0] === "run") return runCode(args.slice(1));
   if (args[0] === "search") return searchCatalog(args.slice(1));
+  if (args[0] === "list" && !args.slice(1).some(isHelpArg)) {
+    stdout.write(
+      "Only exact tool names shown as `mcp list` entries are callable. Descriptions may mention related tools that are not exposed; those mentions are not entries.\n\n"
+    );
+  }
   const code = await delegateToMcporter(args);
   await appendOutputSchema(args);
   return code;

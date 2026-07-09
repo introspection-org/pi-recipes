@@ -13,34 +13,18 @@ import {
 } from "../src/mcp-cli.js";
 import {
   buildMcporterConfig,
+  classifyMcpToolAvailability,
   clearRecipeMcpManifest,
   configureMcpLocalConfigPath,
   defaultMcporterConfigPath,
   materializeRecipeMcpManifest,
   materializeSessionMcpCli,
-  mcpCliPromptLines,
   mcpCliEntrypointPath,
   mcporterCliEntrypointPath,
   type RecipePackageManifest,
 } from "../src/index.js";
 
 const originalFetch = globalThis.fetch;
-
-describe("recipe MCP prompt", () => {
-  it("allows recipes to use a custom command wrapper", () => {
-    const prompt = mcpCliPromptLines([
-      {
-        serverId: "nextplay",
-        toolName: "search",
-        raw: "mcp:nextplay/search",
-      },
-    ]).join("\n");
-
-    expect(prompt).toContain("active command-execution tool");
-    expect(prompt).toContain("custom shell wrapper");
-    expect(prompt).not.toContain("through `bash`");
-  });
-});
 
 function recipeManifest(
   recipeDir: string,
@@ -535,7 +519,7 @@ describe("recipe MCP materialization", () => {
     expect(matches).toHaveLength(1);
     expect(matches[0]?.ref).toBe("contacts.search_contacts");
     expect(matches[0]?.inspect).toBe("mcp list contacts.search_contacts --schema");
-    expect(matches[0]?.call).toBe("mcp call contacts.search_contacts q:'example query'");
+    expect(matches[0]?.call).toBe('mcp call contacts.search_contacts q="example query"');
   });
 
   it("supports regex search over names, descriptions, and argument metadata", () => {
@@ -656,6 +640,37 @@ describe("recipe MCP materialization", () => {
         "",
       ].join("\n")
     );
+  });
+});
+
+describe("recipe MCP availability", () => {
+  const configured = [
+    { serverId: "contacts", toolName: "search_contacts", raw: "mcp:contacts/search_contacts" },
+    { serverId: "contacts", toolName: "create_contact", raw: "mcp:contacts/create_contact" },
+  ];
+
+  it("classifies materialized and missing configured tools", () => {
+    expect(
+      classifyMcpToolAvailability(configured, {
+        servers: [
+          {
+            id: "contacts",
+            base_url: "https://example.test/mcp",
+            tools: [{ name: "search_contacts" }],
+          },
+        ],
+      })
+    ).toEqual({
+      availableTools: ["contacts.search_contacts"],
+      unavailableTools: ["contacts.create_contact"],
+    });
+  });
+
+  it("classifies every configured ref as unavailable when discovery is empty", () => {
+    expect(classifyMcpToolAvailability(configured, { servers: [] })).toEqual({
+      availableTools: [],
+      unavailableTools: ["contacts.create_contact", "contacts.search_contacts"],
+    });
   });
 });
 
