@@ -35,6 +35,7 @@ export interface CreateRecipeChildAgentRunnerOptions {
   env?: NodeJS.ProcessEnv;
   authStorage?: AuthStorage;
   modelRegistry?: ModelRegistry;
+  mcpAvailableTools?: readonly string[];
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
 }
@@ -129,18 +130,23 @@ function applySystemInstructions(
 function runtimeContextPrompt(
   workspaceDir: string,
   recipeDir: string,
-  tools: readonly string[]
+  tools: readonly string[],
+  mcpAvailableTools: readonly string[] | undefined
 ): string {
   const mcpRefs = tools
     .map((tool) => parseAgentMcpToolRef(tool))
     .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
-  const mcpLines = mcpRefs.length > 0 ? ["", ...mcpCliPromptLines(mcpRefs)] : [];
+  const mcpPrompt = mcpRefs.length > 0
+    ? mcpCliPromptLines(mcpRefs, { availableTools: mcpAvailableTools }).join("\n")
+    : undefined;
   return [
-    "## Recipe Runtime Context",
-    "- Current workspace: " + workspaceDir,
-    "- Recipe directory: " + recipeDir,
-    ...mcpLines,
-  ].join("\n");
+    [
+      "## Recipe Runtime Context",
+      "- Current workspace: " + workspaceDir,
+      "- Recipe directory: " + recipeDir,
+    ].join("\n"),
+    mcpPrompt,
+  ].filter(Boolean).join("\n\n");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -315,7 +321,12 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
           ),
         appendSystemPromptOverride: (base) => [
           ...base,
-          runtimeContextPrompt(this.opts.workspaceDir, this.opts.recipeDir, agent.tools),
+          runtimeContextPrompt(
+            this.opts.workspaceDir,
+            this.opts.recipeDir,
+            agent.tools,
+            this.opts.mcpAvailableTools
+          ),
         ],
       },
     });

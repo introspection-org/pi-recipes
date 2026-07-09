@@ -276,14 +276,27 @@ mcp list contacts.search_contacts --schema
 mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
-const result = await tools.contacts.search_contacts({ query: "Ada Lovelace" })
+const result = await tools["contacts"]["search_contacts"]({ query: "Ada Lovelace" })
 console.log(JSON.stringify(result, null, 2))
 EOF
 ```
 
+The runtime prompt includes the exact MCP tools that were successfully
+materialized for the session and separately identifies configured refs that
+were unavailable after discovery. That inventory is authoritative. Agents are
+instructed to start with `mcp search` when the right tool is unclear, inspect
+schemas before guessing arguments, and use `mcp --help` for the complete CLI
+guide. The prompt retains concrete examples for search, list, call, and run.
+
+Only exact tool names in the runtime inventory or `mcp list` output are
+callable. Upstream tool descriptions can mention related tools that are not
+exposed by the recipe policy; those mentions are documentation, not capability
+grants. If no available tool supports an action, the agent should report that
+the connected capability is unavailable rather than guessing an unlisted tool.
+
 Use `mcp search` to find relevant tool references without printing every schema.
 Search covers tool names, descriptions, argument names, and argument
-descriptions. Arguments are `key=value` / `key:value` pairs with automatic type
+descriptions. Arguments are `key=value` pairs with automatic type
 coercion, or a function-call expression for nested objects and arrays;
 `key=@file.md` reads a value from a file, and `--output json` prints a
 machine-parseable result. Use `mcp run` when a workflow needs multiple calls,

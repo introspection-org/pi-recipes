@@ -34,6 +34,7 @@ import {
 } from "./child-agent-completions.js";
 import {
   clearRecipeMcpManifest,
+  classifyMcpToolAvailability,
   configureMcpLocalConfigPath,
   executableRecipeToolNames,
   formatMcpDiscoveryDiagnostics,
@@ -78,6 +79,7 @@ type CreateRecipeChildAgentRunner = (opts: {
   env?: NodeJS.ProcessEnv;
   authStorage?: AuthStorage;
   modelRegistry?: ModelRegistry;
+  mcpAvailableTools?: readonly string[];
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
 }) => RecipeChildAgentRunner;
@@ -163,6 +165,8 @@ interface RecipeLaunchState {
   extensionPaths: string[];
   mcpServerCount: number;
   mcpToolCount: number;
+  mcpAvailableTools?: string[];
+  mcpUnavailableTools: string[];
   extensionsLoaded: boolean;
   configured: boolean;
 }
@@ -239,15 +243,20 @@ function runtimeContextPrompt(
   const mcpRefs = state.agent.tools
     .map((tool) => parseAgentMcpToolRef(tool))
     .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
-  const mcpLines = mcpRefs.length > 0 ? ["", ...mcpCliPromptLines(mcpRefs)] : [];
+  const mcpPrompt = mcpRefs.length > 0
+    ? mcpCliPromptLines(mcpRefs, {
+          availableTools: state.mcpAvailableTools,
+          unavailableTools: state.mcpUnavailableTools,
+        }).join("\n")
+    : undefined;
   return [
     base,
     [
       "## Recipe Runtime Context",
       "- Current workspace: " + state.cwd,
       "- Recipe directory: " + state.recipeDir,
-      ...mcpLines,
     ].join("\n"),
+    mcpPrompt,
   ].filter(Boolean).join("\n\n");
 }
 
@@ -884,6 +893,7 @@ export function createPiRecipesExtension(
       extensionPaths,
       mcpServerCount: 0,
       mcpToolCount: 0,
+      mcpUnavailableTools: [],
       extensionsLoaded: false,
       configured: false,
     };
@@ -987,6 +997,8 @@ export function createPiRecipesExtension(
     if (mcpToolRefs.length === 0) {
       launchState.mcpServerCount = 0;
       launchState.mcpToolCount = 0;
+      launchState.mcpAvailableTools = undefined;
+      launchState.mcpUnavailableTools = [];
       await clearRecipeMcpManifest(env, launchState.cwd);
       return;
     }
@@ -1014,6 +1026,12 @@ export function createPiRecipesExtension(
       (count, server) => count + (server.tools?.length ?? 0),
       0
     );
+    const configuredRefs = mcpToolRefs
+      .map((tool) => parseAgentMcpToolRef(tool))
+      .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
+    const availability = classifyMcpToolAvailability(configuredRefs, manifest);
+    launchState.mcpAvailableTools = availability.availableTools;
+    launchState.mcpUnavailableTools = availability.unavailableTools;
     if (launchState.mcpToolCount > 0) {
       ctx.ui.notify(
         `Recipe MCP: ${launchState.mcpToolCount} tool(s) from ${launchState.mcpServerCount} server(s)`,
@@ -1059,6 +1077,7 @@ export function createPiRecipesExtension(
       agentName,
       authStorage: ctx.modelRegistry.authStorage,
       modelRegistry: ctx.modelRegistry,
+      mcpAvailableTools: launchState.mcpAvailableTools,
       onAssistantMessage(text, stream) {
         if (!run) return;
         if (stream === "delta") {

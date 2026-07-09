@@ -664,11 +664,35 @@ export function executableRecipeToolNames(tools: readonly string[]): string[] {
 }
 
 export interface McpCliPromptOptions {
-  /**
-   * Include the PATH lookup hint pointing at `$PI_RECIPES_MCP_BIN_DIR`.
-   * Hosts that install a global `mcp` shim should disable it.
-   */
-  binDirHint?: boolean;
+  /** Exact CLI refs (`server.tool`) successfully materialized for the session. */
+  availableTools?: readonly string[];
+  /** Configured policy refs that were absent after MCP discovery and filtering. */
+  unavailableTools?: readonly string[];
+}
+
+export function mcpManifestToolRefs(manifest: McpManifest): string[] {
+  return (manifest.servers ?? []).flatMap((server) =>
+    (server.tools ?? []).map((tool) => `${server.id}.${tool.name}`)
+  );
+}
+
+export interface McpToolAvailability {
+  availableTools: string[];
+  unavailableTools: string[];
+}
+
+export function classifyMcpToolAvailability(
+  configuredRefs: readonly AgentMcpToolRef[],
+  manifest: McpManifest
+): McpToolAvailability {
+  const availableTools = [...new Set(mcpManifestToolRefs(manifest))].sort();
+  const available = new Set(availableTools);
+  const unavailableTools = [...new Set(
+    configuredRefs
+      .map((tool) => `${tool.serverId}.${tool.toolName}`)
+      .filter((tool) => !available.has(tool))
+  )].sort();
+  return { availableTools, unavailableTools };
 }
 
 /**
@@ -680,28 +704,53 @@ export function mcpCliPromptLines(
   mcpRefs: readonly AgentMcpToolRef[],
   opts: McpCliPromptOptions = {}
 ): string[] {
-  const binDirHint = opts.binDirHint ?? true;
+  const configuredTools = mcpRefs.map((tool) => `${tool.serverId}.${tool.toolName}`);
+  const availableTools = opts.availableTools
+    ? [...new Set(opts.availableTools)].sort()
+    : undefined;
+  const unavailableTools = opts.unavailableTools
+    ? [...new Set(opts.unavailableTools)].sort()
+    : availableTools
+      ? configuredTools.filter((tool) => !availableTools.includes(tool)).sort()
+      : [];
+  if (availableTools?.length === 0) {
+    return [
+      "## MCP tools",
+      "No MCP tools are available in this session.",
+      ...(unavailableTools.length > 0
+        ? ["Configured but unavailable—do not call: " + unavailableTools.join(", ")]
+        : []),
+      "Do not attempt MCP calls. If the request requires one of these capabilities, explain that it is unavailable.",
+    ];
+  }
+
+  const availabilityLines = availableTools
+    ? [
+        "Available (callable): " + availableTools.join(", "),
+        ...(unavailableTools.length > 0
+          ? ["Unavailable—do not call: " + unavailableTools.join(", ")]
+          : []),
+      ]
+    : ["Configured (verify with `mcp list`): " + configuredTools.join(", ")];
+  const callableRule = availableTools
+    ? "- Only tools listed above or shown as entries by `mcp list` are callable. Tool names merely mentioned inside descriptions are not available."
+    : "- Only tools shown as entries by `mcp list` are callable. Tool names merely mentioned inside descriptions are not available.";
+
   return [
-    "## Recipe MCP CLI",
-    "- MCP tool policy refs are not directly callable tool names.",
-    "- Use the session-local `mcp` command through an active command-execution tool for MCP endpoint tools. This is normally `bash`, but a recipe may provide a custom shell wrapper.",
-    ...(binDirHint
-      ? [
-          "- The extension puts `mcp` on PATH; if lookup fails, use `$PI_RECIPES_MCP_BIN_DIR/mcp`.",
-        ]
-      : []),
-    '- Find relevant tools with `mcp search "what you need"`; inspect exact arguments with `mcp list <server.tool> --schema`.',
-    "- List servers and their tools with `mcp list`.",
-    "- Show parameter schemas with `mcp list <server> --schema`.",
-    "- Call a tool with `mcp call <server>.<tool> key=value ...` (values auto-coerce).",
-    "- Use function-call syntax for nested arguments: `mcp call '<server>.<tool>(key: \"value\", items: [1, 2])'`.",
-    "- Use `mcp run` for multi-step JavaScript workflows; recipe MCP tools are available as async functions on `tools.<server>.<tool>`.",
-    ...(mcpRefs.length > 0
-      ? [
-          "- Configured MCP policy refs: " +
-            mcpRefs.map((tool) => `${tool.serverId}/${tool.toolName}`).join(", "),
-        ]
-      : []),
+    "## MCP tools",
+    "Use the session-local `mcp` command through an active command-execution tool (normally `bash`; recipes may provide a custom shell wrapper).",
+    ...availabilityLines,
+    '- Use `mcp search "<what you need>"` when you are unsure which tool applies.',
+    callableRule,
+    "- Before guessing arguments, inspect the tool with `mcp list <server.tool> --schema`.",
+    "- If no available tool supports the request, explain that the connected capability is unavailable instead of guessing a tool name.",
+    "- Run `mcp --help` for the complete CLI guide.",
+    "Examples:",
+    '- `mcp search "contact lookup"`',
+    "- `mcp list contacts.search_contacts --schema`",
+    '- `mcp call contacts.search_contacts query="Ada Lovelace"`',
+    "- `mcp call 'contacts.search_contacts(query: \"Ada Lovelace\", limit: 5)'`",
+    '- Use `mcp run` for workflows involving multiple calls, filtering, or deduplication; tools are functions such as `tools["contacts"]["search_contacts"]({ query: "Ada Lovelace" })`.',
   ];
 }
 
