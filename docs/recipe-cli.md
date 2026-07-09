@@ -274,6 +274,10 @@ tools:
   - mcp:contacts/search_contacts
 ```
 
+Agents with any `mcp:*` entry must also include `bash`, because MCP endpoint
+tools are invoked through the session-local CLI. `recipes check` reports an
+error when `bash` is missing.
+
 The extension writes `.pi/bin/mcp` and makes that shim available on `PATH` for
 bash commands run inside the launched Pi session. When configured endpoints
 expose matching allowed tools, it filters the manifest for the active agent and

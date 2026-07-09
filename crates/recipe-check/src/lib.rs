@@ -809,6 +809,7 @@ fn validate_agent_string_array(
             fields.insert(field);
             if key == "tools" {
                 validate_mcp_tool_refs(value, path, mcp_tool_policy, ctx);
+                validate_mcp_requires_bash(value, path, ctx);
             }
         }
         Err(message) => ctx.error(
@@ -817,6 +818,28 @@ fn validate_agent_string_array(
             message,
             None::<String>,
         ),
+    }
+}
+
+fn validate_mcp_requires_bash(value: &YamlValue, path: &Path, ctx: &mut CheckContext) {
+    let Some(items) = value.as_sequence() else {
+        return;
+    };
+    let has_mcp = items
+        .iter()
+        .filter_map(YamlValue::as_str)
+        .any(|tool| parse_mcp_tool_ref(tool).is_some());
+    let has_bash = items
+        .iter()
+        .filter_map(YamlValue::as_str)
+        .any(|tool| tool == "bash");
+    if has_mcp && !has_bash {
+        ctx.error(
+            "agent.mcp_requires_bash",
+            path,
+            "Agent declares MCP tools but does not allow bash",
+            Some("add bash to the agent tools list"),
+        );
     }
 }
 
@@ -1780,7 +1803,13 @@ mod tests {
         root
     }
 
-    fn write_recipe(root: &Path, server_id: &str, allowed: &[&str], agent_tools: &[&str]) {
+    fn write_recipe(
+        root: &Path,
+        server_id: &str,
+        allowed: &[&str],
+        agent_tools: &[&str],
+        include_bash: bool,
+    ) {
         let package = json!({
             "name": "mcp-policy-test",
             "version": "0.1.0",
@@ -1808,6 +1837,7 @@ mod tests {
             .map(|tool| format!("  - {tool}"))
             .collect::<Vec<_>>()
             .join("\n");
+        let bash = if include_bash { "  - bash\n" } else { "" };
         fs::write(
             root.join("agents").join("agent.yaml"),
             format!(
@@ -1819,6 +1849,7 @@ mod tests {
                     "  thinking_level: low\n",
                     "tools:\n",
                     "  - read\n",
+                    "{}",
                     "{}\n",
                     "skills: []\n",
                     "subagents: []\n",
@@ -1826,7 +1857,7 @@ mod tests {
                     "  mode: append\n",
                     "  content: Test instructions\n",
                 ),
-                tools
+                bash, tools
             ),
         )
         .expect("write agent");
@@ -1840,6 +1871,7 @@ mod tests {
             "slack-mcp",
             &["slack_read_channel"],
             &["mcp:slack/slack_read_channel"],
+            true,
         );
 
         let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
@@ -1861,6 +1893,7 @@ mod tests {
             "slack-mcp",
             &["slack_read_channel"],
             &["mcp:slack-mcp/slack_send_message"],
+            true,
         );
 
         let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
@@ -1883,12 +1916,34 @@ mod tests {
             "Slack MCP",
             &["slack_read_channel"],
             &["mcp:slack-mcp/slack_read_channel"],
+            true,
         );
 
         let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
         fs::remove_dir_all(&root).expect("cleanup recipe");
 
         assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn flags_agent_mcp_refs_without_bash() {
+        let root = temp_recipe("mcp-requires-bash");
+        write_recipe(
+            &root,
+            "slack-mcp",
+            &["slack_read_channel"],
+            &["mcp:slack-mcp/slack_read_channel"],
+            false,
+        );
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.mcp_requires_bash"));
     }
 }
 

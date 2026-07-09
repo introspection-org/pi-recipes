@@ -241,7 +241,7 @@ export function validateRecipeDirectory(recipeDir: string): RecipeDevelopmentRep
       findings.push(
         finding(
           "error",
-          `agent.${agentFinding.field}_missing`,
+          `agent.${agentFinding.code ?? `${agentFinding.field}_missing`}`,
           agentFinding.message,
           manifest.name
         )

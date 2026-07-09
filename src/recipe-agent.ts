@@ -12,6 +12,7 @@ import {
   readPiPackageManifest,
   RecipePackageError,
 } from "./recipe-package.js";
+import { parseAgentMcpToolRef } from "./mcp.js";
 
 export interface RecipeSystemInstructions {
   mode: "append" | "replace";
@@ -76,6 +77,7 @@ export const REQUIRED_RECIPE_AGENT_FIELDS: RequiredResolvedRecipeAgentField[] = 
 export interface RecipeAgentValidationFinding {
   agentName: string;
   field: "name" | "from" | "file" | RequiredResolvedRecipeAgentField;
+  code?: string;
   message: string;
 }
 
@@ -434,6 +436,20 @@ export function validateResolvedRecipeAgentDefinition(opts: {
       : false;
   }
 
+  function resolvedTools(
+    name: string,
+    stack: string[] = []
+  ): string[] | undefined {
+    const resolvedName = resolveName(name);
+    if (stack.includes(resolvedName)) return undefined;
+    const definition = rawDefinitions.get(resolvedName);
+    if (!definition) return undefined;
+    if (definition.tools !== undefined) return definition.tools;
+    return definition.from
+      ? resolvedTools(definition.from, [...stack, resolvedName])
+      : undefined;
+  }
+
   const agentName = resolveName(opts.agentName);
   const findings: RecipeAgentValidationFinding[] = [];
   if (opts.requireExplicitName && explicitNames.get(agentName) !== true) {
@@ -453,6 +469,19 @@ export function validateResolvedRecipeAgentDefinition(opts: {
       agentName,
       field,
       message: `Recipe agent "${agentName}" must declare ${field} directly or inherit it with from`,
+    });
+  }
+
+  const tools = resolvedTools(agentName);
+  if (
+    tools?.some((tool) => parseAgentMcpToolRef(tool)) &&
+    !tools.includes("bash")
+  ) {
+    findings.push({
+      agentName,
+      field: "tools",
+      code: "mcp_requires_bash",
+      message: `Recipe agent "${agentName}" declares MCP tools but does not allow bash; add "bash" to tools`,
     });
   }
 
