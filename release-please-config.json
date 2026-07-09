@@ -4,7 +4,9 @@
   "include-component-in-tag": false,
   "packages": {
     ".": {
-      "release-type": "node"
+      "release-type": "node",
+      "bump-minor-pre-major": true
     }
-  }
+  },
+  "bump-minor-pre-major": true
 }
