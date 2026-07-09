@@ -263,9 +263,10 @@ also writes the filtered manifest to `.pi/mcp.json` and an
 [mcporter](https://github.com/openclaw/mcporter) config to `.pi/mcporter.json`
 in the workspace. Agents can use:
 
-Because MCP endpoint tools are invoked through the session-local CLI, an agent
-that declares any `mcp:*` entry must also include `bash` in `tools`; recipe
-validation reports an error otherwise.
+Because MCP endpoint tools are invoked through the session-local CLI, agents
+normally need `bash` or another command-capable tool. Recipe validation emits a
+non-blocking warning when an agent declares `mcp:*` entries without `bash`;
+recipes that provide a custom shell wrapper may intentionally ignore it.
 
 ```bash
 mcp search "contact lookup"              # find relevant tool references

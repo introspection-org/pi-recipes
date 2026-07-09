@@ -240,7 +240,7 @@ export function validateRecipeDirectory(recipeDir: string): RecipeDevelopmentRep
     for (const agentFinding of validateRecipeAgentDefinitions(recipeDir)) {
       findings.push(
         finding(
-          "error",
+          agentFinding.severity ?? "error",
           `agent.${agentFinding.code ?? `${agentFinding.field}_missing`}`,
           agentFinding.message,
           manifest.name

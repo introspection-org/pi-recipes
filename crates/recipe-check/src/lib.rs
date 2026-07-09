@@ -834,11 +834,11 @@ fn validate_mcp_requires_bash(value: &YamlValue, path: &Path, ctx: &mut CheckCon
         .filter_map(YamlValue::as_str)
         .any(|tool| tool == "bash");
     if has_mcp && !has_bash {
-        ctx.error(
+        ctx.warning(
             "agent.mcp_requires_bash",
             path,
-            "Agent declares MCP tools but does not allow bash",
-            Some("add bash to the agent tools list"),
+            "Agent declares MCP tools without bash",
+            Some("add bash or ensure another active tool can execute the session-local mcp CLI"),
         );
     }
 }
@@ -1926,7 +1926,7 @@ mod tests {
     }
 
     #[test]
-    fn flags_agent_mcp_refs_without_bash() {
+    fn warns_for_agent_mcp_refs_without_bash() {
         let root = temp_recipe("mcp-requires-bash");
         write_recipe(
             &root,
@@ -1939,11 +1939,10 @@ mod tests {
         let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
         fs::remove_dir_all(&root).expect("cleanup recipe");
 
-        assert!(!report.valid);
-        assert!(report
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "agent.mcp_requires_bash"));
+        assert!(report.valid, "{:?}", report.diagnostics);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.mcp_requires_bash" && diagnostic.severity == Severity::Warning
+        }));
     }
 }
 

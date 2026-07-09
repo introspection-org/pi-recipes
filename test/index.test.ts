@@ -1560,7 +1560,7 @@ describe("recipe child agents", () => {
     }
   });
 
-  it("requires bash when resolved agent tools include MCP refs", () => {
+  it("warns when resolved agent tools include MCP refs without bash", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agent-mcp-tools-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -1618,16 +1618,18 @@ describe("recipe child agents", () => {
           agentName: "worker",
           field: "tools",
           code: "mcp_requires_bash",
+          severity: "warning",
           message:
-            'Recipe agent "worker" declares MCP tools but does not allow bash; add "bash" to tools',
+            'Recipe agent "worker" declares MCP tools without bash; ensure another active tool can execute the session-local mcp CLI',
         },
       ]);
 
       const report = validateRecipeDirectory(root);
+      expect(report.valid).toBe(true);
       expect(report.findings).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            severity: "error",
+            severity: "warning",
             code: "agent.mcp_requires_bash",
           }),
         ])

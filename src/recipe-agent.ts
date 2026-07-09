@@ -78,6 +78,7 @@ export interface RecipeAgentValidationFinding {
   agentName: string;
   field: "name" | "from" | "file" | RequiredResolvedRecipeAgentField;
   code?: string;
+  severity?: "error" | "warning";
   message: string;
 }
 
@@ -481,7 +482,8 @@ export function validateResolvedRecipeAgentDefinition(opts: {
       agentName,
       field: "tools",
       code: "mcp_requires_bash",
-      message: `Recipe agent "${agentName}" declares MCP tools but does not allow bash; add "bash" to tools`,
+      severity: "warning",
+      message: `Recipe agent "${agentName}" declares MCP tools without bash; ensure another active tool can execute the session-local mcp CLI`,
     });
   }
 
