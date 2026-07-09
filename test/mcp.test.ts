@@ -132,6 +132,63 @@ describe("recipe MCP materialization", () => {
     }
   });
 
+  it("names bootstrap servers from serverInfo.name, then the binding label, never the endpoint id", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-bootstrap-"));
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(cwd, { recursive: true });
+      mkdirSync(recipeDir, { recursive: true });
+
+      const env: NodeJS.ProcessEnv = {
+        INTROSPECTION_TOKEN: "session-token",
+        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
+          endpoints: [
+            {
+              id: "0197f00d",
+              name: "nextplay staging",
+              host: "mcp.nextplay.test",
+              base_url: "http://mcp.nextplay.test/mcp",
+              kind: "mcp",
+            },
+          ],
+        }),
+      };
+      const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+        if (body.method === "initialize") {
+          return jsonResponse({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { serverInfo: { name: "nextplay", version: "0.1.0" } },
+          });
+        }
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: 2,
+          result: { tools: [{ name: "search_positions" }] },
+        });
+      }) as unknown as typeof fetch;
+
+      const manifest = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: fetchImpl,
+        agentTools: [],
+        manifest: recipeManifest(recipeDir, []),
+      });
+
+      // Recipes reference cloud MCP servers by their human name (the id the
+      // server reports, falling back to the endpoint label) — the opaque
+      // bootstrap endpoint id must never become the server id.
+      expect(manifest.servers?.map((server) => server.id)).toEqual(["nextplay"]);
+      expect(manifest.servers?.[0]?.name).toBe("nextplay");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not write a fake manifest when live tool discovery returns no catalog", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-fallback-"));
     try {
