@@ -318,7 +318,7 @@ function bootstrapBindings(env: NodeJS.ProcessEnv): McpEndpointBinding[] {
       const baseUrl = endpoint.base_url as string;
       const label = endpoint.name ?? endpoint.host ?? baseUrl;
       return {
-        id: safeServerId(endpoint.id ?? label),
+        id: safeServerId(label),
         name: label,
         host: endpoint.host ?? hostForUrl(baseUrl),
         baseUrl,
@@ -463,17 +463,25 @@ function rpcFailureMessage(body: string, parsed: JsonRpcResponse<unknown> | null
 async function initializeSession(
   io: Pick<CliIO, "env" | "fetch"> & { cwd?: string },
   server: McpManifestServer
-): Promise<{ sessionId?: string; diagnostic?: McpDiscoveryDiagnostic }> {
-  const result = await postJsonRpc(io, server, {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: { name: "pi-recipes-mcp-cli", version: "1.0" },
-    },
-  });
+): Promise<{
+  sessionId?: string;
+  serverName?: string;
+  diagnostic?: McpDiscoveryDiagnostic;
+}> {
+  const result = await postJsonRpc<{ serverInfo?: { name?: unknown } }>(
+    io,
+    server,
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "pi-recipes-mcp-cli", version: "1.0" },
+      },
+    }
+  );
   if (typeof result === "string" || result.status < 200 || result.status >= 300) {
     return {
       diagnostic: {
@@ -490,6 +498,11 @@ async function initializeSession(
     };
   }
   const sessionId = result.headers.get("mcp-session-id") ?? undefined;
+  const rawServerName = result.parsed?.result?.serverInfo?.name;
+  const serverName =
+    typeof rawServerName === "string" && rawServerName.trim()
+      ? rawServerName.trim()
+      : undefined;
   if (sessionId) {
     await postJsonRpc(
       io,
@@ -498,13 +511,17 @@ async function initializeSession(
       sessionId
     ).catch(() => undefined);
   }
-  return { sessionId };
+  return { sessionId, serverName };
 }
 
 async function listEndpointTools(
   binding: McpEndpointBinding,
   opts: { env: NodeJS.ProcessEnv; cwd: string; fetch: typeof fetch }
-): Promise<{ tools: RemoteMcpTool[]; diagnostic?: McpDiscoveryDiagnostic }> {
+): Promise<{
+  tools: RemoteMcpTool[];
+  serverName?: string;
+  diagnostic?: McpDiscoveryDiagnostic;
+}> {
   const manifestServer: McpManifestServer = {
     id: binding.id,
     name: binding.name,
@@ -515,6 +532,7 @@ async function listEndpointTools(
   };
   const initialized = await initializeSession(opts, manifestServer);
   if (initialized.diagnostic) return { tools: [], diagnostic: initialized.diagnostic };
+  const serverName = initialized.serverName;
   const result = await postJsonRpc<ToolsListResult>(
     opts,
     manifestServer,
@@ -559,6 +577,7 @@ async function listEndpointTools(
   if (tools.length === 0) {
     return {
       tools,
+      serverName,
       diagnostic: {
         serverId: binding.id,
         url: binding.baseUrl,
@@ -567,7 +586,7 @@ async function listEndpointTools(
       },
     };
   }
-  return { tools };
+  return { tools, serverName };
 }
 
 async function discoverMcpCatalogs(opts: {
@@ -599,9 +618,10 @@ async function discoverMcpCatalogs(opts: {
     const result = await listEndpointTools(binding, opts);
     if (result.diagnostic) diagnostics.push(result.diagnostic);
     if (result.tools.length === 0) continue;
+    const serverName = result.serverName;
     catalogs.push({
-      id: binding.id,
-      name: binding.name,
+      id: serverName ? safeServerId(serverName) : binding.id,
+      name: serverName || binding.name,
       host: binding.host,
       baseUrl: binding.baseUrl,
       tools: result.tools,
