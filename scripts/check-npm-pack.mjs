@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
+
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -21,4 +23,42 @@ process.stdin.on("end", () => {
     for (const path of forbidden) console.error(`- ${path}`);
     process.exitCode = 1;
   }
+
+  const brokenImports = missingRelativeImports(files);
+  if (brokenImports.length > 0) {
+    console.error(
+      "npm package has relative imports pointing at unpacked modules:"
+    );
+    for (const message of brokenImports) console.error(`- ${message}`);
+    process.exitCode = 1;
+  }
 });
+
+// Every packed dist module must resolve its relative imports within the pack,
+// or the published package throws ERR_MODULE_NOT_FOUND at import time.
+function missingRelativeImports(files) {
+  const packedJs = new Set(
+    files.filter((path) => path.startsWith("dist/") && path.endsWith(".js"))
+  );
+  const missing = [];
+  for (const file of packedJs) {
+    let source;
+    try {
+      source = readFileSync(file, "utf8");
+    } catch {
+      missing.push(`${file} is listed but not built`);
+      continue;
+    }
+    const imports = source.matchAll(
+      /(?:from\s+|import\s*\(\s*)["'](\.\.?\/[^"']+)["']/g
+    );
+    for (const match of imports) {
+      const target = new URL(match[1], `file:///${file}`).pathname.slice(1);
+      if (!target.endsWith(".js")) continue;
+      if (!packedJs.has(target)) {
+        missing.push(`${file} -> ${target}`);
+      }
+    }
+  }
+  return missing;
+}

@@ -8,6 +8,8 @@
   "files": [
     "dist/child-agent.d.ts",
     "dist/child-agent.js",
+    "dist/child-agent-completions.d.ts",
+    "dist/child-agent-completions.js",
     "dist/child-agent-store.d.ts",
     "dist/child-agent-store.js",
     "dist/cli.d.ts",
