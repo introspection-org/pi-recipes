@@ -366,7 +366,9 @@ async function runCode(args: string[]): Promise<number> {
 }
 
 export function rebrandDelegatedOutput(text: string): string {
-  return text.replace(/\bmcporter\b/g, "mcp");
+  return text
+    .replace(/^mcporter\s+\d+\.\d+\.\d+\s+—\s+/gm, "")
+    .replace(/\bmcporter\b/g, "mcp");
 }
 
 function delegateToMcporter(args: string[]): Promise<number> {

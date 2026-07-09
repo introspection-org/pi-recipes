@@ -500,7 +500,7 @@ describe("recipe MCP materialization", () => {
       )
     ).toBe(
       [
-        "mcp 0.12.3 — Listing 1 server(s)",
+        "Listing 1 server(s)",
         "Examples:",
         "  mcp call nextplay.search_profiles q:'staff engineer'",
       ].join("\n")
