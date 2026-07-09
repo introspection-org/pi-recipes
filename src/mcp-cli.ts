@@ -71,6 +71,11 @@ function readStdin(): Promise<string> {
 
 function normalizeToolResult(result: unknown): unknown {
   const callResult = createCallResult(result);
+  if (asRecord(result).isError === true) {
+    // Fail loudly in code mode so a bad call rejects instead of flowing an
+    // error string into downstream logic.
+    throw new Error(callResult.text() ?? "MCP tool call failed.");
+  }
   const json = callResult.json();
   if (json !== null) return json;
   const structured = callResult.structuredContent();
@@ -368,7 +373,38 @@ async function runCode(args: string[]): Promise<number> {
 export function rebrandDelegatedOutput(text: string): string {
   return text
     .replace(/^mcporter\s+\d+\.\d+\.\d+\s+—\s+/gm, "")
-    .replace(/\bmcporter\b/g, "mcp");
+    .replace(/\bmcporter\b/g, "mcp")
+    .replace(
+      /is not accessible on server '([^']+)' \(blocked by configuration\)/g,
+      "is not available on server '$1'. Run `mcp list $1` to see available tools"
+    );
+}
+
+export function createDelegatedErrorFilter(write: (text: string) => void): {
+  push(chunk: string): void;
+  flush(): void;
+} {
+  let buffer = "";
+  const emit = (line: string) => {
+    // Drop Node stack frames from upstream errors; keep the message lines.
+    if (/^\s+at\s\S/.test(line)) return;
+    write(rebrandDelegatedOutput(line));
+  };
+  return {
+    push(chunk: string) {
+      buffer += chunk;
+      let index = buffer.indexOf("\n");
+      while (index !== -1) {
+        emit(buffer.slice(0, index + 1));
+        buffer = buffer.slice(index + 1);
+        index = buffer.indexOf("\n");
+      }
+    },
+    flush() {
+      if (buffer) emit(buffer);
+      buffer = "";
+    },
+  };
 }
 
 function delegateToMcporter(args: string[]): Promise<number> {
@@ -377,9 +413,13 @@ function delegateToMcporter(args: string[]): Promise<number> {
       stdio: ["inherit", "pipe", "pipe"],
       env: process.env,
     });
+    const stderrFilter = createDelegatedErrorFilter((text) => stderr.write(text));
     child.stdout.on("data", (chunk) => stdout.write(rebrandDelegatedOutput(String(chunk))));
-    child.stderr.on("data", (chunk) => stderr.write(rebrandDelegatedOutput(String(chunk))));
-    child.on("close", (code) => resolve(code ?? 1));
+    child.stderr.on("data", (chunk) => stderrFilter.push(String(chunk)));
+    child.on("close", (code) => {
+      stderrFilter.flush();
+      resolve(code ?? 1);
+    });
   });
 }
 

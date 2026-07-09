@@ -4,7 +4,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { rebrandDelegatedOutput, runMcpJavaScript, searchMcpTools } from "../src/mcp-cli.js";
+import {
+  createDelegatedErrorFilter,
+  rebrandDelegatedOutput,
+  runMcpJavaScript,
+  searchMcpTools,
+} from "../src/mcp-cli.js";
 import {
   buildMcporterConfig,
   clearRecipeMcpManifest,
@@ -506,6 +511,34 @@ describe("recipe MCP materialization", () => {
       ].join("\n")
     );
   });
+
+  it("rewrites the blocked-by-configuration error into an actionable hint", () => {
+    expect(
+      rebrandDelegatedOutput(
+        "Tool 'search_people' is not accessible on server 'nextplay' (blocked by configuration)."
+      )
+    ).toBe(
+      "Tool 'search_people' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools."
+    );
+  });
+
+  it("drops upstream stack frames from delegated stderr but keeps message lines", () => {
+    const out: string[] = [];
+    const filter = createDelegatedErrorFilter((text) => out.push(text));
+    filter.push("[mcporter] Tool 'x' is not accessible on server 'nextplay' (blocked by configuration).\n");
+    filter.push("Error: Tool 'x' is not accessible on server 'nextplay' (blocked by configuration).\n");
+    filter.push("    at McpRuntime.callTool (file:///tmp/mcporter/dist/runtime.js:174:19)\n");
+    filter.push("    at async main (file:///tmp/mcporter/di");
+    filter.push("st/cli.js:365:5)\n");
+    filter.flush();
+    expect(out.join("")).toBe(
+      [
+        "[mcp] Tool 'x' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools.",
+        "Error: Tool 'x' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools.",
+        "",
+      ].join("\n")
+    );
+  });
 });
 
 describe("mcporter CLI end-to-end", () => {
@@ -587,19 +620,23 @@ describe("mcporter CLI end-to-end", () => {
           return;
         }
         if (msg.method === "tools/call") {
+          const args = msg.params?.arguments as { key?: string } | undefined;
+          const result =
+            args?.key === "explode"
+              ? {
+                  isError: true,
+                  content: [{ type: "text", text: "stub failure: explode" }],
+                }
+              : {
+                  content: [
+                    {
+                      type: "text",
+                      text: `called ${msg.params?.name} with ${JSON.stringify(msg.params?.arguments)}`,
+                    },
+                  ],
+                };
           res.writeHead(200, headers).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: msg.id,
-              result: {
-                content: [
-                  {
-                    type: "text",
-                    text: `called ${msg.params?.name} with ${JSON.stringify(msg.params?.arguments)}`,
-                  },
-                ],
-              },
-            })
+            JSON.stringify({ jsonrpc: "2.0", id: msg.id, result })
           );
           return;
         }
@@ -723,14 +760,21 @@ describe("mcporter CLI end-to-end", () => {
       await runMcpJavaScript(
         `
         const result = await tools.stub.get_value({ key: "color" });
-        globalThis.__mcpRunSmoke = result;
+        let errorMessage = null;
+        try {
+          await tools.stub.get_value({ key: "explode" });
+        } catch (error) {
+          errorMessage = error instanceof Error ? error.message : String(error);
+        }
+        globalThis.__mcpRunSmoke = { result, errorMessage };
         `,
         { timeoutMs: 10_000 }
       );
 
-      expect((globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke).toBe(
-        'called get_value with {"key":"color"}'
-      );
+      expect((globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke).toEqual({
+        result: 'called get_value with {"key":"color"}',
+        errorMessage: "stub failure: explode",
+      });
     } finally {
       if (previousConfig === undefined) delete process.env.MCPORTER_CONFIG;
       else process.env.MCPORTER_CONFIG = previousConfig;
