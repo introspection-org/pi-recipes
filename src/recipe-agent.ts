@@ -2,6 +2,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parse } from "yaml";
 import {
+  mergeRecipeAgentModelConfig,
+  parseRecipeAgentModelConfig,
+  RecipeModelConfigError,
+  type RecipeAgentModelConfig,
+} from "./recipe-model.js";
+import {
   packageResourcePaths,
   readPiPackageManifest,
   RecipePackageError,
@@ -25,8 +31,16 @@ export interface RecipeAgentDefinition {
     name?: string;
     thinkingLevel?: string;
   };
+  /**
+   * The full validated `model:` block (stream options, provider routing),
+   * merged along the `from:` chain. `model` is its `{name, thinkingLevel}`
+   * projection, kept for callers that only route on the spec.
+   */
+  modelConfig?: RecipeAgentModelConfig;
   tools: string[];
   skills: string[];
+  /** True when `skills:` was declared (directly or inherited) rather than defaulted to []. */
+  skillsDeclared?: boolean;
   subagents: string[];
   subagentsDeclared?: boolean;
   extensions?: RecipeAgentExtensions;
@@ -35,7 +49,7 @@ export interface RecipeAgentDefinition {
 
 type ParsedRecipeAgentDefinition = Omit<
   RecipeAgentDefinition,
-  "tools" | "skills" | "subagents" | "subagentsDeclared"
+  "tools" | "skills" | "skillsDeclared" | "subagents" | "subagentsDeclared"
 > & {
   tools?: string[];
   skills?: string[];
@@ -61,7 +75,7 @@ export const REQUIRED_RECIPE_AGENT_FIELDS: RequiredResolvedRecipeAgentField[] = 
 
 export interface RecipeAgentValidationFinding {
   agentName: string;
-  field: "name" | "from" | RequiredResolvedRecipeAgentField;
+  field: "name" | "from" | "file" | RequiredResolvedRecipeAgentField;
   message: string;
 }
 
@@ -70,6 +84,20 @@ interface RecipeAgentSource {
   explicitName: boolean;
   definition: ParsedRecipeAgentDefinition;
 }
+
+const AGENT_YAML_KEYS = new Set([
+  "name",
+  "from",
+  "description",
+  "model",
+  "tools",
+  "skills",
+  "subagents",
+  "extensions",
+  "system_instructions",
+  "systemInstructions",
+  "prompt",
+]);
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -83,24 +111,17 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
-function parseModel(data: Record<string, unknown>):
+function modelProjection(config: RecipeAgentModelConfig | undefined):
   | {
       name?: string;
       thinkingLevel?: string;
     }
   | undefined {
-  const raw = asRecord(data.model);
-  const name = typeof raw.name === "string" ? raw.name.trim() : "";
-  const thinkingLevel =
-    typeof raw.thinking_level === "string"
-      ? raw.thinking_level.trim()
-      : typeof raw.thinkingLevel === "string"
-        ? raw.thinkingLevel.trim()
-        : "";
-  if (!name && !thinkingLevel) return undefined;
+  if (!config) return undefined;
+  if (!config.name && !config.thinkingLevel) return undefined;
   return {
-    ...(name ? { name } : {}),
-    ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(config.name ? { name: config.name } : {}),
+    ...(config.thinkingLevel ? { thinkingLevel: config.thinkingLevel } : {}),
   };
 }
 
@@ -161,13 +182,35 @@ function recipeAgentFiles(recipeDir: string): string[] {
   return yamlFilesFromPaths([join(recipeDir, "agents")]);
 }
 
-function readRecipeAgentSources(recipeDir: string): RecipeAgentSource[] {
+function readRecipeAgentSources(
+  recipeDir: string,
+  opts: { onInvalidFile?: (path: string, error: Error) => void } = {}
+): RecipeAgentSource[] {
   const sources: RecipeAgentSource[] = [];
   for (const path of recipeAgentFiles(recipeDir)) {
     const data = readYaml(path);
     const fallbackName = basename(path).replace(/\.ya?ml$/i, "");
     const explicitName = typeof data.name === "string" && Boolean(data.name.trim());
     const name = explicitName ? (data.name as string).trim() : fallbackName;
+
+    const unknownKeys = Object.keys(data).filter((key) => !AGENT_YAML_KEYS.has(key));
+    if (unknownKeys.length > 0) {
+      opts.onInvalidFile?.(
+        path,
+        new Error(`Agent YAML at ${path} has unsupported key(s): ${unknownKeys.join(", ")}`)
+      );
+      continue;
+    }
+
+    let modelConfig: RecipeAgentModelConfig | undefined;
+    try {
+      modelConfig = parseRecipeAgentModelConfig(`Agent YAML at ${path}`, data.model);
+    } catch (err) {
+      if (!(err instanceof RecipeModelConfigError)) throw err;
+      opts.onInvalidFile?.(path, err);
+      continue;
+    }
+
     sources.push({
       fallbackName,
       explicitName,
@@ -176,7 +219,8 @@ function readRecipeAgentSources(recipeDir: string): RecipeAgentSource[] {
         from: typeof data.from === "string" && data.from.trim() ? data.from.trim() : undefined,
         description:
           typeof data.description === "string" ? data.description : undefined,
-        model: parseModel(data),
+        model: modelProjection(modelConfig),
+        modelConfig,
         tools: Object.hasOwn(data, "tools") ? stringArray(data.tools) : undefined,
         skills: Object.hasOwn(data, "skills") ? stringArray(data.skills) : undefined,
         subagents: Object.hasOwn(data, "subagents") ? stringArray(data.subagents) : undefined,
@@ -196,20 +240,18 @@ export function loadRecipeAgentDefinitions(
   const resolvedDefinitions = new Map<string, RecipeAgentDefinition>();
   const definitions = new Map<string, RecipeAgentDefinition>();
 
-  for (const source of readRecipeAgentSources(recipeDir)) {
+  const sources = readRecipeAgentSources(recipeDir, {
+    onInvalidFile: (path, error) => {
+      console.warn(`[pi-recipes] skipping ${path}: ${error.message}`);
+    },
+  });
+  for (const source of sources) {
     rawDefinitions.set(source.definition.name, source.definition);
     aliases.set(source.fallbackName, source.definition.name);
   }
 
   function resolveName(name: string): string {
     return rawDefinitions.has(name) ? name : aliases.get(name) ?? name;
-  }
-
-  function mergeModel(
-    base: RecipeAgentDefinition["model"],
-    child: RecipeAgentDefinition["model"]
-  ): RecipeAgentDefinition["model"] {
-    return base || child ? { ...base, ...child } : undefined;
   }
 
   function mergeExtensions(
@@ -241,14 +283,20 @@ export function loadRecipeAgentDefinitions(
       : undefined;
     if (raw.from && !base) return undefined;
 
+    const modelConfig = mergeRecipeAgentModelConfig(
+      base?.modelConfig,
+      raw.modelConfig
+    );
     const definition: RecipeAgentDefinition = {
       name: raw.name,
       ...(raw.from ? { from: raw.from } : {}),
       description: raw.description ?? base?.description,
-      model: mergeModel(base?.model, raw.model),
+      model: modelProjection(modelConfig),
+      ...(modelConfig ? { modelConfig } : {}),
       tools: raw.tools ?? base?.tools ?? [],
       skills: raw.skills ?? base?.skills ?? [],
       subagents: raw.subagents ?? base?.subagents ?? [],
+      skillsDeclared: raw.skills !== undefined || base?.skillsDeclared === true,
       subagentsDeclared: raw.subagents !== undefined || base?.subagentsDeclared === true,
       extensions: mergeExtensions(base?.extensions, raw.extensions),
       systemInstructions: raw.systemInstructions ?? base?.systemInstructions,
@@ -259,7 +307,16 @@ export function loadRecipeAgentDefinitions(
 
   for (const name of rawDefinitions.keys()) {
     const definition = resolveDefinition(name);
-    if (!definition) continue;
+    if (!definition) {
+      console.warn(
+        `[pi-recipes] skipping agent "${name}": ${fromChainSkipReason(
+          name,
+          rawDefinitions,
+          resolveName
+        )}`
+      );
+      continue;
+    }
     definitions.set(name, definition);
   }
   for (const [alias, name] of aliases) {
@@ -269,6 +326,29 @@ export function loadRecipeAgentDefinitions(
   }
 
   return definitions;
+}
+
+/** Explain why an agent's from: chain failed to resolve (cycle or missing base). */
+function fromChainSkipReason(
+  name: string,
+  rawDefinitions: Map<string, ParsedRecipeAgentDefinition>,
+  resolveName: (name: string) => string
+): string {
+  const stack: string[] = [];
+  let current = resolveName(name);
+  for (;;) {
+    const raw = rawDefinitions.get(current);
+    if (!raw?.from) return "from: chain failed to resolve";
+    const next = resolveName(raw.from);
+    if (!rawDefinitions.has(next)) {
+      return `from: "${raw.from}" does not exist in the recipe`;
+    }
+    if (stack.includes(next) || next === current) {
+      return `from: cycle detected (${[...stack, current, next].join(" -> ")})`;
+    }
+    stack.push(current);
+    current = next;
+  }
 }
 
 function recipeAgentFieldProvided(
@@ -445,9 +525,19 @@ function validateRecipeAgentNames(
 }
 
 export function validateRecipeAgentDefinitions(recipeDir: string): RecipeAgentValidationFinding[] {
-  const sources = readRecipeAgentSources(recipeDir);
+  const invalidFileFindings: RecipeAgentValidationFinding[] = [];
+  const sources = readRecipeAgentSources(recipeDir, {
+    onInvalidFile: (path, error) => {
+      invalidFileFindings.push({
+        agentName: basename(path).replace(/\.ya?ml$/i, ""),
+        field: "file",
+        message: error.message,
+      });
+    },
+  });
   const agentNames = [...new Set(sources.map((source) => source.definition.name))].sort();
   return [
+    ...invalidFileFindings,
     ...validateRecipeAgentNames(sources),
     ...validateRecipeAgentModelSpecs(sources),
     ...agentNames.flatMap((agentName) =>
