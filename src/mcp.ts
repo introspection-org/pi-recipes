@@ -190,6 +190,10 @@ export function mcporterCliEntrypointPath(): string {
   return fileURLToPath(import.meta.resolve("mcporter/cli"));
 }
 
+export function mcpCliEntrypointPath(): string {
+  return fileURLToPath(new URL("./mcp-cli.js", import.meta.url));
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
@@ -226,7 +230,7 @@ export async function materializeSessionMcpCli(opts: {
     "#!/bin/sh",
     `: "\${${MCPORTER_CONFIG_ENV}:=${doubleQuoteEscape(defaultMcporterConfigPath(opts.cwd))}}"`,
     `export ${MCPORTER_CONFIG_ENV}`,
-    `exec ${shellQuote(process.execPath)} ${shellQuote(mcporterCliEntrypointPath())} "$@"`,
+    `exec ${shellQuote(process.execPath)} ${shellQuote(mcpCliEntrypointPath())} "$@"`,
     "",
   ].join("\n");
   await mkdir(binDir, { recursive: true });

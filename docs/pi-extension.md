@@ -264,22 +264,32 @@ also writes the filtered manifest to `.pi/mcp.json` and an
 in the workspace. Agents can use:
 
 ```bash
+mcp search "staff engineer"              # find relevant tool references
 mcp list                                 # servers and their tools
 mcp list contacts --schema               # parameter schemas per tool
+mcp list contacts.search_contacts --schema
 mcp call contacts.search_contacts query="staff engineer"
 mcp call 'contacts.search_contacts(query: "staff engineer", limit: 5)'
+mcp run <<'EOF'                          # multi-step JavaScript workflow
+const result = await tools.contacts.search_contacts({ query: "staff engineer" })
+console.log(JSON.stringify(result, null, 2))
+EOF
 ```
 
-Arguments are `key=value` / `key:value` pairs with automatic type coercion, or
-a function-call expression for nested objects and arrays; `key=@file.md` reads
-a value from a file, and `--output json` prints a machine-parseable result.
+Use `mcp search` to find relevant tool references without printing every schema.
+Search covers tool names, descriptions, argument names, and argument
+descriptions. Arguments are `key=value` / `key:value` pairs with automatic type
+coercion, or a function-call expression for nested objects and arrays;
+`key=@file.md` reads a value from a file, and `--output json` prints a
+machine-parseable result. Use `mcp run` when a workflow needs multiple calls,
+local filtering, ranking, or deduplication before printing a compact result.
 
-The `mcp` command is mcporter, installed as a package dependency; the shim pins
-`MCPORTER_CONFIG` to the generated session config, so a recipe session only
-ever sees the servers and tools its policy allows — never host-level mcporter
-or editor MCP configs. Header values in the generated config stay `${VAR}`
-environment references; secrets are resolved by mcporter at call time and are
-not written to disk.
+The `mcp` command is a pi-recipes wrapper backed by mcporter, installed as a
+package dependency; the shim pins `MCPORTER_CONFIG` to the generated session
+config, so a recipe session only ever sees the servers and tools its policy
+allows — never host-level mcporter or editor MCP configs. Header values in the
+generated config stay `${VAR}` environment references; secrets are resolved by
+mcporter at call time and are not written to disk.
 
 The session records the generated paths in `PI_RECIPES_MCP_MANIFEST`,
 `MCPORTER_CONFIG`, and `PI_RECIPES_MCP_BIN_DIR`.

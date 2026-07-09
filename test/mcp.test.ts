@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { runMcpJavaScript, searchMcpTools } from "../src/mcp-cli.js";
 import {
   buildMcporterConfig,
   clearRecipeMcpManifest,
@@ -11,6 +12,7 @@ import {
   defaultMcporterConfigPath,
   materializeRecipeMcpManifest,
   materializeSessionMcpCli,
+  mcpCliEntrypointPath,
   mcporterCliEntrypointPath,
   type RecipePackageManifest,
 } from "../src/index.js";
@@ -396,19 +398,95 @@ describe("recipe MCP materialization", () => {
     }
   });
 
-  it("materializes an mcp shim that pins MCPORTER_CONFIG and execs mcporter", async () => {
+  it("materializes an mcp shim that pins MCPORTER_CONFIG and execs the recipe mcp CLI", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-shim-"));
     try {
       const env: NodeJS.ProcessEnv = {};
       const { binDir, shimPath } = await materializeSessionMcpCli({ cwd: root, env });
       const script = readFileSync(shimPath, "utf8");
-      expect(script).toContain(mcporterCliEntrypointPath());
+      expect(script).toContain(mcpCliEntrypointPath());
       expect(script).toContain(`MCPORTER_CONFIG:=${defaultMcporterConfigPath(root)}`);
       expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(binDir);
       expect(env.PATH?.split(":")).toContain(binDir);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("searches the allowed MCP catalog and returns tool references", () => {
+    const matches = searchMcpTools(
+      {
+        servers: [
+          {
+            id: "nextplay",
+            base_url: "http://example.test/mcp",
+            tools: [
+              {
+                name: "search_profiles",
+                description: "Search profiles by title, company, location, and experience.",
+                input_schema: {
+                  type: "object",
+                  properties: {
+                    q: { type: "string", description: "Natural language candidate query" },
+                    city: { type: "string", description: "City filter" },
+                  },
+                  required: ["q"],
+                },
+              },
+              {
+                name: "add_shortlist_entry",
+                description: "Add a person to the shortlist.",
+                input_schema: {
+                  type: "object",
+                  properties: {
+                    personId: { type: "string", description: "Profile identifier" },
+                  },
+                  required: ["personId"],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      "candidate location search",
+      { limit: 1 }
+    );
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.ref).toBe("nextplay.search_profiles");
+    expect(matches[0]?.inspect).toBe("mcp list nextplay.search_profiles --schema");
+    expect(matches[0]?.call).toBe("mcp call nextplay.search_profiles q:'example query'");
+  });
+
+  it("supports regex search over names, descriptions, and argument metadata", () => {
+    const matches = searchMcpTools(
+      {
+        servers: [
+          {
+            id: "linear",
+            base_url: "http://example.test/mcp",
+            tools: [
+              {
+                name: "create_comment",
+                description: "Create an issue comment.",
+                input_schema: {
+                  type: "object",
+                  properties: {
+                    issueId: { type: "string", description: "Linear issue identifier" },
+                    body: { type: "string", description: "Comment markdown" },
+                  },
+                  required: ["issueId", "body"],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      "markdown",
+      { regex: true }
+    );
+
+    expect(matches.map((match) => match.ref)).toEqual(["linear.create_comment"]);
   });
 });
 
@@ -586,6 +664,61 @@ describe("mcporter CLI end-to-end", () => {
       const blocked = await runMcporter(["call", "stub.hidden_tool"], configEnv);
       expect(blocked.code).toBe(1);
     } finally {
+      server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("runs JavaScript with recipe MCP tools injected", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-run-"));
+    const { server, url } = await startStubMcpServer("Bearer stub-token");
+    const previousConfig = process.env.MCPORTER_CONFIG;
+    const previousToken = process.env.STUB_MCP_TOKEN;
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(recipeDir, { recursive: true });
+      const localConfig = writeLocalConfig(cwd, [
+        {
+          id: "stub",
+          transport: "streamable_http",
+          url,
+          headers: { Authorization: "Bearer ${STUB_MCP_TOKEN}" },
+        },
+      ]);
+      const env: NodeJS.ProcessEnv = {
+        PI_RECIPES_MCP_LOCAL_CONFIG: localConfig,
+        STUB_MCP_TOKEN: "stub-token",
+      };
+      await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: globalThis.fetch,
+        agentTools: ["mcp:stub/get_value"],
+        manifest: recipeManifest(recipeDir, [{ id: "stub", allow: ["get_value"] }]),
+      });
+      process.env.MCPORTER_CONFIG = env.MCPORTER_CONFIG;
+      process.env.STUB_MCP_TOKEN = "stub-token";
+      (globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke = undefined;
+
+      await runMcpJavaScript(
+        `
+        const result = await tools.stub.get_value({ key: "color" });
+        globalThis.__mcpRunSmoke = result;
+        `,
+        { timeoutMs: 10_000 }
+      );
+
+      expect((globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke).toBe(
+        'called get_value with {"key":"color"}'
+      );
+    } finally {
+      if (previousConfig === undefined) delete process.env.MCPORTER_CONFIG;
+      else process.env.MCPORTER_CONFIG = previousConfig;
+      if (previousToken === undefined) delete process.env.STUB_MCP_TOKEN;
+      else process.env.STUB_MCP_TOKEN = previousToken;
+      delete (globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke;
       server.close();
       rmSync(root, { recursive: true, force: true });
     }

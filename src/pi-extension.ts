@@ -244,10 +244,12 @@ function runtimeContextPrompt(
         "- MCP tool policy refs are not directly callable tool names.",
         "- Use the session-local `mcp` command through `bash` for MCP endpoint tools.",
         "- The extension puts `mcp` on PATH; if lookup fails, use `$PI_RECIPES_MCP_BIN_DIR/mcp`.",
+        "- Find relevant tools with `mcp search \"what you need\"`; inspect exact arguments with `mcp list <server.tool> --schema`.",
         "- List servers and their tools with `mcp list`.",
         "- Show parameter schemas with `mcp list <server> --schema`.",
         "- Call a tool with `mcp call <server>.<tool> key=value ...` (values auto-coerce).",
         "- Use function-call syntax for nested arguments: `mcp call '<server>.<tool>(key: \"value\", items: [1, 2])'`.",
+        "- Use `mcp run` for multi-step JavaScript workflows; recipe MCP tools are available as async functions on `tools.<server>.<tool>`.",
         "- Configured MCP policy refs: " + mcpRefs.map((tool) => `${tool.serverId}/${tool.toolName}`).join(", "),
       ]
     : [];

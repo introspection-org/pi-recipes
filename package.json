@@ -18,6 +18,8 @@
     "dist/interactions.js",
     "dist/mcp.d.ts",
     "dist/mcp.js",
+    "dist/mcp-cli.d.ts",
+    "dist/mcp-cli.js",
     "dist/package-info.d.ts",
     "dist/package-info.js",
     "dist/pi-extension.d.ts",

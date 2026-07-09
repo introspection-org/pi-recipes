@@ -282,16 +282,23 @@ writes a workspace-local `.pi/mcp.json` plus an
 Agents use:
 
 ```bash
+mcp search "staff engineer"              # find relevant tool references
 mcp list                                 # servers and their tools
 mcp list contacts --schema               # parameter schemas per tool
+mcp list contacts.search_contacts --schema
 mcp call contacts.search_contacts query="staff engineer"
 mcp call 'contacts.search_contacts(query: "staff engineer", limit: 5)'
+mcp run <<'EOF'                          # multi-step JavaScript workflow
+const result = await tools.contacts.search_contacts({ query: "staff engineer" })
+console.log(JSON.stringify(result, null, 2))
+EOF
 ```
 
-The `mcp` command is mcporter (a package dependency), locked to the generated
-session config via `MCPORTER_CONFIG` — a recipe session never reads host-level
-mcporter or editor MCP configs. Outside the Pi session, `mcp` is not a normal
-package-level command; the launched session owns the CLI setup.
+The `mcp` command is a pi-recipes wrapper backed by mcporter (a package
+dependency), locked to the generated session config via `MCPORTER_CONFIG` — a
+recipe session never reads host-level mcporter or editor MCP configs. Outside
+the Pi session, `mcp` is not a normal package-level command; the launched
+session owns the CLI setup.
 
 For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
 directory. Workspace config wins over recipe config. To override that path, set
