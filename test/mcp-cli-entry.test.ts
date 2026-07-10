@@ -220,6 +220,15 @@ describe("mcp CLI entry detection", () => {
     }
   });
 
+  it("keeps an empty search on the progressive-disclosure path", () => {
+    const result = runCli(distCli, ["search", "unlikely-capability"]);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Try broader or alternate terms");
+    expect(result.output).toContain("Use `mcp list` only to identify exact tool names");
+    expect(result.output).toContain("mcp list <server.tool> --schema");
+    expect(result.output).not.toContain("run `mcp list` to inspect available servers");
+  });
+
   it("provides recipe-scoped help for delegated commands", () => {
     for (const command of ["list", "call"]) {
       const result = runCli(distCli, [command, "--help"]);
