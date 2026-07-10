@@ -200,6 +200,27 @@ describe("mcp CLI entry detection", () => {
     }
   });
 
+  it("documents exact-target list flags and keeps quiet mode free of the capability banner", () => {
+    const help = runCli(distCli, ["list", "--help"]);
+    expect(help.output).toContain("exact server target");
+    expect(help.output).toContain("--no-oauth");
+
+    const quiet = runCli(distCli, ["list", "--quiet"]);
+    expect(quiet.status).toBe(2);
+    expect(quiet.output).not.toContain("Only exact tool names shown");
+  });
+
+  it("documents JSON stdin, structured call errors, and headless OAuth completion", () => {
+    const call = runCli(distCli, ["call", "--help"]);
+    expect(call.output).toContain("--args <json|->");
+    expect(call.output).toContain("{ server, tool, issue }");
+    expect(call.output).toContain("--no-oauth");
+
+    const auth = runCli(distCli, ["auth", "--help"]);
+    expect(auth.output).toContain("keep this command running");
+    expect(auth.output).toContain("tokens are saved");
+  });
+
   it("blocks mcporter administration and ad-hoc connection surfaces", () => {
     for (const args of [
       ["config", "list"],

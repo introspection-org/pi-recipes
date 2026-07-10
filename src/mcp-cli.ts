@@ -175,11 +175,12 @@ export function mcpListHelpText(): string {
     "Flags:",
     "  --brief, --signatures     Compact signatures only.",
     "  --all-parameters          Include every optional parameter.",
-    "  --schema                  Include JSON input schemas.",
+    "  --schema                  Include full input and available output schemas.",
     "  --json                    Emit machine-readable output.",
-    "  --status                  Show concise server status only.",
-    "  --quiet, --exit-code      Silent/exit-code health checks.",
-    "  --timeout <ms>            Override discovery timeout.",
+    "  --status                  Show concise status for an exact server target.",
+    "  --quiet, --exit-code      Health checks for an exact server target.",
+    "  --timeout <ms>            Override discovery timeout for an exact target.",
+    "  --no-oauth                Use cached credentials without starting OAuth.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -195,7 +196,7 @@ export function mcpCallHelpText(): string {
     "  key=value / key:value     Named arguments with schema-aware coercion.",
     "  --key value               Named schema arguments are normalized to key=value.",
     "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
-    "  --args <json>, --json <json|->  Supply a JSON object directly or from stdin.",
+    "  --args <json|->, --json <json|->  Supply a JSON object directly or from stdin.",
     "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
     "  --                         Treat remaining values as literal positional inputs.",
     "",
@@ -203,7 +204,9 @@ export function mcpCallHelpText(): string {
     "  --output text|markdown|json|raw",
     "  --save-images <dir>",
     "  --timeout <ms>",
+    "  --no-oauth, --oauth-timeout <ms>",
     "  --raw-strings, --no-coerce",
+    "  With --output json, transport/auth failures use a structured { server, tool, issue } envelope.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -215,6 +218,7 @@ export function mcpAuthHelpText(): string {
     "",
     "In a recipe session, authenticates a configured local server whose binding declares auth: oauth.",
     "Managed Introspection bindings use host-provided application assertions or stored headers and cannot start OAuth.",
+    "With --no-browser, open the printed URL but keep this command running until the redirect callback completes and tokens are saved.",
   ].join("\n");
 }
 
