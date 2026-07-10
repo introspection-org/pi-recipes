@@ -874,6 +874,62 @@ describe("recipe MCP materialization", () => {
     }
   });
 
+  it("matches local credentials by binding identity when endpoints share a URL", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcporter-shared-url-"));
+    try {
+      const sharedUrl = "https://mcp.example.test/mcp";
+      const localConfig = writeLocalConfig(root, [
+        {
+          id: "account-a",
+          url: sharedUrl,
+          headers: { "X-Account": "a" },
+          auth: "oauth",
+          oauthClientId: "client-a",
+          tokenCacheDir: "/tmp/account-a",
+        },
+        {
+          id: "account-b",
+          url: sharedUrl,
+          headers: { "X-Account": "b" },
+          auth: "oauth",
+          oauthClientId: "client-b",
+          tokenCacheDir: "/tmp/account-b",
+        },
+      ]);
+      const config = buildMcporterConfig(
+        {
+          servers: [
+            {
+              id: "account-a",
+              base_url: sharedUrl,
+              tools: [{ name: "lookup" }],
+            },
+            {
+              id: "reported-name-2",
+              binding_id: "account-b",
+              base_url: sharedUrl,
+              tools: [{ name: "lookup" }],
+            },
+          ],
+        },
+        { cwd: root, env: { PI_RECIPES_MCP_LOCAL_CONFIG: localConfig } }
+      );
+
+      expect(config.mcpServers["account-a"]).toMatchObject({
+        headers: { "X-Account": "a" },
+        oauthClientId: "client-a",
+        tokenCacheDir: "/tmp/account-a",
+      });
+      expect(config.mcpServers["reported-name-2"]).toMatchObject({
+        headers: { "X-Account": "b" },
+        oauthClientId: "client-b",
+        tokenCacheDir: "/tmp/account-b",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("clears to an empty mcporter config so stale shims cannot see host servers", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcporter-clear-"));
     try {
