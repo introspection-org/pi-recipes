@@ -354,6 +354,21 @@ timeout diagnostics still treat its outcome as unknown. Structured MCP errors
 retain recovery fields such as `code`, `retryable`, `action`, `request_id`, and
 `outcome` on the thrown error and in `--json-errors` output.
 
+Normal calls return JSON-first normalized data. For mixed-modality responses,
+`await tools.server.tool.result(args)` returns mcporter's result helper with
+`.text()`, `.markdown()`, `.json()`, `.images()`, `.content()`, and
+`.structuredContent()` accessors. `await tools.server.tool.raw(args)` returns
+the untouched MCP result envelope. Both variants use the same await detection,
+queue, deadline, error, and allowlist enforcement as normal calls. Calls run
+with interactive OAuth disabled: configured headers and cached credentials are
+usable, but a failed bearer token cannot launch a browser flow from the agent.
+
+Server instructions negotiated during MCP initialization are bounded, filtered
+alongside the available tool catalog, and included in the recipe runtime prompt.
+They are server-scoped operational guidance and cannot add capabilities or
+override recipe policy, the materialized allowlist, or higher-level safety
+rules.
+
 `mcp run` executes JavaScript with the same OS privileges as the active shell
 sandbox. It is a composition convenience, not a second security boundary; the
 recipe allowlist controls which MCP tools are reachable, while the outer runtime

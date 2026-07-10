@@ -339,6 +339,19 @@ committed and must be inspected before retrying. Structured MCP errors preserve
 server recovery fields such as `code`, `retryable`, `action`, `request_id`, and
 `outcome` in JavaScript and `--json-errors` output.
 
+Normal calls return JSON-first normalized data. Use
+`tools.server.tool.result(args)` when a workflow needs mcporter's
+`.text()`, `.markdown()`, `.json()`, `.images()`, `.content()`, or
+`.structuredContent()` helpers, and `tools.server.tool.raw(args)` for the
+untouched MCP envelope. These variants share the normal queue, deadline,
+await-detection, typed-error, and allowlist behavior. `mcp run` disables
+interactive OAuth while retaining configured and cached credentials, so a
+headless recipe call cannot unexpectedly launch a browser.
+
+Bounded server instructions received during MCP initialization are carried into
+the runtime prompt after tool filtering. They remain scoped to that server and
+cannot override recipe policy or make filtered tools callable.
+
 The JavaScript runs with the same OS privileges as the active shell sandbox.
 `mcp run` is not an additional sandbox or security boundary.
 

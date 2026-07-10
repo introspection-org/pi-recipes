@@ -168,6 +168,7 @@ interface RecipeLaunchState {
   mcpToolCount: number;
   mcpAvailableTools?: string[];
   mcpUnavailableTools: string[];
+  mcpServerInstructions: Array<{ serverId: string; instructions: string }>;
   extensionsLoaded: boolean;
   configured: boolean;
 }
@@ -247,6 +248,7 @@ function runtimeContextPrompt(
     ? mcpCliPromptLines(mcpRefs, {
           availableTools: state.mcpAvailableTools,
           unavailableTools: state.mcpUnavailableTools,
+          serverInstructions: state.mcpServerInstructions,
         }).join("\n")
     : undefined;
   return [
@@ -896,6 +898,7 @@ export function createPiRecipesExtension(
       mcpServerCount: 0,
       mcpToolCount: 0,
       mcpUnavailableTools: [],
+      mcpServerInstructions: [],
       extensionsLoaded: false,
       configured: false,
     };
@@ -1001,6 +1004,7 @@ export function createPiRecipesExtension(
       launchState.mcpToolCount = 0;
       launchState.mcpAvailableTools = undefined;
       launchState.mcpUnavailableTools = [];
+      launchState.mcpServerInstructions = [];
       await clearRecipeMcpManifest(env, launchState.cwd);
       return;
     }
@@ -1032,6 +1036,11 @@ export function createPiRecipesExtension(
     const availability = classifyMcpToolAvailability(configuredRefs, manifest);
     launchState.mcpAvailableTools = availability.availableTools;
     launchState.mcpUnavailableTools = availability.unavailableTools;
+    launchState.mcpServerInstructions = (manifest.servers ?? []).flatMap((server) =>
+      server.instructions
+        ? [{ serverId: server.id, instructions: server.instructions }]
+        : []
+    );
     if (launchState.mcpToolCount > 0) {
       ctx.ui.notify(
         `Recipe MCP: ${launchState.mcpToolCount} tool(s) from ${launchState.mcpServerCount} server(s)`,

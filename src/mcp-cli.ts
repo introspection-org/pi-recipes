@@ -41,6 +41,14 @@ interface ToolCallRecord {
   promise: Promise<unknown>;
 }
 
+type McpRunResultMode = "normalized" | "raw" | "result";
+
+interface McpRunToolFunction {
+  (args?: Record<string, unknown>): Promise<unknown>;
+  raw(args?: Record<string, unknown>): Promise<unknown>;
+  result(args?: Record<string, unknown>): Promise<ReturnType<typeof createCallResult>>;
+}
+
 export class McpRunUsageError extends Error {}
 
 export class McpRunTimeoutError extends Error {
@@ -149,6 +157,8 @@ export function mcpRunHelpText(): string {
     "Always await or return tool-call chains.",
     "Detached .then/.catch calls fail if still pending when the script exits.",
     "Structured MCP errors retain code, retryable, action, request_id, and outcome fields when supplied.",
+    "Use tools.server.tool.result(args) for text/markdown/image/content helpers, or .raw(args) for the untouched MCP envelope.",
+    "MCP calls are headless: configured/cached credentials are allowed, but mcp run never starts interactive OAuth.",
     "A synchronous busy-loop is force-killed at the deadline.",
     "Code runs with the same OS privileges as the active shell sandbox; mcp run is not a separate security boundary.",
     "",
@@ -176,7 +186,7 @@ function readStdin(): Promise<string> {
   });
 }
 
-function normalizeToolResult(result: unknown): unknown {
+function checkedCallResult(result: unknown): ReturnType<typeof createCallResult> {
   const callResult = createCallResult(result);
   if (asRecord(result).isError === true) {
     // Fail loudly in code mode so a bad call rejects instead of flowing an
@@ -195,6 +205,13 @@ function normalizeToolResult(result: unknown): unknown {
           : callResult.text() ?? "MCP tool call failed.";
     throw new McpRemoteToolResultError({ ...errorObject, message });
   }
+  return callResult;
+}
+
+function toolResult(result: unknown, mode: McpRunResultMode): unknown {
+  const callResult = checkedCallResult(result);
+  if (mode === "raw") return result;
+  if (mode === "result") return callResult;
   const structured = callResult.structuredContent();
   if (structured !== undefined && structured !== null) return structured;
   const json = callResult.json();
@@ -598,19 +615,22 @@ async function createTools(opts: {
   const queue = new ToolCallQueue(opts.maxConcurrentCalls);
   const toolsByServer: Record<
     string,
-    Record<string, (args?: Record<string, unknown>) => Promise<unknown>>
+    Record<string, McpRunToolFunction>
   > = Object.create(null);
   for (const server of servers) {
     toolsByServer[server] = new Proxy(Object.create(null), {
       get(_target, property) {
         if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) return undefined;
-        return (args: Record<string, unknown> = {}) => {
-          const callable = knownTools.get(server);
-          if (callable && !callable.includes(property)) {
+        const startCall = (
+          args: Record<string, unknown>,
+          mode: McpRunResultMode
+        ): Promise<unknown> => {
+          const allowedToolNames = knownTools.get(server);
+          if (allowedToolNames && !allowedToolNames.includes(property)) {
             throw new McpRunToolError(
               server,
               property,
-              describeUnavailableRunTool(server, property, callable)
+              describeUnavailableRunTool(server, property, allowedToolNames)
             );
           }
           if (callCount >= opts.maxCalls) {
@@ -629,14 +649,16 @@ async function createTools(opts: {
                   `mcp run deadline reached before ${server}.${property} started.`
                 );
               }
-              return normalizeToolResult(
+              return toolResult(
                 await runtime.callTool(server, property, {
                   args,
                   // A queued call must never outlive the workflow that owns
                   // it. mcporter forwards this timeout to the MCP SDK and
                   // resets the transport when it fires.
                   timeoutMs: Math.min(opts.callTimeoutMs, remainingMs),
-                })
+                  disableOAuth: true,
+                }),
+                mode
               );
             } catch (error) {
               const improved = improveRunToolError(
@@ -709,8 +731,15 @@ async function createTools(opts: {
             },
           });
         };
+
+        const callable = ((args: Record<string, unknown> = {}) =>
+          startCall(args, "normalized")) as McpRunToolFunction;
+        callable.raw = (args: Record<string, unknown> = {}) => startCall(args, "raw");
+        callable.result = (args: Record<string, unknown> = {}) =>
+          startCall(args, "result") as Promise<ReturnType<typeof createCallResult>>;
+        return callable;
       },
-    }) as Record<string, (args?: Record<string, unknown>) => Promise<unknown>>;
+    }) as Record<string, McpRunToolFunction>;
   }
   // Fail with a clear message when a script names a server that does not
   // exist, instead of "Cannot read properties of undefined".

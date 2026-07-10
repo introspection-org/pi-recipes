@@ -428,6 +428,7 @@ describe("Pi recipes launch extension", () => {
                 host: "host.docker.internal",
                 base_url: "http://host.docker.internal:3200/api/mcp",
                 transport: "streamable_http",
+                instructions: "Read with get_value before drawing conclusions.",
                 tools: [
                   {
                     name: "get_value",
@@ -497,6 +498,24 @@ describe("Pi recipes launch extension", () => {
       expect(materialized.servers[0].tools.map((tool: { name: string }) => tool.name)).toEqual([
         "get_value",
       ]);
+      expect(materialized.servers[0].instructions).toBe(
+        "Read with get_value before drawing conclusions."
+      );
+      const promptResults = await pi.emitExtensionEvent(
+        {
+          type: "before_agent_start",
+          prompt: "hello",
+          systemPrompt: "Default Pi prompt",
+          systemPromptOptions: {},
+        } as any,
+        ctx
+      );
+      expect((promptResults[0] as { systemPrompt: string }).systemPrompt).toContain(
+        "Guidance from MCP server: partner-mcp"
+      );
+      expect((promptResults[0] as { systemPrompt: string }).systemPrompt).toContain(
+        "Read with get_value before drawing conclusions."
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
