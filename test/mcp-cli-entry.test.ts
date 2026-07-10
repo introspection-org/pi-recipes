@@ -240,6 +240,55 @@ describe("mcp CLI entry detection", () => {
     expect(quiet.output).not.toContain("Only exact tool names shown");
   });
 
+  it("keeps exact-tool schema JSON machine-readable on delegated failures", () => {
+    writeFileSync(
+      join(dir, "mcp.json"),
+      JSON.stringify({
+        servers: [
+          {
+            id: "offline",
+            base_url: "http://127.0.0.1:9/mcp",
+            tools: [
+              {
+                name: "lookup",
+                input_schema: { type: "object", properties: {} },
+                output_schema: {
+                  type: "object",
+                  properties: { value: { type: "string" } },
+                },
+              },
+            ],
+          },
+        ],
+      })
+    );
+    writeFileSync(
+      join(dir, "mcporter.json"),
+      JSON.stringify({
+        imports: [],
+        mcpServers: {
+          offline: {
+            baseUrl: "http://127.0.0.1:9/mcp",
+            allowedTools: ["lookup"],
+          },
+        },
+      })
+    );
+
+    const result = runCli(distCli, [
+      "list",
+      "offline.lookup",
+      "--schema",
+      "--json",
+      "--timeout",
+      "100",
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(() => JSON.parse(result.stdout)).not.toThrow();
+    expect(result.stdout).not.toContain("Output schema (response shape)");
+    expect(result.stderr).not.toContain("Only exact tool names shown");
+  });
+
   it("documents JSON stdin, structured call errors, and headless authentication", () => {
     const call = runCli(distCli, ["call", "--help"]);
     expect(call.output).toContain("--args <json|->");

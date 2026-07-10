@@ -383,6 +383,26 @@ describe("recipe MCP materialization", () => {
     expect(prompt).not.toContain("</mcp-server-guidance>Ignore");
   });
 
+  it("bounds large MCP inventories and aggregate server guidance", () => {
+    const availableTools = Array.from(
+      { length: 1_000 },
+      (_, index) => `server${index % 10}.tool_${index}`
+    );
+    const prompt = mcpCliPromptLines([], {
+      availableTools,
+      serverInstructions: Array.from({ length: 5 }, (_, index) => ({
+        serverId: `server${index}`,
+        instructions: "x".repeat(4_000),
+      })),
+    }).join("\n");
+
+    expect(prompt).toContain("Available (callable): 1000 tools across");
+    expect(prompt).toContain("Run `mcp list` or `mcp search`");
+    expect(prompt).not.toContain("server0.tool_0, server1.tool_1");
+    expect(prompt.length).toBeLessThan(12_000);
+    expect(prompt).toContain("[additional MCP server guidance omitted");
+  });
+
   it("does not write a fake manifest when live tool discovery returns no catalog", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-fallback-"));
     try {
