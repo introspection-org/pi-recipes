@@ -27,6 +27,7 @@ export interface McpManifestServer {
   host?: string;
   base_url: string;
   transport?: string;
+  instructions?: string;
   tools?: McpManifestTool[];
 }
 
@@ -84,6 +85,7 @@ interface McpCatalog {
   name: string;
   host: string;
   baseUrl: string;
+  instructions?: string;
   tools: RemoteMcpTool[];
 }
 
@@ -153,6 +155,7 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set([
   "2025-03-26",
 ]);
 const MAX_TOOL_LIST_PAGES = 64;
+const MAX_SERVER_INSTRUCTIONS_CHARS = 4_000;
 const RECIPE_ENV_PREFIX = "PI_RECIPES_";
 const MCP_MANIFEST_ENV = `${RECIPE_ENV_PREFIX}MCP_MANIFEST`;
 // mcporter's own config env var — the sandbox `mcp` CLI is mcporter, and the
@@ -488,12 +491,14 @@ async function initializeSession(
 ): Promise<{
   sessionId?: string;
   serverName?: string;
+  instructions?: string;
   protocolVersion?: string;
   diagnostic?: McpDiscoveryDiagnostic;
 }> {
   const result = await postJsonRpc<{
     protocolVersion?: unknown;
     serverInfo?: { name?: unknown };
+    instructions?: unknown;
   }>(
     io,
     server,
@@ -542,6 +547,11 @@ async function initializeSession(
     typeof rawServerName === "string" && rawServerName.trim()
       ? rawServerName.trim()
       : undefined;
+  const rawInstructions = result.parsed?.result?.instructions;
+  const instructions =
+    typeof rawInstructions === "string" && rawInstructions.trim()
+      ? rawInstructions.trim().slice(0, MAX_SERVER_INSTRUCTIONS_CHARS)
+      : undefined;
   if (sessionId) {
     await postJsonRpc(
       io,
@@ -564,6 +574,7 @@ async function listEndpointTools(
 ): Promise<{
   tools: RemoteMcpTool[];
   serverName?: string;
+  instructions?: string;
   diagnostic?: McpDiscoveryDiagnostic;
 }> {
   const manifestServer: McpManifestServer = {
@@ -577,6 +588,7 @@ async function listEndpointTools(
   const initialized = await initializeSession(opts, manifestServer);
   if (initialized.diagnostic) return { tools: [], diagnostic: initialized.diagnostic };
   const serverName = initialized.serverName;
+  const instructions = initialized.instructions;
   const tools: RemoteMcpTool[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
@@ -659,6 +671,7 @@ async function listEndpointTools(
     return {
       tools,
       serverName,
+      instructions,
       diagnostic: {
         serverId: binding.id,
         url: binding.baseUrl,
@@ -667,7 +680,7 @@ async function listEndpointTools(
       },
     };
   }
-  return { tools, serverName };
+  return { tools, serverName, instructions };
 }
 
 async function listLocalOAuthTools(binding: McpEndpointBinding): Promise<{
@@ -779,6 +792,7 @@ async function discoverMcpCatalogs(opts: {
       name: serverName || binding.name,
       host: binding.host,
       baseUrl: binding.baseUrl,
+      instructions: result.instructions,
       tools: result.tools,
     });
   }
@@ -971,6 +985,12 @@ function normalizeManifest(
       return true;
     });
     if (tools.length === 0) continue;
+    const instructions = filteredServerInstructions(
+      serverId,
+      server.instructions,
+      server.tools ?? [],
+      tools
+    );
     servers.push({
       id: uniqueServerId(serverId, seenServerIds),
       ...(server.binding_id ? { binding_id: server.binding_id } : {}),
@@ -978,6 +998,7 @@ function normalizeManifest(
       host: server.host ?? hostForUrl(server.base_url),
       base_url: server.base_url,
       transport: server.transport ?? "streamable_http",
+      ...(instructions ? { instructions } : {}),
       tools: scrubFilteredToolDescriptions(serverId, server.tools ?? [], tools),
     });
   }
@@ -998,6 +1019,7 @@ function manifestFromCatalogs(catalogs: McpCatalog[]): McpManifest {
       host: catalog.host,
       base_url: catalog.baseUrl,
       transport: "streamable_http",
+      ...(catalog.instructions ? { instructions: catalog.instructions } : {}),
       tools: catalog.tools.map((tool) => ({
         name: tool.name,
         description: tool.description ?? "",
