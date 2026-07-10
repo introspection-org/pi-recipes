@@ -24,13 +24,18 @@ describe("mcp CLI entry detection", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function runCli(entry: string, args: string[]): { status: number | null; output: string } {
+  function runCli(
+    entry: string,
+    args: string[],
+    opts: { input?: string; env?: Record<string, string> } = {}
+  ): { status: number | null; signal: NodeJS.Signals | null; output: string } {
     const child = spawnSync(process.execPath, [entry, ...args], {
-      env: { ...process.env, MCPORTER_CONFIG: join(dir, "mcporter.json") },
+      env: { ...process.env, MCPORTER_CONFIG: join(dir, "mcporter.json"), ...opts.env },
       encoding: "utf8",
       timeout: 30_000,
+      input: opts.input,
     });
-    return { status: child.status, output: `${child.stdout}${child.stderr}` };
+    return { status: child.status, signal: child.signal, output: `${child.stdout}${child.stderr}` };
   }
 
   it("runs main when invoked directly", () => {
@@ -61,5 +66,35 @@ describe("mcp CLI entry detection", () => {
     const run = runCli(distCli, ["run", "--help"]);
     expect(run.status).toBe(0);
     expect(run.output.trim().length).toBeGreaterThan(0);
+    expect(run.output).toContain("PI_RECIPES_MCP_RUN_TIMEOUT_MS");
+  });
+
+  it("rejects an empty run script as a usage error", () => {
+    const result = runCli(distCli, ["run"], { input: "  \n" });
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("mcp run: empty script");
+  });
+
+  it("reports unknown servers in run scripts with the available list", () => {
+    const result = runCli(distCli, ["run"], { input: "await tools.ghost.lookup({})" });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Unknown MCP server 'ghost'");
+    expect(result.output).toContain("No MCP servers are configured.");
+  });
+
+  it("force-kills run scripts that never yield", () => {
+    const result = runCli(distCli, ["run"], {
+      input: "while (true) {}",
+      env: { PI_RECIPES_MCP_RUN_TIMEOUT_MS: "500" },
+    });
+    expect(result.signal).toBe("SIGKILL");
+    expect(result.output).toContain("mcp run: killed after 2500ms");
+    expect(result.output).toContain("synchronous busy-loop");
+  });
+
+  it("warns when a call argument key is passed more than once", () => {
+    const result = runCli(distCli, ["call", "ghost.lookup", "q:a", "limit:5", "q:b"]);
+    expect(result.output).toContain("argument 'q' was passed more than once");
+    expect(result.output).not.toContain("argument 'limit'");
   });
 });

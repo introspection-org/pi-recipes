@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { stdin as input, stderr, stdout } from "node:process";
+import { Worker } from "node:worker_threads";
 import { createCallResult, createRuntime } from "mcporter";
 import { isDirectEntry } from "./direct-cli.js";
 import {
@@ -79,6 +80,8 @@ export function mcpRunHelpText(): string {
     "",
     'Runs a short JavaScript workflow with available MCP tools such as `tools["server"]["tool"]`.',
     "With no file, code is read from stdin. Keep heredocs quoted and pass dynamic values with --var.",
+    "Scripts are killed after 120s by default (override with PI_RECIPES_MCP_RUN_TIMEOUT_MS).",
+    "Always await inside loops; a synchronous busy-loop is force-killed at the deadline.",
     "",
     "Example:",
     "  mcp run --var ID=abc123 <<'EOF'",
@@ -346,24 +349,141 @@ async function searchCatalog(args: string[]): Promise<number> {
   return 0;
 }
 
+// Property names scripts and runtimes probe on plain objects; returning
+// undefined keeps `await tools`, JSON.stringify, and inspection from throwing.
+const PROXY_PROBE_PROPS = new Set(["then", "toJSON", "constructor", "inspect"]);
+
+function normalizeName(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+function closestName(input: string, candidates: Iterable<string>): string | undefined {
+  const normalizedInput = normalizeName(input);
+  let best: string | undefined;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    const score = levenshtein(normalizedInput, normalizeName(candidate));
+    if (score < bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+  if (best === undefined) return undefined;
+  const baseline = Math.max(normalizedInput.length, normalizeName(best).length, 1);
+  return bestScore <= Math.max(2, Math.floor(baseline / 3)) ? best : undefined;
+}
+
+export function describeUnknownRunServer(server: string, servers: string[]): string {
+  const suggestion = closestName(server, servers);
+  const parts = [`Unknown MCP server '${server}'.`];
+  if (suggestion) parts.push(`Did you mean 'tools.${suggestion}'?`);
+  parts.push(
+    servers.length > 0
+      ? `Available servers: ${servers.join(", ")}.`
+      : "No MCP servers are configured."
+  );
+  return parts.join(" ");
+}
+
+const RUN_TOOL_REJECTED_PATTERNS = [
+  /is not accessible on server '[^']+' \(blocked by configuration\)/,
+  /\btool\s+[\w.-]+\s+not found\b/i,
+  /\bunknown tool\b/i,
+];
+
+export function describeUnavailableRunTool(
+  server: string,
+  tool: string,
+  knownTools: string[]
+): string {
+  const suggestion = closestName(tool, knownTools);
+  const parts = [`Tool '${tool}' is not available on server '${server}'.`];
+  if (suggestion) parts.push(`Did you mean '${suggestion}'?`);
+  parts.push(`Run \`mcp list ${server}\` to see available tools.`);
+  return parts.join(" ");
+}
+
+function improveRunToolError(
+  error: unknown,
+  server: string,
+  tool: string,
+  knownTools: string[]
+): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!RUN_TOOL_REJECTED_PATTERNS.some((pattern) => pattern.test(message))) return error;
+  return new Error(describeUnavailableRunTool(server, tool, knownTools), { cause: error });
+}
+
+async function manifestToolNames(): Promise<Map<string, string[]>> {
+  const names = new Map<string, string[]>();
+  try {
+    const manifest = await readManifest();
+    for (const server of manifest.servers ?? []) {
+      names.set(
+        server.id,
+        (server.tools ?? []).map((tool) => tool.name)
+      );
+    }
+  } catch {
+    // The manifest is a session artifact; suggestions degrade without it.
+  }
+  return names;
+}
+
 async function createTools() {
   const runtime = await createRuntime();
-  const tools: Record<string, Record<string, (args?: Record<string, unknown>) => Promise<unknown>>> =
-    Object.create(null);
-  for (const server of runtime.listServers()) {
-    tools[server] = new Proxy(Object.create(null), {
+  const knownTools = await manifestToolNames();
+  const servers = runtime.listServers();
+  const toolsByServer: Record<
+    string,
+    Record<string, (args?: Record<string, unknown>) => Promise<unknown>>
+  > = Object.create(null);
+  for (const server of servers) {
+    toolsByServer[server] = new Proxy(Object.create(null), {
       get(_target, property) {
-        if (typeof property !== "string") return undefined;
-        if (property === "then") return undefined;
-        return async (args: Record<string, unknown> = {}) =>
-          normalizeToolResult(
-            await runtime.callTool(server, property, {
-              args,
-            })
-          );
+        if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) return undefined;
+        return async (args: Record<string, unknown> = {}) => {
+          try {
+            return normalizeToolResult(
+              await runtime.callTool(server, property, {
+                args,
+              })
+            );
+          } catch (error) {
+            throw improveRunToolError(error, server, property, knownTools.get(server) ?? []);
+          }
+        };
       },
     }) as Record<string, (args?: Record<string, unknown>) => Promise<unknown>>;
   }
+  // Fail with a clear message when a script names a server that does not
+  // exist, instead of "Cannot read properties of undefined".
+  const tools = new Proxy(toolsByServer, {
+    get(target, property) {
+      if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) return undefined;
+      if (property in target) return target[property];
+      throw new Error(describeUnknownRunServer(property, servers));
+    },
+  });
   return { runtime, tools };
 }
 
@@ -394,6 +514,31 @@ export async function runMcpJavaScript(
   }
 }
 
+// The soft timeout in runMcpJavaScript is a Promise.race, which a script that
+// never yields (a synchronous busy-loop) starves forever. Worker threads run
+// their own event loop, so a watchdog there can still fire and kill the
+// process with a diagnostic once the deadline plus a grace period passes.
+const RUN_WATCHDOG_GRACE_MS = 2_000;
+
+function startRunWatchdog(timeoutMs: number): () => void {
+  const worker = new Worker(
+    `const { workerData } = require("node:worker_threads");
+     const { writeSync } = require("node:fs");
+     setTimeout(() => {
+       writeSync(
+         2,
+         "mcp run: killed after " + workerData.limitMs + "ms. The script never yielded " +
+           "(synchronous busy-loop?) or ignored the timeout. Use await inside loops and " +
+           "set PI_RECIPES_MCP_RUN_TIMEOUT_MS to adjust the limit.\\n"
+       );
+       process.kill(process.pid, "SIGKILL");
+     }, workerData.limitMs);`,
+    { eval: true, workerData: { limitMs: timeoutMs + RUN_WATCHDOG_GRACE_MS } }
+  );
+  worker.unref();
+  return () => void worker.terminate();
+}
+
 async function runCode(args: string[]): Promise<number> {
   const vars: Record<string, string> = {};
   const positional: string[] = [];
@@ -418,7 +563,30 @@ async function runCode(args: string[]): Promise<number> {
     return 2;
   }
   const code = file ? await readFile(file, "utf8") : await readStdin();
-  await runMcpJavaScript(code, { vars });
+  if (!code.trim()) {
+    stderr.write(
+      "mcp run: empty script. Pass a file path or pipe JavaScript on stdin (see `mcp run --help`).\n"
+    );
+    return 2;
+  }
+  const timeoutMs = Number(process.env.PI_RECIPES_MCP_RUN_TIMEOUT_MS ?? DEFAULT_RUN_TIMEOUT_MS);
+  const stopWatchdog = startRunWatchdog(timeoutMs);
+  try {
+    await runMcpJavaScript(code, { vars, timeoutMs });
+  } catch (error) {
+    // Keep the error class visible for non-generic failures (SyntaxError,
+    // TypeError, ...) so script bugs read differently from tool failures.
+    const message =
+      error instanceof Error
+        ? error.name === "Error"
+          ? error.message
+          : `${error.name}: ${error.message}`
+        : String(error);
+    stderr.write(message.startsWith("mcp run") ? `${message}\n` : `mcp run: ${message}\n`);
+    return 1;
+  } finally {
+    stopWatchdog();
+  }
   return 0;
 }
 
@@ -494,6 +662,27 @@ export function createDelegatedErrorFilter(write: (text: string) => void): {
   };
 }
 
+export function duplicateCallArgumentKeys(args: string[]): string[] {
+  // Tool ref first, then key:value / key=value tokens; flags are skipped.
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const token of args.slice(1)) {
+    if (token.startsWith("-")) continue;
+    const match = token.match(/^([A-Za-z_][A-Za-z0-9_.-]*)[:=]/);
+    if (!match) continue;
+    const key = match[1];
+    if (seen.has(key)) duplicates.add(key);
+    seen.add(key);
+  }
+  return [...duplicates];
+}
+
+function warnDuplicateCallArguments(args: string[]): void {
+  for (const key of duplicateCallArgumentKeys(args)) {
+    stderr.write(`mcp call: argument '${key}' was passed more than once; the last value wins.\n`);
+  }
+}
+
 function delegateToMcporter(args: string[]): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [mcporterCliEntrypointPath(), ...args], {
@@ -530,6 +719,7 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   }
   if (args[0] === "run") return runCode(args.slice(1));
   if (args[0] === "search") return searchCatalog(args.slice(1));
+  if (args[0] === "call") warnDuplicateCallArguments(args.slice(1));
   if (args[0] === "list" && !args.slice(1).some(isHelpArg)) {
     stdout.write(
       "Only exact tool names shown as `mcp list` entries are callable. Descriptions may mention related tools that are not exposed; those mentions are not entries.\n\n"

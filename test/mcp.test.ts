@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDelegatedErrorFilter,
+  describeUnavailableRunTool,
+  describeUnknownRunServer,
   outputSchemaSection,
   rebrandDelegatedOutput,
   runMcpJavaScript,
@@ -764,6 +766,32 @@ describe("recipe MCP materialization", () => {
     );
   });
 
+  it("describes unknown run servers with suggestions and the available list", () => {
+    expect(describeUnknownRunServer("nextplai", ["nextplay", "linear"])).toBe(
+      "Unknown MCP server 'nextplai'. Did you mean 'tools.nextplay'? Available servers: nextplay, linear."
+    );
+    expect(describeUnknownRunServer("gmail", ["nextplay", "linear"])).toBe(
+      "Unknown MCP server 'gmail'. Available servers: nextplay, linear."
+    );
+    expect(describeUnknownRunServer("gmail", [])).toBe(
+      "Unknown MCP server 'gmail'. No MCP servers are configured."
+    );
+  });
+
+  it("describes unavailable run tools with near-match suggestions", () => {
+    expect(
+      describeUnavailableRunTool("nextplay", "search_profils", [
+        "search_profiles",
+        "get_company",
+      ])
+    ).toBe(
+      "Tool 'search_profils' is not available on server 'nextplay'. Did you mean 'search_profiles'? Run `mcp list nextplay` to see available tools."
+    );
+    expect(describeUnavailableRunTool("nextplay", "send_email", ["search_profiles"])).toBe(
+      "Tool 'send_email' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools."
+    );
+  });
+
   it("appends a bearer-token hint when OAuth metadata discovery fails", () => {
     const out: string[] = [];
     const filter = createDelegatedErrorFilter((text) => out.push(text));
@@ -1018,6 +1046,7 @@ describe("mcporter CLI end-to-end", () => {
     const { server, url } = await startStubMcpServer("Bearer stub-token");
     const previousConfig = process.env.MCPORTER_CONFIG;
     const previousToken = process.env.STUB_MCP_TOKEN;
+    const previousManifest = process.env.PI_RECIPES_MCP_MANIFEST;
     try {
       const cwd = join(root, "workspace");
       const recipeDir = join(root, "recipe");
@@ -1044,6 +1073,7 @@ describe("mcporter CLI end-to-end", () => {
       });
       process.env.MCPORTER_CONFIG = env.MCPORTER_CONFIG;
       process.env.STUB_MCP_TOKEN = "stub-token";
+      process.env.PI_RECIPES_MCP_MANIFEST = env.PI_RECIPES_MCP_MANIFEST;
       (globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke = undefined;
 
       await runMcpJavaScript(
@@ -1055,7 +1085,19 @@ describe("mcporter CLI end-to-end", () => {
         } catch (error) {
           errorMessage = error instanceof Error ? error.message : String(error);
         }
-        globalThis.__mcpRunSmoke = { result, errorMessage };
+        let unknownServerMessage = null;
+        try {
+          tools.stubb;
+        } catch (error) {
+          unknownServerMessage = error instanceof Error ? error.message : String(error);
+        }
+        let unknownToolMessage = null;
+        try {
+          await tools.stub.get_valu({});
+        } catch (error) {
+          unknownToolMessage = error instanceof Error ? error.message : String(error);
+        }
+        globalThis.__mcpRunSmoke = { result, errorMessage, unknownServerMessage, unknownToolMessage };
         `,
         { timeoutMs: 10_000, vars: { KEY: "color" } }
       );
@@ -1063,12 +1105,18 @@ describe("mcporter CLI end-to-end", () => {
       expect((globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke).toEqual({
         result: 'called get_value with {"key":"color"}',
         errorMessage: "stub failure: explode",
+        unknownServerMessage:
+          "Unknown MCP server 'stubb'. Did you mean 'tools.stub'? Available servers: stub.",
+        unknownToolMessage:
+          "Tool 'get_valu' is not available on server 'stub'. Did you mean 'get_value'? Run `mcp list stub` to see available tools.",
       });
     } finally {
       if (previousConfig === undefined) delete process.env.MCPORTER_CONFIG;
       else process.env.MCPORTER_CONFIG = previousConfig;
       if (previousToken === undefined) delete process.env.STUB_MCP_TOKEN;
       else process.env.STUB_MCP_TOKEN = previousToken;
+      if (previousManifest === undefined) delete process.env.PI_RECIPES_MCP_MANIFEST;
+      else process.env.PI_RECIPES_MCP_MANIFEST = previousManifest;
       delete (globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke;
       server.close();
       rmSync(root, { recursive: true, force: true });
