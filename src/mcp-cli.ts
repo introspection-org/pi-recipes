@@ -166,6 +166,58 @@ export function mcpCallHelpText(): string {
   ].join("\n");
 }
 
+export function mcpListHelpText(): string {
+  return [
+    "Usage: mcp list [server | server.tool] [flags]",
+    "",
+    "Lists only servers and tools materialized for this recipe session.",
+    "",
+    "Flags:",
+    "  --brief, --signatures     Compact signatures only.",
+    "  --all-parameters          Include every optional parameter.",
+    "  --schema                  Include JSON input schemas.",
+    "  --json                    Emit machine-readable output.",
+    "  --status                  Show concise server status only.",
+    "  --quiet, --exit-code      Silent/exit-code health checks.",
+    "  --timeout <ms>            Override discovery timeout.",
+    "",
+    "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
+  ].join("\n");
+}
+
+export function mcpCallHelpText(): string {
+  return [
+    "Usage: mcp call <server>.<tool> [arguments] [flags]",
+    "",
+    "Calls only exact tools materialized for this recipe session.",
+    "",
+    "Arguments:",
+    "  key=value / key:value     Named arguments with schema-aware coercion.",
+    "  --key value               Named schema arguments are normalized to key=value.",
+    "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
+    "  --args <json>, --json <json|->  Supply a JSON object directly or from stdin.",
+    "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
+    "  --                         Treat remaining values as literal positional inputs.",
+    "",
+    "Output/runtime flags:",
+    "  --output text|markdown|json|raw",
+    "  --save-images <dir>",
+    "  --timeout <ms>",
+    "  --raw-strings, --no-coerce",
+    "",
+    "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
+  ].join("\n");
+}
+
+export function mcpAuthHelpText(): string {
+  return [
+    "Usage: mcp auth <server> [--reset] [--no-browser] [--json] [--oauth-timeout <ms>]",
+    "",
+    "In a recipe session, authenticates a configured local server whose binding declares auth: oauth.",
+    "Managed Introspection bindings use host-provided application assertions or stored headers and cannot start OAuth.",
+  ].join("\n");
+}
+
 export function mcpSearchHelpText(): string {
   return [
     'Usage: mcp search "what you need" [--limit N] [--json] [--regex]',
@@ -813,7 +865,7 @@ async function createTools(opts: {
                     // it. mcporter forwards this timeout to the MCP SDK and
                     // resets the transport when it fires.
                     timeoutMs: Math.min(opts.callTimeoutMs, remainingMs),
-                    disableOAuth: true,
+                    disableOAuth: runtime.getDefinition(server).auth !== "oauth",
                   })
                 )
               );

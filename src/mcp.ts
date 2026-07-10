@@ -401,6 +401,10 @@ function localMcpHeadersForServer(
 ): Record<string, string> | null {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
+  // Bootstrap endpoints identify a managed Introspection session. Their
+  // session-token/egress authentication must never be shadowed by a workspace
+  // or recipe-local binding with the same id or URL.
+  if (bootstrapBindings(env).length > 0) return null;
   const id = safeServerId(serverId);
   const binding = localBindings(env, cwd).find((candidate) => candidate.id === id);
   return binding ? binding.headers : null;
@@ -1172,7 +1176,7 @@ export function buildMcporterConfig(
 ): McporterConfig {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
-  const bindings = localBindings(env, cwd);
+  const bindings = bootstrapBindings(env).length > 0 ? [] : localBindings(env, cwd);
   const mcpServers: Record<string, McporterServerConfig> = {};
   for (const server of manifest.servers ?? []) {
     const bindingId = server.binding_id ?? server.id;

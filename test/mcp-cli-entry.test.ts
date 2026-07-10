@@ -190,6 +190,29 @@ describe("mcp CLI entry detection", () => {
     }
   });
 
+  it("provides recipe-scoped help for delegated commands", () => {
+    for (const command of ["list", "call", "auth"]) {
+      const result = runCli(distCli, [command, "--help"]);
+      expect(result.status).toBe(0);
+      expect(result.output).toContain("recipe session");
+      expect(result.output).not.toContain("--http-url");
+      expect(result.output).not.toContain("--stdio");
+    }
+  });
+
+  it("blocks mcporter administration and ad-hoc connection surfaces", () => {
+    for (const args of [
+      ["config", "list"],
+      ["resource", "contacts"],
+      ["generate-cli", "contacts"],
+      ["list", "--http-url", "https://example.test/mcp"],
+    ]) {
+      const result = runCli(distCli, args);
+      expect(result.status).toBe(2);
+      expect(result.output).toContain("unavailable");
+    }
+  });
+
   it("rejects an empty run script as a usage error", () => {
     const result = runCli(distCli, ["run"], { input: "  \n" });
     expect(result.status).toBe(2);
