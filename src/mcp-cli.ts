@@ -1348,6 +1348,34 @@ function usesMachineReadableOutput(args: readonly string[]): boolean {
   );
 }
 
+// A mangled expression form (unbalanced quotes/parens) falls through to the
+// upstream ad-hoc command path, which tries to SPAWN the text and dies with a
+// baffling ENOENT. Catch it here with a usable message instead.
+export function malformedCallExpression(args: string[]): string | null {
+  const ref = args.find((arg) => !arg.startsWith("-"));
+  if (!ref || !/[()]/.test(ref)) return null;
+  let depth = 0;
+  let inString: '"' | "'" | null = null;
+  for (let index = 0; index < ref.length; index += 1) {
+    const char = ref[index];
+    if (inString) {
+      if (char === "\\") index += 1;
+      else if (char === inString) inString = null;
+      continue;
+    }
+    if (char === '"' || char === "'") inString = char;
+    else if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    if (depth < 0) break;
+  }
+  if (depth === 0 && inString === null && /^[\w-]+\.[\w-]+\(.*\)$/s.test(ref)) return null;
+  return (
+    `mcp call: malformed tool expression '${ref}'. ` +
+    `Use mcp call '<server>.<tool>(key: "value")' with balanced quotes and parentheses, ` +
+    `or plain arguments: mcp call <server>.<tool> key:value.`
+  );
+}
+
 function delegateToMcporter(args: string[]): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [mcporterCliEntrypointPath(), ...args], {
