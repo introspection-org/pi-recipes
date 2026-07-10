@@ -615,7 +615,7 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
-  it("skips MCP discovery when no active recipe agent opts into MCP refs", async () => {
+  it("skips MCP discovery when no active recipe agent opts into MCP", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-no-mcp-"));
     const originalFetch = globalThis.fetch;
     try {

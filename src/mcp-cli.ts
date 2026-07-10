@@ -992,6 +992,19 @@ export async function runMcpJavaScript(
       for (const call of unsafeAtExit) {
         if (call.outcome === "pending") call.outcome = "outcome_unknown";
       }
+      // Promise.all rejects as soon as one member fails, while its already-
+      // observed siblings keep running. We wait those siblings above before
+      // closing the transport. Once they have settled, do not misreport them
+      // as detached calls; surface the original tool error instead.
+      const remainingUnsafe = unsafeAtExit.filter(
+        (call) => !call.observed || call.outcome === "outcome_unknown"
+      );
+      if (
+        scriptError instanceof McpRunToolError &&
+        remainingUnsafe.length === 0
+      ) {
+        throw scriptError;
+      }
       const summary = unsafeAtExit
         .map(
           (call) =>

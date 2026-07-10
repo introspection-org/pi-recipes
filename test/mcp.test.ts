@@ -1605,6 +1605,25 @@ describe("mcporter CLI end-to-end", () => {
         ])
       );
 
+      let aggregateError: unknown;
+      try {
+        await runMcpJavaScript(
+          `
+          await Promise.all([
+            tools.stub.get_value({ key: "explode" }),
+            tools.stub.get_value({ key: "delay-80-a" }),
+            tools.stub.get_value({ key: "delay-80-b" }),
+          ]);
+          `,
+          { timeoutMs: 10_000, maxConcurrentCalls: 3 }
+        );
+      } catch (error) {
+        aggregateError = error;
+      }
+      expect(aggregateError).toBeInstanceOf(Error);
+      expect((aggregateError as Error).message).toContain("stub failure: explode");
+      expect((aggregateError as Error).message).not.toContain("not awaited");
+
       await expect(
         runMcpJavaScript(
           `
