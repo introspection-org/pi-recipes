@@ -330,6 +330,46 @@ class ToolCallQueue {
   }
 }
 
+class ToolCallQueue {
+  private active = 0;
+  private readonly waiting: Array<{
+    resolve: (release: () => void) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  private cancelled: unknown;
+
+  constructor(private readonly limit: number) {}
+
+  acquire(): Promise<() => void> {
+    if (this.cancelled !== undefined) return Promise.reject(this.cancelled);
+    if (this.active < this.limit) {
+      this.active += 1;
+      return Promise.resolve(this.releaseHandle());
+    }
+    return new Promise((resolve, reject) => this.waiting.push({ resolve, reject }));
+  }
+
+  cancel(error: unknown): void {
+    if (this.cancelled !== undefined) return;
+    this.cancelled = error;
+    for (const waiter of this.waiting.splice(0)) waiter.reject(error);
+  }
+
+  private releaseHandle(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = this.waiting.shift();
+      if (next && this.cancelled === undefined) {
+        next.resolve(this.releaseHandle());
+        return;
+      }
+      this.active -= 1;
+    };
+  }
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
