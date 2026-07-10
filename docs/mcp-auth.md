@@ -43,18 +43,13 @@ configuration mutation. A local user configures connectivity outside the agent
 through `.pi/mcp.local.json` or their normal mcporter configuration. The agent
 cannot initiate authentication.
 
-## Managed Introspection bindings
+## Hosted bindings
 
-Introspection deployments do not run interactive OAuth. An MCP endpoint is
-configured in the project bindings UI with either:
-
-- an authorized application, which signs a per-task identity assertion; or
-- stored headers, such as `Authorization: Bearer <token>` or `X-API-Key`.
-
-The sandbox receives a task session token and the endpoint URL. The egress
-layer replaces that token with the configured application assertion or stored
-headers for the destination host; upstream credentials are not written into
-the recipe workspace.
+Hosted runtimes adapt their endpoint and credential systems into the same
+`.pi/mcp.local.json` shape before starting Pi Recipes. Header values remain
+environment references, so credentials are resolved at runtime rather than
+written into the recipe workspace. Deployment-specific bootstrap, token, and
+egress behavior belongs to the hosting adapter, not this package.
 
 Regardless of where a recipe runs, the agent sees one rule: MCP operations are
 headless. When authentication is missing, it receives a deployment-neutral

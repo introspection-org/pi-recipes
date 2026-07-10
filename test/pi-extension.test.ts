@@ -625,16 +625,6 @@ describe("Pi recipes launch extension", () => {
       const staleManifest = join(projectDir, ".pi", "mcp.json");
       writeFileSync(staleManifest, JSON.stringify({ servers: [{ id: "old", tools: [] }] }));
       const env: NodeJS.ProcessEnv = {
-        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
-          endpoints: [
-            {
-              kind: "mcp",
-              id: "bootstrap",
-              base_url: "http://127.0.0.1:3201/mcp",
-            },
-          ],
-        }),
-        INTROSPECTION_TOKEN: "session-token",
         PI_RECIPES_MCP_MANIFEST: staleManifest,
       };
       const fetchImpl = vi.fn(async () =>

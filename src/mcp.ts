@@ -64,14 +64,6 @@ interface LocalMcpOAuthSettings {
   httpFetch?: "default" | "node-http1";
 }
 
-interface BootstrapEndpoint {
-  id?: string;
-  name?: string;
-  host?: string;
-  base_url?: string | null;
-  kind?: string;
-}
-
 interface McpEndpointBinding {
   id: string;
   name: string;
@@ -81,10 +73,9 @@ interface McpEndpointBinding {
   /**
    * Header values as written in the local config (`${VAR}` refs intact) so
    * they can be re-emitted into the mcporter config without persisting
-   * resolved secrets to disk. Empty for session-token bindings.
+   * resolved secrets to disk.
    */
   rawHeaders: Record<string, string>;
-  requiresSessionToken: boolean;
   localOAuth?: LocalMcpOAuthSettings;
 }
 
@@ -166,19 +157,12 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set([
 const MAX_TOOL_LIST_PAGES = 64;
 const MAX_SERVER_INSTRUCTIONS_CHARS = 4_000;
 const RECIPE_ENV_PREFIX = "PI_RECIPES_";
-const LEGACY_RUNTIME_ENV_PREFIX = "INTRO" + "SPECTION_";
 const MCP_MANIFEST_ENV = `${RECIPE_ENV_PREFIX}MCP_MANIFEST`;
 // mcporter's own config env var — the sandbox `mcp` CLI is mcporter, and the
 // generated config referenced here is the only server catalog it may read.
 const MCPORTER_CONFIG_ENV = "MCPORTER_CONFIG";
 const MCP_LOCAL_CONFIG_ENV = `${RECIPE_ENV_PREFIX}MCP_LOCAL_CONFIG`;
 const MCP_BIN_DIR_ENV = `${RECIPE_ENV_PREFIX}MCP_BIN_DIR`;
-const LEGACY_MCP_MANIFEST_ENV = `${LEGACY_RUNTIME_ENV_PREFIX}MCP_MANIFEST`;
-const LEGACY_MCP_LOCAL_CONFIG_ENV = `${LEGACY_RUNTIME_ENV_PREFIX}MCP_LOCAL_CONFIG`;
-const LEGACY_MCP_BIN_DIR_ENV = `${LEGACY_RUNTIME_ENV_PREFIX}MCP_BIN_DIR`;
-const BOOTSTRAP_JSON_ENV = `${LEGACY_RUNTIME_ENV_PREFIX}BOOTSTRAP_JSON`;
-const TOKEN_ENV = `${LEGACY_RUNTIME_ENV_PREFIX}TOKEN`;
-const AGENT_SESSION_TOKEN_ENV = "AGENT_SESSION_TOKEN";
 
 export function defaultMcpManifestPath(cwd: string): string {
   return join(cwd, ".pi", "mcp.json");
@@ -206,7 +190,7 @@ export function resolveMcpLocalConfigPath(opts: {
   env?: NodeJS.ProcessEnv;
 }): string | undefined {
   const env = opts.env ?? process.env;
-  const configured = env[MCP_LOCAL_CONFIG_ENV] || env[LEGACY_MCP_LOCAL_CONFIG_ENV];
+  const configured = env[MCP_LOCAL_CONFIG_ENV];
   if (configured) return configured;
 
   const workspaceConfig = defaultMcpLocalConfigPath(opts.cwd);
@@ -225,7 +209,6 @@ export function configureMcpLocalConfigPath(opts: {
   const path = resolveMcpLocalConfigPath({ ...opts, env });
   if (!path) return undefined;
   env[MCP_LOCAL_CONFIG_ENV] = path;
-  env[LEGACY_MCP_LOCAL_CONFIG_ENV] = path;
   return path;
 }
 
@@ -286,7 +269,6 @@ export async function materializeSessionMcpCli(opts: {
   await writeFile(shimPath, script);
   await chmod(shimPath, 0o755);
   env[MCP_BIN_DIR_ENV] = binDir;
-  env[LEGACY_MCP_BIN_DIR_ENV] = binDir;
   prependPath(env, binDir);
   return { binDir, shimPath };
 }
@@ -296,11 +278,11 @@ function writeLine(stream: WritableLike, value = ""): void {
 }
 
 function manifestPath(env: NodeJS.ProcessEnv, cwd = process.cwd()): string {
-  return env[MCP_MANIFEST_ENV] || env[LEGACY_MCP_MANIFEST_ENV] || defaultMcpManifestPath(cwd);
+  return env[MCP_MANIFEST_ENV] || defaultMcpManifestPath(cwd);
 }
 
 function localMcpConfigPath(env: NodeJS.ProcessEnv, cwd = process.cwd()): string {
-  return env[MCP_LOCAL_CONFIG_ENV] || env[LEGACY_MCP_LOCAL_CONFIG_ENV] || defaultMcpLocalConfigPath(cwd);
+  return env[MCP_LOCAL_CONFIG_ENV] || defaultMcpLocalConfigPath(cwd);
 }
 
 function safeServerId(value: string): string {
@@ -355,31 +337,6 @@ function readLocalMcpServers(env: NodeJS.ProcessEnv, cwd: string): LocalMcpServe
   }
 }
 
-function bootstrapBindings(env: NodeJS.ProcessEnv): McpEndpointBinding[] {
-  if (!env[BOOTSTRAP_JSON_ENV]) return [];
-  let parsed: { endpoints?: BootstrapEndpoint[] };
-  try {
-    parsed = JSON.parse(env[BOOTSTRAP_JSON_ENV]) as { endpoints?: BootstrapEndpoint[] };
-  } catch {
-    return [];
-  }
-  return (parsed.endpoints ?? [])
-    .filter((endpoint) => endpoint.kind === "mcp" && !!endpoint.base_url)
-    .map((endpoint) => {
-      const baseUrl = endpoint.base_url as string;
-      const label = endpoint.name ?? endpoint.host ?? baseUrl;
-      return {
-        id: safeServerId(label),
-        name: label,
-        host: endpoint.host ?? hostForUrl(baseUrl),
-        baseUrl,
-        headers: {},
-        rawHeaders: {},
-        requiresSessionToken: true,
-      };
-    });
-}
-
 function localBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[] {
   return readLocalMcpServers(env, cwd).flatMap((server) => {
     if (server.transport && server.transport !== "streamable_http") return [];
@@ -420,15 +377,13 @@ function localBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[
       baseUrl,
       headers,
       rawHeaders,
-      requiresSessionToken: false,
       ...(localOAuth ? { localOAuth } : {}),
     }];
   });
 }
 
 function endpointBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[] {
-  const managed = bootstrapBindings(env);
-  const candidates = managed.length > 0 ? managed : localBindings(env, cwd);
+  const candidates = localBindings(env, cwd);
   const seen = new Set<string>();
   const bindings: McpEndpointBinding[] = [];
   for (const binding of candidates) {
@@ -446,17 +401,9 @@ function localMcpHeadersForServer(
 ): Record<string, string> | null {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
-  // Bootstrap endpoints identify a managed Introspection session. Their
-  // session-token/egress authentication must never be shadowed by a workspace
-  // or recipe-local binding with the same id or URL.
-  if (bootstrapBindings(env).length > 0) return null;
   const id = safeServerId(serverId);
   const binding = localBindings(env, cwd).find((candidate) => candidate.id === id);
   return binding ? binding.headers : null;
-}
-
-function sessionToken(env: NodeJS.ProcessEnv): string {
-  return env[TOKEN_ENV] || env[AGENT_SESSION_TOKEN_ENV] || "";
 }
 
 function parseJsonRpcBody<T>(body: string, contentType: string): JsonRpcResponse<T> | null {
@@ -495,16 +442,15 @@ async function postJsonRpc<T>(
   | string
 > {
   const localHeaders = localMcpHeadersForServer(server.id, { env: io.env, cwd: io.cwd });
-  const token = sessionToken(io.env);
-  if (!token && localHeaders === null) {
-    return `${TOKEN_ENV} is not set; cannot call MCP endpoint tools.`;
+  if (localHeaders === null) {
+    return `No MCP binding is configured for server '${server.id}'.`;
   }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
     "MCP-Protocol-Version": protocolVersion,
-    ...(localHeaders ?? { Authorization: `Bearer ${token}` }),
+    ...localHeaders,
   };
   if (sessionId) {
     headers["Mcp-Session-Id"] = sessionId;
@@ -838,15 +784,6 @@ async function discoverMcpCatalogs(opts: {
     });
   }
   for (const binding of bindings) {
-    if (binding.requiresSessionToken && !sessionToken(opts.env)) {
-      diagnostics.push({
-        serverId: binding.id,
-        url: binding.baseUrl,
-        stage: "config",
-        message: `${TOKEN_ENV} is not set for this MCP endpoint binding.`,
-      });
-      continue;
-    }
     const result = binding.localOAuth
       ? await listLocalOAuthTools(binding)
       : await listEndpointTools(binding, opts);
@@ -1364,14 +1301,10 @@ function filterDiagnostics(
   return diagnostics;
 }
 
-function readConfiguredManifests(recipeDir: string, manifest: RecipePackageManifest): McpManifest {
+function readConfiguredManifests(manifest: RecipePackageManifest): McpManifest {
   const servers: McpManifestServer[] = [];
   for (const path of resolvePiPackageMcpManifestPaths(manifest)) {
     const parsed = readJson(path) as McpManifest;
-    servers.push(...(parsed.servers ?? []));
-  }
-  if (servers.length === 0 && existsSync(join(recipeDir, "mcp.json"))) {
-    const parsed = readJson(join(recipeDir, "mcp.json")) as McpManifest;
     servers.push(...(parsed.servers ?? []));
   }
   return { servers };
@@ -1429,7 +1362,7 @@ export function buildMcporterConfig(
 ): McporterConfig {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
-  const bindings = bootstrapBindings(env).length > 0 ? [] : localBindings(env, cwd);
+  const bindings = localBindings(env, cwd);
   const mcpServers: Record<string, McporterServerConfig> = {};
   for (const server of manifest.servers ?? []) {
     const bindingId = server.binding_id ?? server.id;
@@ -1437,12 +1370,9 @@ export function buildMcporterConfig(
       (candidate) =>
         candidate.id === bindingId && candidate.baseUrl === server.base_url
     );
-    const headers = binding
-      ? binding.rawHeaders
-      : { Authorization: `Bearer \${${TOKEN_ENV}}` };
     mcpServers[server.id] = {
       baseUrl: server.base_url,
-      headers,
+      headers: binding?.rawHeaders ?? {},
       allowedTools: (server.tools ?? []).map((tool) => tool.name),
       ...(binding?.localOAuth ?? {}),
     };
@@ -1468,7 +1398,6 @@ async function writeMcporterConfig(
 
 export async function clearRecipeMcpManifest(env: NodeJS.ProcessEnv, cwd: string): Promise<void> {
   delete env[MCP_MANIFEST_ENV];
-  delete env[LEGACY_MCP_MANIFEST_ENV];
   await rm(defaultMcpManifestPath(cwd), { force: true });
   // Keep an empty mcporter config (rather than none): a stale `.pi/bin/mcp`
   // shim from an earlier session must resolve to "no servers", never to
@@ -1482,14 +1411,13 @@ export async function materializeRecipeMcpManifest(
   const env = opts.env ?? process.env;
   const fetchImpl = opts.fetch ?? globalThis.fetch;
   const hasConfiguredManifest =
-    opts.manifest.mcp.manifests.length > 0 ||
-    existsSync(join(opts.recipeDir, "mcp.json"));
+    opts.manifest.mcp.manifests.length > 0;
   const agentSelections = opts.agentMcp ?? [];
 
   let rawManifest: McpManifest;
   let diagnostics: McpDiscoveryDiagnostic[] = [];
   if (hasConfiguredManifest) {
-    rawManifest = readConfiguredManifests(opts.recipeDir, opts.manifest);
+    rawManifest = readConfiguredManifests(opts.manifest);
   } else {
     const discovery = await discoverMcpCatalogs({
       env,
@@ -1517,7 +1445,6 @@ export async function materializeRecipeMcpManifest(
     fallbackMcpManifestPath()
   );
   env[MCP_MANIFEST_ENV] = writtenPath;
-  env[LEGACY_MCP_MANIFEST_ENV] = writtenPath;
   await writeMcporterConfig(env, opts.cwd, mcpManifest);
   return { ...mcpManifest, diagnostics };
 }

@@ -24,7 +24,6 @@ const DEFAULT_MAX_RUN_TOOL_CALLS = 100;
 const DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 16;
 const MAX_SEARCH_DESCRIPTION_CHARS = 600;
 const MCP_MANIFEST_ENV = "PI_RECIPES_MCP_MANIFEST";
-const LEGACY_MCP_MANIFEST_ENV = "INTRO" + "SPECTION_MCP_MANIFEST";
 
 export interface ToolSearchMatch {
   ref: string;
@@ -472,9 +471,7 @@ function sessionManifestPath(): string {
   const workspacePath = defaultMcpManifestPath(sessionRoot());
   return existsSync(workspacePath)
     ? workspacePath
-    : process.env[MCP_MANIFEST_ENV] ||
-        process.env[LEGACY_MCP_MANIFEST_ENV] ||
-        workspacePath;
+    : process.env[MCP_MANIFEST_ENV] || workspacePath;
 }
 
 function sessionMcporterConfigPath(): string {

@@ -36,7 +36,8 @@ function recipeManifest(
     required?: boolean;
     include?: string[];
     exclude?: string[];
-  }>
+  }>,
+  manifests: string[] = []
 ): RecipePackageManifest {
   return {
     name: "demo",
@@ -49,7 +50,7 @@ function recipeManifest(
       prompts: [],
     },
     mcp: {
-      manifests: [],
+      manifests,
       servers: servers.map((server) => ({
         id: server.id,
         required: server.required ?? false,
@@ -120,7 +121,6 @@ describe("recipe MCP materialization", () => {
         })
       ).toBe(workspaceConfig);
       expect(workspaceEnv.PI_RECIPES_MCP_LOCAL_CONFIG).toBe(workspaceConfig);
-      expect(workspaceEnv.INTROSPECTION_MCP_LOCAL_CONFIG).toBe(workspaceConfig);
 
       rmSync(workspaceConfig);
       const recipeEnv: NodeJS.ProcessEnv = {};
@@ -171,7 +171,7 @@ describe("recipe MCP materialization", () => {
               required: true,
               include: ["search_profiles", "get_profile"],
             },
-          ]),
+          ], ["mcp.json"]),
         })
       ).rejects.toThrow(
         "Required MCP tool(s) missing from server 'nextplay': get_profile"
@@ -181,13 +181,13 @@ describe("recipe MCP materialization", () => {
     }
   });
 
-  it("accepts the legacy local MCP config env var as an alias", () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-legacy-"));
+  it("honors the canonical local MCP config env override", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-config-override-"));
     try {
       const configured = join(root, "custom.local.json");
       writeFileSync(configured, JSON.stringify({ servers: [] }));
       const env: NodeJS.ProcessEnv = {
-        INTROSPECTION_MCP_LOCAL_CONFIG: configured,
+        PI_RECIPES_MCP_LOCAL_CONFIG: configured,
       };
       expect(
         configureMcpLocalConfigPath({ cwd: root, recipeDir: root, env })
@@ -198,8 +198,8 @@ describe("recipe MCP materialization", () => {
     }
   });
 
-  it("requires package, binding, and agent gates for bootstrap MCP tools", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-bootstrap-"));
+  it("requires package, binding, and agent gates for configured MCP tools", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-gates-"));
     try {
       const cwd = join(root, "workspace");
       const recipeDir = join(root, "recipe");
@@ -208,28 +208,16 @@ describe("recipe MCP materialization", () => {
       const localConfig = writeLocalConfig(cwd, [
         {
           id: "nextplay",
+          name: "nextplay staging",
           transport: "streamable_http",
           url: "http://mcp.nextplay.test/mcp",
-          headers: { Authorization: "Bearer ${LOCAL_MCP_TOKEN}" },
-          auth: "oauth",
+          headers: { Authorization: "Bearer ${MCP_SESSION_TOKEN}" },
         },
       ]);
 
       const env: NodeJS.ProcessEnv = {
-        INTROSPECTION_TOKEN: "session-token",
-        LOCAL_MCP_TOKEN: "must-not-be-used",
+        MCP_SESSION_TOKEN: "session-token",
         PI_RECIPES_MCP_LOCAL_CONFIG: localConfig,
-        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
-          endpoints: [
-            {
-              id: "0197f00d",
-              name: "nextplay staging",
-              host: "mcp.nextplay.test",
-              base_url: "http://mcp.nextplay.test/mcp",
-              kind: "mcp",
-            },
-          ],
-        }),
       };
       const authHeaders: Array<string | undefined> = [];
       const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -342,9 +330,8 @@ describe("recipe MCP materialization", () => {
         ]),
       });
 
-      // Recipes reference cloud MCP servers by their human name (the id the
-      // server reports, falling back to the endpoint label) — the opaque
-      // bootstrap endpoint id must never become the server id.
+      // The server-reported name becomes the callable id; the configured
+      // binding id remains available for credential projection.
       expect(manifest.servers?.map((server) => server.id)).toEqual(["nextplay"]);
       expect(manifest.servers?.[0]?.name).toBe("nextplay");
       expect(manifest.diagnostics).toEqual([]);
@@ -372,7 +359,7 @@ describe("recipe MCP materialization", () => {
         {
           serverId: "nextplay",
           toolName: "search_profiles",
-          raw: "mcp:nextplay/search_profiles",
+          raw: "search_profiles",
         },
       ],
       {
@@ -603,7 +590,7 @@ describe("recipe MCP materialization", () => {
         agentMcp: [{ serverId: "slack", tools: { include: ["slack_read_channel"] } }],
         manifest: recipeManifest(recipeDir, [
           { id: "slack", include: ["slack_read_channel"] },
-        ]),
+        ], ["mcp.json"]),
       });
 
       const description = manifest.servers?.[0]?.tools?.[0]?.description ?? "";
@@ -617,15 +604,15 @@ describe("recipe MCP materialization", () => {
         "Use [unavailable MCP tool] before slack_read_channel, then [unavailable MCP tool]."
       );
 
-      // The mcporter config mirrors the filtered manifest: only allowed
-      // tools, session-token header as an env reference (never a value).
+      // The mcporter config mirrors the filtered static manifest. Static
+      // public endpoints have no implicit deployment-specific credentials.
       expect(env.MCPORTER_CONFIG).toBe(defaultMcporterConfigPath(cwd));
       expect(readMcporterConfig(cwd)).toEqual({
         imports: [],
         mcpServers: {
           slack: {
             baseUrl: "https://mcp.slack.com/mcp",
-            headers: { Authorization: "Bearer ${INTROSPECTION_TOKEN}" },
+            headers: {},
             allowedTools: ["slack_read_channel"],
           },
         },
@@ -684,7 +671,7 @@ describe("recipe MCP materialization", () => {
             exclude: ["delete_org"],
           },
           { id: "hubspot", include: ["*"] },
-        ]),
+        ], ["mcp.json"]),
       });
 
       expect(manifest.servers?.map((server) => server.id)).toEqual(["salesforce"]);
@@ -699,7 +686,7 @@ describe("recipe MCP materialization", () => {
         agentMcp: [{ serverId: "salesforce", tools: { include: [] } }],
         manifest: recipeManifest(recipeDir, [
           { id: "salesforce", include: ["*"] },
-        ]),
+        ], ["mcp.json"]),
       });
       expect(none.servers).toEqual([]);
       expect(none.diagnostics).toEqual([
@@ -766,7 +753,7 @@ describe("recipe MCP materialization", () => {
     }
   });
 
-  it("preserves configured local OAuth without enabling it for managed bindings", () => {
+  it("projects either configured OAuth or bearer headers without mixing them", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcporter-oauth-"));
     try {
       const localConfig = writeLocalConfig(root, [
@@ -801,7 +788,15 @@ describe("recipe MCP materialization", () => {
         oauthScope: "read write",
       });
 
-      const managed = buildMcporterConfig(
+      const bearerConfig = writeLocalConfig(root, [
+        {
+          id: "linear",
+          transport: "streamable_http",
+          url: "https://mcp.linear.app/mcp",
+          headers: { Authorization: "Bearer ${MCP_SESSION_TOKEN}" },
+        },
+      ]);
+      const bearer = buildMcporterConfig(
         {
           servers: [
             {
@@ -814,24 +809,13 @@ describe("recipe MCP materialization", () => {
         {
           cwd: root,
           env: {
-            PI_RECIPES_MCP_LOCAL_CONFIG: localConfig,
-            INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
-              endpoints: [
-                {
-                  id: "managed-linear",
-                  name: "linear",
-                  host: "mcp.linear.app",
-                  base_url: "https://mcp.linear.app/mcp",
-                  kind: "mcp",
-                },
-              ],
-            }),
+            PI_RECIPES_MCP_LOCAL_CONFIG: bearerConfig,
           },
         }
       );
-      expect(managed.mcpServers.linear).not.toHaveProperty("auth");
-      expect(managed.mcpServers.linear.headers).toEqual({
-        Authorization: "Bearer ${INTROSPECTION_TOKEN}",
+      expect(bearer.mcpServers.linear).not.toHaveProperty("auth");
+      expect(bearer.mcpServers.linear.headers).toEqual({
+        Authorization: "Bearer ${MCP_SESSION_TOKEN}",
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1110,8 +1094,8 @@ describe("recipe MCP materialization", () => {
 
 describe("recipe MCP availability", () => {
   const configured = [
-    { serverId: "contacts", toolName: "search_contacts", raw: "mcp:contacts/search_contacts" },
-    { serverId: "contacts", toolName: "create_contact", raw: "mcp:contacts/create_contact" },
+    { serverId: "contacts", toolName: "search_contacts", raw: "search_contacts" },
+    { serverId: "contacts", toolName: "create_contact", raw: "create_contact" },
   ];
 
   it("classifies materialized and missing configured tools", () => {
