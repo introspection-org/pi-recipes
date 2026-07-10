@@ -8,9 +8,7 @@ import {
   createDelegatedErrorFilter,
   describeUnavailableRunTool,
   describeUnknownRunServer,
-  formatMcpSessionInventory,
   outputSchemaSection,
-  rebrandDelegatedOutput,
   runMcpJavaScript,
   searchMcpTools,
 } from "../src/mcp-cli.js";
@@ -965,53 +963,7 @@ describe("recipe MCP materialization", () => {
     expect(match?.description).toContain("[truncated]");
   });
 
-  it("renders the no-target list inventory from the filtered manifest", () => {
-    const manifest = {
-      servers: [
-        {
-          id: "contacts",
-          name: "Contacts",
-          base_url: "https://contacts.example/mcp",
-          tools: [
-            {
-              name: "search_contacts",
-              description: "Search contacts.\nMore detail.",
-            },
-          ],
-        },
-      ],
-    };
-    expect(formatMcpSessionInventory(manifest)).toContain("contacts.search_contacts");
-    expect(JSON.parse(formatMcpSessionInventory(manifest, { json: true }))).toEqual({
-      servers: [
-        {
-          id: "contacts",
-          name: "Contacts",
-          tools: ["search_contacts"],
-        },
-      ],
-    });
-  });
-
-  it("rebrands delegated mcporter output as the recipe mcp command", () => {
-    expect(
-      rebrandDelegatedOutput(
-        [
-          "mcporter 0.12.3 — Listing 1 server(s)",
-          "Examples:",
-          "  mcporter call contacts.search_contacts q:'Ada Lovelace'",
-        ].join("\n")
-      )
-    ).toBe(
-      [
-        "Listing 1 server(s)",
-        "Examples:",
-        "  mcp call contacts.search_contacts q:'Ada Lovelace'",
-      ].join("\n")
-    );
-  });
-
-  it("renders an output-schema section for tools that publish one", () => {
+  it("adds the response contract that mcporter omits from text schema output", () => {
     const manifest = {
       servers: [
         {
@@ -1020,13 +972,12 @@ describe("recipe MCP materialization", () => {
           tools: [
             {
               name: "verify_shortlist",
-              description: "Verify",
               output_schema: {
                 type: "object",
                 properties: { checked: { type: "number" } },
+                required: ["checked"],
               },
             },
-            { name: "list_search_sessions", description: "List" },
           ],
         },
       ],
@@ -1034,19 +985,43 @@ describe("recipe MCP materialization", () => {
     const section = outputSchemaSection(manifest, "nextplay.verify_shortlist");
     expect(section).toContain("Output schema (response shape):");
     expect(section).toContain('"checked"');
-    expect(outputSchemaSection(manifest, "nextplay.list_search_sessions")).toBeNull();
-    expect(outputSchemaSection(manifest, "other.verify_shortlist")).toBeNull();
   });
 
-  it("rewrites the blocked-by-configuration error into an actionable hint", () => {
-    expect(
-      rebrandDelegatedOutput(
-        "Tool 'search_people' is not accessible on server 'nextplay' (blocked by configuration)."
-      )
-    ).toBe(
-      "Tool 'search_people' is not enabled for server 'nextplay' in this session. " +
-        "Run `mcp list nextplay` to inspect the allowlist; if absent, the recipe configuration must grant it."
+  it("keeps useful delegated errors while removing implementation stacks", () => {
+    const output: string[] = [];
+    const filter = createDelegatedErrorFilter((text) => output.push(text));
+    filter.push(
+      "[mcporter] Tool 'delete_all' is not accessible on server 'nextplay' (blocked by configuration).\n"
     );
+    filter.push("    at McpRuntime.callTool (file:///tmp/mcporter/runtime.js:174:19)\n");
+    filter.flush();
+    expect(output.join("")).toContain(
+      "Tool 'delete_all' is not enabled on server 'nextplay' in this recipe session"
+    );
+    expect(output.join("")).not.toContain("McpRuntime.callTool");
+  });
+
+  it("keeps missing credentials deployment-neutral", () => {
+    const output: string[] = [];
+    const filter = createDelegatedErrorFilter((text) => output.push(text));
+    filter.push(
+      "Failed to resolve header 'Authorization' for server 'linear': Environment variable(s) LINEAR_TOKEN must be set for MCP header substitution.\n"
+    );
+    filter.flush();
+    expect(output.join("")).toBe(
+      "Authentication is required for MCP server 'linear'. Ask the user to authenticate this MCP connection outside the agent session, then retry.\n"
+    );
+    expect(output.join("")).not.toContain("LINEAR_TOKEN");
+  });
+
+  it("adds recovery context when bearer auth falls through to OAuth discovery", () => {
+    const output: string[] = [];
+    const filter = createDelegatedErrorFilter((text) => output.push(text));
+    filter.push(
+      "[mcporter] HTTP 502 trying to load OAuth metadata from http://localhost/.well-known/oauth-authorization-server\n"
+    );
+    filter.flush();
+    expect(output.join("")).toContain("the token may be invalid or expired");
   });
 
   it("describes unknown run servers with suggestions and the available list", () => {
@@ -1075,71 +1050,6 @@ describe("recipe MCP materialization", () => {
     );
   });
 
-  it("appends a bearer-token hint when OAuth metadata discovery fails", () => {
-    const out: string[] = [];
-    const filter = createDelegatedErrorFilter((text) => out.push(text));
-    filter.push("[mcporter] HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server\n");
-    filter.push("Error: HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server\n");
-    filter.flush();
-    expect(out.join("")).toBe(
-      [
-        "[mcp] HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server",
-        "Error: HTTP 502 trying to load OAuth metadata from http://localhost:3201/.well-known/oauth-authorization-server",
-        "Hint: this server is called with a configured bearer token; the token may be invalid or expired.",
-        "",
-      ].join("\n")
-    );
-  });
-
-  it("turns missing agent credentials into deployment-neutral recovery", () => {
-    expect(
-      rebrandDelegatedOutput(
-        "Failed to resolve header 'Authorization' for server 'linear': Environment variable(s) LINEAR_TOKEN must be set for MCP header substitution."
-      )
-    ).toBe(
-      "Authentication is required for MCP server 'linear'. Ask the user to authenticate this MCP connection outside the agent session, then retry."
-    );
-    expect(
-      rebrandDelegatedOutput(
-        "Next: run 'mcp auth linear' to finish authentication."
-      )
-    ).toBe(
-      "Authentication is required. Ask the user to authenticate this MCP connection outside the agent session, then retry."
-    );
-    expect(
-      JSON.parse(
-        rebrandDelegatedOutput(
-          JSON.stringify({
-            server: "linear",
-            error:
-              "Failed to resolve header 'Authorization' for server 'linear': Environment variable(s) LINEAR_TOKEN must be set for MCP header substitution.",
-          })
-        )
-      )
-    ).toEqual({
-      server: "linear",
-      error:
-        "Authentication is required for MCP server 'linear'. Ask the user to authenticate this MCP connection outside the agent session, then retry.",
-    });
-  });
-
-  it("drops upstream stack frames from delegated stderr but keeps message lines", () => {
-    const out: string[] = [];
-    const filter = createDelegatedErrorFilter((text) => out.push(text));
-    filter.push("[mcporter] Tool 'x' is not accessible on server 'nextplay' (blocked by configuration).\n");
-    filter.push("Error: Tool 'x' is not accessible on server 'nextplay' (blocked by configuration).\n");
-    filter.push("    at McpRuntime.callTool (file:///tmp/mcporter/dist/runtime.js:174:19)\n");
-    filter.push("    at async main (file:///tmp/mcporter/di");
-    filter.push("st/cli.js:365:5)\n");
-    filter.flush();
-    expect(out.join("")).toBe(
-      [
-        "[mcp] Tool 'x' is not enabled for server 'nextplay' in this session. Run `mcp list nextplay` to inspect the allowlist; if absent, the recipe configuration must grant it.",
-        "Error: Tool 'x' is not enabled for server 'nextplay' in this session. Run `mcp list nextplay` to inspect the allowlist; if absent, the recipe configuration must grant it.",
-        "",
-      ].join("\n")
-    );
-  });
 });
 
 describe("recipe MCP availability", () => {
@@ -1258,6 +1168,11 @@ describe("mcporter CLI end-to-end", () => {
                       properties: { key: { type: "string" } },
                       required: ["key"],
                     },
+                    outputSchema: {
+                      type: "object",
+                      properties: { value: { type: "string" } },
+                      required: ["value"],
+                    },
                   },
                   { name: "hidden_tool", description: "Filtered out", inputSchema: { type: "object", properties: {} } },
                 ],
@@ -1333,6 +1248,9 @@ describe("mcporter CLI end-to-end", () => {
                         ],
                       }
               : {
+                  structuredContent: {
+                    value: `called ${msg.params?.name} with ${JSON.stringify(msg.params?.arguments)}`,
+                  },
                   content: [
                     {
                       type: "text",
@@ -1431,6 +1349,7 @@ describe("mcporter CLI end-to-end", () => {
       expect(manifest.servers).toHaveLength(1);
       const configEnv = {
         MCPORTER_CONFIG: env.MCPORTER_CONFIG!,
+        PI_RECIPES_MCP_MANIFEST: env.PI_RECIPES_MCP_MANIFEST!,
         STUB_MCP_TOKEN: "stub-token",
       };
 
@@ -1443,9 +1362,58 @@ describe("mcporter CLI end-to-end", () => {
       expect(listed.status).toBe("ok");
       expect(listed.tools.map((tool) => tool.name)).toEqual(["get_value"]);
 
-      const call = await runMcporter(["call", "stub.get_value", "key=color"], configEnv);
+      const wrappedList = await runMcpCli(["list", "stub", "--json"], configEnv, "");
+      expect(wrappedList.code).toBe(list.code);
+      expect(wrappedList.stderr).toBe(list.stderr);
+      const wrappedListed = JSON.parse(wrappedList.stdout) as typeof listed;
+      expect(wrappedListed.status).toBe(listed.status);
+      expect(wrappedListed.tools).toEqual(listed.tools);
+
+      const wrappedTextSchema = await runMcpCli(
+        ["list", "stub.get_value", "--schema"],
+        configEnv,
+        ""
+      );
+      expect(wrappedTextSchema.code).toBe(0);
+      expect(wrappedTextSchema.stdout).toContain("Output schema (response shape):");
+      expect(wrappedTextSchema.stdout).toContain('"value"');
+
+      const call = await runMcporter(
+        ["call", "stub.get_value", "key=mcporter", "--no-oauth"],
+        configEnv
+      );
       expect(call.code).toBe(0);
-      expect(call.stdout).toContain('called get_value with {"key":"color"}');
+      expect(JSON.parse(call.stdout)).toEqual({
+        value: 'called get_value with {"key":"mcporter"}',
+      });
+      const wrappedCall = await runMcpCli(
+        ["call", "stub.get_value", "key=mcporter"],
+        configEnv,
+        ""
+      );
+      expect(wrappedCall).toEqual(call);
+
+      const directJsonCall = await runMcporter(
+        ["call", "stub.get_value", "key=mcporter", "--output", "json", "--no-oauth"],
+        configEnv
+      );
+      const wrappedJsonCall = await runMcpCli(
+        ["call", "stub.get_value", "key=mcporter", "--output", "json"],
+        configEnv,
+        ""
+      );
+      expect(wrappedJsonCall).toEqual(directJsonCall);
+
+      const directNamedFlag = await runMcporter(
+        ["call", "stub.get_value", "--key", "color", "--no-oauth"],
+        configEnv
+      );
+      const wrappedNamedFlag = await runMcpCli(
+        ["call", "stub.get_value", "--key", "color"],
+        configEnv,
+        ""
+      );
+      expect(wrappedNamedFlag).toEqual(directNamedFlag);
 
       // allowedTools gates calls, not just listings.
       const blocked = await runMcporter(["call", "stub.hidden_tool"], configEnv);

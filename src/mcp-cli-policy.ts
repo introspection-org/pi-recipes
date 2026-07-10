@@ -4,46 +4,18 @@ export interface McpCliSessionPolicy {
   servers: Map<
     string,
     {
-      tools: Map<string, Set<string>>;
+      tools: Set<string>;
     }
   >;
 }
 
 export interface ValidatedMcpCliCommand {
   args: string[];
-  forceNoOAuth: boolean;
 }
 
 export type McpCliPolicyResult =
   | { command: ValidatedMcpCliCommand; error?: undefined }
   | { command?: undefined; error: string };
-
-const LIST_BOOLEAN_FLAGS = new Set([
-  "--brief",
-  "--signatures",
-  "--schema",
-  "--all-parameters",
-  "--json",
-  "--status",
-  "--exit-code",
-  "--quiet",
-  "--no-oauth",
-]);
-const LIST_VALUE_FLAGS = new Set(["--timeout"]);
-
-const CALL_BOOLEAN_FLAGS = new Set([
-  "--raw-strings",
-  "--no-coerce",
-  "--no-oauth",
-]);
-const CALL_VALUE_FLAGS = new Set([
-  "--args",
-  "--json",
-  "--output",
-  "--save-images",
-  "--timeout",
-  "--oauth-timeout",
-]);
 
 const FORBIDDEN_DELEGATED_FLAGS = new Set([
   "--config",
@@ -97,16 +69,10 @@ function withNoOAuth(args: readonly string[]): string[] {
   ];
 }
 
-function consumeFlagValue(
-  args: readonly string[],
-  index: number,
-  flag: string
-): { nextIndex: number; error?: string } {
-  const value = args[index + 1];
-  if (value === undefined || (value.startsWith("-") && value !== "-")) {
-    return { nextIndex: index, error: `${flag} expects a value.` };
-  }
-  return { nextIndex: index + 1 };
+function forbiddenFlag(args: readonly string[]): string | undefined {
+  const literalSeparator = args.indexOf("--");
+  const options = literalSeparator === -1 ? args : args.slice(0, literalSeparator);
+  return options.map(flagName).find((flag) => FORBIDDEN_DELEGATED_FLAGS.has(flag));
 }
 
 function closestName(input: string, candidates: Iterable<string>): string | undefined {
@@ -165,48 +131,19 @@ function validateList(
   args: string[],
   policy: McpCliSessionPolicy
 ): McpCliPolicyResult {
-  let target: string | undefined;
-  for (let index = 1; index < args.length; index += 1) {
-    const arg = args[index];
-    if (!arg.startsWith("-")) {
-      if (target !== undefined) {
-        return { error: "mcp list accepts at most one session server or server.tool target." };
-      }
-      target = arg;
-      continue;
-    }
-    const flag = flagName(arg);
-    if (FORBIDDEN_DELEGATED_FLAGS.has(flag)) {
-      return { error: `mcp list option '${flag}' is unavailable in recipe sessions.` };
-    }
-    if (LIST_BOOLEAN_FLAGS.has(flag)) {
-      if (arg !== flag) return { error: `${flag} does not accept a value.` };
-      continue;
-    }
-    if (LIST_VALUE_FLAGS.has(flag)) {
-      if (arg !== flag) return { error: `${flag} expects its value as the next argument.` };
-      const consumed = consumeFlagValue(args, index, flag);
-      if (consumed.error) return { error: consumed.error };
-      index = consumed.nextIndex;
-      continue;
-    }
-    return { error: `Unknown or unavailable mcp list option '${flag}'.` };
+  const blocked = forbiddenFlag(args.slice(1));
+  if (blocked) return { error: `mcp list option '${blocked}' is unavailable in recipe sessions.` };
+  const adHocTarget = args
+    .slice(1)
+    .find((arg) => !arg.startsWith("-") && /^(?:https?:\/\/|[^/]+\/)/i.test(arg));
+  if (adHocTarget) {
+    return { error: "mcp list accepts only servers materialized for this recipe session; URLs and ad-hoc servers are unavailable." };
   }
 
-  if (target === undefined) {
-    const unsupported = args
-      .slice(1)
-      .map(flagName)
-      .find((flag) => flag !== "--json" && flag !== "--no-oauth");
-    if (unsupported) {
-      return {
-        error: `${unsupported} requires an exact session server or server.tool target.`,
-      };
-    }
-  } else {
-    if (/^(?:https?:\/\/|[^/]+\/)/i.test(target)) {
-      return { error: "mcp list accepts only servers materialized for this recipe session; URLs and ad-hoc servers are unavailable." };
-    }
+  // mcporter's grammar places the optional target directly after `list`.
+  // Do not parse or normalize any remaining arguments; mcporter owns them.
+  const target = args[1] && !args[1].startsWith("-") ? args[1] : undefined;
+  if (target !== undefined) {
     const selector = toolSelector(target);
     const server = selector?.server ?? target;
     const error = validateExactTarget(policy, server, selector?.tool);
@@ -216,7 +153,6 @@ function validateList(
   return {
     command: {
       args: forceNoOAuth ? withNoOAuth(args) : args,
-      forceNoOAuth,
     },
   };
 }
@@ -238,62 +174,13 @@ function validateCall(
   }
   const targetError = validateExactTarget(policy, selector.server, selector.tool);
   if (targetError) return { error: targetError };
-
-  const inputParameters = policy.servers
-    .get(selector.server)
-    ?.tools.get(selector.tool) ?? new Set<string>();
-  const delegatedArgs = args.slice(0, 2);
-  let literal = false;
-  for (let index = 2; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--") {
-      literal = true;
-      delegatedArgs.push(...args.slice(index));
-      break;
-    }
-    if (literal || !arg.startsWith("--")) {
-      delegatedArgs.push(arg);
-      continue;
-    }
-    const flag = flagName(arg);
-    if (FORBIDDEN_DELEGATED_FLAGS.has(flag)) {
-      return { error: `mcp call option '${flag}' is unavailable in recipe sessions.` };
-    }
-    if (CALL_BOOLEAN_FLAGS.has(flag)) {
-      if (arg !== flag) return { error: `${flag} does not accept a value.` };
-      delegatedArgs.push(arg);
-      continue;
-    }
-    if (CALL_VALUE_FLAGS.has(flag)) {
-      if (arg !== flag) return { error: `${flag} expects its value as the next argument.` };
-      const consumed = consumeFlagValue(args, index, flag);
-      if (consumed.error) return { error: consumed.error };
-      delegatedArgs.push(arg, args[consumed.nextIndex]);
-      index = consumed.nextIndex;
-      continue;
-    }
-    const body = arg.slice(2);
-    const equals = body.indexOf("=");
-    const rawKey = equals === -1 ? body : body.slice(0, equals);
-    const key = rawKey.replace(/-([a-zA-Z0-9])/g, (_match, char: string) =>
-      char.toUpperCase()
-    );
-    if (key && inputParameters.has(key)) {
-      const value =
-        equals === -1 ? args[index + 1] : body.slice(equals + 1);
-      if (value === undefined) return { error: `Tool argument '--${rawKey}' expects a value.` };
-      delegatedArgs.push(`${key}=${value}`);
-      if (equals === -1) index += 1;
-      continue;
-    }
-    return { error: `Unknown or unavailable mcp call option '${flag}'.` };
-  }
+  const blocked = forbiddenFlag(args.slice(2));
+  if (blocked) return { error: `mcp call option '${blocked}' is unavailable in recipe sessions.` };
 
   const forceNoOAuth = !hasNoOAuth(args);
   return {
     command: {
-      args: forceNoOAuth ? withNoOAuth(delegatedArgs) : delegatedArgs,
-      forceNoOAuth,
+      args: forceNoOAuth ? withNoOAuth(args) : args,
     },
   };
 }
@@ -306,19 +193,7 @@ export function createMcpCliSessionPolicy(
       (manifest.servers ?? []).map((server) => [
         server.id,
         {
-          tools: new Map(
-            (server.tools ?? []).map((tool) => {
-              const properties = tool.input_schema?.properties;
-              return [
-                tool.name,
-                new Set(
-                  properties && typeof properties === "object"
-                    ? Object.keys(properties)
-                    : []
-                ),
-              ];
-            })
-          ),
+          tools: new Set((server.tools ?? []).map((tool) => tool.name)),
         },
       ])
     ),

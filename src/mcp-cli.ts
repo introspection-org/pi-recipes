@@ -152,13 +152,13 @@ export function mcpListHelpText(): string {
   return [
     "Usage: mcp list [server | server.tool] [flags]",
     "",
-    "Lists only servers and tools materialized for this recipe session.",
+    "Delegates listing and schema rendering to mcporter for servers materialized in this recipe session.",
     "",
     "Flags:",
     "  --brief, --signatures     Compact signatures only.",
     "  --all-parameters          Include every optional parameter.",
-    "  --schema                  Include full input and available output schemas.",
-    "  --json                    Emit machine-readable output.",
+    "  --schema                  Include the input schema and, for one exact tool, its output schema.",
+    "  --json                    Emit mcporter's machine-readable output unchanged.",
     "  --status                  Show concise status for an exact server target.",
     "  --quiet, --exit-code      Health checks for an exact server target.",
     "  --timeout <ms>            Override discovery timeout for an exact target.",
@@ -172,11 +172,11 @@ export function mcpCallHelpText(): string {
   return [
     "Usage: mcp call <server>.<tool> [arguments] [flags]",
     "",
-    "Calls only exact tools materialized for this recipe session.",
+    "Delegates argument parsing and tool execution to mcporter for exact tools materialized in this recipe session.",
     "",
     "Arguments:",
-    "  key=value / key:value     Named arguments with schema-aware coercion.",
-    "  --key value               Named schema arguments are normalized to key=value.",
+    "  key=value / key:value     Named arguments with mcporter's schema-aware coercion.",
+    "  --key value               Named schema arguments supported by mcporter.",
     "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
     "  --args <json|->, --json <json|->  Supply a JSON object directly or from stdin.",
     "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
@@ -189,7 +189,7 @@ export function mcpCallHelpText(): string {
     "  --timeout <ms>",
     "  --no-oauth, --oauth-timeout <ms>",
     "  --raw-strings, --no-coerce",
-    "  With --output json, tool responses and transport/auth failures are machine-readable; CLI usage/policy errors stay on stderr with exit 2.",
+    "  Machine-readable output is forwarded unchanged.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -202,7 +202,7 @@ export function mcpSearchHelpText(): string {
     "Searches only MCP tools available in this session.",
     "Results include the exact tool ref, required fields, an inspection command, and a call example.",
     "Try broader or alternate terms when no result matches.",
-    "Use `mcp list` only to identify exact tool names, then inspect one candidate with `mcp list <server.tool> --schema`.",
+    "Use `mcp list <server>` only to identify exact tool names, then inspect one candidate with `mcp list <server.tool> --schema`.",
   ].join("\n");
 }
 
@@ -496,27 +496,6 @@ async function sessionCliPolicy() {
   return createMcpCliSessionPolicy(await readManifest());
 }
 
-export function formatMcpSessionInventory(
-  manifest: McpManifest,
-  opts: { json?: boolean } = {}
-): string {
-  const servers = (manifest.servers ?? []).map((server) => ({
-    id: server.id,
-    name: server.name ?? server.id,
-    tools: (server.tools ?? []).map((tool) => tool.name),
-  }));
-  if (opts.json) return JSON.stringify({ servers }, null, 2);
-  if (servers.length === 0) return "No MCP servers or tools are available in this session.";
-  return [
-    ...servers.flatMap((server) => [
-      `${server.id}${server.name !== server.id ? ` (${server.name})` : ""}`,
-      ...server.tools.map((tool) => `  ${server.id}.${tool}`),
-    ]),
-    "",
-    "Use `mcp list <server>` for signatures or `mcp list <server.tool> --schema` for one schema.",
-  ].join("\n");
-}
-
 function parseSearchArgs(
   args: string[]
 ):
@@ -580,7 +559,7 @@ async function searchCatalog(args: string[]): Promise<number> {
     stdout.write(`No matching tools found for "${query}".\n`);
     stdout.write("Try broader or alternate terms.\n");
     stdout.write(
-      "Use `mcp list` only to identify exact tool names, then inspect one candidate with `mcp list <server.tool> --schema`.\n"
+      "Use `mcp list <server>` only to identify exact tool names, then inspect one candidate with `mcp list <server.tool> --schema`.\n"
     );
     return 0;
   }
@@ -1203,26 +1182,8 @@ async function appendOutputSchema(args: string[], exitCode: number): Promise<voi
     const section = outputSchemaSection(await readManifest(), ref);
     if (section) stdout.write(section);
   } catch {
-    // The manifest is a session artifact; schema display works without it.
+    // The manifest is a session artifact; mcporter's input schema still rendered.
   }
-}
-
-export function rebrandDelegatedOutput(text: string): string {
-  return text
-    .replace(/^mcporter\s+\d+\.\d+\.\d+\s+—\s+/gm, "")
-    .replace(/\bmcporter\b/g, "mcp")
-    .replace(
-      /is not accessible on server '([^']+)' \(blocked by configuration\)/g,
-      "is not enabled for server '$1' in this session. Run `mcp list $1` to inspect the allowlist; if absent, the recipe configuration must grant it"
-    )
-    .replace(
-      /Failed to resolve header 'Authorization' for server '([^']+)': Environment variable\(s\) [A-Z0-9_, ]+ must be set for MCP header substitution\./g,
-      "Authentication is required for MCP server '$1'. Ask the user to authenticate this MCP connection outside the agent session, then retry."
-    )
-    .replace(
-      /Next: run ['`]mcp auth [^'`]+['`] to finish authentication\.?/gi,
-      "Authentication is required. Ask the user to authenticate this MCP connection outside the agent session, then retry."
-    );
 }
 
 export function createDelegatedErrorFilter(write: (text: string) => void): {
@@ -1232,12 +1193,24 @@ export function createDelegatedErrorFilter(write: (text: string) => void): {
   let buffer = "";
   let sawOAuthMetadataError = false;
   const emit = (line: string) => {
-    // Drop Node stack frames from upstream errors; keep the message lines.
+    // Keep mcporter's message, but omit implementation stack frames that do
+    // not help an agent recover.
     if (/^\s+at\s\S/.test(line)) return;
-    // A rejected bearer token makes the upstream client fall back to OAuth
-    // discovery, which fails with an unrelated-looking metadata error.
     if (/trying to load OAuth metadata/.test(line)) sawOAuthMetadataError = true;
-    write(rebrandDelegatedOutput(line));
+    const safe = line
+      .replace(
+        /Tool '([^']+)' is not accessible on server '([^']+)' \(blocked by configuration\)/g,
+        "Tool '$1' is not enabled on server '$2' in this recipe session"
+      )
+      .replace(
+        /Failed to resolve header 'Authorization' for server '([^']+)': Environment variable\(s\) [A-Z0-9_, ]+ must be set for MCP header substitution\./g,
+        "Authentication is required for MCP server '$1'. Ask the user to authenticate this MCP connection outside the agent session, then retry."
+      )
+      .replace(
+        /Next: run ['`]mcporter auth [^'`]+['`] to finish authentication\.?/gi,
+        "Authentication is required. Ask the user to authenticate this MCP connection outside the agent session, then retry."
+      );
+    write(safe);
   };
   return {
     push(chunk: string) {
@@ -1263,7 +1236,6 @@ export function createDelegatedErrorFilter(write: (text: string) => void): {
 }
 
 export function duplicateCallArgumentKeys(args: string[]): string[] {
-  // Tool ref first, then key:value / key=value tokens; flags are skipped.
   const seen = new Set<string>();
   const duplicates = new Set<string>();
   for (const token of args.slice(1)) {
@@ -1277,9 +1249,6 @@ export function duplicateCallArgumentKeys(args: string[]): string[] {
   return [...duplicates];
 }
 
-// A mangled expression form (unbalanced quotes/parens) falls through to the
-// upstream ad-hoc command path, which tries to SPAWN the text and dies with a
-// baffling ENOENT. Catch it here with a usable message instead.
 export function malformedCallExpression(args: string[]): string | null {
   const ref = args.find((arg) => !arg.startsWith("-"));
   if (!ref || !/[()]/.test(ref)) return null;
@@ -1305,17 +1274,31 @@ export function malformedCallExpression(args: string[]): string | null {
   );
 }
 
+function usesMachineReadableOutput(args: readonly string[]): boolean {
+  if (args[0] === "list") return args.includes("--json");
+  if (args[0] !== "call") return false;
+  return args.some(
+    (arg, index) =>
+      arg === "--output=json" ||
+      (arg === "--output" && args[index + 1] === "json")
+  );
+}
+
 function delegateToMcporter(args: string[]): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [mcporterCliEntrypointPath(), ...args], {
       stdio: ["inherit", "pipe", "pipe"],
       env: process.env,
     });
+    const preserve = usesMachineReadableOutput(args);
     const stderrFilter = createDelegatedErrorFilter((text) => stderr.write(text));
-    child.stdout.on("data", (chunk) => stdout.write(rebrandDelegatedOutput(String(chunk))));
-    child.stderr.on("data", (chunk) => stderrFilter.push(String(chunk)));
+    child.stdout.on("data", (chunk) => stdout.write(chunk));
+    child.stderr.on("data", (chunk) => {
+      if (preserve) stderr.write(chunk);
+      else stderrFilter.push(String(chunk));
+    });
     child.on("close", (code) => {
-      stderrFilter.flush();
+      if (!preserve) stderrFilter.flush();
       resolve(code ?? 1);
     });
   });
@@ -1367,16 +1350,6 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
       return 2;
     }
   }
-  if (
-    args[0] === "list" &&
-    !args.slice(1).some(isHelpArg) &&
-    !args.includes("--quiet") &&
-    !args.includes("--json")
-  ) {
-    stderr.write(
-      "Only exact tool names shown as `mcp list` entries are callable. Descriptions may mention related tools that are not exposed; those mentions are not entries.\n\n"
-    );
-  }
   let validated;
   try {
     validated = validateDelegatedMcpCommand(args, await sessionCliPolicy());
@@ -1391,17 +1364,6 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   if (!validated.command) {
     stderr.write("mcp: invalid session command policy result.\n");
     return 1;
-  }
-  if (
-    args[0] === "list" &&
-    !args.slice(1).some((arg) => !arg.startsWith("-"))
-  ) {
-    stdout.write(
-      `${formatMcpSessionInventory(await readManifest(), {
-        json: args.includes("--json"),
-      })}\n`
-    );
-    return 0;
   }
   const delegatedArgs = validated.command.args;
   const code = await delegateToMcporter(delegatedArgs);

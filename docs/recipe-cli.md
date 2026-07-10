@@ -316,7 +316,8 @@ Agents use:
 
 ```bash
 mcp search "contact lookup"              # find relevant tool references
-mcp list                                 # servers and their tools
+mcp list                                 # configured server health/status
+mcp list contacts --brief                # compact tool signatures
 mcp list contacts.search_contacts --schema # inspect one tool's input/output schema
 mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
@@ -325,6 +326,15 @@ const result = await tools.contacts.search_contacts({ query: "Ada Lovelace" })
 console.log(JSON.stringify(result.json(), null, 2))
 EOF
 ```
+
+`mcp list` and `mcp call` delegate listing, argument coercion, tool execution,
+and result formatting to mcporter against the filtered session config. The
+recipe wrapper only enforces the materialized server/tool policy, blocks
+configuration and ad-hoc transport escapes, keeps calls headless, rejects
+ambiguous duplicate or malformed call input, and removes non-actionable error
+stacks. Machine-readable output is forwarded unchanged. For an exact textual
+`mcp list <server.tool> --schema`, the wrapper appends the tool's materialized
+output schema because mcporter 0.12.3 renders it only in JSON mode.
 
 Every `mcp run` tool call must be awaited or its promise chain returned. A
 detached `.then()` or `.catch()` chain that is still pending when the script
@@ -339,7 +349,7 @@ server recovery fields such as `code`, `retryable`, `action`, `request_id`, and
 `outcome` in JavaScript and `--json-errors` output.
 
 If search does not find a match, retry with broader or alternate terms. Use
-`mcp list` only to identify exact tool names, then inspect one candidate with
+`mcp list <server>` only to identify exact tool names, then inspect one candidate with
 `mcp list <server.tool> --schema`; avoid server-wide schema dumps during normal
 agent workflows.
 

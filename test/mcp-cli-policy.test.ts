@@ -43,7 +43,6 @@ describe("recipe-session mcporter policy", () => {
           "--all-parameters",
           "--no-oauth",
         ],
-        forceNoOAuth: true,
       },
     });
   });
@@ -94,7 +93,7 @@ describe("recipe-session mcporter policy", () => {
     ]);
   });
 
-  it("allows paths in function-call values but rejects unknown flags", () => {
+  it("preserves mcporter syntax, including future non-escape flags", () => {
     expect(
       validateDelegatedMcpCommand(
         ['call', 'contacts.search_contacts(query: "docs/readme.md")'],
@@ -103,13 +102,19 @@ describe("recipe-session mcporter policy", () => {
     ).toBeUndefined();
     expect(
       validateDelegatedMcpCommand(
-        ["call", "contacts.search_contacts", "--future-mcporter-escape"],
+        ["call", "contacts.search_contacts", "--future-mcporter-option", "value"],
         policy()
-      ).error
-    ).toContain("Unknown or unavailable");
+      ).command?.args
+    ).toEqual([
+      "call",
+      "contacts.search_contacts",
+      "--future-mcporter-option",
+      "value",
+      "--no-oauth",
+    ]);
   });
 
-  it("normalizes schema-backed named flags before delegating to mcporter", () => {
+  it("does not normalize schema-backed named flags before delegation", () => {
     expect(
       validateDelegatedMcpCommand(
         ["call", "contacts.search_contacts", "--query", "Ada", "--page-size=25"],
@@ -118,8 +123,9 @@ describe("recipe-session mcporter policy", () => {
     ).toEqual([
       "call",
       "contacts.search_contacts",
-      "query=Ada",
-      "pageSize=25",
+      "--query",
+      "Ada",
+      "--page-size=25",
       "--no-oauth",
     ]);
   });
@@ -127,6 +133,8 @@ describe("recipe-session mcporter policy", () => {
   it.each([
     ["list", "--http-url", "https://attacker.example/mcp"],
     ["list", "https://attacker.example/mcp"],
+    ["list", "--verbose", "https://attacker.example/mcp"],
+    ["list", "--verbose", "attacker.example/mcp"],
     ["call", "https://attacker.example/mcp.fetch"],
     ["call", "contacts.search_contacts", "--config", "/tmp/other.json"],
     ["call", "contacts.search_contacts", "--stdio", "node rogue.mjs"],
@@ -141,9 +149,7 @@ describe("recipe-session mcporter policy", () => {
     ["serve", "--http", "9999"],
   ])("blocks commands or escape hatches: %j", (...args) => {
     const result = validateDelegatedMcpCommand(args as string[], policy());
-    expect(result.error).toMatch(
-      /unavailable|only tools materialized|only servers materialized|expects a value/
-    );
+    expect(result.error).toMatch(/unavailable|only tools materialized|only servers materialized/);
   });
 
   it("rejects tools outside the final materialized inventory", () => {
@@ -179,7 +185,6 @@ describe("recipe-session mcporter policy", () => {
     ).toEqual({
       command: {
         args: ["call", "contacts.search_contacts", "--no-oauth"],
-        forceNoOAuth: true,
       },
     });
   });
