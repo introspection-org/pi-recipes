@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/introspection-org/pi-recipes/compare/v0.5.0...v0.6.0) (2026-07-10)
+
+
+### Features
+
+* add explicit per-server MCP tool selection ([#40](https://github.com/introspection-org/pi-recipes/issues/40)) ([8a1ee0f](https://github.com/introspection-org/pi-recipes/commit/8a1ee0f96facc56308771b1315dd24c5e2cc0902))
+* improve MCP capability disclosure ([7bc380c](https://github.com/introspection-org/pi-recipes/commit/7bc380c474c83b802cb2821983701686de95aa8f))
+
+
+### Bug Fixes
+
+* enforce recipe agent tool allowlists ([7d86939](https://github.com/introspection-org/pi-recipes/commit/7d8693925a3523022e9c7aef76c0ee250f34494b))
+* warn when MCP agents omit bash ([75b5586](https://github.com/introspection-org/pi-recipes/commit/75b5586c40d60e64ca1db34fd32cd5b596aee13b))
+
 ## [0.5.0](https://github.com/introspection-org/pi-recipes/compare/v0.4.1...v0.5.0) (2026-07-09)
 
 
