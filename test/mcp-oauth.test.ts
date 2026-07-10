@@ -77,7 +77,7 @@ describe("local MCP OAuth materialization", () => {
             {
               id: "local-oauth",
               required: true,
-              tools: { allow: ["get_value"] },
+              tools: { include: ["get_value"] },
             },
           ],
         },
@@ -87,7 +87,12 @@ describe("local MCP OAuth materialization", () => {
         cwd,
         recipeDir,
         manifest,
-        agentTools: ["mcp:local-oauth/get_value"],
+        agentMcp: [
+          {
+            serverId: "local-oauth",
+            tools: { include: ["get_value"] },
+          },
+        ],
         env: { PI_RECIPES_MCP_LOCAL_CONFIG: localConfig },
       });
 
