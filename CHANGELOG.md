@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/introspection-org/pi-recipes/compare/v0.6.0...v0.6.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* add a capability-scoped MCP CLI for recipe agents ([#44](https://github.com/introspection-org/pi-recipes/issues/44)) ([c48a519](https://github.com/introspection-org/pi-recipes/commit/c48a5198558eaf377f7ce6310a51b4e6cc0f55a8))
+
 ## [0.6.0](https://github.com/introspection-org/pi-recipes/compare/v0.5.0...v0.6.0) (2026-07-10)
 
 

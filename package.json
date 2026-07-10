@@ -1,6 +1,6 @@
 {
   "name": "@introspection-ai/pi-recipes",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Local session tooling for package-based workflows.",
   "license": "MIT",
   "type": "module",
