@@ -332,12 +332,11 @@ stacks. Machine-readable output is forwarded unchanged. For an exact textual
 `mcp list <server.tool> --schema`, the wrapper appends the tool's materialized
 output schema because mcporter 0.12.3 renders it only in JSON mode.
 
-The runtime prompt includes the exact MCP tools that were successfully
-materialized for the session and separately identifies configured refs that
-were unavailable after discovery. That inventory is authoritative. Agents are
-instructed to start with `mcp search` when the right tool is unclear, inspect
-schemas before guessing arguments, and use `mcp --help` for the complete CLI
-guide. The prompt retains concrete examples for search, list, call, and run.
+When MCP tools are available, the system prompt includes only a short note to
+use the `mcp` command through shell and consult `mcp --help`. CLI syntax,
+workflow guidance, server instructions, tool discovery, and schemas are not
+injected into runtime context. They remain progressively available through
+`mcp --help`, `mcp list`, and `mcp search`.
 
 Only exact tool names in the runtime inventory or `mcp list` output are
 callable. Upstream tool descriptions can mention related tools that are not

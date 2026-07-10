@@ -31,7 +31,7 @@ describe("recipe-session mcporter policy", () => {
   it("allows documented list flags and forces headless authentication", () => {
     expect(
       validateDelegatedMcpCommand(
-        ["list", "contacts.search_contacts", "--schema", "--all-parameters"],
+        ["list", "contacts.search_contacts", "--schema", "--timeout", "1000"],
         policy()
       )
     ).toEqual({
@@ -40,11 +40,29 @@ describe("recipe-session mcporter policy", () => {
           "list",
           "contacts.search_contacts",
           "--schema",
-          "--all-parameters",
+          "--timeout",
+          "1000",
           "--no-oauth",
         ],
       },
     });
+  });
+
+  it.each([
+    ["--brief", "--schema"],
+    ["--signatures", "--json"],
+    ["--schema", "--all-parameters"],
+    ["--schema", "--json"],
+    ["--json", "--status"],
+  ])("rejects combined list output modes: %s %s", (left, right) => {
+    expect(
+      validateDelegatedMcpCommand(
+        ["list", "contacts.search_contacts", left, right],
+        policy()
+      ).error
+    ).toBe(
+      "mcp list accepts only one output mode: --brief, --schema, --all-parameters, --json, or --status."
+    );
   });
 
   it("allows safe call formatting and file arguments", () => {

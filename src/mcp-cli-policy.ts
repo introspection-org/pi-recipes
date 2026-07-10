@@ -40,6 +40,15 @@ const FORBIDDEN_DELEGATED_FLAGS = new Set([
   "--tail-log",
 ]);
 
+const LIST_OUTPUT_MODES = new Map([
+  ["--brief", "brief"],
+  ["--signatures", "brief"],
+  ["--schema", "schema"],
+  ["--all-parameters", "all-parameters"],
+  ["--json", "json"],
+  ["--status", "status"],
+]);
+
 function flagName(value: string): string {
   const equals = value.indexOf("=");
   return equals === -1 ? value : value.slice(0, equals);
@@ -73,6 +82,19 @@ function forbiddenFlag(args: readonly string[]): string | undefined {
   const literalSeparator = args.indexOf("--");
   const options = literalSeparator === -1 ? args : args.slice(0, literalSeparator);
   return options.map(flagName).find((flag) => FORBIDDEN_DELEGATED_FLAGS.has(flag));
+}
+
+function listOutputModeError(args: readonly string[]): string | undefined {
+  const literalSeparator = args.indexOf("--");
+  const options = literalSeparator === -1 ? args : args.slice(0, literalSeparator);
+  const modes = new Set(
+    options
+      .map((arg) => LIST_OUTPUT_MODES.get(flagName(arg)))
+      .filter((mode): mode is string => Boolean(mode))
+  );
+  return modes.size > 1
+    ? "mcp list accepts only one output mode: --brief, --schema, --all-parameters, --json, or --status."
+    : undefined;
 }
 
 function closestName(input: string, candidates: Iterable<string>): string | undefined {
@@ -133,6 +155,8 @@ function validateList(
 ): McpCliPolicyResult {
   const blocked = forbiddenFlag(args.slice(1));
   if (blocked) return { error: `mcp list option '${blocked}' is unavailable in recipe sessions.` };
+  const outputModeError = listOutputModeError(args.slice(1));
+  if (outputModeError) return { error: outputModeError };
   const adHocTarget = args
     .slice(1)
     .find((arg) => !arg.startsWith("-") && /^(?:https?:\/\/|[^/]+\/)/i.test(arg));

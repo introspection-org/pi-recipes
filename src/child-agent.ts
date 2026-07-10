@@ -25,8 +25,7 @@ import {
 } from "./recipe-model.js";
 import {
   executableRecipeToolNames,
-  exactAgentMcpToolRefs,
-  mcpCliPromptLines,
+  mcpSystemPromptLines,
   resolveAgentMcpSelections,
 } from "./mcp.js";
 
@@ -129,26 +128,22 @@ function applySystemInstructions(
   return [base, instructions.content].filter(Boolean).join("\n\n");
 }
 
-function runtimeContextPrompt(
-  workspaceDir: string,
-  recipeDir: string,
-  tools: readonly string[],
+function mcpSystemPrompt(
   mcp: RecipeAgentMcp | undefined,
   mcpAvailableTools: readonly string[] | undefined
-): string {
+): string | undefined {
   const selections = resolveAgentMcpSelections(mcp);
-  const mcpRefs = exactAgentMcpToolRefs(selections);
-  const mcpPrompt = selections.length > 0
-    ? mcpCliPromptLines(mcpRefs, { availableTools: mcpAvailableTools }).join("\n")
-    : undefined;
+  if (selections.length === 0) return undefined;
+  const lines = mcpSystemPromptLines(mcpAvailableTools);
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function runtimeContextPrompt(workspaceDir: string, recipeDir: string): string {
   return [
-    [
-      "## Recipe Runtime Context",
-      "- Current workspace: " + workspaceDir,
-      "- Recipe directory: " + recipeDir,
-    ].join("\n"),
-    mcpPrompt,
-  ].filter(Boolean).join("\n\n");
+    "## Recipe Runtime Context",
+    "- Current workspace: " + workspaceDir,
+    "- Recipe directory: " + recipeDir,
+  ].join("\n");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -323,14 +318,9 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
           ),
         appendSystemPromptOverride: (base) => [
           ...base,
-          runtimeContextPrompt(
-            this.opts.workspaceDir,
-            this.opts.recipeDir,
-            agent.tools,
-            agent.mcp,
-            this.opts.mcpAvailableTools
-          ),
-        ],
+          mcpSystemPrompt(agent.mcp, this.opts.mcpAvailableTools),
+          runtimeContextPrompt(this.opts.workspaceDir, this.opts.recipeDir),
+        ].filter((value): value is string => Boolean(value)),
       },
     });
 

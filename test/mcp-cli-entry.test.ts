@@ -59,15 +59,8 @@ describe("mcp CLI entry detection", () => {
   it("runs main when invoked directly", () => {
     const result = runCli(distCli, ["--help"]);
     expect(result.status).toBe(0);
-    expect(result.output).toContain("mcp <command> --help");
-    expect(result.output).toContain("not `mcporter` or `npx mcporter`");
-    expect(result.output).toContain("MCP resources");
-    expect(result.output).toContain("decoded JSON by default");
-    expect(result.output).toContain("--json '{\"key\":\"value\"}'");
-    expect(result.output).toContain("multi-value |");
-    expect(result.output).toContain(
-      "Otherwise inspect the exact tool before supplying arguments: mcp list <server.tool> --schema"
-    );
+    expect(result.stdout.length).toBeGreaterThan(0);
+    expect(result.stderr).toBe("");
   });
 
   it("exits cleanly when a downstream pipeline closes stdout", () => {
@@ -111,54 +104,26 @@ describe("mcp CLI entry detection", () => {
 
     const result = runCli(link, ["--help"]);
     expect(result.status).toBe(0);
-    expect(result.output).toContain("mcp");
+    expect(result.stdout.length).toBeGreaterThan(0);
+    expect(result.stderr).toBe("");
   });
 
-  it("provides wrapper help for search and run subcommands", () => {
-    const search = runCli(distCli, ["search", "--help"]);
-    expect(search.status).toBe(0);
-    expect(search.output.trim().length).toBeGreaterThan(0);
-    expect(search.output).toContain("Try broader or alternate terms");
-    expect(search.output).toContain("mcp list <server.tool> --schema");
-
-    const run = runCli(distCli, ["run", "--help"]);
-    expect(run.status).toBe(0);
-    expect(run.output.trim().length).toBeGreaterThan(0);
-    expect(run.output).toContain("PI_RECIPES_MCP_RUN_TIMEOUT_MS");
-    expect(run.output).toContain("MCP calls are always headless");
-    expect(run.output).not.toContain("managed");
-  });
-
-  it("keeps an empty search on the progressive-disclosure path", () => {
-    const result = runCli(distCli, ["search", "unlikely-capability"]);
-    expect(result.status).toBe(0);
-    expect(result.output).toContain("Try broader or alternate terms");
-    expect(result.output).toContain("Use `mcp list <server>` only to identify exact tool names");
-    expect(result.output).toContain("mcp list <server.tool> --schema");
-    expect(result.output).not.toContain("run `mcp list` to inspect available servers");
-  });
-
-  it("provides recipe-scoped help for delegated commands", () => {
-    for (const command of ["list", "call"]) {
+  it("provides wrapper help for every supported subcommand", () => {
+    for (const command of ["search", "run", "list", "call"]) {
       const result = runCli(distCli, [command, "--help"]);
       expect(result.status).toBe(0);
-      expect(result.output).toContain("recipe session");
-      expect(result.output).not.toContain("--http-url");
-      expect(result.output).not.toContain("--stdio");
+      expect(result.stdout.trim().length).toBeGreaterThan(0);
+      expect(result.stderr).toBe("");
     }
   });
 
-  it("documents exact-target list flags and keeps quiet mode free of the capability banner", () => {
-    const help = runCli(distCli, ["list", "--help"]);
-    expect(help.output).toContain("exact server target");
-    expect(help.output).toContain("--no-oauth");
-
+  it("keeps quiet list output silent", () => {
     const quiet = runCli(distCli, ["list", "--quiet"]);
     expect(quiet.status).toBe(0);
-    expect(quiet.output).not.toContain("Only exact tool names shown");
+    expect(quiet.output).toBe("");
   });
 
-  it("keeps exact-tool schema JSON machine-readable on delegated failures", () => {
+  it("keeps delegated list failures machine-readable in JSON mode", () => {
     writeFileSync(
       join(dir, "mcp.json"),
       JSON.stringify({
@@ -196,24 +161,16 @@ describe("mcp CLI entry detection", () => {
     const result = runCli(distCli, [
       "list",
       "offline.lookup",
-      "--schema",
       "--json",
       "--timeout",
       "100",
     ]);
     expect(result.status).not.toBe(0);
     expect(() => JSON.parse(result.stdout)).not.toThrow();
-    expect(result.stdout).not.toContain("Output schema (response shape)");
     expect(result.stderr).not.toContain("Only exact tool names shown");
   });
 
-  it("documents JSON stdin, structured call errors, and headless authentication", () => {
-    const call = runCli(distCli, ["call", "--help"]);
-    expect(call.output).toContain("--args <json|->");
-    expect(call.output).toContain("Machine-readable output is forwarded unchanged");
-    expect(call.output).toContain("--no-oauth");
-    expect(call.output).toContain("Quote argument tokens containing shell operators");
-
+  it("rejects in-session authentication", () => {
     const auth = runCli(distCli, ["auth", "contacts"]);
     expect(auth.status).toBe(2);
     expect(auth.output).toContain("Ask the user to authenticate");

@@ -6,6 +6,7 @@ import { stdin as input, stderr, stdout } from "node:process";
 import { Worker } from "node:worker_threads";
 import { createCallResult, createRuntime } from "mcporter";
 import { isDirectEntry } from "./direct-cli.js";
+import { mcpCliHelpText } from "./mcp-cli-help.js";
 import {
   defaultMcporterConfigPath,
   defaultMcpManifestPath,
@@ -115,54 +116,6 @@ export class McpRunToolError extends Error {
   }
 }
 
-export function mcpCliHelpText(): string {
-  return [
-    "mcp - use available MCP tools",
-    "Supported: search, list, call, and run.",
-    "Run `mcp <command> --help` for complete command syntax.",
-    "Use this session-local `mcp` command, not `mcporter` or `npx mcporter`; it enforces the materialized recipe capabilities.",
-    "",
-    "Find tools:",
-    "  mcp search \"what you need\"",
-    "  mcp search \"tool|argument\" --regex --json",
-    "  mcp list",
-    "  mcp list <server>",
-    "  mcp list <server.tool> --schema",
-    "  Add --brief for compact signatures, --all-parameters for every optional input, or --json for machine output.",
-    "",
-    "Call one tool:",
-    "  mcp call <server>.<tool> key=value ...",
-    "  mcp call '<server>.<tool>(key: \"value\")'",
-    "  mcp call <server>.<tool> --json '{\"key\":\"value\"}'",
-    "  Calls support --args/--json payloads, --output text|markdown|json|raw, --save-images, --timeout, and @file.",
-    "  Quote argument tokens containing shell operators, especially multi-value |; JSON stdin avoids shell quoting.",
-    "  Use --output json for machine-readable success and failure envelopes.",
-    "",
-    "Run a short workflow:",
-    "  mcp run --var ID=abc123 <<'EOF'",
-    '  const result = await tools["server"]["tool"]({ sessionId: vars.ID, key: "value" })',
-    "  console.log(JSON.stringify(result, null, 2))",
-    "  EOF",
-    "  Keep the heredoc quoted (<<'EOF'); pass dynamic values with --var KEY=value (read as vars.KEY).",
-    "  Calls return decoded JSON by default. Use tool.text(args), tool.markdown(args), tool.images(args), tool.content(args), tool.structuredContent(args), or tool.raw(args) only when the tool documentation calls for another shape.",
-    "",
-    "When to use:",
-    "  Use search when you do not know the right tool.",
-    "  Use arguments documented by the active recipe or skill directly. Otherwise inspect the exact tool before supplying arguments: mcp list <server.tool> --schema.",
-    "  Use mcp call for a single simple operation.",
-    "  Use mcp run for multiple calls, filtering, ranking, or dedupe.",
-    "  Use @file for long text and --output json when piping call output.",
-    "  Tool commands are always headless. If authentication is required, ask the user to authenticate the MCP connection outside the agent session, then retry.",
-    "",
-    "Availability:",
-    "  Search and list expose only tools callable in this session.",
-    "  Only exact tool names returned by mcp list are callable.",
-    "  Descriptions may mention related tools that are not exposed; mentions do not grant access.",
-    "  If no listed tool supports an action, report that the connected capability is unavailable.",
-    "  MCP resources and mcporter configuration, ad-hoc transport, code-generation, record/replay, daemon, and serve commands are not exposed.",
-  ].join("\n");
-}
-
 export function mcpListHelpText(): string {
   return [
     "Usage: mcp list [server | server.tool] [flags]",
@@ -178,6 +131,8 @@ export function mcpListHelpText(): string {
     "  --quiet, --exit-code      Health checks for an exact server target.",
     "  --timeout <ms>            Override discovery timeout for an exact target.",
     "  --no-oauth                Use cached credentials without starting OAuth.",
+    "  Use only one output-mode flag at a time: --brief, --schema, --all-parameters, --json, or --status.",
+    "  Exact --schema output includes both input and output schemas, with the output schema after the input schema. Do not truncate it with head or sed.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -205,6 +160,7 @@ export function mcpCallHelpText(): string {
     "  --no-oauth, --oauth-timeout <ms>",
     "  --raw-strings, --no-coerce",
     "  Machine-readable output is forwarded unchanged.",
+    "  When parsing JSON, keep stderr separate and do not truncate stdout with head or sed.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -235,6 +191,8 @@ export function mcpRunHelpText(): string {
     "Structured MCP errors retain code, retryable, action, request_id, and outcome fields when supplied.",
     "Calls return decoded JSON by default, so read response fields directly from the awaited value.",
     "Only when a tool documents another response type, call the format on the tool itself: tool.text(args), tool.markdown(args), tool.images(args), tool.content(args), tool.structuredContent(args), or tool.raw(args).",
+    "Use Promise.all for independent reads. Await dependent calls and mutations in order.",
+    "Do not loop over mcp call in the shell. Use mcp run for repeated calls and print only the fields needed.",
     "Use --var/vars for dynamic input; process.argv is intentionally unavailable inside workflows.",
     "--json-errors emits a structured error object on stderr while preserving the nonzero exit code.",
     "MCP calls are always headless. If authentication is required, ask the user to authenticate the connection outside the agent session, then retry.",
@@ -242,9 +200,10 @@ export function mcpRunHelpText(): string {
     "Code runs with the same OS privileges as the active shell sandbox; mcp run is not a separate security boundary.",
     "",
     "Example:",
-    "  mcp run --var ID=abc123 <<'EOF'",
-    '  const result = await tools["server"]["tool"]({ id: vars.ID })',
-    "  console.log(JSON.stringify(result, null, 2))",
+    "  mcp run <<'EOF'",
+    '  const ids = ["id-1", "id-2", "id-3"]',
+    '  const results = await Promise.all(ids.map(id => tools["server"]["tool"]({ id })))',
+    "  console.log(JSON.stringify(results.map(result => ({ id: result.id, name: result.name })), null, 2))",
     "  EOF",
   ].join("\n");
 }
