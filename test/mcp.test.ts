@@ -359,7 +359,7 @@ describe("recipe MCP materialization", () => {
         {
           serverId: "nextplay",
           toolName: "search_profiles",
-          raw: "mcp:nextplay/search_profiles",
+          raw: "search_profiles",
         },
       ],
       {
