@@ -8,6 +8,7 @@ import {
   createDelegatedErrorFilter,
   describeUnavailableRunTool,
   describeUnknownRunServer,
+  McpRunToolError,
   outputSchemaSection,
   runMcpJavaScript,
   searchMcpTools,
@@ -1716,7 +1717,37 @@ describe("mcporter CLI end-to-end", () => {
       }
       expect(aggregateError).toBeInstanceOf(Error);
       expect((aggregateError as Error).message).toContain("stub failure: explode");
+      expect((aggregateError as Error).message).toContain("Workflow call outcomes:");
+      expect((aggregateError as Error).message).toContain("stub.get_value=failed");
+      expect((aggregateError as Error).message).toContain("stub.get_value=succeeded");
+      expect((aggregateError as McpRunToolError).details?.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ outcome: "failed" }),
+          expect.objectContaining({ outcome: "succeeded" }),
+        ])
+      );
       expect((aggregateError as Error).message).not.toContain("not awaited");
+
+      await expect(
+        runMcpJavaScript(
+          `
+          const result = await tools.stub.get_value({ key: "color" });
+          console.log(result.id);
+          `,
+          { timeoutMs: 10_000 }
+        )
+      ).rejects.toThrow(/CallResult has no property 'id'.*result\.json\(\)\.id/);
+
+      await expect(
+        runMcpJavaScript(
+          `await tools.stub.get_value({ "filterBy:=person_name='Ada'": "" });`,
+          { timeoutMs: 10_000 }
+        )
+      ).rejects.toThrow(/mcp run uses normal JavaScript objects/);
+
+      await expect(
+        runMcpJavaScript(`console.log(process.argv[2]);`, { timeoutMs: 10_000 })
+      ).rejects.toThrow(/process\.argv is unavailable in mcp run.*--var KEY=value/);
 
       await expect(
         runMcpJavaScript(

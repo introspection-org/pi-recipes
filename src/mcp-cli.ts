@@ -218,7 +218,9 @@ export function mcpRunHelpText(): string {
     "Detached .then/.catch calls fail if still pending when the script exits.",
     "Structured MCP errors retain code, retryable, action, request_id, and outcome fields when supplied.",
     "Calls return mcporter CallResult objects with text/markdown/json/images/content/structuredContent helpers and .raw.",
+    "Decode a CallResult before reading response fields; direct access such as result.id throws with a correction.",
     "Use .json() only for JSON-shaped results; use .text(), .content(), or .raw when the response is not JSON.",
+    "Use --var/vars for dynamic input; process.argv is intentionally unavailable inside workflows.",
     "--json-errors emits a structured error object on stderr while preserving the nonzero exit code.",
     "MCP calls are always headless. If authentication is required, ask the user to authenticate the connection outside the agent session, then retry.",
     "A synchronous busy-loop is force-killed at the deadline.",
@@ -268,7 +270,35 @@ function checkedCallResult(
           : callResult.text() ?? "MCP tool call failed.";
     throw new McpRemoteToolResultError({ ...errorObject, message });
   }
-  return callResult;
+  return new Proxy(callResult, {
+    get(target, property) {
+      if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) {
+        return Reflect.get(target, property, target);
+      }
+      // Promise resolution probes returned values for `.then`.
+      if (property === "then") return undefined;
+      if (property in target) {
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      throw new McpRunUsageError(
+        `CallResult has no property '${property}'. Decode the tool response first, ` +
+          `for example with result.json().${property}; other readers are .text(), ` +
+          ".markdown(), .images(), .content(), .structuredContent(), and .raw."
+      );
+    },
+  });
+}
+
+function validateRunToolArgs(server: string, tool: string, args: Record<string, unknown>): void {
+  const cliStyleKey = Object.keys(args).find((key) => key.includes(":=") || key.includes("="));
+  if (!cliStyleKey) return;
+  const suggestedKey = cliStyleKey.split(/:=|=/, 1)[0];
+  throw new McpRunUsageError(
+    `Invalid JavaScript argument key '${cliStyleKey}' for ${server}.${tool}. ` +
+      `mcp run uses normal JavaScript objects: write { ${suggestedKey}: value }, ` +
+      `not mcporter CLI key=value or key:=value syntax.`
+  );
 }
 
 class ToolCallQueue {
@@ -720,6 +750,7 @@ async function createTools(opts: {
         const startCall = (
           args: Record<string, unknown>
         ): Promise<ReturnType<typeof createCallResult>> => {
+          validateRunToolArgs(server, property, args);
           const allowedToolNames = knownTools.get(server);
           if (allowedToolNames && !allowedToolNames.includes(property)) {
             throw new McpRunToolError(
@@ -867,6 +898,38 @@ function createVars(vars: Record<string, string>): Record<string, string> {
   });
 }
 
+function createRunProcess(): NodeJS.Process {
+  return new Proxy(globalThis.process, {
+    get(target, property) {
+      if (property === "argv") {
+        throw new McpRunUsageError(
+          "process.argv is unavailable in mcp run. Pass dynamic values with --var KEY=value and read them as vars.KEY."
+        );
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function concurrentOutcomeError(
+  error: McpRunToolError,
+  calls: ToolCallRecord[]
+): McpRunToolError {
+  if (calls.length < 2) return error;
+  const outcomes = calls.map((call) => ({
+    ref: call.ref,
+    outcome: call.outcome,
+    ...(call.error ? { error: call.error } : {}),
+  }));
+  const summary = outcomes.map((call) => `${call.ref}=${call.outcome}`).join(", ");
+  const message = `${error.message} Workflow call outcomes: ${summary}. Inspect state before retrying side-effecting calls.`;
+  return new McpRunToolError(error.server, error.tool, message, {
+    cause: error,
+    details: { ...error.details, message, calls: outcomes },
+  });
+}
+
 function positiveInteger(
   value: number | string | undefined,
   label: string,
@@ -918,15 +981,15 @@ export async function runMcpJavaScript(
   });
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
     ...args: string[]
-  ) => (tools: unknown, vars: Record<string, string>) => Promise<unknown>;
-  const run = new AsyncFunction("tools", "vars", code);
+  ) => (tools: unknown, vars: Record<string, string>, process: NodeJS.Process) => Promise<unknown>;
+  const run = new AsyncFunction("tools", "vars", "process", code);
   let timeout: NodeJS.Timeout | undefined;
   let primaryError: unknown;
   try {
     let scriptError: unknown;
     try {
       await Promise.race([
-        run(tools, createVars(opts.vars ?? {})),
+        run(tools, createVars(opts.vars ?? {}), createRunProcess()),
         new Promise((_resolve, reject) => {
           timeout = setTimeout(() => {
             reject(
@@ -988,7 +1051,7 @@ export async function runMcpJavaScript(
         scriptError instanceof McpRunToolError &&
         remainingUnsafe.length === 0
       ) {
-        throw scriptError;
+        throw concurrentOutcomeError(scriptError, calls);
       }
       const summary = unsafeAtExit
         .map(
