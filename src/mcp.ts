@@ -976,20 +976,13 @@ export function mcpCliPromptLines(
   return [
     "## MCP tools",
     "Use the session-local `mcp` command through an active command-execution tool (normally `bash`; recipes may provide a custom shell wrapper).",
+    "MCP endpoint tools are not registered directly in the model tool list; access them only through this command.",
+    "The first `mcp` command in this session must be exactly `mcp --help`. Do not infer command syntax before reading it. Treat that output and each subcommand's `--help` as the authoritative CLI contract.",
     ...availabilityLines,
     ...serverInstructionLines,
-    '- Use `mcp search "<what you need>"` when you are unsure which tool applies.',
     callableRule,
-    "- Use arguments already documented by the active recipe or skill directly. If a required input is genuinely unknown, inspect only that one tool with `mcp list <server.tool> --schema` immediately before calling it. Never batch schema reads or preflight schemas for later steps.",
+    "- Use tools and arguments already documented by the active recipe or skill directly. Otherwise follow `mcp --help` to discover the tool and inspect only the exact schema you need.",
     "- If no available tool supports the request, explain that the connected capability is unavailable instead of guessing a tool name.",
-    "- Run `mcp --help` for the complete CLI guide.",
-    "Examples:",
-    '- `mcp search "contact lookup"`',
-    "- `mcp list contacts.search_contacts --schema`",
-    '- `mcp call contacts.search_contacts query="Ada Lovelace"`',
-    "- `mcp call 'contacts.search_contacts(query: \"Ada Lovelace\", limit: 5)'`",
-    '- Use `mcp run` for workflows involving multiple calls, filtering, or deduplication; tools are functions such as `tools["contacts"]["search_contacts"]({ query: "Ada Lovelace" })`.',
-    "- Every `mcp run` tool call returns decoded JSON by default. Read fields directly from the awaited value. Only when a tool documents another response type, select it on the tool function with `.text(args)`, `.markdown(args)`, `.images(args)`, `.content(args)`, `.structuredContent(args)`, or `.raw(args)`.",
   ];
 }
 

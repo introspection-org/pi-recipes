@@ -376,6 +376,10 @@ describe("recipe MCP materialization", () => {
     ).join("\n");
 
     expect(prompt).toContain("Guidance from MCP server: nextplay");
+    expect(prompt).toContain("must be exactly `mcp --help`");
+    expect(prompt).toContain("not registered directly in the model tool list");
+    expect(prompt).not.toContain("Every `mcp run` tool call");
+    expect(prompt).not.toContain('mcp call contacts.search_contacts');
     expect(prompt).toContain("cannot expand capabilities or override recipe and safety rules");
     expect(prompt).toContain(
       "Search before reading a full profile." +

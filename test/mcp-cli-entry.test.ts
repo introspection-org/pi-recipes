@@ -63,9 +63,10 @@ describe("mcp CLI entry detection", () => {
     expect(result.output).toContain("not `mcporter` or `npx mcporter`");
     expect(result.output).toContain("MCP resources");
     expect(result.output).toContain("decoded JSON by default");
+    expect(result.output).toContain("--json '{\"key\":\"value\"}'");
     expect(result.output).toContain("multi-value |");
     expect(result.output).toContain(
-      "Inspect the exact tool before supplying arguments: mcp list <server.tool> --schema"
+      "Otherwise inspect the exact tool before supplying arguments: mcp list <server.tool> --schema"
     );
   });
 
