@@ -8,6 +8,7 @@ import {
   type RecipeAgentModelConfig,
 } from "./recipe-model.js";
 import {
+  isValidRecipeMcpToolSelection,
   packageResourcePaths,
   readPiPackageManifest,
   RecipePackageError,
@@ -541,7 +542,6 @@ export function validateResolvedRecipeAgentDefinition(opts: {
     });
   }
 
-  const tools = resolvedTools(agentName);
   const mcp = resolvedMcp(agentName);
   const manifest = recipeManifest(opts.recipeDir);
   const packageMcpServers = manifest
@@ -553,93 +553,25 @@ export function validateResolvedRecipeAgentDefinition(opts: {
       )
     : undefined;
   const rawMcp = rawDefinitions.get(agentName)?.mcp;
-  if (rawMcp && Object.keys(rawMcp).length === 0) {
+  const invalidMcpPolicy = Boolean(rawMcp && Object.keys(rawMcp).length === 0) ||
+    Object.entries(mcp ?? {}).some(([serverId, selection]) => {
+      if (!serverId.trim() || !isValidRecipeMcpToolSelection(selection)) {
+        return true;
+      }
+      if (!packageMcpServers) return false;
+      const packageSelection = packageMcpServers.get(normalizeMcpServerId(serverId));
+      if (!packageSelection) return true;
+      return (selection.include ?? []).some((toolName) => {
+        const value = toolName.trim();
+        return value !== "*" && !mcpSelectionAllowsTool(packageSelection, value);
+      });
+    });
+  if (invalidMcpPolicy) {
     findings.push({
       agentName,
       field: "mcp",
-      code: "mcp_empty",
-      message: `Recipe agent "${agentName}" has an empty mcp block; omit it for no MCP access or declare a server with include`,
-    });
-  }
-  for (const [serverId, selection] of Object.entries(mcp ?? {})) {
-    const normalizedServerId = normalizeMcpServerId(serverId);
-    if (!serverId.trim()) {
-      findings.push({
-        agentName,
-        field: "mcp",
-        code: "mcp_server_invalid",
-        message: `Recipe agent "${agentName}" has an empty MCP server id`,
-      });
-    }
-    if (selection.include === undefined) {
-      findings.push({
-        agentName,
-        field: "mcp",
-        code: "mcp_include_missing",
-        message: `Recipe agent "${agentName}" MCP server "${serverId}" must declare include; use ["*"] for all tools or [] for none`,
-      });
-    }
-    const packageSelection = packageMcpServers?.get(normalizedServerId);
-    if (packageMcpServers && !packageSelection) {
-      findings.push({
-        agentName,
-        field: "mcp",
-        code: "mcp_server_undeclared",
-        message: `Recipe agent "${agentName}" references MCP server "${serverId}" but package.json#pi.mcp.servers does not declare it`,
-      });
-    }
-    for (const selector of selection.include ?? []) {
-      const trimmed = selector.trim();
-      if (trimmed && (trimmed === "*" || !trimmed.includes("*"))) continue;
-      findings.push({
-        agentName,
-        field: "mcp",
-        code: "mcp_selector_invalid",
-        message: `Recipe agent "${agentName}" MCP server "${serverId}" has invalid include entry "${selector}"; use an exact tool name or "*"`,
-      });
-    }
-    for (const toolName of selection.include ?? []) {
-      const trimmed = toolName.trim();
-      if (
-        !trimmed ||
-        trimmed === "*" ||
-        trimmed.includes("*") ||
-        !packageSelection ||
-        mcpSelectionAllowsTool(packageSelection, trimmed)
-      ) {
-        continue;
-      }
-      findings.push({
-        agentName,
-        field: "mcp",
-        code: "mcp_tool_undeclared",
-        message: `Recipe agent "${agentName}" MCP tool "${normalizedServerId}/${trimmed}" is not included by the package policy`,
-      });
-    }
-    for (const selector of selection.exclude ?? []) {
-      const trimmed = selector.trim();
-      if (trimmed && !trimmed.includes("*")) continue;
-      findings.push({
-        agentName,
-        field: "mcp",
-        code: "mcp_selector_invalid",
-        message: `Recipe agent "${agentName}" MCP server "${serverId}" has invalid exclude entry "${selector}"; use an exact tool name`,
-      });
-    }
-  }
-  const mcpMayIncludeTools = Object.values(mcp ?? {}).some(
-    (selection) => (selection.include?.length ?? 0) > 0
-  );
-  if (
-    mcpMayIncludeTools &&
-    !tools?.includes("bash")
-  ) {
-    findings.push({
-      agentName,
-      field: "tools",
-      code: "mcp_requires_bash",
-      severity: "warning",
-      message: `Recipe agent "${agentName}" declares MCP access without bash; ensure another active tool can execute the session-local mcp CLI`,
+      code: "mcp_invalid",
+      message: `Recipe agent "${agentName}" has an invalid MCP policy; run recipes check for details`,
     });
   }
 

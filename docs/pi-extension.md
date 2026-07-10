@@ -286,10 +286,12 @@ Package and agent MCP policies use only `include` and `exclude`. MCP tools are
 selected only through the agent `mcp` block; the ordinary `tools` list remains
 an explicit list of non-MCP tools.
 
-Validation reports explicit codes for invalid MCP configurations:
+`recipes check` owns detailed static MCP diagnostics, including:
 `agent.mcp_server_undeclared`, `agent.mcp_tool_undeclared`,
 `agent.mcp_include_missing`, `agent.mcp_empty`, and
-`agent.mcp_selector_invalid`. Runtime discovery similarly distinguishes an
+`agent.mcp_selector_invalid`. The TypeScript runtime uses a generic fail-closed
+guard so an invalid policy cannot launch silently without duplicating those
+diagnostics. Runtime discovery separately distinguishes an
 undeclared package server (`mcp.package_server_undeclared`), an unselected
 agent server (`mcp.agent_server_unselected`), explicit `include: []`
 (`mcp.agent_tools_disabled`), and a zero-tool policy intersection

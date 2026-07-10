@@ -297,9 +297,10 @@ therefore permits no MCP servers.
 Package and agent MCP policies use only `include` and `exclude`, and MCP tools
 are selected only through the agent `mcp` block. Missing package declarations,
 invalid selectors, and package-blocked agent tools are reported as validation
-errors rather than being silently filtered. Runtime binding diagnostics
-distinguish package, agent-selection, explicitly-disabled, and
-zero-tool-intersection filtering.
+errors by `recipes check` rather than being silently filtered. Runtime launch
+uses a generic fail-closed policy guard, while binding diagnostics distinguish
+package, agent-selection, explicitly-disabled, and zero-tool-intersection
+filtering.
 
 Agents with MCP access normally need `bash` or another command-capable
 tool, because MCP endpoint tools are invoked through the session-local CLI.

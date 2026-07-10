@@ -21,6 +21,20 @@ export interface RecipeMcpToolSelection {
   exclude?: string[];
 }
 
+/** Minimal runtime guard; recipe-check owns detailed authoring diagnostics. */
+export function isValidRecipeMcpToolSelection(
+  selection: RecipeMcpToolSelection
+): boolean {
+  if (selection.include === undefined) return false;
+  return selection.include.every((selector) => {
+    const value = selector.trim();
+    return Boolean(value) && (value === "*" || !value.includes("*"));
+  }) && (selection.exclude ?? []).every((selector) => {
+    const value = selector.trim();
+    return Boolean(value) && !value.includes("*");
+  });
+}
+
 export interface RecipePackageMcpConfig {
   manifests: string[];
   servers: RecipePackageMcpServer[];
@@ -705,37 +719,18 @@ export function validatePiPackageManifest(
       )
     );
   }
-  for (const server of pkg.mcp.servers) {
-    if (server.tools.include === undefined) {
-      findings.push(
-        finding(
-          "error",
-          "pi.mcp_include_missing",
-          `MCP server "${server.id}" must declare tools.include; use ["*"] for all tools or [] for none`,
-          pkg.name
-        )
-      );
-    }
-    for (const [list, selectors] of [
-      ["include", server.tools.include],
-      ["exclude", server.tools.exclude],
-    ] as const) {
-      for (const selector of selectors ?? []) {
-        const trimmed = selector.trim();
-        const valid = list === "include"
-          ? Boolean(trimmed) && (trimmed === "*" || !trimmed.includes("*"))
-          : Boolean(trimmed) && !trimmed.includes("*");
-        if (valid) continue;
-        findings.push(
-          finding(
-            "error",
-            "pi.mcp_selector_invalid",
-            `MCP server "${server.id}" tools.${list} entry "${selector}" must be ${list === "include" ? 'an exact tool name or "*"' : "an exact tool name"}`,
-            pkg.name
-          )
-        );
-      }
-    }
+  const invalidMcpServer = pkg.mcp.servers.find(
+    (server) => !isValidRecipeMcpToolSelection(server.tools)
+  );
+  if (invalidMcpServer) {
+    findings.push(
+      finding(
+        "error",
+        "pi.mcp_invalid",
+        `MCP server "${invalidMcpServer.id}" has an invalid tool policy; run recipes check for details`,
+        pkg.name
+      )
+    );
   }
   findings.push(...validateRecipeEvalsConfig(pkg.evals, pkg.name).findings);
 

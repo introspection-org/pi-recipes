@@ -209,7 +209,7 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("requires an explicit package MCP tools.include", () => {
+  it("fails closed on an invalid package MCP policy", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-include-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -227,7 +227,7 @@ describe("recipe package manifest", () => {
         valid: false,
         findings: [
           expect.objectContaining({
-            code: "pi.mcp_include_missing",
+            code: "pi.mcp_invalid",
             severity: "error",
           }),
         ],
@@ -237,7 +237,7 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("rejects glob patterns in package MCP tool policy", () => {
+  it("collapses package MCP policy failures into one runtime error", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-selector-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -260,11 +260,7 @@ describe("recipe package manifest", () => {
         valid: false,
         findings: [
           expect.objectContaining({
-            code: "pi.mcp_selector_invalid",
-            severity: "error",
-          }),
-          expect.objectContaining({
-            code: "pi.mcp_selector_invalid",
+            code: "pi.mcp_invalid",
             severity: "error",
           }),
         ],
@@ -1648,7 +1644,7 @@ describe("recipe child agents", () => {
     }
   });
 
-  it("warns when resolved agent tools include MCP refs without bash", () => {
+  it("leaves advisory MCP diagnostics to recipe-check", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agent-mcp-tools-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -1712,26 +1708,12 @@ describe("recipe child agents", () => {
           agentName: "worker",
           requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
         })
-      ).toEqual([
-        {
-          agentName: "worker",
-          field: "tools",
-          code: "mcp_requires_bash",
-          severity: "warning",
-          message:
-            'Recipe agent "worker" declares MCP access without bash; ensure another active tool can execute the session-local mcp CLI',
-        },
-      ]);
+      ).toEqual([]);
       const report = validateRecipeDirectory(root);
       expect(report.valid).toBe(true);
-      expect(report.findings).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            severity: "warning",
-            code: "agent.mcp_requires_bash",
-          }),
-        ])
-      );
+      expect(
+        report.findings.filter((finding) => finding.code.includes("mcp"))
+      ).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1790,7 +1772,7 @@ describe("recipe child agents", () => {
     }
   });
 
-  it("validates explicit per-server agent MCP selections", () => {
+  it("collapses agent MCP policy failures into one runtime error per agent", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agent-mcp-selector-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -1851,35 +1833,17 @@ describe("recipe child agents", () => {
         "      - \"*\"",
       ]);
 
-      expect(validateRecipeAgentDefinitions(root)).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            agentName: "missing-include",
-            field: "mcp",
-            code: "mcp_include_missing",
-          }),
-          expect.objectContaining({
-            agentName: "undeclared-server",
-            field: "mcp",
-            code: "mcp_server_undeclared",
-          }),
-          expect.objectContaining({
-            agentName: "package-blocked-tool",
-            field: "mcp",
-            code: "mcp_tool_undeclared",
-          }),
-          expect.objectContaining({
-            agentName: "empty-mcp",
-            field: "mcp",
-            code: "mcp_empty",
-          }),
-          expect.objectContaining({
-            agentName: "invalid-patterns",
-            field: "mcp",
-            code: "mcp_selector_invalid",
-          }),
-        ])
-      );
+      const findings = validateRecipeAgentDefinitions(root);
+      expect(findings.map((finding) => finding.agentName).sort()).toEqual([
+        "empty-mcp",
+        "invalid-patterns",
+        "missing-include",
+        "package-blocked-tool",
+        "undeclared-server",
+      ]);
+      expect(findings.every((finding) =>
+        finding.field === "mcp" && finding.code === "mcp_invalid"
+      )).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
