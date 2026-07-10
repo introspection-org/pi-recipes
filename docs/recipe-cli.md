@@ -327,11 +327,17 @@ console.log(JSON.stringify(result, null, 2))
 EOF
 ```
 
-Every `mcp run` tool call must be awaited. Missing awaits, duplicate direct-call
-arguments, invalid limits, and invalid timeout configuration fail with a nonzero
-usage status instead of continuing ambiguously. Run workflows also bound
-per-call time, total calls, and concurrency; a timeout reports that a remote
-mutation may already have committed and must be inspected before retrying.
+Every `mcp run` tool call must be awaited or its promise chain returned. A
+detached `.then()` or `.catch()` chain that is still pending when the script
+exits fails as a missing await. Duplicate direct-call arguments, invalid limits,
+and invalid timeout configuration also fail with a nonzero usage status instead
+of continuing ambiguously. Run workflows bound per-call time, total calls, and
+concurrency; excess calls wait in a FIFO queue and inherit the remaining run
+deadline. At the deadline queued calls are cancelled and active transports are
+closed. A timeout still reports that a remote mutation may already have
+committed and must be inspected before retrying. Structured MCP errors preserve
+server recovery fields such as `code`, `retryable`, `action`, `request_id`, and
+`outcome` in JavaScript and `--json-errors` output.
 
 The JavaScript runs with the same OS privileges as the active shell sandbox.
 `mcp run` is not an additional sandbox or security boundary.

@@ -891,8 +891,23 @@ describe("recipe MCP availability", () => {
 });
 
 describe("mcporter CLI end-to-end", () => {
-  function startStubMcpServer(expectedAuth: string): Promise<{ server: Server; url: string }> {
+  function startStubMcpServer(expectedAuth: string): Promise<{
+    server: Server;
+    url: string;
+    stats: {
+      activeCalls: number;
+      maxActiveCalls: number;
+      startedKeys: string[];
+      abortedCalls: number;
+    };
+  }> {
     const sessions = new Set<string>();
+    const stats = {
+      activeCalls: 0,
+      maxActiveCalls: 0,
+      startedKeys: [] as string[],
+      abortedCalls: 0,
+    };
     const server = createServer((req, res) => {
       // The MCP SDK streamable-HTTP client also opens a GET SSE stream and
       // DELETEs the session on close; only POSTs carry JSON-RPC bodies.
@@ -906,7 +921,7 @@ describe("mcporter CLI end-to-end", () => {
       }
       let body = "";
       req.on("data", (chunk) => (body += chunk));
-      req.on("end", () => {
+      req.on("end", async () => {
         if ((req.headers.authorization ?? "") !== expectedAuth) {
           res.writeHead(401).end(JSON.stringify({ error: "unauthorized" }));
           return;
@@ -970,12 +985,58 @@ describe("mcporter CLI end-to-end", () => {
         }
         if (msg.method === "tools/call") {
           const args = msg.params?.arguments as { key?: string } | undefined;
+          const key = args?.key ?? "";
+          stats.activeCalls += 1;
+          stats.maxActiveCalls = Math.max(stats.maxActiveCalls, stats.activeCalls);
+          stats.startedKeys.push(key);
+          let finished = false;
+          res.on("close", () => {
+            if (!finished) stats.abortedCalls += 1;
+          });
+          const delay = /^delay-(\d+)/.exec(key);
+          if (delay) await new Promise((resolve) => setTimeout(resolve, Number(delay[1])));
           const result =
-            args?.key === "explode"
+            key === "explode"
               ? {
                   isError: true,
                   content: [{ type: "text", text: "stub failure: explode" }],
                 }
+              : key === "typed-error"
+                ? {
+                    isError: true,
+                    content: [
+                      {
+                        type: "text",
+                        text: JSON.stringify({
+                          error: {
+                            code: "rate_limited",
+                            message: "Slow down and retry.",
+                            retryable: true,
+                            action: "retry",
+                            retry_after_ms: 250,
+                            request_id: "req-stub-1",
+                            outcome: "not_started",
+                          },
+                        }),
+                      },
+                    ],
+                  }
+                : key === "typed-error-direct"
+                  ? {
+                      isError: true,
+                      structuredContent: {
+                        code: "permission_denied",
+                        message: "Permission required.",
+                        retryable: false,
+                        action: "request_permission",
+                      },
+                      content: [
+                        {
+                          type: "text",
+                          text: "Permission required.",
+                        },
+                      ],
+                    }
               : {
                   content: [
                     {
@@ -984,9 +1045,13 @@ describe("mcporter CLI end-to-end", () => {
                     },
                   ],
                 };
-          res.writeHead(200, headers).end(
-            JSON.stringify({ jsonrpc: "2.0", id: msg.id, result })
-          );
+          stats.activeCalls -= 1;
+          if (!res.destroyed) {
+            finished = true;
+            res.writeHead(200, headers).end(
+              JSON.stringify({ jsonrpc: "2.0", id: msg.id, result })
+            );
+          }
           return;
         }
         res.writeHead(200, headers).end(JSON.stringify({ jsonrpc: "2.0", id: msg.id ?? null, result: {} }));
@@ -996,7 +1061,7 @@ describe("mcporter CLI end-to-end", () => {
       server.listen(0, "127.0.0.1", () => {
         const address = server.address();
         const port = typeof address === "object" && address ? address.port : 0;
-        resolve({ server, url: `http://127.0.0.1:${port}/mcp` });
+        resolve({ server, url: `http://127.0.0.1:${port}/mcp`, stats });
       });
     });
   }
@@ -1015,6 +1080,29 @@ describe("mcporter CLI end-to-end", () => {
       child.stdout.on("data", (chunk) => (stdout += chunk));
       child.stderr.on("data", (chunk) => (stderr += chunk));
       child.on("close", (code) => resolve({ code, stdout, stderr }));
+    });
+  }
+
+  function runMcpCli(
+    args: string[],
+    env: Record<string, string>,
+    input: string
+  ): Promise<{ code: number | null; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      const child = spawn(
+        process.execPath,
+        [join(process.cwd(), "dist", "mcp-cli.js"), ...args],
+        {
+          env: { ...process.env, ...env },
+          stdio: ["pipe", "pipe", "pipe"],
+        }
+      );
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => (stdout += chunk));
+      child.stderr.on("data", (chunk) => (stderr += chunk));
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+      child.stdin.end(input);
     });
   }
 
@@ -1075,7 +1163,7 @@ describe("mcporter CLI end-to-end", () => {
 
   it("runs JavaScript with recipe MCP tools injected", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-run-"));
-    const { server, url } = await startStubMcpServer("Bearer stub-token");
+    const { server, url, stats } = await startStubMcpServer("Bearer stub-token");
     const previousConfig = process.env.MCPORTER_CONFIG;
     const previousToken = process.env.STUB_MCP_TOKEN;
     const previousManifest = process.env.PI_RECIPES_MCP_MANIFEST;
@@ -1117,6 +1205,26 @@ describe("mcporter CLI end-to-end", () => {
         } catch (error) {
           errorMessage = error instanceof Error ? error.message : String(error);
         }
+        let typedError = null;
+        try {
+          await tools.stub.get_value({ key: "typed-error" });
+        } catch (error) {
+          typedError = {
+            name: error.name,
+            code: error.code,
+            message: error.message,
+            retryable: error.retryable,
+            action: error.action,
+            outcome: error.outcome,
+            details: error.details,
+          };
+        }
+        let directTypedError = null;
+        try {
+          await tools.stub.get_value({ key: "typed-error-direct" });
+        } catch (error) {
+          directTypedError = error.details;
+        }
         let unknownServerMessage = null;
         try {
           tools.stubb;
@@ -1138,7 +1246,16 @@ describe("mcporter CLI end-to-end", () => {
         } catch (error) {
           missingVarMessage = error instanceof Error ? error.message : String(error);
         }
-        globalThis.__mcpRunSmoke = { result, errorMessage, unknownServerMessage, unknownToolMessage, pendingSnapshot, missingVarMessage };
+        globalThis.__mcpRunSmoke = {
+          result,
+          errorMessage,
+          typedError,
+          directTypedError,
+          unknownServerMessage,
+          unknownToolMessage,
+          pendingSnapshot,
+          missingVarMessage,
+        };
         `,
         { timeoutMs: 10_000, vars: { KEY: "color" } }
       );
@@ -1146,6 +1263,29 @@ describe("mcporter CLI end-to-end", () => {
       expect((globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke).toEqual({
         result: 'called get_value with {"key":"color"}',
         errorMessage: "stub failure: explode",
+        typedError: {
+          name: "McpRunToolError",
+          code: "rate_limited",
+          message: "Slow down and retry.",
+          retryable: true,
+          action: "retry",
+          outcome: "not_started",
+          details: {
+            code: "rate_limited",
+            message: "Slow down and retry.",
+            retryable: true,
+            action: "retry",
+            retry_after_ms: 250,
+            request_id: "req-stub-1",
+            outcome: "not_started",
+          },
+        },
+        directTypedError: {
+          code: "permission_denied",
+          message: "Permission required.",
+          retryable: false,
+          action: "request_permission",
+        },
         unknownServerMessage:
           "Unknown MCP server 'stubb'. Did you mean 'tools.stub'? Available servers: stub.",
         unknownToolMessage:
@@ -1177,6 +1317,134 @@ describe("mcporter CLI end-to-end", () => {
           { timeoutMs: 10_000 }
         )
       ).rejects.toThrow(/stub\.get_value=succeeded[\s\S]*script also failed: later failure/);
+
+      await expect(
+        runMcpJavaScript(
+          'tools.stub.get_value({ key: "delay-75" }).then(() => {});',
+          { timeoutMs: 10_000 }
+        )
+      ).rejects.toThrow(
+        /tool call\(s\) were not awaited: stub\.get_value=succeeded[\s\S]*attaching \.then\/\.catch without awaiting/
+      );
+
+      stats.maxActiveCalls = 0;
+      stats.startedKeys.length = 0;
+      await runMcpJavaScript(
+        `
+        const keys = ["delay-80-a", "delay-80-b", "delay-80-c", "delay-80-d", "delay-80-e"];
+        await Promise.all(keys.map((key) => tools.stub.get_value({ key })));
+        `,
+        { timeoutMs: 10_000, maxConcurrentCalls: 2 }
+      );
+      expect(stats.maxActiveCalls).toBe(2);
+      expect(stats.startedKeys).toEqual([
+        "delay-80-a",
+        "delay-80-b",
+        "delay-80-c",
+        "delay-80-d",
+        "delay-80-e",
+      ]);
+
+      await expect(
+        runMcpJavaScript(
+          `
+          await tools.stub.get_value({ key: "first" });
+          await tools.stub.get_value({ key: "second" });
+          await tools.stub.get_value({ key: "third" });
+          `,
+          { timeoutMs: 10_000, maxCalls: 2 }
+        )
+      ).rejects.toThrow(/mcp run tool-call limit exceeded \(2\)/);
+
+      await runMcpJavaScript(
+        `
+        try {
+          await tools.stub.get_value({ key: "delay-300" });
+        } catch (error) {
+          globalThis.__mcpRunSmoke = {
+            name: error.name,
+            code: error.code,
+            retryable: error.retryable,
+            action: error.action,
+            outcome: error.outcome,
+          };
+        }
+        `,
+        { timeoutMs: 5_000, callTimeoutMs: 40 }
+      );
+      expect((globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke).toEqual(
+        {
+          name: "McpRunToolError",
+          code: "timeout",
+          retryable: true,
+          action: "inspect_state",
+          outcome: "unknown",
+        }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(stats.abortedCalls).toBeGreaterThan(0);
+
+      const detachedStartedAt = Date.now();
+      const detached = await runMcpCli(
+        ["run"],
+        {
+          MCPORTER_CONFIG: process.env.MCPORTER_CONFIG!,
+          PI_RECIPES_MCP_MANIFEST: process.env.PI_RECIPES_MCP_MANIFEST!,
+          STUB_MCP_TOKEN: "stub-token",
+        },
+        'tools.stub.get_value({ key: "delay-75" }).then(() => {});'
+      );
+      expect(detached.code).toBe(2);
+      expect(detached.stderr).toContain("tool call(s) were not awaited");
+      expect(Date.now() - detachedStartedAt).toBeLessThan(2_000);
+
+      const jsonError = await runMcpCli(
+        ["run", "--json-errors"],
+        {
+          MCPORTER_CONFIG: process.env.MCPORTER_CONFIG!,
+          PI_RECIPES_MCP_MANIFEST: process.env.PI_RECIPES_MCP_MANIFEST!,
+          STUB_MCP_TOKEN: "stub-token",
+        },
+        'await tools.stub.get_value({ key: "typed-error" });'
+      );
+      expect(jsonError.code).toBe(1);
+      expect(jsonError.stdout).toBe("");
+      const jsonErrorLine = jsonError.stderr
+        .trim()
+        .split("\n")
+        .find((line) => line.startsWith('{"error":'));
+      expect(jsonErrorLine, jsonError.stderr).toBeDefined();
+      expect(JSON.parse(jsonErrorLine!)).toEqual({
+        error: {
+          code: "rate_limited",
+          message: "Slow down and retry.",
+          retryable: true,
+          action: "retry",
+          retry_after_ms: 250,
+          request_id: "req-stub-1",
+          outcome: "not_started",
+          server: "stub",
+          tool: "get_value",
+        },
+      });
+
+      stats.startedKeys.length = 0;
+      const startedAt = Date.now();
+      await expect(
+        runMcpJavaScript(
+          `
+          await Promise.all([
+            tools.stub.get_value({ key: "delay-1000" }),
+            tools.stub.get_value({ key: "delay-1000" }),
+          ]);
+          `,
+          { timeoutMs: 150, callTimeoutMs: 5_000, maxConcurrentCalls: 1 }
+        )
+      ).rejects.toThrow(/mcp run timed out after 150ms/);
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(stats.startedKeys).toEqual(["delay-1000"]);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(stats.abortedCalls).toBeGreaterThan(1);
     } finally {
       if (previousConfig === undefined) delete process.env.MCPORTER_CONFIG;
       else process.env.MCPORTER_CONFIG = previousConfig;

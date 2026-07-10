@@ -343,10 +343,16 @@ coercion, or a function-call expression for nested objects and arrays;
 `key=@file.md` reads a value from a file, and `--output json` prints a
 machine-parseable result. Use `mcp run` when a workflow needs multiple calls,
 local filtering, ranking, or deduplication before printing a compact result.
-Every tool call in a run script must be awaited; an un-awaited call makes the
-command fail even if the remote operation eventually succeeds. Run workflows
-have bounded wall time, per-call time, total calls, and concurrency, and timeout
-diagnostics treat remote mutation outcome as unknown.
+Every tool call in a run script must be awaited or its chain returned; merely
+attaching `.then()` or `.catch()` is insufficient when the chain remains pending
+as the script exits. Run workflows have bounded wall time, per-call time, total
+calls, and concurrency. Calls beyond the concurrency limit wait in FIFO order
+and inherit the remaining workflow deadline. Per-call deadlines are forwarded
+to the MCP client; on a workflow timeout, queued calls are cancelled and active
+transports are closed. Because a remote mutation may already have committed,
+timeout diagnostics still treat its outcome as unknown. Structured MCP errors
+retain recovery fields such as `code`, `retryable`, `action`, `request_id`, and
+`outcome` on the thrown error and in `--json-errors` output.
 
 `mcp run` executes JavaScript with the same OS privileges as the active shell
 sandbox. It is a composition convenience, not a second security boundary; the

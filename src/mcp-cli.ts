@@ -51,16 +51,42 @@ export class McpRunTimeoutError extends Error {
   }
 }
 
+export interface McpRunRemoteErrorDetails extends Record<string, unknown> {
+  code?: string;
+  message: string;
+  retryable?: boolean;
+  action?: string;
+  outcome?: string;
+}
+
+class McpRemoteToolResultError extends Error {
+  constructor(readonly details: McpRunRemoteErrorDetails) {
+    super(details.message);
+    this.name = "McpRemoteToolResultError";
+  }
+}
+
 export class McpRunToolError extends Error {
   readonly kind = "tool_execution";
+  readonly details?: McpRunRemoteErrorDetails;
+  readonly code?: string;
+  readonly retryable?: boolean;
+  readonly action?: string;
+  readonly outcome?: string;
+
   constructor(
     readonly server: string,
     readonly tool: string,
     message: string,
-    options?: ErrorOptions
+    options?: ErrorOptions & { details?: McpRunRemoteErrorDetails }
   ) {
     super(message, options);
     this.name = "McpRunToolError";
+    this.details = options?.details;
+    this.code = options?.details?.code;
+    this.retryable = options?.details?.retryable;
+    this.action = options?.details?.action;
+    this.outcome = options?.details?.outcome;
   }
 }
 
@@ -118,8 +144,12 @@ export function mcpRunHelpText(): string {
     'Runs a short JavaScript workflow with available MCP tools such as `tools["server"]["tool"]`.',
     "With no file, code is read from stdin. Keep heredocs quoted and pass dynamic values with --var.",
     "Scripts are killed after 120s by default (override with PI_RECIPES_MCP_RUN_TIMEOUT_MS).",
-    "Each tool call is capped at 60s; workflows allow at most 100 calls and 16 concurrent calls by default.",
-    "Always await inside loops; a synchronous busy-loop is force-killed at the deadline.",
+    "Each tool call is capped at 60s; workflows allow at most 100 calls and run 16 at a time by default.",
+    "Extra calls wait in a FIFO queue and inherit the remaining workflow deadline.",
+    "Always await or return tool-call chains.",
+    "Detached .then/.catch calls fail if still pending when the script exits.",
+    "Structured MCP errors retain code, retryable, action, request_id, and outcome fields when supplied.",
+    "A synchronous busy-loop is force-killed at the deadline.",
     "Code runs with the same OS privileges as the active shell sandbox; mcp run is not a separate security boundary.",
     "",
     "Example:",
@@ -152,14 +182,18 @@ function normalizeToolResult(result: unknown): unknown {
     // Fail loudly in code mode so a bad call rejects instead of flowing an
     // error string into downstream logic.
     const parsed = callResult.json();
-    const parsedError = asRecord(parsed).error;
+    const parsedRecord = asRecord(parsed);
+    const parsedError = Object.prototype.hasOwnProperty.call(parsedRecord, "error")
+      ? parsedRecord.error
+      : parsedRecord;
+    const errorObject = asRecord(parsedError);
     const message =
       typeof parsedError === "string"
         ? parsedError
-        : typeof asRecord(parsedError).message === "string"
-          ? String(asRecord(parsedError).message)
-          : callResult.text();
-    throw new Error(message ?? "MCP tool call failed.");
+        : typeof errorObject.message === "string"
+          ? errorObject.message
+          : callResult.text() ?? "MCP tool call failed.";
+    throw new McpRemoteToolResultError({ ...errorObject, message });
   }
   const structured = callResult.structuredContent();
   if (structured !== undefined && structured !== null) return structured;
@@ -167,6 +201,46 @@ function normalizeToolResult(result: unknown): unknown {
   if (json !== null) return json;
   const text = callResult.text();
   return text ?? result;
+}
+
+class ToolCallQueue {
+  private active = 0;
+  private readonly waiting: Array<{
+    resolve: (release: () => void) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  private cancelled: unknown;
+
+  constructor(private readonly limit: number) {}
+
+  acquire(): Promise<() => void> {
+    if (this.cancelled !== undefined) return Promise.reject(this.cancelled);
+    if (this.active < this.limit) {
+      this.active += 1;
+      return Promise.resolve(this.releaseHandle());
+    }
+    return new Promise((resolve, reject) => this.waiting.push({ resolve, reject }));
+  }
+
+  cancel(error: unknown): void {
+    if (this.cancelled !== undefined) return;
+    this.cancelled = error;
+    for (const waiter of this.waiting.splice(0)) waiter.reject(error);
+  }
+
+  private releaseHandle(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = this.waiting.shift();
+      if (next && this.cancelled === undefined) {
+        next.resolve(this.releaseHandle());
+        return;
+      }
+      this.active -= 1;
+    };
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -514,13 +588,14 @@ async function createTools(opts: {
   callTimeoutMs: number;
   maxCalls: number;
   maxConcurrentCalls: number;
+  deadlineMs: number;
 }) {
   const runtime = await createRuntime();
   const knownTools = await manifestToolNames();
   const servers = runtime.listServers();
   const calls: ToolCallRecord[] = [];
   let callCount = 0;
-  let activeCalls = 0;
+  const queue = new ToolCallQueue(opts.maxConcurrentCalls);
   const toolsByServer: Record<
     string,
     Record<string, (args?: Record<string, unknown>) => Promise<unknown>>
@@ -543,19 +618,24 @@ async function createTools(opts: {
               `mcp run tool-call limit exceeded (${opts.maxCalls}). Split the workflow or raise PI_RECIPES_MCP_RUN_MAX_CALLS.`
             );
           }
-          if (activeCalls >= opts.maxConcurrentCalls) {
-            throw new McpRunUsageError(
-              `mcp run concurrent tool-call limit exceeded (${opts.maxConcurrentCalls}). Await calls or raise PI_RECIPES_MCP_RUN_MAX_CONCURRENCY.`
-            );
-          }
           callCount += 1;
-          activeCalls += 1;
           const rawCall = (async () => {
+            let release: (() => void) | undefined;
             try {
+              release = await queue.acquire();
+              const remainingMs = opts.deadlineMs - Date.now();
+              if (remainingMs <= 0) {
+                throw new McpRunTimeoutError(
+                  `mcp run deadline reached before ${server}.${property} started.`
+                );
+              }
               return normalizeToolResult(
                 await runtime.callTool(server, property, {
                   args,
-                  timeoutMs: opts.callTimeoutMs,
+                  // A queued call must never outlive the workflow that owns
+                  // it. mcporter forwards this timeout to the MCP SDK and
+                  // resets the transport when it fires.
+                  timeoutMs: Math.min(opts.callTimeoutMs, remainingMs),
                 })
               );
             } catch (error) {
@@ -566,9 +646,36 @@ async function createTools(opts: {
                 knownTools.get(server) ?? []
               );
               const message = improved instanceof Error ? improved.message : String(improved);
-              throw new McpRunToolError(server, property, message, { cause: improved });
+              const remoteDetails =
+                improved instanceof McpRemoteToolResultError
+                  ? improved.details
+                  : error instanceof McpRemoteToolResultError
+                    ? error.details
+                    : undefined;
+              const timeoutDetails =
+                !remoteDetails &&
+                (improved instanceof McpRunTimeoutError ||
+                  /\b(?:timed?\s*out|timeout)\b/i.test(message))
+                  ? {
+                      code: "timeout",
+                      message:
+                        improved instanceof McpRunTimeoutError
+                          ? message
+                          : `MCP tool call ${server}.${property} timed out.`,
+                      retryable: true,
+                      action: "inspect_state",
+                      outcome:
+                        improved instanceof McpRunTimeoutError ? "not_started" : "unknown",
+                    }
+                  : undefined;
+              throw new McpRunToolError(
+                server,
+                property,
+                remoteDetails?.message ?? timeoutDetails?.message ?? message,
+                { cause: improved, details: remoteDetails ?? timeoutDetails }
+              );
             } finally {
-              activeCalls -= 1;
+              release?.();
             }
           })();
           const record: ToolCallRecord = {
@@ -614,7 +721,12 @@ async function createTools(opts: {
       throw new Error(describeUnknownRunServer(property, servers));
     },
   });
-  return { runtime, tools, calls };
+  return {
+    runtime,
+    tools,
+    calls,
+    cancelQueued: (error: unknown) => queue.cancel(error),
+  };
 }
 
 // vars.TYPO silently becomes undefined, which strips the argument it feeds
@@ -676,10 +788,12 @@ export async function runMcpJavaScript(
     "PI_RECIPES_MCP_RUN_MAX_CONCURRENCY",
     DEFAULT_MAX_CONCURRENT_TOOL_CALLS
   );
-  const { runtime, tools, calls } = await createTools({
+  const deadlineMs = Date.now() + timeoutMs;
+  const { runtime, tools, calls, cancelQueued } = await createTools({
     callTimeoutMs,
     maxCalls,
     maxConcurrentCalls,
+    deadlineMs,
   });
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
     ...args: string[]
@@ -704,16 +818,44 @@ export async function runMcpJavaScript(
     } catch (error) {
       scriptError = error;
     }
-    const unobserved = calls.filter((call) => !call.observed);
-    if (unobserved.length > 0) {
-      await Promise.race([
-        Promise.allSettled(unobserved.map((call) => call.promise)),
-        new Promise((resolve) => setTimeout(resolve, 15_000)),
-      ]);
-      for (const call of unobserved) {
+
+    // A workflow deadline is also the cancellation boundary. mcporter 0.12.3
+    // does not expose an AbortSignal, but it does forward each effective
+    // timeout to the MCP SDK. Cancel calls that have not started, then close
+    // the runtime in finally to tear down active transports.
+    if (scriptError instanceof McpRunTimeoutError) {
+      cancelQueued(scriptError);
+      for (const call of calls) {
         if (call.outcome === "pending") call.outcome = "outcome_unknown";
       }
-      const summary = unobserved
+      throw scriptError;
+    }
+
+    // Accessing .then/.catch is not proof that a detached chain was awaited.
+    // Anything still pending when the script returns is unsafe even if a
+    // handler was attached, because closing the runtime can cut it off.
+    const unsafeAtExit = calls.filter(
+      (call) => !call.observed || call.outcome === "pending"
+    );
+    if (unsafeAtExit.length > 0) {
+      const remainingSettleMs = Math.max(0, Math.min(15_000, deadlineMs - Date.now()));
+      if (remainingSettleMs > 0) {
+        let settleTimer: NodeJS.Timeout | undefined;
+        try {
+          await Promise.race([
+            Promise.allSettled(unsafeAtExit.map((call) => call.promise)),
+            new Promise((resolve) => {
+              settleTimer = setTimeout(resolve, remainingSettleMs);
+            }),
+          ]);
+        } finally {
+          if (settleTimer) clearTimeout(settleTimer);
+        }
+      }
+      for (const call of unsafeAtExit) {
+        if (call.outcome === "pending") call.outcome = "outcome_unknown";
+      }
+      const summary = unsafeAtExit
         .map(
           (call) =>
             `${call.ref}=${call.outcome}` +
@@ -721,8 +863,10 @@ export async function runMcpJavaScript(
         )
         .join(", ");
       throw new McpRunUsageError(
-        `mcp run: ${unobserved.length} tool call(s) were not awaited: ${summary}. ` +
-          "Await every tool call before the script exits; remote side effects may already have occurred." +
+        `mcp run: ${unsafeAtExit.length} tool call(s) were not awaited: ${summary}. ` +
+          "Await or return every tool-call chain before the script exits; " +
+          "attaching .then/.catch without awaiting the chain is not enough. " +
+          "Remote side effects may already have occurred." +
           (scriptError
             ? ` The script also failed: ${scriptError instanceof Error ? scriptError.message : String(scriptError)}.`
             : "")
@@ -822,25 +966,29 @@ async function runCode(args: string[]): Promise<number> {
     const prefixed = message.startsWith("mcp run") ? message : `mcp run: ${message}`;
     const code = error instanceof McpRunUsageError ? 2 : 1;
     if (jsonErrors) {
+      const remoteDetails = error instanceof McpRunToolError ? error.details : undefined;
       stderr.write(
         `${JSON.stringify({
           error: {
+            ...remoteDetails,
             code:
-              error instanceof McpRunUsageError
+              remoteDetails?.code ??
+              (error instanceof McpRunUsageError
                 ? "invalid_usage"
                 : error instanceof McpRunToolError
                   ? "tool_execution"
                   : error instanceof McpRunTimeoutError
                     ? "timeout"
-                    : "script_failure",
-            message: prefixed,
-            retryable: false,
+                    : "script_failure"),
+            message: remoteDetails?.message ?? prefixed,
+            retryable: remoteDetails?.retryable ?? false,
             action:
-              error instanceof McpRunUsageError
+              remoteDetails?.action ??
+              (error instanceof McpRunUsageError
                 ? "correct_script"
                 : error instanceof McpRunTimeoutError
                   ? "inspect_state"
-                  : "inspect_error",
+                  : "inspect_error"),
             ...(error instanceof McpRunTimeoutError
               ? { outcome: error.outcome }
               : {}),
