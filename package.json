@@ -24,6 +24,8 @@
     "dist/mcp.js",
     "dist/mcp-cli.d.ts",
     "dist/mcp-cli.js",
+    "dist/mcp-cli-help.d.ts",
+    "dist/mcp-cli-help.js",
     "dist/mcp-cli-policy.d.ts",
     "dist/mcp-cli-policy.js",
     "dist/package-info.d.ts",
