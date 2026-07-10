@@ -47,7 +47,10 @@ describe("mcp CLI entry detection", () => {
   it("runs main when invoked directly", () => {
     const result = runCli(distCli, ["--help"]);
     expect(result.status).toBe(0);
-    expect(result.output).toContain("mcp");
+    expect(result.output).toContain("mcp <command> --help");
+    expect(result.output).toContain("not `mcporter` or `npx mcporter`");
+    expect(result.output).toContain("MCP resources");
+    expect(result.output).toContain("CallResult");
   });
 
   it("runs main when invoked through a symlink (pnpm/npm bin shims)", () => {
@@ -73,6 +76,8 @@ describe("mcp CLI entry detection", () => {
     expect(run.status).toBe(0);
     expect(run.output.trim().length).toBeGreaterThan(0);
     expect(run.output).toContain("PI_RECIPES_MCP_RUN_TIMEOUT_MS");
+    expect(run.output).toContain("configured local auth: oauth server may launch");
+    expect(run.output).not.toContain("mcp run never starts interactive OAuth");
   });
 
   it("provides recipe-scoped help for delegated commands", () => {
@@ -83,6 +88,27 @@ describe("mcp CLI entry detection", () => {
       expect(result.output).not.toContain("--http-url");
       expect(result.output).not.toContain("--stdio");
     }
+  });
+
+  it("documents exact-target list flags and keeps quiet mode free of the capability banner", () => {
+    const help = runCli(distCli, ["list", "--help"]);
+    expect(help.output).toContain("exact server target");
+    expect(help.output).toContain("--no-oauth");
+
+    const quiet = runCli(distCli, ["list", "--quiet"]);
+    expect(quiet.status).toBe(2);
+    expect(quiet.output).not.toContain("Only exact tool names shown");
+  });
+
+  it("documents JSON stdin, structured call errors, and headless OAuth completion", () => {
+    const call = runCli(distCli, ["call", "--help"]);
+    expect(call.output).toContain("--args <json|->");
+    expect(call.output).toContain("{ server, tool, issue }");
+    expect(call.output).toContain("--no-oauth");
+
+    const auth = runCli(distCli, ["auth", "--help"]);
+    expect(auth.output).toContain("keep this command running");
+    expect(auth.output).toContain("tokens are saved");
   });
 
   it("blocks mcporter administration and ad-hoc connection surfaces", () => {

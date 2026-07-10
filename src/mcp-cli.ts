@@ -103,6 +103,9 @@ export class McpRunToolError extends Error {
 export function mcpCliHelpText(): string {
   return [
     "mcp - use available MCP tools",
+    "Supported: search, list, call, run, and auth for configured local OAuth servers.",
+    "Run `mcp <command> --help` for complete command syntax.",
+    "Use this session-local `mcp` command, not `mcporter` or `npx mcporter`; it enforces the materialized recipe capabilities.",
     "",
     "Find tools:",
     "  mcp search \"what you need\"",
@@ -116,6 +119,7 @@ export function mcpCliHelpText(): string {
     "  mcp call <server>.<tool> key=value ...",
     "  mcp call '<server>.<tool>(key: \"value\")'",
     "  Calls support --args/--json payloads, --output text|markdown|json|raw, --save-images, --timeout, and @file.",
+    "  Use --output json for machine-readable success and failure envelopes.",
     "",
     "Run a short workflow:",
     "  mcp run --var ID=abc123 <<'EOF'",
@@ -123,6 +127,7 @@ export function mcpCliHelpText(): string {
     "  console.log(JSON.stringify(result.json(), null, 2))",
     "  EOF",
     "  Keep the heredoc quoted (<<'EOF'); pass dynamic values with --var KEY=value (read as vars.KEY).",
+    "  Calls return CallResult: choose .json(), .text(), .markdown(), .images(), .content(), .structuredContent(), or .raw for the response shape.",
     "",
     "When to use:",
     "  Use search when you do not know the right tool.",
@@ -137,6 +142,7 @@ export function mcpCliHelpText(): string {
     "  Only exact tool names returned by mcp list are callable.",
     "  Descriptions may mention related tools that are not exposed; mentions do not grant access.",
     "  If no listed tool supports an action, report that the connected capability is unavailable.",
+    "  MCP resources and mcporter configuration, ad-hoc transport, code-generation, record/replay, daemon, and serve commands are not exposed.",
   ].join("\n");
 }
 
@@ -149,11 +155,12 @@ export function mcpListHelpText(): string {
     "Flags:",
     "  --brief, --signatures     Compact signatures only.",
     "  --all-parameters          Include every optional parameter.",
-    "  --schema                  Include JSON input schemas.",
+    "  --schema                  Include full input and available output schemas.",
     "  --json                    Emit machine-readable output.",
-    "  --status                  Show concise server status only.",
-    "  --quiet, --exit-code      Silent/exit-code health checks.",
-    "  --timeout <ms>            Override discovery timeout.",
+    "  --status                  Show concise status for an exact server target.",
+    "  --quiet, --exit-code      Health checks for an exact server target.",
+    "  --timeout <ms>            Override discovery timeout for an exact target.",
+    "  --no-oauth                Use cached credentials without starting OAuth.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -169,7 +176,7 @@ export function mcpCallHelpText(): string {
     "  key=value / key:value     Named arguments with schema-aware coercion.",
     "  --key value               Named schema arguments are normalized to key=value.",
     "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
-    "  --args <json>, --json <json|->  Supply a JSON object directly or from stdin.",
+    "  --args <json|->, --json <json|->  Supply a JSON object directly or from stdin.",
     "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
     "  --                         Treat remaining values as literal positional inputs.",
     "",
@@ -177,7 +184,9 @@ export function mcpCallHelpText(): string {
     "  --output text|markdown|json|raw",
     "  --save-images <dir>",
     "  --timeout <ms>",
+    "  --no-oauth, --oauth-timeout <ms>",
     "  --raw-strings, --no-coerce",
+    "  With --output json, transport/auth failures use a structured { server, tool, issue } envelope.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -189,6 +198,7 @@ export function mcpAuthHelpText(): string {
     "",
     "In a recipe session, authenticates a configured local server whose binding declares auth: oauth.",
     "Managed Introspection bindings use host-provided application assertions or stored headers and cannot start OAuth.",
+    "With --no-browser, open the printed URL but keep this command running until the redirect callback completes and tokens are saved.",
   ].join("\n");
 }
 
@@ -215,7 +225,9 @@ export function mcpRunHelpText(): string {
     "Detached .then/.catch calls fail if still pending when the script exits.",
     "Structured MCP errors retain code, retryable, action, request_id, and outcome fields when supplied.",
     "Calls return mcporter CallResult objects with text/markdown/json/images/content/structuredContent helpers and .raw.",
-    "MCP calls are headless: configured/cached credentials are allowed, but mcp run never starts interactive OAuth.",
+    "Use .json() only for JSON-shaped results; use .text(), .content(), or .raw when the response is not JSON.",
+    "--json-errors emits a structured error object on stderr while preserving the nonzero exit code.",
+    "Managed bindings never start OAuth. A configured local auth: oauth server may launch or resume its OAuth flow; use mcp auth first when user interaction is needed.",
     "A synchronous busy-loop is force-killed at the deadline.",
     "Code runs with the same OS privileges as the active shell sandbox; mcp run is not a separate security boundary.",
     "",
@@ -1318,7 +1330,11 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
       return 2;
     }
   }
-  if (args[0] === "list" && !args.slice(1).some(isHelpArg)) {
+  if (
+    args[0] === "list" &&
+    !args.slice(1).some(isHelpArg) &&
+    !args.includes("--quiet")
+  ) {
     stderr.write(
       "Only exact tool names shown as `mcp list` entries are callable. Descriptions may mention related tools that are not exposed; those mentions are not entries.\n\n"
     );
