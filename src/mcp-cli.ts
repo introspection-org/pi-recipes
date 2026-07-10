@@ -179,6 +179,7 @@ export function mcpCallHelpText(): string {
     "  --args <json|->, --json <json|->  Supply a JSON object directly or from stdin.",
     "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
     "  --                         Treat remaining values as literal positional inputs.",
+    "  Quote argument tokens containing shell operators such as |, <, >, &, or ;. JSON stdin avoids nested shell quoting.",
     "",
     "Output/runtime flags:",
     "  --output text|markdown|json|raw",
@@ -186,7 +187,7 @@ export function mcpCallHelpText(): string {
     "  --timeout <ms>",
     "  --no-oauth, --oauth-timeout <ms>",
     "  --raw-strings, --no-coerce",
-    "  With --output json, transport/auth failures use a structured { server, tool, issue } envelope.",
+    "  With --output json, tool responses and transport/auth failures are machine-readable; CLI usage/policy errors stay on stderr with exit 2.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -1372,11 +1373,28 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
 }
 
 if (isDirectEntry(import.meta.url)) {
+  let brokenPipe = false;
+  const handleOutputError = (error: NodeJS.ErrnoException) => {
+    if (error.code === "EPIPE") {
+      // A downstream command such as `head` intentionally closed the pipe.
+      // Treat that as normal Unix pipeline completion and avoid leaking a Node
+      // stack trace after the MCP operation has already produced its result.
+      brokenPipe = true;
+      return;
+    }
+    throw error;
+  };
+  stdout.on("error", handleOutputError);
+  stderr.on("error", handleOutputError);
   main()
     .then((code) => {
-      process.exitCode = code;
+      process.exitCode = brokenPipe ? 0 : code;
     })
     .catch((err: unknown) => {
+      if (brokenPipe) {
+        process.exitCode = 0;
+        return;
+      }
       stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
     });
