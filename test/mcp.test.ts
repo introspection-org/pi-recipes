@@ -1097,7 +1097,16 @@ describe("mcporter CLI end-to-end", () => {
         } catch (error) {
           unknownToolMessage = error instanceof Error ? error.message : String(error);
         }
-        globalThis.__mcpRunSmoke = { result, errorMessage, unknownServerMessage, unknownToolMessage };
+        const pending = tools.stub.get_value({ key: "color" });
+        const pendingSnapshot = JSON.stringify(pending);
+        await pending;
+        let missingVarMessage = null;
+        try {
+          vars.MISSING;
+        } catch (error) {
+          missingVarMessage = error instanceof Error ? error.message : String(error);
+        }
+        globalThis.__mcpRunSmoke = { result, errorMessage, unknownServerMessage, unknownToolMessage, pendingSnapshot, missingVarMessage };
         `,
         { timeoutMs: 10_000, vars: { KEY: "color" } }
       );
@@ -1109,6 +1118,11 @@ describe("mcporter CLI end-to-end", () => {
           "Unknown MCP server 'stubb'. Did you mean 'tools.stub'? Available servers: stub.",
         unknownToolMessage:
           "Tool 'get_valu' is not available on server 'stub'. Did you mean 'get_value'? Run `mcp list stub` to see available tools.",
+        pendingSnapshot:
+          '"[pending tool call stub.get_value — did you forget await?]"',
+        missingVarMessage:
+          "vars.MISSING is not defined. Pass it with --var MISSING=value (defined vars: KEY). " +
+          'Use `"MISSING" in vars` to test for optional vars.',
       });
     } finally {
       if (previousConfig === undefined) delete process.env.MCPORTER_CONFIG;

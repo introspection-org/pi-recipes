@@ -92,6 +92,27 @@ describe("mcp CLI entry detection", () => {
     expect(result.output).toContain("synchronous busy-loop");
   });
 
+  it("rejects malformed call expressions before the ad-hoc spawn path", () => {
+    const result = runCli(distCli, ["call", 'ghost.lookup(q: "x", limit:']);
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("malformed tool expression");
+    expect(result.output).toContain("balanced quotes and parentheses");
+  });
+
+  it("accepts well-formed call expressions and plain refs with dots", () => {
+    // Balanced expression → not flagged (fails later on the unknown server).
+    const expr = runCli(distCli, ["call", 'ghost.lookup(q: "x")']);
+    expect(expr.output).not.toContain("malformed tool expression");
+    const plain = runCli(distCli, ["call", "ghost.lookup", "q:a"]);
+    expect(plain.output).not.toContain("malformed tool expression");
+  });
+
+  it("rejects non-numeric search limits", () => {
+    const result = runCli(distCli, ["search", "profile", "--limit", "abc"]);
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("--limit expects a positive integer, got 'abc'");
+  });
+
   it("warns when a call argument key is passed more than once", () => {
     const result = runCli(distCli, ["call", "ghost.lookup", "q:a", "limit:5", "q:b"]);
     expect(result.output).toContain("argument 'q' was passed more than once");

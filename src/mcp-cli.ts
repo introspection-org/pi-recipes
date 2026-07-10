@@ -277,12 +277,11 @@ async function readManifest(): Promise<McpManifest> {
   return JSON.parse(data) as McpManifest;
 }
 
-function parseSearchArgs(args: string[]): {
-  query: string;
-  limit: number;
-  json: boolean;
-  regex: boolean;
-} {
+function parseSearchArgs(
+  args: string[]
+):
+  | { query: string; limit: number; json: boolean; regex: boolean; error?: undefined }
+  | { error: string } {
   const queryParts: string[] = [];
   let limit = 8;
   let json = false;
@@ -297,15 +296,13 @@ function parseSearchArgs(args: string[]): {
       regex = true;
       continue;
     }
-    if (arg === "--limit") {
-      const value = Number(args[index + 1]);
-      if (Number.isFinite(value) && value > 0) limit = Math.floor(value);
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith("--limit=")) {
-      const value = Number(arg.slice("--limit=".length));
-      if (Number.isFinite(value) && value > 0) limit = Math.floor(value);
+    if (arg === "--limit" || arg.startsWith("--limit=")) {
+      const raw = arg === "--limit" ? args[++index] : arg.slice("--limit=".length);
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value <= 0) {
+        return { error: `--limit expects a positive integer, got '${raw ?? ""}'.` };
+      }
+      limit = Math.floor(value);
       continue;
     }
     queryParts.push(arg);
@@ -314,7 +311,12 @@ function parseSearchArgs(args: string[]): {
 }
 
 async function searchCatalog(args: string[]): Promise<number> {
-  const { query, limit, json, regex } = parseSearchArgs(args);
+  const parsed = parseSearchArgs(args);
+  if (parsed.error !== undefined) {
+    stderr.write(`${parsed.error}\n`);
+    return 2;
+  }
+  const { query, limit, json, regex } = parsed;
   if (!query.trim()) {
     stderr.write("Usage: mcp search \"what you need\" [--limit N] [--json] [--regex]\n");
     return 2;
@@ -453,6 +455,9 @@ async function createTools() {
   const runtime = await createRuntime();
   const knownTools = await manifestToolNames();
   const servers = runtime.listServers();
+  // Calls a script started but never awaited: drained before shutdown so the
+  // un-awaited work does not die with a confusing "connection superseded".
+  const inFlight = new Set<Promise<unknown>>();
   const toolsByServer: Record<
     string,
     Record<string, (args?: Record<string, unknown>) => Promise<unknown>>
@@ -461,16 +466,25 @@ async function createTools() {
     toolsByServer[server] = new Proxy(Object.create(null), {
       get(_target, property) {
         if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) return undefined;
-        return async (args: Record<string, unknown> = {}) => {
-          try {
-            return normalizeToolResult(
-              await runtime.callTool(server, property, {
-                args,
-              })
-            );
-          } catch (error) {
-            throw improveRunToolError(error, server, property, knownTools.get(server) ?? []);
-          }
+        return (args: Record<string, unknown> = {}) => {
+          const call = (async () => {
+            try {
+              return normalizeToolResult(
+                await runtime.callTool(server, property, {
+                  args,
+                })
+              );
+            } catch (error) {
+              throw improveRunToolError(error, server, property, knownTools.get(server) ?? []);
+            }
+          })();
+          inFlight.add(call);
+          call.finally(() => inFlight.delete(call)).catch(() => {});
+          // JSON.stringify(promise) is "{}" — the classic missing-await
+          // symptom. Make it print a diagnosis instead.
+          (call as Promise<unknown> & { toJSON?: () => string }).toJSON = () =>
+            `[pending tool call ${server}.${property} — did you forget await?]`;
+          return call;
         };
       },
     }) as Record<string, (args?: Record<string, unknown>) => Promise<unknown>>;
@@ -484,14 +498,31 @@ async function createTools() {
       throw new Error(describeUnknownRunServer(property, servers));
     },
   });
-  return { runtime, tools };
+  return { runtime, tools, inFlight };
+}
+
+// vars.TYPO silently becomes undefined, which strips the argument it feeds
+// and can turn a targeted query into a match-everything one. Throw instead.
+function createVars(vars: Record<string, string>): Record<string, string> {
+  return new Proxy({ ...vars }, {
+    get(target, property) {
+      if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) return undefined;
+      if (property in target) return target[property as keyof typeof target];
+      const defined = Object.keys(target);
+      throw new Error(
+        `vars.${property} is not defined. Pass it with --var ${property}=value` +
+          (defined.length > 0 ? ` (defined vars: ${defined.join(", ")}).` : " (no vars were passed).") +
+          ` Use \`"${property}" in vars\` to test for optional vars.`
+      );
+    },
+  });
 }
 
 export async function runMcpJavaScript(
   code: string,
   opts: { timeoutMs?: number; vars?: Record<string, string> } = {}
 ): Promise<void> {
-  const { runtime, tools } = await createTools();
+  const { runtime, tools, inFlight } = await createTools();
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
     ...args: string[]
   ) => (tools: unknown, vars: Record<string, string>) => Promise<unknown>;
@@ -501,13 +532,23 @@ export async function runMcpJavaScript(
   let timeout: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
-      run(tools, opts.vars ?? {}),
+      run(tools, createVars(opts.vars ?? {})),
       new Promise((_resolve, reject) => {
         timeout = setTimeout(() => {
           reject(new Error(`mcp run timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }),
     ]);
+    if (inFlight.size > 0) {
+      stderr.write(
+        `mcp run: ${inFlight.size} tool call(s) still pending when the script finished — ` +
+          `did you forget await? Waiting for them before shutdown; their results are discarded.\n`
+      );
+      await Promise.race([
+        Promise.allSettled([...inFlight]),
+        new Promise((resolve) => setTimeout(resolve, 15_000)),
+      ]);
+    }
   } finally {
     if (timeout) clearTimeout(timeout);
     await runtime.close();
@@ -683,6 +724,34 @@ function warnDuplicateCallArguments(args: string[]): void {
   }
 }
 
+// A mangled expression form (unbalanced quotes/parens) falls through to the
+// upstream ad-hoc command path, which tries to SPAWN the text and dies with a
+// baffling ENOENT. Catch it here with a usable message instead.
+export function malformedCallExpression(args: string[]): string | null {
+  const ref = args.find((arg) => !arg.startsWith("-"));
+  if (!ref || !/[()]/.test(ref)) return null;
+  let depth = 0;
+  let inString: '"' | "'" | null = null;
+  for (let index = 0; index < ref.length; index += 1) {
+    const char = ref[index];
+    if (inString) {
+      if (char === "\\") index += 1;
+      else if (char === inString) inString = null;
+      continue;
+    }
+    if (char === '"' || char === "'") inString = char;
+    else if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    if (depth < 0) break;
+  }
+  if (depth === 0 && inString === null && /^[\w-]+\.[\w-]+\(.*\)$/s.test(ref)) return null;
+  return (
+    `mcp call: malformed tool expression '${ref}'. ` +
+    `Use mcp call '<server>.<tool>(key: "value")' with balanced quotes and parentheses, ` +
+    `or plain arguments: mcp call <server>.<tool> key:value.`
+  );
+}
+
 function delegateToMcporter(args: string[]): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [mcporterCliEntrypointPath(), ...args], {
@@ -719,7 +788,14 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   }
   if (args[0] === "run") return runCode(args.slice(1));
   if (args[0] === "search") return searchCatalog(args.slice(1));
-  if (args[0] === "call") warnDuplicateCallArguments(args.slice(1));
+  if (args[0] === "call") {
+    const malformed = malformedCallExpression(args.slice(1));
+    if (malformed) {
+      stderr.write(`${malformed}\n`);
+      return 2;
+    }
+    warnDuplicateCallArguments(args.slice(1));
+  }
   if (args[0] === "list" && !args.slice(1).some(isHelpArg)) {
     stdout.write(
       "Only exact tool names shown as `mcp list` entries are callable. Descriptions may mention related tools that are not exposed; those mentions are not entries.\n\n"
