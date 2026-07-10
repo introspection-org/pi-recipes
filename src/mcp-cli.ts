@@ -47,8 +47,23 @@ interface ToolCallRecord {
   promise: Promise<unknown>;
 }
 
+type McpRunResultFormat =
+  | "json"
+  | "text"
+  | "markdown"
+  | "images"
+  | "content"
+  | "structuredContent"
+  | "raw";
+
 interface McpRunToolFunction {
-  (args?: Record<string, unknown>): Promise<ReturnType<typeof createCallResult>>;
+  (args?: Record<string, unknown>): Promise<unknown>;
+  text(args?: Record<string, unknown>): Promise<unknown>;
+  markdown(args?: Record<string, unknown>): Promise<unknown>;
+  images(args?: Record<string, unknown>): Promise<unknown>;
+  content(args?: Record<string, unknown>): Promise<unknown>;
+  structuredContent(args?: Record<string, unknown>): Promise<unknown>;
+  raw(args?: Record<string, unknown>): Promise<unknown>;
 }
 
 export class McpRunUsageError extends Error {}
@@ -125,10 +140,10 @@ export function mcpCliHelpText(): string {
     "Run a short workflow:",
     "  mcp run --var ID=abc123 <<'EOF'",
     '  const result = await tools["server"]["tool"]({ sessionId: vars.ID, key: "value" })',
-    "  console.log(JSON.stringify(result.json(), null, 2))",
+    "  console.log(JSON.stringify(result, null, 2))",
     "  EOF",
     "  Keep the heredoc quoted (<<'EOF'); pass dynamic values with --var KEY=value (read as vars.KEY).",
-    "  Calls return CallResult: choose .json(), .text(), .markdown(), .images(), .content(), .structuredContent(), or .raw for the response shape.",
+    "  Calls return decoded JSON by default. Use tool.text(args), tool.markdown(args), tool.images(args), tool.content(args), tool.structuredContent(args), or tool.raw(args) only when the tool documentation calls for another shape.",
     "",
     "When to use:",
     "  Use search when you do not know the right tool.",
@@ -217,9 +232,8 @@ export function mcpRunHelpText(): string {
     "Always await or return tool-call chains.",
     "Detached .then/.catch calls fail if still pending when the script exits.",
     "Structured MCP errors retain code, retryable, action, request_id, and outcome fields when supplied.",
-    "Calls return mcporter CallResult objects with text/markdown/json/images/content/structuredContent helpers and .raw.",
-    "Decode a CallResult before reading response fields; direct access such as result.id throws with a correction.",
-    "Use .json() only for JSON-shaped results; use .text(), .content(), or .raw when the response is not JSON.",
+    "Calls return decoded JSON by default, so read response fields directly from the awaited value.",
+    "Only when a tool documents another response type, call the format on the tool itself: tool.text(args), tool.markdown(args), tool.images(args), tool.content(args), tool.structuredContent(args), or tool.raw(args).",
     "Use --var/vars for dynamic input; process.argv is intentionally unavailable inside workflows.",
     "--json-errors emits a structured error object on stderr while preserving the nonzero exit code.",
     "MCP calls are always headless. If authentication is required, ask the user to authenticate the connection outside the agent session, then retry.",
@@ -229,7 +243,7 @@ export function mcpRunHelpText(): string {
     "Example:",
     "  mcp run --var ID=abc123 <<'EOF'",
     '  const result = await tools["server"]["tool"]({ id: vars.ID })',
-    "  console.log(JSON.stringify(result.json(), null, 2))",
+    "  console.log(JSON.stringify(result, null, 2))",
     "  EOF",
   ].join("\n");
 }
@@ -270,24 +284,39 @@ function checkedCallResult(
           : callResult.text() ?? "MCP tool call failed.";
     throw new McpRemoteToolResultError({ ...errorObject, message });
   }
-  return new Proxy(callResult, {
-    get(target, property) {
-      if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) {
-        return Reflect.get(target, property, target);
+  return callResult;
+}
+
+function decodeCallResult(
+  callResult: ReturnType<typeof createCallResult>,
+  format: McpRunResultFormat,
+  ref: string
+): unknown {
+  switch (format) {
+    case "json": {
+      const decoded = callResult.json();
+      if (decoded === null && callResult.structuredContent() == null && callResult.text() != null) {
+        throw new McpRunUsageError(
+          `${ref} did not return JSON. Its documentation should name the response type; ` +
+            `for plain text call tools[${JSON.stringify(ref.split(".")[0])}]` +
+            `[${JSON.stringify(ref.slice(ref.indexOf(".") + 1))}].text(args).`
+        );
       }
-      // Promise resolution probes returned values for `.then`.
-      if (property === "then") return undefined;
-      if (property in target) {
-        const value = Reflect.get(target, property, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      }
-      throw new McpRunUsageError(
-        `CallResult has no property '${property}'. Decode the tool response first, ` +
-          `for example with result.json().${property}; other readers are .text(), ` +
-          ".markdown(), .images(), .content(), .structuredContent(), and .raw."
-      );
-    },
-  });
+      return decoded;
+    }
+    case "text":
+      return callResult.text();
+    case "markdown":
+      return callResult.markdown();
+    case "images":
+      return callResult.images();
+    case "content":
+      return callResult.content();
+    case "structuredContent":
+      return callResult.structuredContent();
+    case "raw":
+      return callResult.raw;
+  }
 }
 
 function validateRunToolArgs(server: string, tool: string, args: Record<string, unknown>): void {
@@ -748,8 +777,9 @@ async function createTools(opts: {
       get(_target, property) {
         if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) return undefined;
         const startCall = (
-          args: Record<string, unknown>
-        ): Promise<ReturnType<typeof createCallResult>> => {
+          args: Record<string, unknown>,
+          format: McpRunResultFormat
+        ): Promise<unknown> => {
           validateRunToolArgs(server, property, args);
           const allowedToolNames = knownTools.get(server);
           if (allowedToolNames && !allowedToolNames.includes(property)) {
@@ -775,7 +805,7 @@ async function createTools(opts: {
                   `mcp run deadline reached before ${server}.${property} started.`
                 );
               }
-              return checkedCallResult(
+              const result = checkedCallResult(
                 createCallResult(
                   await runtime.callTool(server, property, {
                     args,
@@ -787,6 +817,7 @@ async function createTools(opts: {
                   })
                 )
               );
+              return decodeCallResult(result, format, `${server}.${property}`);
             } catch (error) {
               const improved = improveRunToolError(
                 error,
@@ -794,6 +825,7 @@ async function createTools(opts: {
                 property,
                 allowedToolNames ?? []
               );
+              if (improved instanceof McpRunUsageError) throw improved;
               const message = improved instanceof Error ? improved.message : String(improved);
               const remoteDetails =
                 improved instanceof McpRemoteToolResultError
@@ -859,8 +891,16 @@ async function createTools(opts: {
           });
         };
 
-        return ((args: Record<string, unknown> = {}) =>
-          startCall(args)) as McpRunToolFunction;
+        const tool = ((args: Record<string, unknown> = {}) =>
+          startCall(args, "json")) as McpRunToolFunction;
+        tool.text = (args: Record<string, unknown> = {}) => startCall(args, "text");
+        tool.markdown = (args: Record<string, unknown> = {}) => startCall(args, "markdown");
+        tool.images = (args: Record<string, unknown> = {}) => startCall(args, "images");
+        tool.content = (args: Record<string, unknown> = {}) => startCall(args, "content");
+        tool.structuredContent = (args: Record<string, unknown> = {}) =>
+          startCall(args, "structuredContent");
+        tool.raw = (args: Record<string, unknown> = {}) => startCall(args, "raw");
+        return tool;
       },
     }) as Record<string, McpRunToolFunction>;
   }

@@ -319,7 +319,7 @@ mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
 const result = await tools["contacts"]["search_contacts"]({ query: "Ada Lovelace" })
-console.log(JSON.stringify(result.json(), null, 2))
+console.log(JSON.stringify(result, null, 2))
 EOF
 ```
 
@@ -367,14 +367,13 @@ timeout diagnostics still treat its outcome as unknown. Structured MCP errors
 retain recovery fields such as `code`, `retryable`, `action`, `request_id`, and
 `outcome` on the thrown error and in `--json-errors` output.
 
-Every call returns mcporter's `CallResult` directly. Use `.text()`,
-`.markdown()`, `.json()`, `.images()`, `.content()`, or
-`.structuredContent()` to read the response; `.raw` contains the untouched MCP
-result envelope. This single result contract preserves mixed-modality content
-without a parallel normalized API. Calls share the same await detection, queue,
-deadline, typed-error, and allowlist enforcement. Interactive OAuth is disabled:
-configured headers and cached credentials are usable, but a failed bearer token
-cannot launch a browser flow from the agent.
+Every call returns decoded JSON by default. When a tool explicitly documents a
+different response type, select it on the tool function with `.text(args)`,
+`.markdown(args)`, `.images(args)`, `.content(args)`,
+`.structuredContent(args)`, or `.raw(args)`. Calls in every format share the
+same await detection, queue, deadline, typed-error, and allowlist enforcement.
+Interactive OAuth is disabled: configured headers and cached credentials are
+usable, but a failed bearer token cannot launch a browser flow from the agent.
 
 Server instructions negotiated during MCP initialization are bounded, filtered
 alongside the available tool catalog, and included in the recipe runtime prompt.

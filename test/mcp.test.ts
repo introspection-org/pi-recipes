@@ -1276,7 +1276,11 @@ describe("mcporter CLI end-to-end", () => {
                         },
                       ],
                     }
-                  : key === "multimodal"
+                  : key === "text-only"
+                    ? {
+                        content: [{ type: "text", text: "plain response" }],
+                      }
+                    : key === "multimodal"
                     ? {
                         structuredContent: { summary: "ready", count: 1 },
                         content: [
@@ -1539,14 +1543,14 @@ describe("mcporter CLI end-to-end", () => {
         } catch (error) {
           directTypedError = error.details;
         }
-        const richMultimodal = await tools.stub.get_value({ key: "multimodal" });
         const multimodal = {
-          json: richMultimodal.json(),
-          text: richMultimodal.text(),
-          images: richMultimodal.images(),
-          content: richMultimodal.content(),
-          structured: richMultimodal.structuredContent(),
-          rawStructured: richMultimodal.raw.structuredContent,
+          json: await tools.stub.get_value({ key: "multimodal" }),
+          text: await tools.stub.get_value.text({ key: "multimodal" }),
+          markdown: await tools.stub.get_value.markdown({ key: "multimodal" }),
+          images: await tools.stub.get_value.images({ key: "multimodal" }),
+          content: await tools.stub.get_value.content({ key: "multimodal" }),
+          structured: await tools.stub.get_value.structuredContent({ key: "multimodal" }),
+          rawStructured: (await tools.stub.get_value.raw({ key: "multimodal" })).structuredContent,
         };
         let unknownServerMessage = null;
         try {
@@ -1576,7 +1580,7 @@ describe("mcporter CLI end-to-end", () => {
           missingVarMessage = error instanceof Error ? error.message : String(error);
         }
         globalThis.__mcpRunSmoke = {
-          result: result.text(),
+          result: result.value,
           errorMessage,
           typedError,
           directTypedError,
@@ -1620,6 +1624,7 @@ describe("mcporter CLI end-to-end", () => {
         multimodal: {
           json: { summary: "ready", count: 1 },
           text: "human-readable summary",
+          markdown: null,
           images: [
             {
               data: "aGVsbG8=",
@@ -1732,11 +1737,34 @@ describe("mcporter CLI end-to-end", () => {
         runMcpJavaScript(
           `
           const result = await tools.stub.get_value({ key: "color" });
-          console.log(result.id);
+          if (result.value !== 'called get_value with {"key":"color"}') {
+            throw new Error("default JSON decoding failed");
+          }
           `,
           { timeoutMs: 10_000 }
         )
-      ).rejects.toThrow(/CallResult has no property 'id'.*result\.json\(\)\.id/);
+      ).resolves.toBeUndefined();
+
+      await expect(
+        runMcpJavaScript(
+          `await tools.stub.get_value({ key: "text-only" });`,
+          { timeoutMs: 10_000 }
+        )
+      ).rejects.toThrow(/did not return JSON.*\.text\(args\)/);
+
+      await runMcpJavaScript(
+        `
+        const text = await tools.stub.get_value.text({ key: "text-only" });
+        if (text !== "plain response") throw new Error("text decoding failed");
+        `,
+        { timeoutMs: 10_000 }
+      );
+
+      await expect(
+        runMcpJavaScript('tools.stub.get_value.text({ key: "color" });', {
+          timeoutMs: 10_000,
+        })
+      ).rejects.toThrow(/tool call\(s\) were not awaited: stub\.get_value=succeeded/);
 
       await expect(
         runMcpJavaScript(

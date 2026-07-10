@@ -323,7 +323,7 @@ mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
 const result = await tools.contacts.search_contacts({ query: "Ada Lovelace" })
-console.log(JSON.stringify(result.json(), null, 2))
+console.log(JSON.stringify(result, null, 2))
 EOF
 ```
 
@@ -353,10 +353,10 @@ If search does not find a match, retry with broader or alternate terms. Use
 `mcp list <server.tool> --schema`; avoid server-wide schema dumps during normal
 agent workflows.
 
-Every tool call returns mcporter's `CallResult` directly. Read it with
-`.text()`, `.markdown()`, `.json()`, `.images()`, `.content()`, or
-`.structuredContent()`; `.raw` contains the untouched MCP envelope. This single
-contract preserves mixed-modality content and shares the normal queue,
+Every tool call returns decoded JSON by default. For a tool that explicitly
+documents another response type, select it on the tool function with
+`.text(args)`, `.markdown(args)`, `.images(args)`, `.content(args)`,
+`.structuredContent(args)`, or `.raw(args)`. All formats share the normal queue,
 deadline, await-detection, typed-error, and allowlist behavior. `mcp run`
 disables interactive OAuth while retaining configured and cached credentials,
 so a headless recipe call cannot unexpectedly launch a browser.
