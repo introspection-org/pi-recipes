@@ -221,7 +221,7 @@ describe("mcp CLI entry detection", () => {
   });
 
   it("provides recipe-scoped help for delegated commands", () => {
-    for (const command of ["list", "call", "auth"]) {
+    for (const command of ["list", "call"]) {
       const result = runCli(distCli, [command, "--help"]);
       expect(result.status).toBe(0);
       expect(result.output).toContain("recipe session");
@@ -240,16 +240,17 @@ describe("mcp CLI entry detection", () => {
     expect(quiet.output).not.toContain("Only exact tool names shown");
   });
 
-  it("documents JSON stdin, structured call errors, and headless OAuth completion", () => {
+  it("documents JSON stdin, structured call errors, and headless authentication", () => {
     const call = runCli(distCli, ["call", "--help"]);
     expect(call.output).toContain("--args <json|->");
     expect(call.output).toContain("CLI usage/policy errors stay on stderr with exit 2");
     expect(call.output).toContain("--no-oauth");
     expect(call.output).toContain("Quote argument tokens containing shell operators");
 
-    const auth = runCli(distCli, ["auth", "--help"]);
-    expect(auth.output).toContain("keep this command running");
-    expect(auth.output).toContain("tokens are saved");
+    const auth = runCli(distCli, ["auth", "contacts"]);
+    expect(auth.status).toBe(2);
+    expect(auth.output).toContain("Ask the user to authenticate");
+    expect(auth.output).not.toContain("managed");
   });
 
   it("blocks mcporter administration and ad-hoc connection surfaces", () => {

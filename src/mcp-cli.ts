@@ -213,16 +213,6 @@ export function mcpCallHelpText(): string {
   ].join("\n");
 }
 
-export function mcpAuthHelpText(): string {
-  return [
-    "Usage: mcp auth <server> [--reset] [--no-browser] [--json] [--oauth-timeout <ms>]",
-    "",
-    "In a recipe session, authenticates a configured local server whose binding declares auth: oauth.",
-    "Managed Introspection bindings use host-provided application assertions or stored headers and cannot start OAuth.",
-    "With --no-browser, open the printed URL but keep this command running until the redirect callback completes and tokens are saved.",
-  ].join("\n");
-}
-
 export function mcpSearchHelpText(): string {
   return [
     'Usage: mcp search "what you need" [--limit N] [--json] [--regex]',
@@ -870,7 +860,7 @@ async function createTools(opts: {
                     // it. mcporter forwards this timeout to the MCP SDK and
                     // resets the transport when it fires.
                     timeoutMs: Math.min(opts.callTimeoutMs, remainingMs),
-                    disableOAuth: runtime.getDefinition(server).auth !== "oauth",
+                    disableOAuth: true,
                   })
                 )
               );
