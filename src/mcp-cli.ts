@@ -170,13 +170,13 @@ export function mcpListHelpText(): string {
   return [
     "Usage: mcp list [server | server.tool] [flags]",
     "",
-    "Lists only servers and tools materialized for this recipe session.",
+    "Delegates listing and schema rendering to mcporter for servers materialized in this recipe session.",
     "",
     "Flags:",
     "  --brief, --signatures     Compact signatures only.",
     "  --all-parameters          Include every optional parameter.",
-    "  --schema                  Include full input and available output schemas.",
-    "  --json                    Emit machine-readable output.",
+    "  --schema                  Include the input schema and, for one exact tool, its output schema.",
+    "  --json                    Emit mcporter's machine-readable output unchanged.",
     "  --status                  Show concise status for an exact server target.",
     "  --quiet, --exit-code      Health checks for an exact server target.",
     "  --timeout <ms>            Override discovery timeout for an exact target.",
@@ -190,11 +190,11 @@ export function mcpCallHelpText(): string {
   return [
     "Usage: mcp call <server>.<tool> [arguments] [flags]",
     "",
-    "Calls only exact tools materialized for this recipe session.",
+    "Delegates argument parsing and tool execution to mcporter for exact tools materialized in this recipe session.",
     "",
     "Arguments:",
-    "  key=value / key:value     Named arguments with schema-aware coercion.",
-    "  --key value               Named schema arguments are normalized to key=value.",
+    "  key=value / key:value     Named arguments with mcporter's schema-aware coercion.",
+    "  --key value               Named schema arguments supported by mcporter.",
     "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
     "  --args <json|->, --json <json|->  Supply a JSON object directly or from stdin.",
     "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
@@ -207,7 +207,7 @@ export function mcpCallHelpText(): string {
     "  --timeout <ms>",
     "  --no-oauth, --oauth-timeout <ms>",
     "  --raw-strings, --no-coerce",
-    "  With --output json, tool responses and transport/auth failures are machine-readable; CLI usage/policy errors stay on stderr with exit 2.",
+    "  Machine-readable output is forwarded unchanged.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -1460,6 +1460,16 @@ export function malformedCallExpression(args: string[]): string | null {
     `mcp call: malformed tool expression '${ref}'. ` +
     `Use mcp call '<server>.<tool>(key: "value")' with balanced quotes and parentheses, ` +
     `or plain arguments: mcp call <server>.<tool> key:value.`
+  );
+}
+
+function usesMachineReadableOutput(args: readonly string[]): boolean {
+  if (args[0] === "list") return args.includes("--json");
+  if (args[0] !== "call") return false;
+  return args.some(
+    (arg, index) =>
+      arg === "--output=json" ||
+      (arg === "--output" && args[index + 1] === "json")
   );
 }
 

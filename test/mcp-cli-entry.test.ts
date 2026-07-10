@@ -224,7 +224,7 @@ describe("mcp CLI entry detection", () => {
     const result = runCli(distCli, ["search", "unlikely-capability"]);
     expect(result.status).toBe(0);
     expect(result.output).toContain("Try broader or alternate terms");
-    expect(result.output).toContain("Use `mcp list` only to identify exact tool names");
+    expect(result.output).toContain("Use `mcp list <server>` only to identify exact tool names");
     expect(result.output).toContain("mcp list <server.tool> --schema");
     expect(result.output).not.toContain("run `mcp list` to inspect available servers");
   });
@@ -245,7 +245,7 @@ describe("mcp CLI entry detection", () => {
     expect(help.output).toContain("--no-oauth");
 
     const quiet = runCli(distCli, ["list", "--quiet"]);
-    expect(quiet.status).toBe(2);
+    expect(quiet.status).toBe(0);
     expect(quiet.output).not.toContain("Only exact tool names shown");
   });
 
@@ -301,7 +301,7 @@ describe("mcp CLI entry detection", () => {
   it("documents JSON stdin, structured call errors, and headless authentication", () => {
     const call = runCli(distCli, ["call", "--help"]);
     expect(call.output).toContain("--args <json|->");
-    expect(call.output).toContain("CLI usage/policy errors stay on stderr with exit 2");
+    expect(call.output).toContain("Machine-readable output is forwarded unchanged");
     expect(call.output).toContain("--no-oauth");
     expect(call.output).toContain("Quote argument tokens containing shell operators");
 
