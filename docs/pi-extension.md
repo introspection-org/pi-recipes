@@ -343,6 +343,15 @@ coercion, or a function-call expression for nested objects and arrays;
 `key=@file.md` reads a value from a file, and `--output json` prints a
 machine-parseable result. Use `mcp run` when a workflow needs multiple calls,
 local filtering, ranking, or deduplication before printing a compact result.
+Every tool call in a run script must be awaited; an un-awaited call makes the
+command fail even if the remote operation eventually succeeds. Run workflows
+have bounded wall time, per-call time, total calls, and concurrency, and timeout
+diagnostics treat remote mutation outcome as unknown.
+
+`mcp run` executes JavaScript with the same OS privileges as the active shell
+sandbox. It is a composition convenience, not a second security boundary; the
+recipe allowlist controls which MCP tools are reachable, while the outer runtime
+remains responsible for filesystem, environment, process, and network isolation.
 
 The `mcp` command is a pi-recipes wrapper backed by mcporter, installed as a
 package dependency; the shim pins `MCPORTER_CONFIG` to the generated session

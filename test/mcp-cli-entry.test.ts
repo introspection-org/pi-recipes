@@ -92,6 +92,16 @@ describe("mcp CLI entry detection", () => {
     expect(result.output).toContain("synchronous busy-loop");
   });
 
+  it("reports uncertain remote outcome on a yielding timeout", () => {
+    const result = runCli(distCli, ["run"], {
+      input: "await new Promise(() => {})",
+      env: { PI_RECIPES_MCP_RUN_TIMEOUT_MS: "100" },
+    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Remote side effects may already have occurred");
+    expect(result.output).toContain("inspect state before retrying");
+  });
+
   it("rejects malformed call expressions before the ad-hoc spawn path", () => {
     const result = runCli(distCli, ["call", 'ghost.lookup(q: "x", limit:']);
     expect(result.status).toBe(2);
@@ -113,9 +123,29 @@ describe("mcp CLI entry detection", () => {
     expect(result.output).toContain("--limit expects a positive integer, got 'abc'");
   });
 
-  it("warns when a call argument key is passed more than once", () => {
+  it("rejects fractional search limits and unknown options", () => {
+    const fractional = runCli(distCli, ["search", "profile", "--limit", "1.5"]);
+    expect(fractional.status).toBe(2);
+    expect(fractional.output).toContain("--limit expects a positive integer");
+
+    const unknown = runCli(distCli, ["search", "profile", "--limt", "2"]);
+    expect(unknown.status).toBe(2);
+    expect(unknown.output).toContain("Unknown mcp search option '--limt'");
+  });
+
+  it("rejects a call argument key passed more than once", () => {
     const result = runCli(distCli, ["call", "ghost.lookup", "q:a", "limit:5", "q:b"]);
+    expect(result.status).toBe(2);
     expect(result.output).toContain("argument 'q' was passed more than once");
     expect(result.output).not.toContain("argument 'limit'");
+  });
+
+  it("rejects invalid run timeout configuration", () => {
+    const result = runCli(distCli, ["run"], {
+      input: "return 1",
+      env: { PI_RECIPES_MCP_RUN_TIMEOUT_MS: "NaN" },
+    });
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("PI_RECIPES_MCP_RUN_TIMEOUT_MS expects a positive integer");
   });
 });

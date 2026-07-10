@@ -169,18 +169,41 @@ describe("recipe MCP materialization", () => {
         }),
       };
       const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          method?: string;
+          params?: { cursor?: string };
+        };
         if (body.method === "initialize") {
           return jsonResponse({
             jsonrpc: "2.0",
             id: 1,
-            result: { serverInfo: { name: "nextplay", version: "0.1.0" } },
+            result: {
+              protocolVersion: "2025-11-25",
+              serverInfo: { name: "nextplay", version: "0.1.0" },
+            },
+          });
+        }
+        if (body.params?.cursor === "page-2") {
+          return jsonResponse({
+            jsonrpc: "2.0",
+            id: 3,
+            result: {
+              tools: [
+                {
+                  name: "get_profile",
+                  annotations: { readOnlyHint: true, openWorldHint: false },
+                },
+              ],
+            },
           });
         }
         return jsonResponse({
           jsonrpc: "2.0",
           id: 2,
-          result: { tools: [{ name: "search_positions" }] },
+          result: {
+            tools: [{ name: "search_positions" }],
+            nextCursor: "page-2",
+          },
         });
       }) as unknown as typeof fetch;
 
@@ -258,6 +281,14 @@ describe("recipe MCP materialization", () => {
       expect(manifest.servers?.map((server) => server.id)).toEqual(["nextplay"]);
       expect(manifest.servers?.[0]?.name).toBe("nextplay");
       expect(manifest.diagnostics).toEqual([]);
+      expect(manifest.servers?.[0]?.tools?.map((tool) => tool.name)).toEqual([
+        "search_positions",
+        "get_profile",
+      ]);
+      expect(manifest.servers?.[0]?.tools?.[1]?.annotations).toEqual({
+        readOnlyHint: true,
+        openWorldHint: false,
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -762,7 +793,8 @@ describe("recipe MCP materialization", () => {
         "Tool 'search_people' is not accessible on server 'nextplay' (blocked by configuration)."
       )
     ).toBe(
-      "Tool 'search_people' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools."
+      "Tool 'search_people' is not enabled for server 'nextplay' in this session. " +
+        "Run `mcp list nextplay` to inspect the allowlist; if absent, the recipe configuration must grant it."
     );
   });
 
@@ -819,8 +851,8 @@ describe("recipe MCP materialization", () => {
     filter.flush();
     expect(out.join("")).toBe(
       [
-        "[mcp] Tool 'x' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools.",
-        "Error: Tool 'x' is not available on server 'nextplay'. Run `mcp list nextplay` to see available tools.",
+        "[mcp] Tool 'x' is not enabled for server 'nextplay' in this session. Run `mcp list nextplay` to inspect the allowlist; if absent, the recipe configuration must grant it.",
+        "Error: Tool 'x' is not enabled for server 'nextplay' in this session. Run `mcp list nextplay` to inspect the allowlist; if absent, the recipe configuration must grant it.",
         "",
       ].join("\n")
     );
@@ -1124,6 +1156,27 @@ describe("mcporter CLI end-to-end", () => {
           "vars.MISSING is not defined. Pass it with --var MISSING=value (defined vars: KEY). " +
           'Use `"MISSING" in vars` to test for optional vars.',
       });
+
+      await expect(
+        runMcpJavaScript('tools.stub.get_value({ key: "explode" });', {
+          timeoutMs: 10_000,
+        })
+      ).rejects.toThrow(
+        /tool call\(s\) were not awaited: stub\.get_value=failed \(stub failure: explode\)/
+      );
+
+      await expect(
+        runMcpJavaScript('tools.stub.get_value({ key: "color" });', {
+          timeoutMs: 10_000,
+        })
+      ).rejects.toThrow(/stub\.get_value=succeeded/);
+
+      await expect(
+        runMcpJavaScript(
+          'tools.stub.get_value({ key: "color" }); throw new Error("later failure")',
+          { timeoutMs: 10_000 }
+        )
+      ).rejects.toThrow(/stub\.get_value=succeeded[\s\S]*script also failed: later failure/);
     } finally {
       if (previousConfig === undefined) delete process.env.MCPORTER_CONFIG;
       else process.env.MCPORTER_CONFIG = previousConfig;

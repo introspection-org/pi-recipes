@@ -327,6 +327,15 @@ console.log(JSON.stringify(result, null, 2))
 EOF
 ```
 
+Every `mcp run` tool call must be awaited. Missing awaits, duplicate direct-call
+arguments, invalid limits, and invalid timeout configuration fail with a nonzero
+usage status instead of continuing ambiguously. Run workflows also bound
+per-call time, total calls, and concurrency; a timeout reports that a remote
+mutation may already have committed and must be inspected before retrying.
+
+The JavaScript runs with the same OS privileges as the active shell sandbox.
+`mcp run` is not an additional sandbox or security boundary.
+
 The `mcp` command is a pi-recipes wrapper backed by mcporter (a package
 dependency), locked to the generated session config via `MCPORTER_CONFIG` — a
 recipe session never reads host-level mcporter or editor MCP configs. Outside

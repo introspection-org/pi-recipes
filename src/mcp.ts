@@ -15,6 +15,7 @@ export interface McpManifestTool {
   description?: string;
   input_schema?: Record<string, unknown>;
   output_schema?: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
 }
 
 export interface McpManifestServer {
@@ -87,6 +88,7 @@ interface RemoteMcpTool {
   description?: string;
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
 }
 
 interface WritableLike {
@@ -110,6 +112,7 @@ interface JsonRpcResponse<T = unknown> {
 
 interface ToolsListResult {
   tools?: RemoteMcpTool[];
+  nextCursor?: string;
 }
 
 export interface MaterializeRecipeMcpOptions {
@@ -126,7 +129,13 @@ export interface MaterializedMcpManifest extends McpManifest {
   diagnostics?: McpDiscoveryDiagnostic[];
 }
 
-const PROTOCOL_VERSION = "2025-03-26";
+const PROTOCOL_VERSION = "2025-11-25";
+const SUPPORTED_PROTOCOL_VERSIONS = new Set([
+  PROTOCOL_VERSION,
+  "2025-06-18",
+  "2025-03-26",
+]);
+const MAX_TOOL_LIST_PAGES = 64;
 const RECIPE_ENV_PREFIX = "PI_RECIPES_";
 const LEGACY_RUNTIME_ENV_PREFIX = "INTRO" + "SPECTION_";
 const MCP_MANIFEST_ENV = `${RECIPE_ENV_PREFIX}MCP_MANIFEST`;
@@ -421,7 +430,8 @@ async function postJsonRpc<T>(
   io: Pick<CliIO, "env" | "fetch"> & { cwd?: string },
   server: McpManifestServer,
   payload: Record<string, unknown>,
-  sessionId?: string
+  sessionId?: string,
+  protocolVersion = PROTOCOL_VERSION
 ): Promise<
   | { parsed: JsonRpcResponse<T> | null; status: number; headers: Headers; body: string }
   | string
@@ -435,7 +445,7 @@ async function postJsonRpc<T>(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
-    "MCP-Protocol-Version": PROTOCOL_VERSION,
+    "MCP-Protocol-Version": protocolVersion,
     ...(localHeaders ?? { Authorization: `Bearer ${token}` }),
   };
   if (sessionId) {
@@ -477,9 +487,13 @@ async function initializeSession(
 ): Promise<{
   sessionId?: string;
   serverName?: string;
+  protocolVersion?: string;
   diagnostic?: McpDiscoveryDiagnostic;
 }> {
-  const result = await postJsonRpc<{ serverInfo?: { name?: unknown } }>(
+  const result = await postJsonRpc<{
+    protocolVersion?: unknown;
+    serverInfo?: { name?: unknown };
+  }>(
     io,
     server,
     {
@@ -509,6 +523,19 @@ async function initializeSession(
     };
   }
   const sessionId = result.headers.get("mcp-session-id") ?? undefined;
+  const rawProtocolVersion = result.parsed?.result?.protocolVersion;
+  const protocolVersion =
+    typeof rawProtocolVersion === "string" ? rawProtocolVersion : undefined;
+  if (protocolVersion !== undefined && !SUPPORTED_PROTOCOL_VERSIONS.has(protocolVersion)) {
+    return {
+      diagnostic: {
+        serverId: server.id,
+        url: server.base_url,
+        stage: "initialize",
+        message: `Server negotiated unsupported MCP protocol ${protocolVersion}; this client supports ${[...SUPPORTED_PROTOCOL_VERSIONS].join(", ")}.`,
+      },
+    };
+  }
   const rawServerName = result.parsed?.result?.serverInfo?.name;
   const serverName =
     typeof rawServerName === "string" && rawServerName.trim()
@@ -519,10 +546,11 @@ async function initializeSession(
       io,
       server,
       { jsonrpc: "2.0", method: "notifications/initialized" },
-      sessionId
+      sessionId,
+      protocolVersion ?? PROTOCOL_VERSION
     ).catch(() => undefined);
   }
-  return { sessionId, serverName };
+  return { sessionId, serverName, protocolVersion: protocolVersion ?? PROTOCOL_VERSION };
 }
 
 async function listEndpointTools(
@@ -544,47 +572,84 @@ async function listEndpointTools(
   const initialized = await initializeSession(opts, manifestServer);
   if (initialized.diagnostic) return { tools: [], diagnostic: initialized.diagnostic };
   const serverName = initialized.serverName;
-  const result = await postJsonRpc<ToolsListResult>(
-    opts,
-    manifestServer,
-    { jsonrpc: "2.0", id: 2, method: "tools/list" },
-    initialized.sessionId
-  );
-  if (typeof result === "string") {
-    return {
-      tools: [],
-      diagnostic: {
-        serverId: binding.id,
-        url: binding.baseUrl,
-        stage: "tools/list",
-        message: result,
+  const tools: RemoteMcpTool[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_TOOL_LIST_PAGES; page += 1) {
+    const result = await postJsonRpc<ToolsListResult>(
+      opts,
+      manifestServer,
+      {
+        jsonrpc: "2.0",
+        id: 2 + page,
+        method: "tools/list",
+        ...(cursor ? { params: { cursor } } : {}),
       },
-    };
+      initialized.sessionId,
+      initialized.protocolVersion
+    );
+    if (typeof result === "string") {
+      return {
+        tools: [],
+        diagnostic: {
+          serverId: binding.id,
+          url: binding.baseUrl,
+          stage: "tools/list",
+          message: result,
+        },
+      };
+    }
+    if (result.status < 200 || result.status >= 300) {
+      return {
+        tools: [],
+        diagnostic: {
+          serverId: binding.id,
+          url: binding.baseUrl,
+          stage: "tools/list",
+          status: result.status,
+          message: rpcFailureMessage(result.body, result.parsed),
+        },
+      };
+    }
+    if (!result.parsed || result.parsed.error || !result.parsed.result) {
+      return {
+        tools: [],
+        diagnostic: {
+          serverId: binding.id,
+          url: binding.baseUrl,
+          stage: "tools/list",
+          message: rpcFailureMessage(result.body, result.parsed),
+        },
+      };
+    }
+    tools.push(...(result.parsed.result.tools ?? []));
+    const nextCursor = result.parsed.result.nextCursor;
+    if (!nextCursor) break;
+    if (seenCursors.has(nextCursor)) {
+      return {
+        tools: [],
+        diagnostic: {
+          serverId: binding.id,
+          url: binding.baseUrl,
+          stage: "tools/list",
+          message: `Server repeated tools/list cursor '${nextCursor}'.`,
+        },
+      };
+    }
+    if (page === MAX_TOOL_LIST_PAGES - 1) {
+      return {
+        tools: [],
+        diagnostic: {
+          serverId: binding.id,
+          url: binding.baseUrl,
+          stage: "tools/list",
+          message: `Tool discovery exceeded ${MAX_TOOL_LIST_PAGES} pages.`,
+        },
+      };
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
   }
-  if (result.status < 200 || result.status >= 300) {
-    return {
-      tools: [],
-      diagnostic: {
-        serverId: binding.id,
-        url: binding.baseUrl,
-        stage: "tools/list",
-        status: result.status,
-        message: rpcFailureMessage(result.body, result.parsed),
-      },
-    };
-  }
-  if (!result.parsed || result.parsed.error || !result.parsed.result) {
-    return {
-      tools: [],
-      diagnostic: {
-        serverId: binding.id,
-        url: binding.baseUrl,
-        stage: "tools/list",
-        message: rpcFailureMessage(result.body, result.parsed),
-      },
-    };
-  }
-  const tools = result.parsed.result.tools ?? [];
   if (tools.length === 0) {
     return {
       tools,
@@ -947,6 +1012,7 @@ function manifestFromCatalogs(catalogs: McpCatalog[]): McpManifest {
         description: tool.description ?? "",
         ...(tool.inputSchema ? { input_schema: tool.inputSchema } : {}),
         ...(tool.outputSchema ? { output_schema: tool.outputSchema } : {}),
+        ...(tool.annotations ? { annotations: tool.annotations } : {}),
       })),
     })),
   };
