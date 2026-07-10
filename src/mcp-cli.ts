@@ -181,6 +181,8 @@ export function mcpListHelpText(): string {
     "  --quiet, --exit-code      Health checks for an exact server target.",
     "  --timeout <ms>            Override discovery timeout for an exact target.",
     "  --no-oauth                Use cached credentials without starting OAuth.",
+    "  Use only one output-mode flag at a time: --brief, --schema, --all-parameters, --json, or --status.",
+    "  Exact --schema output includes both input and output schemas, with the output schema after the input schema. Do not truncate it with head or sed.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -208,6 +210,7 @@ export function mcpCallHelpText(): string {
     "  --no-oauth, --oauth-timeout <ms>",
     "  --raw-strings, --no-coerce",
     "  Machine-readable output is forwarded unchanged.",
+    "  When parsing JSON, keep stderr separate and do not truncate stdout with head or sed.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");

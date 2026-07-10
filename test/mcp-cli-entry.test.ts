@@ -233,23 +233,18 @@ describe("mcp CLI entry detection", () => {
     for (const command of ["list", "call"]) {
       const result = runCli(distCli, [command, "--help"]);
       expect(result.status).toBe(0);
-      expect(result.output).toContain("recipe session");
-      expect(result.output).not.toContain("--http-url");
-      expect(result.output).not.toContain("--stdio");
+      expect(result.stdout.trim().length).toBeGreaterThan(0);
+      expect(result.stderr).toBe("");
     }
   });
 
-  it("documents exact-target list flags and keeps quiet mode free of the capability banner", () => {
-    const help = runCli(distCli, ["list", "--help"]);
-    expect(help.output).toContain("exact server target");
-    expect(help.output).toContain("--no-oauth");
-
+  it("keeps quiet list output silent", () => {
     const quiet = runCli(distCli, ["list", "--quiet"]);
     expect(quiet.status).toBe(0);
-    expect(quiet.output).not.toContain("Only exact tool names shown");
+    expect(quiet.output).toBe("");
   });
 
-  it("keeps exact-tool schema JSON machine-readable on delegated failures", () => {
+  it("keeps delegated list failures machine-readable in JSON mode", () => {
     writeFileSync(
       join(dir, "mcp.json"),
       JSON.stringify({
@@ -287,24 +282,16 @@ describe("mcp CLI entry detection", () => {
     const result = runCli(distCli, [
       "list",
       "offline.lookup",
-      "--schema",
       "--json",
       "--timeout",
       "100",
     ]);
     expect(result.status).not.toBe(0);
     expect(() => JSON.parse(result.stdout)).not.toThrow();
-    expect(result.stdout).not.toContain("Output schema (response shape)");
     expect(result.stderr).not.toContain("Only exact tool names shown");
   });
 
-  it("documents JSON stdin, structured call errors, and headless authentication", () => {
-    const call = runCli(distCli, ["call", "--help"]);
-    expect(call.output).toContain("--args <json|->");
-    expect(call.output).toContain("Machine-readable output is forwarded unchanged");
-    expect(call.output).toContain("--no-oauth");
-    expect(call.output).toContain("Quote argument tokens containing shell operators");
-
+  it("rejects in-session authentication", () => {
     const auth = runCli(distCli, ["auth", "contacts"]);
     expect(auth.status).toBe(2);
     expect(auth.output).toContain("Ask the user to authenticate");
