@@ -269,6 +269,10 @@ function safeServerId(value: string): string {
   return id || "mcp";
 }
 
+export function normalizeMcpServerId(value: string): string {
+  return safeServerId(value);
+}
+
 function uniqueServerId(base: string, seen: Set<string>): string {
   const safe = safeServerId(base);
   let candidate = safe;
@@ -838,12 +842,10 @@ export function formatMcpDiscoveryDiagnostics(
 }
 
 function recipeMcpPolicy(mcp: RecipePackageMcpConfig): {
-  hasServers: boolean;
   required: Set<string>;
   tools: Map<string, RecipeMcpToolSelection>;
 } {
   return {
-    hasServers: mcp.servers.length > 0,
     required: new Set(
       mcp.servers
         .filter((server) => server.required)
@@ -876,7 +878,7 @@ function filterTools(
   const packageSelection = recipeTools.get(serverId);
   return tools.filter((tool) => {
     const name = tool.name.trim();
-    if (packageSelection && !mcpSelectionAllowsTool(packageSelection, name)) {
+    if (!packageSelection || !mcpSelectionAllowsTool(packageSelection, name)) {
       return false;
     }
     return agentSelections.some(
@@ -951,7 +953,7 @@ function normalizeManifest(
   for (const server of manifest.servers ?? []) {
     if (!server.id || !server.base_url) continue;
     const serverId = safeServerId(server.id);
-    if (recipePolicy.hasServers && !recipePolicy.tools.has(serverId)) continue;
+    if (!recipePolicy.tools.has(serverId)) continue;
     matched.add(serverId);
     const seenTools = new Set<string>();
     const tools = filterTools(

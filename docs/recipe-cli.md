@@ -289,6 +289,11 @@ automatically exposing tools that a remote server adds later. Empty package
 `tools`, agent server (`contacts: {}`), and agent `mcp: {}` objects are invalid
 rather than implicit wildcards.
 
+Package declaration, endpoint binding, and agent selection are all required.
+A local or cloud binding never grants access by itself, and a bound server not
+listed in `package.json#pi.mcp.servers` is ignored. An empty package server list
+therefore permits no MCP servers.
+
 Agents with MCP access normally need `bash` or another command-capable
 tool, because MCP endpoint tools are invoked through the session-local CLI.
 `recipes check` emits a non-blocking warning when `bash` is missing; recipes

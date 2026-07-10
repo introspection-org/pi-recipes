@@ -272,6 +272,12 @@ agent no access to it; omitting the entire `mcp` block gives it no MCP access.
 Empty package `tools`, agent server (`contacts: {}`), and agent `mcp: {}`
 objects are invalid rather than implicit wildcards.
 
+Package declaration, endpoint binding, and agent selection are independent
+gates. A bound server that is absent from `package.json#pi.mcp.servers` is
+ignored, and an agent cannot select it. An empty package server list therefore
+permits no MCP servers; creating a local or cloud binding never grants access
+by itself.
+
 `"*"` is a reserved whole-toolset sentinel, not a glob. Patterns such as
 `search_*` are invalid. An explicit wildcard opts into tools that the remote
 server may add later; use exact includes when that behavior is not desired.

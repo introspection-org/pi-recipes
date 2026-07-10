@@ -144,7 +144,7 @@ describe("recipe MCP materialization", () => {
     }
   });
 
-  it("names bootstrap servers from serverInfo.name, then the binding label, never the endpoint id", async () => {
+  it("requires package, binding, and agent gates for bootstrap MCP tools", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-bootstrap-"));
     try {
       const cwd = join(root, "workspace");
@@ -182,13 +182,36 @@ describe("recipe MCP materialization", () => {
         });
       }) as unknown as typeof fetch;
 
-      const manifest = await materializeRecipeMcpManifest({
+      const withoutPackage = await materializeRecipeMcpManifest({
         cwd,
         recipeDir,
         env,
         fetch: fetchImpl,
         agentMcp: [{ serverId: "nextplay", tools: { include: ["*"] } }],
         manifest: recipeManifest(recipeDir, []),
+      });
+      expect(withoutPackage.servers).toEqual([]);
+
+      const withoutAgent = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: fetchImpl,
+        manifest: recipeManifest(recipeDir, [
+          { id: "nextplay", include: ["*"] },
+        ]),
+      });
+      expect(withoutAgent.servers).toEqual([]);
+
+      const manifest = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: fetchImpl,
+        agentMcp: [{ serverId: "nextplay", tools: { include: ["*"] } }],
+        manifest: recipeManifest(recipeDir, [
+          { id: "nextplay", include: ["*"] },
+        ]),
       });
 
       // Recipes reference cloud MCP servers by their human name (the id the

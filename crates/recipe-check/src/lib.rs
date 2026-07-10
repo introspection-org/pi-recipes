@@ -1234,10 +1234,7 @@ fn validate_resolved_agent_mcp(
             );
             continue;
         };
-        let Some(policy) = mcp_tool_policy else {
-            continue;
-        };
-        let Some(server_policy) = policy.get(&server_id) else {
+        let Some(server_policy) = mcp_tool_policy.and_then(|policy| policy.get(&server_id)) else {
             ctx.error(
                 "agent.mcp_server_undeclared",
                 &path,
@@ -1302,11 +1299,8 @@ fn validate_mcp_tool_refs(
             );
             continue;
         };
-        let Some(policy) = mcp_tool_policy else {
-            continue;
-        };
         let server_id = safe_mcp_server_id(server);
-        let Some(server_policy) = policy.get(&server_id) else {
+        let Some(server_policy) = mcp_tool_policy.and_then(|policy| policy.get(&server_id)) else {
             ctx.error(
                 "agent.mcp_server_undeclared",
                 path,
@@ -2383,6 +2377,40 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.mcp_include_missing"));
+    }
+
+    #[test]
+    fn rejects_agent_mcp_access_without_package_server_policy() {
+        let root = temp_recipe("mcp-package-policy-missing");
+        write_recipe(
+            &root,
+            "nextplay",
+            &["search_profiles"],
+            &["mcp:nextplay/search_profiles"],
+            true,
+        );
+        let package = json!({
+            "name": "mcp-policy-missing-test",
+            "version": "0.1.0",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        fs::write(
+            root.join("package.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&package).expect("serialize package")
+            ),
+        )
+        .expect("write package");
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.mcp_server_undeclared"
+                && diagnostic.message.contains("nextplay")
+        }));
     }
 }
 

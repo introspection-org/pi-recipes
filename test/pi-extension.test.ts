@@ -209,7 +209,14 @@ describe("Pi recipes launch extension", () => {
         `${JSON.stringify({
           name: "mcp-shell-recipe",
           version: "1.0.0",
-          pi: { agents: ["agents/*.yaml"] },
+          pi: {
+            agents: ["agents/*.yaml"],
+            mcp: {
+              servers: [
+                { id: "nextplay", tools: { include: ["search"] } },
+              ],
+            },
+          },
         })}\n`
       );
       writeFileSync(

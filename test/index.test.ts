@@ -1683,6 +1683,14 @@ describe("recipe child agents", () => {
         version: "0.1.0",
         pi: {
           agents: ["agents/*.yaml"],
+          mcp: {
+            servers: [
+              {
+                id: "contacts",
+                tools: { include: ["search_contacts"] },
+              },
+            ],
+          },
         },
       });
       writeFileSync(
@@ -1816,7 +1824,17 @@ describe("recipe child agents", () => {
       writePiPackageManifest(root, {
         name: "invalid-mcp-selector",
         version: "0.1.0",
-        pi: { agents: ["agents/*.yaml"] },
+        pi: {
+          agents: ["agents/*.yaml"],
+          mcp: {
+            servers: [
+              {
+                id: "salesforce",
+                tools: { include: ["search_accounts"] },
+              },
+            ],
+          },
+        },
       });
       const writeAgent = (name: string, mcpLines: string[]) =>
         writeFileSync(
@@ -1839,6 +1857,18 @@ describe("recipe child agents", () => {
         );
       writeAgent("missing-include", ["mcp:", "  salesforce: {}"]);
       writeAgent("empty-mcp", ["mcp: {}"]);
+      writeAgent("undeclared-server", [
+        "mcp:",
+        "  nextplay:",
+        "    include:",
+        "      - \"*\"",
+      ]);
+      writeAgent("package-blocked-tool", [
+        "mcp:",
+        "  salesforce:",
+        "    include:",
+        "      - delete_org",
+      ]);
       writeAgent("invalid-patterns", [
         "mcp:",
         "  salesforce:",
@@ -1854,6 +1884,16 @@ describe("recipe child agents", () => {
             agentName: "missing-include",
             field: "mcp",
             code: "mcp_include_missing",
+          }),
+          expect.objectContaining({
+            agentName: "undeclared-server",
+            field: "mcp",
+            code: "mcp_server_undeclared",
+          }),
+          expect.objectContaining({
+            agentName: "package-blocked-tool",
+            field: "mcp",
+            code: "mcp_tool_undeclared",
           }),
           expect.objectContaining({
             agentName: "empty-mcp",

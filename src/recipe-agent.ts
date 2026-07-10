@@ -12,7 +12,11 @@ import {
   readPiPackageManifest,
   RecipePackageError,
 } from "./recipe-package.js";
-import { parseAgentMcpToolRef } from "./mcp.js";
+import {
+  mcpSelectionAllowsTool,
+  normalizeMcpServerId,
+  parseAgentMcpToolRef,
+} from "./mcp.js";
 
 export interface RecipeSystemInstructions {
   mode: "append" | "replace";
@@ -540,6 +544,15 @@ export function validateResolvedRecipeAgentDefinition(opts: {
 
   const tools = resolvedTools(agentName);
   const mcp = resolvedMcp(agentName);
+  const manifest = recipeManifest(opts.recipeDir);
+  const packageMcpServers = manifest
+    ? new Map(
+        manifest.mcp.servers.map((server) => [
+          normalizeMcpServerId(server.id),
+          server.tools,
+        ])
+      )
+    : undefined;
   const rawMcp = rawDefinitions.get(agentName)?.mcp;
   if (rawMcp && Object.keys(rawMcp).length === 0) {
     findings.push({
@@ -550,6 +563,7 @@ export function validateResolvedRecipeAgentDefinition(opts: {
     });
   }
   for (const [serverId, selection] of Object.entries(mcp ?? {})) {
+    const normalizedServerId = normalizeMcpServerId(serverId);
     if (!serverId.trim()) {
       findings.push({
         agentName,
@@ -566,6 +580,15 @@ export function validateResolvedRecipeAgentDefinition(opts: {
         message: `Recipe agent "${agentName}" MCP server "${serverId}" must declare include; use ["*"] for all tools or [] for none`,
       });
     }
+    const packageSelection = packageMcpServers?.get(normalizedServerId);
+    if (packageMcpServers && !packageSelection) {
+      findings.push({
+        agentName,
+        field: "mcp",
+        code: "mcp_server_undeclared",
+        message: `Recipe agent "${agentName}" references MCP server "${serverId}" but package.json#pi.mcp.servers does not declare it`,
+      });
+    }
     for (const selector of selection.include ?? []) {
       const trimmed = selector.trim();
       if (trimmed && (trimmed === "*" || !trimmed.includes("*"))) continue;
@@ -576,6 +599,24 @@ export function validateResolvedRecipeAgentDefinition(opts: {
         message: `Recipe agent "${agentName}" MCP server "${serverId}" has invalid include entry "${selector}"; use an exact tool name or "*"`,
       });
     }
+    for (const toolName of selection.include ?? []) {
+      const trimmed = toolName.trim();
+      if (
+        !trimmed ||
+        trimmed === "*" ||
+        trimmed.includes("*") ||
+        !packageSelection ||
+        mcpSelectionAllowsTool(packageSelection, trimmed)
+      ) {
+        continue;
+      }
+      findings.push({
+        agentName,
+        field: "mcp",
+        code: "mcp_tool_undeclared",
+        message: `Recipe agent "${agentName}" MCP tool "${normalizedServerId}/${trimmed}" is not included by the package policy`,
+      });
+    }
     for (const selector of selection.exclude ?? []) {
       const trimmed = selector.trim();
       if (trimmed && !trimmed.includes("*")) continue;
@@ -584,6 +625,26 @@ export function validateResolvedRecipeAgentDefinition(opts: {
         field: "mcp",
         code: "mcp_selector_invalid",
         message: `Recipe agent "${agentName}" MCP server "${serverId}" has invalid exclude entry "${selector}"; use an exact tool name`,
+      });
+    }
+  }
+  for (const tool of tools ?? []) {
+    const ref = parseAgentMcpToolRef(tool);
+    if (!ref || !packageMcpServers) continue;
+    const packageSelection = packageMcpServers.get(ref.serverId);
+    if (!packageSelection) {
+      findings.push({
+        agentName,
+        field: "mcp",
+        code: "mcp_server_undeclared",
+        message: `Recipe agent "${agentName}" MCP tool reference "${tool}" uses a server not declared by package.json#pi.mcp.servers`,
+      });
+    } else if (!mcpSelectionAllowsTool(packageSelection, ref.toolName)) {
+      findings.push({
+        agentName,
+        field: "mcp",
+        code: "mcp_tool_undeclared",
+        message: `Recipe agent "${agentName}" MCP tool reference "${tool}" is not included by the package policy`,
       });
     }
   }
