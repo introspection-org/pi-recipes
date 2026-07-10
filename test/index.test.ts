@@ -1741,6 +1741,24 @@ describe("recipe child agents", () => {
         ].join("\n")
       );
       writeFileSync(
+        join(root, "agents", "legacy.yaml"),
+        [
+          "name: legacy",
+          "model:",
+          "  name: test/provider-model",
+          "  thinking_level: low",
+          "tools:",
+          "  - bash",
+          "  - mcp:contacts/search_contacts",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Legacy instructions",
+          "",
+        ].join("\n")
+      );
+      writeFileSync(
         join(root, "agents", "worker.yaml"),
         [
           "name: worker",
@@ -1772,6 +1790,22 @@ describe("recipe child agents", () => {
           severity: "warning",
           message:
             'Recipe agent "worker" declares MCP access without bash; ensure another active tool can execute the session-local mcp CLI',
+        },
+      ]);
+      expect(
+        validateResolvedRecipeAgentDefinition({
+          recipeDir: root,
+          agentName: "legacy",
+          requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+        })
+      ).toEqual([
+        {
+          agentName: "legacy",
+          field: "mcp",
+          code: "mcp_ref_deprecated",
+          severity: "warning",
+          message:
+            'Recipe agent "legacy" uses deprecated mcp:<server>/<tool> entries in tools; migrate them to the agent mcp block',
         },
       ]);
 

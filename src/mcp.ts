@@ -70,6 +70,11 @@ interface McpCatalog {
 }
 
 export interface McpDiscoveryDiagnostic {
+  code?:
+    | "mcp.package_server_undeclared"
+    | "mcp.agent_server_unselected"
+    | "mcp.agent_tools_disabled"
+    | "mcp.tools_filtered";
   serverId: string;
   url: string;
   stage: "config" | "initialize" | "tools/list" | "filter";
@@ -834,7 +839,8 @@ export function formatMcpDiscoveryDiagnostics(
   const selected = diagnostics.slice(0, limit);
   const lines = selected.map((diagnostic) => {
     const status = diagnostic.status ? ` HTTP ${diagnostic.status}` : "";
-    return `${diagnostic.serverId} ${diagnostic.stage}${status}: ${diagnostic.message}`;
+    const code = diagnostic.code ? ` [${diagnostic.code}]` : "";
+    return `${diagnostic.serverId} ${diagnostic.stage}${status}${code}: ${diagnostic.message}`;
   });
   const remaining = diagnostics.length - selected.length;
   if (remaining > 0) lines.push(`${remaining} more MCP discovery failure(s).`);
@@ -1017,14 +1023,57 @@ function filterDiagnostics(
     if (discovered.length === 0) continue;
 
     const packageSelection = recipePolicy.tools.get(serverId);
-    const packageExpected = packageSelection?.include?.map((tool) => `${serverId}/${tool}`) ?? [];
-    const agentExpected = agentSelections
-      .filter((selection) => selection.serverId === serverId)
-      .flatMap((selection) =>
-        (selection.tools.include ?? []).map((tool) => `${serverId}/${tool}`)
-      );
+    const selections = agentSelections.filter(
+      (selection) => selection.serverId === serverId
+    );
+    if (!packageSelection) {
+      diagnostics.push({
+        code: "mcp.package_server_undeclared",
+        serverId,
+        url: server.base_url,
+        stage: "filter",
+        message: `Discovered ${discovered.length} tool(s), but package.json#pi.mcp.servers does not declare this server. The binding was ignored; binding-only MCP access is no longer supported.`,
+      });
+      continue;
+    }
+    if (selections.length === 0) {
+      if (agentSelections.length > 0) continue;
+      diagnostics.push({
+        code: "mcp.agent_server_unselected",
+        serverId,
+        url: server.base_url,
+        stage: "filter",
+        message: `Discovered ${discovered.length} tool(s), but the agent does not select this package MCP server. No tools were exposed.`,
+      });
+      continue;
+    }
+    if (selections.every((selection) => selection.tools.include?.length === 0)) {
+      diagnostics.push({
+        code: "mcp.agent_tools_disabled",
+        serverId,
+        url: server.base_url,
+        stage: "filter",
+        message: `The agent explicitly disables all tools from this server with include: [].`,
+      });
+      continue;
+    }
+    if (
+      filterTools(
+        serverId,
+        server.tools ?? [],
+        recipePolicy.tools,
+        selections
+      ).length > 0
+    ) {
+      continue;
+    }
+    const packageExpected = packageSelection.include?.map((tool) => `${serverId}/${tool}`) ?? [];
+    const agentExpected = selections.flatMap((selection) =>
+      (selection.tools.include ?? []).map((tool) => `${serverId}/${tool}`)
+    );
     const expected = agentExpected.length > 0 ? agentExpected : packageExpected;
     diagnostics.push({
+      code: "mcp.tools_filtered",
       serverId,
       url: server.base_url,
       stage: "filter",
@@ -1168,10 +1217,10 @@ export async function materializeRecipeMcpManifest(
     rawManifest = manifestFromCatalogs(discovery.catalogs);
   }
   const mcpManifest = normalizeManifest(rawManifest, opts.manifest.mcp, agentSelections);
+  diagnostics.push(
+    ...filterDiagnostics(rawManifest, opts.manifest.mcp, agentSelections)
+  );
   if ((mcpManifest.servers ?? []).length === 0) {
-    if (diagnostics.length === 0) {
-      diagnostics = filterDiagnostics(rawManifest, opts.manifest.mcp, agentSelections);
-    }
     await clearRecipeMcpManifest(env, opts.cwd);
     return { ...mcpManifest, diagnostics };
   }

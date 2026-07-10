@@ -1283,6 +1283,7 @@ fn validate_mcp_tool_refs(
     let Some(items) = value.as_sequence() else {
         return;
     };
+    let mut warned_deprecated = false;
     for item in items {
         let Some(tool) = item.as_str() else {
             continue;
@@ -1299,6 +1300,15 @@ fn validate_mcp_tool_refs(
             );
             continue;
         };
+        if !warned_deprecated {
+            ctx.warning(
+                "agent.mcp_ref_deprecated",
+                path,
+                "Agent tools contains deprecated mcp:<server-id>/<tool-name> references",
+                Some("migrate MCP selection to the agent mcp block"),
+            );
+            warned_deprecated = true;
+        }
         let server_id = safe_mcp_server_id(server);
         let Some(server_policy) = mcp_tool_policy.and_then(|policy| policy.get(&server_id)) else {
             ctx.error(
@@ -2306,6 +2316,10 @@ mod tests {
         assert!(report.valid, "{:?}", report.diagnostics);
         assert!(report.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "pi.mcp_allow_deprecated" && diagnostic.severity == Severity::Warning
+        }));
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.mcp_ref_deprecated"
+                && diagnostic.severity == Severity::Warning
         }));
     }
 

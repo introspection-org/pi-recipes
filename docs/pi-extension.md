@@ -286,8 +286,19 @@ For compatibility, package `tools.allow` is accepted as a deprecated alias for
 `tools.include`, and validation emits a warning when it is used. An empty
 legacy `allow: []` keeps its previous uncapped meaning and normalizes to
 `include: ["*"]`; new `include: []` explicitly selects no tools. Legacy
-`mcp:<server>/<tool>` entries in an agent's `tools` list remain readable. New
-recipes should use the separated form above.
+`mcp:<server>/<tool>` entries in an agent's `tools` list remain readable and
+emit `agent.mcp_ref_deprecated`. New recipes should use the separated form
+above.
+
+Validation reports explicit codes for migration-affecting configurations:
+`pi.mcp_allow_deprecated`, `agent.mcp_ref_deprecated`,
+`agent.mcp_server_undeclared`, `agent.mcp_tool_undeclared`,
+`agent.mcp_include_missing`, `agent.mcp_empty`, and
+`agent.mcp_selector_invalid`. Runtime discovery similarly distinguishes an
+undeclared package server (`mcp.package_server_undeclared`), an unselected
+agent server (`mcp.agent_server_unselected`), explicit `include: []`
+(`mcp.agent_tools_disabled`), and a zero-tool policy intersection
+(`mcp.tools_filtered`).
 
 When the selected agent declares MCP access, the extension writes a
 session-local shim at `.pi/bin/mcp` and prepends `.pi/bin` to `PATH` for

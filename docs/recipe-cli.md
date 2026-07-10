@@ -299,6 +299,12 @@ validation warning. To preserve its historical behavior, `allow: []` means
 uncapped and normalizes to `include: ["*"]`; the new `include: []` spelling
 means no tools.
 
+Legacy agent `mcp:<server>/<tool>` entries also remain readable but emit
+`agent.mcp_ref_deprecated`. Missing package declarations, invalid selectors,
+and package-blocked agent tools are reported as validation errors rather than
+being silently filtered. Runtime binding diagnostics distinguish package,
+agent-selection, explicitly-disabled, and zero-tool-intersection filtering.
+
 Agents with MCP access normally need `bash` or another command-capable
 tool, because MCP endpoint tools are invoked through the session-local CLI.
 `recipes check` emits a non-blocking warning when `bash` is missing; recipes

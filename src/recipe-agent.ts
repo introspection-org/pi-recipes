@@ -628,9 +628,12 @@ export function validateResolvedRecipeAgentDefinition(opts: {
       });
     }
   }
+  let hasLegacyMcpRefs = false;
   for (const tool of tools ?? []) {
     const ref = parseAgentMcpToolRef(tool);
-    if (!ref || !packageMcpServers) continue;
+    if (!ref) continue;
+    hasLegacyMcpRefs = true;
+    if (!packageMcpServers) continue;
     const packageSelection = packageMcpServers.get(ref.serverId);
     if (!packageSelection) {
       findings.push({
@@ -647,6 +650,15 @@ export function validateResolvedRecipeAgentDefinition(opts: {
         message: `Recipe agent "${agentName}" MCP tool reference "${tool}" is not included by the package policy`,
       });
     }
+  }
+  if (hasLegacyMcpRefs) {
+    findings.push({
+      agentName,
+      field: "mcp",
+      code: "mcp_ref_deprecated",
+      severity: "warning",
+      message: `Recipe agent "${agentName}" uses deprecated mcp:<server>/<tool> entries in tools; migrate them to the agent mcp block`,
+    });
   }
   const mcpMayIncludeTools = Object.values(mcp ?? {}).some(
     (selection) => (selection.include?.length ?? 0) > 0
