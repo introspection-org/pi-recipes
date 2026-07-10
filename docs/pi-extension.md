@@ -313,8 +313,7 @@ recipes that provide a custom shell wrapper may intentionally ignore it.
 ```bash
 mcp search "contact lookup"              # find relevant tool references
 mcp list                                 # servers and their tools
-mcp list contacts --schema               # parameter schemas per tool
-mcp list contacts.search_contacts --schema
+mcp list contacts.search_contacts --schema # inspect one tool's input/output schema
 mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
@@ -343,6 +342,10 @@ coercion, or a function-call expression for nested objects and arrays;
 `key=@file.md` reads a value from a file, and `--output json` prints a
 machine-parseable result. Use `mcp run` when a workflow needs multiple calls,
 local filtering, ranking, or deduplication before printing a compact result.
+If search does not find a match, retry with broader or alternate terms. Use
+`mcp list` only to identify exact tool names, then inspect one candidate with
+`mcp list <server.tool> --schema`; avoid server-wide schema dumps during normal
+agent workflows.
 Every tool call in a run script must be awaited or its chain returned; merely
 attaching `.then()` or `.catch()` is insufficient when the chain remains pending
 as the script exits. Run workflows have bounded wall time, per-call time, total

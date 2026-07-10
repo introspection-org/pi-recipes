@@ -317,8 +317,7 @@ Agents use:
 ```bash
 mcp search "contact lookup"              # find relevant tool references
 mcp list                                 # servers and their tools
-mcp list contacts --schema               # parameter schemas per tool
-mcp list contacts.search_contacts --schema
+mcp list contacts.search_contacts --schema # inspect one tool's input/output schema
 mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
@@ -338,6 +337,11 @@ closed. A timeout still reports that a remote mutation may already have
 committed and must be inspected before retrying. Structured MCP errors preserve
 server recovery fields such as `code`, `retryable`, `action`, `request_id`, and
 `outcome` in JavaScript and `--json-errors` output.
+
+If search does not find a match, retry with broader or alternate terms. Use
+`mcp list` only to identify exact tool names, then inspect one candidate with
+`mcp list <server.tool> --schema`; avoid server-wide schema dumps during normal
+agent workflows.
 
 Every tool call returns mcporter's `CallResult` directly. Read it with
 `.text()`, `.markdown()`, `.json()`, `.images()`, `.content()`, or

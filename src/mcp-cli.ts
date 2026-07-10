@@ -133,7 +133,7 @@ export function mcpCliHelpText(): string {
     "",
     "When to use:",
     "  Use search when you do not know the right tool.",
-    "  Use list --schema before guessing arguments.",
+    "  Inspect the exact tool before supplying arguments: mcp list <server.tool> --schema.",
     "  Use mcp call for a single simple operation.",
     "  Use mcp run for multiple calls, filtering, ranking, or dedupe.",
     "  Use @file for long text and --output json when piping call output.",
@@ -201,7 +201,8 @@ export function mcpSearchHelpText(): string {
     "",
     "Searches only MCP tools available in this session.",
     "Results include the exact tool ref, required fields, an inspection command, and a call example.",
-    "Use broader terms or `mcp list` when no result matches.",
+    "Try broader or alternate terms when no result matches.",
+    "Use `mcp list` only to identify exact tool names, then inspect one candidate with `mcp list <server.tool> --schema`.",
   ].join("\n");
 }
 
@@ -577,7 +578,10 @@ async function searchCatalog(args: string[]): Promise<number> {
   }
   if (matches.length === 0) {
     stdout.write(`No matching tools found for "${query}".\n`);
-    stdout.write("Try broader terms, or run `mcp list` to inspect available servers.\n");
+    stdout.write("Try broader or alternate terms.\n");
+    stdout.write(
+      "Use `mcp list` only to identify exact tool names, then inspect one candidate with `mcp list <server.tool> --schema`.\n"
+    );
     return 0;
   }
   stdout.write(`Found ${matches.length} available matching tool${matches.length === 1 ? "" : "s"}\n\n`);

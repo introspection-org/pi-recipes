@@ -64,6 +64,9 @@ describe("mcp CLI entry detection", () => {
     expect(result.output).toContain("MCP resources");
     expect(result.output).toContain("CallResult");
     expect(result.output).toContain("multi-value |");
+    expect(result.output).toContain(
+      "Inspect the exact tool before supplying arguments: mcp list <server.tool> --schema"
+    );
   });
 
   it("exits cleanly when a downstream pipeline closes stdout", () => {
@@ -114,6 +117,8 @@ describe("mcp CLI entry detection", () => {
     const search = runCli(distCli, ["search", "--help"]);
     expect(search.status).toBe(0);
     expect(search.output.trim().length).toBeGreaterThan(0);
+    expect(search.output).toContain("Try broader or alternate terms");
+    expect(search.output).toContain("mcp list <server.tool> --schema");
 
     const run = runCli(distCli, ["run", "--help"]);
     expect(run.status).toBe(0);
@@ -121,6 +126,15 @@ describe("mcp CLI entry detection", () => {
     expect(run.output).toContain("PI_RECIPES_MCP_RUN_TIMEOUT_MS");
     expect(run.output).toContain("MCP calls are always headless");
     expect(run.output).not.toContain("managed");
+  });
+
+  it("keeps an empty search on the progressive-disclosure path", () => {
+    const result = runCli(distCli, ["search", "unlikely-capability"]);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Try broader or alternate terms");
+    expect(result.output).toContain("Use `mcp list` only to identify exact tool names");
+    expect(result.output).toContain("mcp list <server.tool> --schema");
+    expect(result.output).not.toContain("run `mcp list` to inspect available servers");
   });
 
   it("provides recipe-scoped help for delegated commands", () => {
