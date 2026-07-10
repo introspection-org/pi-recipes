@@ -51,6 +51,7 @@ describe("mcp CLI entry detection", () => {
     expect(result.output).toContain("not `mcporter` or `npx mcporter`");
     expect(result.output).toContain("MCP resources");
     expect(result.output).toContain("CallResult");
+    expect(result.output).toContain("multi-value |");
   });
 
   it("exits cleanly when a downstream pipeline closes stdout", () => {

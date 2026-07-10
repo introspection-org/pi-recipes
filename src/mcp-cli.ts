@@ -119,6 +119,7 @@ export function mcpCliHelpText(): string {
     "  mcp call <server>.<tool> key=value ...",
     "  mcp call '<server>.<tool>(key: \"value\")'",
     "  Calls support --args/--json payloads, --output text|markdown|json|raw, --save-images, --timeout, and @file.",
+    "  Quote argument tokens containing shell operators, especially multi-value |; JSON stdin avoids shell quoting.",
     "  Use --output json for machine-readable success and failure envelopes.",
     "",
     "Run a short workflow:",
