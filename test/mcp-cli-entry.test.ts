@@ -93,6 +93,36 @@ describe("mcp CLI entry detection", () => {
     expect(probe.stderr).not.toContain("Unhandled 'error' event");
   });
 
+  it("exits cleanly when a downstream pipeline closes stdout", () => {
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        [
+          'const { spawn } = require("node:child_process");',
+          `const child = spawn(process.execPath, [${JSON.stringify(distCli)}, "--help"], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });`,
+          "let stderr = '';",
+          "child.stderr.setEncoding('utf8');",
+          "child.stderr.on('data', chunk => { stderr += chunk; });",
+          "child.stdout.destroy();",
+          "child.on('close', code => { process.stderr.write(stderr); process.exit(code ?? 1); });",
+        ].join("\n"),
+      ],
+      {
+        env: {
+          ...process.env,
+          MCPORTER_CONFIG: join(dir, "mcporter.json"),
+          PI_RECIPES_MCP_MANIFEST: join(dir, "mcp.json"),
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+      }
+    );
+    expect(probe.status).toBe(0);
+    expect(probe.stderr).not.toContain("EPIPE");
+    expect(probe.stderr).not.toContain("Unhandled 'error' event");
+  });
+
   it("runs main when invoked through a symlink (pnpm/npm bin shims)", () => {
     // pnpm exposes packages through node_modules symlinks and npm bin shims
     // symlink to the entry script; argv[1] is then the symlink while
@@ -213,8 +243,9 @@ describe("mcp CLI entry detection", () => {
   it("documents JSON stdin, structured call errors, and headless OAuth completion", () => {
     const call = runCli(distCli, ["call", "--help"]);
     expect(call.output).toContain("--args <json|->");
-    expect(call.output).toContain("{ server, tool, issue }");
+    expect(call.output).toContain("CLI usage/policy errors stay on stderr with exit 2");
     expect(call.output).toContain("--no-oauth");
+    expect(call.output).toContain("Quote argument tokens containing shell operators");
 
     const auth = runCli(distCli, ["auth", "--help"]);
     expect(auth.output).toContain("keep this command running");
