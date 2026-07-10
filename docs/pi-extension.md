@@ -314,7 +314,7 @@ mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
 const result = await tools["contacts"]["search_contacts"]({ query: "Ada Lovelace" })
-console.log(JSON.stringify(result.json(), null, 2))
+console.log(JSON.stringify(result, null, 2))
 EOF
 ```
 

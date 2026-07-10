@@ -291,24 +291,39 @@ function checkedCallResult(
           : callResult.text() ?? "MCP tool call failed.";
     throw new McpRemoteToolResultError({ ...errorObject, message });
   }
-  return new Proxy(callResult, {
-    get(target, property) {
-      if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) {
-        return Reflect.get(target, property, target);
+  return callResult;
+}
+
+function decodeCallResult(
+  callResult: ReturnType<typeof createCallResult>,
+  format: McpRunResultFormat,
+  ref: string
+): unknown {
+  switch (format) {
+    case "json": {
+      const decoded = callResult.json();
+      if (decoded === null && callResult.structuredContent() == null && callResult.text() != null) {
+        throw new McpRunUsageError(
+          `${ref} did not return JSON. Its documentation should name the response type; ` +
+            `for plain text call tools[${JSON.stringify(ref.split(".")[0])}]` +
+            `[${JSON.stringify(ref.slice(ref.indexOf(".") + 1))}].text(args).`
+        );
       }
-      // Promise resolution probes returned values for `.then`.
-      if (property === "then") return undefined;
-      if (property in target) {
-        const value = Reflect.get(target, property, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      }
-      throw new McpRunUsageError(
-        `CallResult has no property '${property}'. Decode the tool response first, ` +
-          `for example with result.json().${property}; other readers are .text(), ` +
-          ".markdown(), .images(), .content(), .structuredContent(), and .raw."
-      );
-    },
-  });
+      return decoded;
+    }
+    case "text":
+      return callResult.text();
+    case "markdown":
+      return callResult.markdown();
+    case "images":
+      return callResult.images();
+    case "content":
+      return callResult.content();
+    case "structuredContent":
+      return callResult.structuredContent();
+    case "raw":
+      return callResult.raw;
+  }
 }
 
 function validateRunToolArgs(server: string, tool: string, args: Record<string, unknown>): void {
