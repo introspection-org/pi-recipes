@@ -209,58 +209,6 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("normalizes and warns for legacy package MCP tools.allow", () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-allow-"));
-    try {
-      mkdirSync(join(root, "agents"), { recursive: true });
-      writePiPackageManifest(root, {
-        name: "legacy-mcp-policy",
-        version: "0.1.0",
-        pi: {
-          mcp: {
-            servers: [
-              {
-                id: "partner-mcp",
-                tools: { allow: ["get_value"] },
-              },
-              {
-                id: "uncapped-mcp",
-                tools: { allow: [] },
-              },
-            ],
-          },
-        },
-      });
-
-      const manifest = readPiPackageManifest(root);
-      expect(manifest.mcp.servers[0]?.tools).toEqual({
-        include: ["get_value"],
-      });
-      expect(manifest.mcp.servers[1]?.tools).toEqual({ include: ["*"] });
-      expect(validatePiPackageManifest(manifest)).toEqual({
-        valid: true,
-        findings: [
-          {
-            severity: "warning",
-            code: "pi.mcp_allow_deprecated",
-            message:
-              'MCP server "partner-mcp" uses deprecated tools.allow; migrate to tools.include',
-            packageName: "legacy-mcp-policy",
-          },
-          {
-            severity: "warning",
-            code: "pi.mcp_allow_deprecated",
-            message:
-              'MCP server "uncapped-mcp" uses deprecated tools.allow; migrate to tools.include',
-            packageName: "legacy-mcp-policy",
-          },
-        ],
-      });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("requires an explicit package MCP tools.include", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-include-"));
     try {
@@ -475,7 +423,7 @@ describe("recipe package manifest", () => {
             servers: [
               {
                 id: "partner",
-                tools: { allow: ["search"] },
+                tools: { include: ["search"] },
               },
             ],
           },
@@ -523,7 +471,7 @@ describe("recipe package manifest", () => {
             servers: [
               {
                 id: "partner-mcp",
-                tools: { allow: ["search"] },
+                tools: { include: ["search"] },
               },
             ],
           },
@@ -570,7 +518,7 @@ describe("recipe package manifest", () => {
             servers: [
               {
                 id: "partner",
-                tools: { allow: ["search"] },
+                tools: { include: ["search"] },
               },
             ],
           },
@@ -1741,24 +1689,6 @@ describe("recipe child agents", () => {
         ].join("\n")
       );
       writeFileSync(
-        join(root, "agents", "legacy.yaml"),
-        [
-          "name: legacy",
-          "model:",
-          "  name: test/provider-model",
-          "  thinking_level: low",
-          "tools:",
-          "  - bash",
-          "  - mcp:contacts/search_contacts",
-          "skills: []",
-          "subagents: []",
-          "system_instructions:",
-          "  mode: append",
-          "  content: Legacy instructions",
-          "",
-        ].join("\n")
-      );
-      writeFileSync(
         join(root, "agents", "worker.yaml"),
         [
           "name: worker",
@@ -1792,23 +1722,6 @@ describe("recipe child agents", () => {
             'Recipe agent "worker" declares MCP access without bash; ensure another active tool can execute the session-local mcp CLI',
         },
       ]);
-      expect(
-        validateResolvedRecipeAgentDefinition({
-          recipeDir: root,
-          agentName: "legacy",
-          requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
-        })
-      ).toEqual([
-        {
-          agentName: "legacy",
-          field: "mcp",
-          code: "mcp_ref_deprecated",
-          severity: "warning",
-          message:
-            'Recipe agent "legacy" uses deprecated mcp:<server>/<tool> entries in tools; migrate them to the agent mcp block',
-        },
-      ]);
-
       const report = validateRecipeDirectory(root);
       expect(report.valid).toBe(true);
       expect(report.findings).toEqual(

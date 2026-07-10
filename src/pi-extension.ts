@@ -272,7 +272,7 @@ function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
 }
 
 function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
-  return resolveAgentMcpSelections(agent.mcp, agent.tools);
+  return resolveAgentMcpSelections(agent.mcp);
 }
 
 function scopedMcpSelections(state: RecipeLaunchState) {

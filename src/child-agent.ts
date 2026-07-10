@@ -136,7 +136,7 @@ function runtimeContextPrompt(
   mcp: RecipeAgentMcp | undefined,
   mcpAvailableTools: readonly string[] | undefined
 ): string {
-  const selections = resolveAgentMcpSelections(mcp, tools);
+  const selections = resolveAgentMcpSelections(mcp);
   const mcpRefs = exactAgentMcpToolRefs(selections);
   const mcpPrompt = selections.length > 0
     ? mcpCliPromptLines(mcpRefs, { availableTools: mcpAvailableTools }).join("\n")

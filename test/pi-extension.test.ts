@@ -460,7 +460,7 @@ describe("Pi recipes launch extension", () => {
                   {
                     id: "partner-mcp",
                     required: true,
-                    tools: { allow: ["get_value"] },
+                    tools: { include: ["get_value"] },
                   },
                 ],
               },
@@ -558,7 +558,7 @@ describe("Pi recipes launch extension", () => {
                   {
                     id: "partner-mcp",
                     required: true,
-                    tools: { allow: ["get_value"] },
+                    tools: { include: ["get_value"] },
                   },
                 ],
               },

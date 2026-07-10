@@ -118,8 +118,6 @@ export interface MaterializeRecipeMcpOptions {
   manifest: RecipePackageManifest;
   /** MCP selections for the active agent and its visible subagents. */
   agentMcp?: readonly ScopedMcpToolSelection[];
-  /** @deprecated Legacy `mcp:<server>/<tool>` entries from agent `tools`. */
-  agentTools?: readonly string[];
   env?: NodeJS.ProcessEnv;
   fetch?: typeof fetch;
 }
@@ -654,66 +652,11 @@ export interface ScopedMcpToolSelection {
   tools: RecipeMcpToolSelection;
 }
 
-export function parseAgentMcpToolRef(value: string): AgentMcpToolRef | null {
-  if (!value.startsWith("mcp:")) return null;
-  const body = value.slice("mcp:".length).trim();
-  const slash = body.indexOf("/");
-  if (slash <= 0 || slash === body.length - 1) return null;
-  const serverId = body.slice(0, slash).trim();
-  const toolName = body.slice(slash + 1).trim();
-  if (!serverId || !toolName) return null;
-  return { serverId: safeServerId(serverId), toolName, raw: value };
-}
-
-export function agentMcpToolAllowlist(tools: readonly string[]): Map<string, Set<string>> {
-  const allow = new Map<string, Set<string>>();
-  for (const tool of tools) {
-    const parsed = parseAgentMcpToolRef(tool);
-    if (!parsed) continue;
-    const serverTools = allow.get(parsed.serverId) ?? new Set<string>();
-    serverTools.add(parsed.toolName);
-    allow.set(parsed.serverId, serverTools);
-  }
-  return allow;
-}
-
-export function legacyAgentMcpSelections(
-  tools: readonly string[]
-): ScopedMcpToolSelection[] {
-  const byServer = new Map<string, string[]>();
-  for (const raw of tools) {
-    const parsed = parseAgentMcpToolRef(raw);
-    if (!parsed) continue;
-    const include = byServer.get(parsed.serverId) ?? [];
-    include.push(parsed.toolName);
-    byServer.set(parsed.serverId, include);
-  }
-  return [...byServer].map(([serverId, include]) => ({
-    serverId,
-    tools: { include },
-  }));
-}
-
 export function resolveAgentMcpSelections(
-  mcp: Readonly<Record<string, RecipeMcpToolSelection>> | undefined,
-  tools: readonly string[]
+  mcp: Readonly<Record<string, RecipeMcpToolSelection>> | undefined
 ): ScopedMcpToolSelection[] {
-  const selections = new Map<string, RecipeMcpToolSelection>();
-  for (const [serverId, selection] of Object.entries(mcp ?? {})) {
-    selections.set(safeServerId(serverId), selection);
-  }
-  for (const legacy of legacyAgentMcpSelections(tools)) {
-    const selection = selections.get(legacy.serverId);
-    selections.set(legacy.serverId, {
-      include: [
-        ...(selection?.include ?? []),
-        ...(legacy.tools.include ?? []),
-      ],
-      ...(selection?.exclude !== undefined ? { exclude: selection.exclude } : {}),
-    });
-  }
-  return [...selections].map(([serverId, selection]) => ({
-    serverId,
+  return Object.entries(mcp ?? {}).map(([serverId, selection]) => ({
+    serverId: safeServerId(serverId),
     tools: selection,
   }));
 }
@@ -737,7 +680,7 @@ export function exactAgentMcpToolRefs(
 }
 
 export function executableRecipeToolNames(tools: readonly string[]): string[] {
-  return tools.filter((tool) => !parseAgentMcpToolRef(tool));
+  return [...tools];
 }
 
 export interface McpCliPromptOptions {
@@ -1197,11 +1140,7 @@ export async function materializeRecipeMcpManifest(
   const hasConfiguredManifest =
     opts.manifest.mcp.manifests.length > 0 ||
     existsSync(join(opts.recipeDir, "mcp.json"));
-  const legacySelections = legacyAgentMcpSelections(opts.agentTools ?? []);
-  const agentSelections = [
-    ...(opts.agentMcp ?? []),
-    ...legacySelections,
-  ];
+  const agentSelections = opts.agentMcp ?? [];
 
   let rawManifest: McpManifest;
   let diagnostics: McpDiscoveryDiagnostic[] = [];

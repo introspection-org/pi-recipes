@@ -32,7 +32,6 @@ function recipeManifest(
   servers: Array<{
     id: string;
     required?: boolean;
-    allow?: string[];
     include?: string[];
     exclude?: string[];
   }>
@@ -53,8 +52,8 @@ function recipeManifest(
         id: server.id,
         required: server.required ?? false,
         tools: {
-          ...((server.include ?? server.allow) !== undefined
-            ? { include: server.include ?? server.allow }
+          ...(server.include !== undefined
+            ? { include: server.include }
             : {}),
           ...(server.exclude !== undefined ? { exclude: server.exclude } : {}),
         },
@@ -305,9 +304,9 @@ describe("recipe MCP materialization", () => {
         recipeDir,
         env,
         fetch: fetchImpl,
-        agentTools: ["mcp:slack/slack_list_threads"],
+        agentMcp: [{ serverId: "slack", tools: { include: ["slack_list_threads"] } }],
         manifest: recipeManifest(recipeDir, [
-          { id: "slack", allow: ["slack_list_threads"] },
+          { id: "slack", include: ["slack_list_threads"] },
         ]),
       });
 
@@ -383,9 +382,9 @@ describe("recipe MCP materialization", () => {
           SLACK_MCP_TOKEN: "slack-token",
         },
         fetch: fetchImpl,
-        agentTools: ["mcp:slack/slack_list_threads"],
+        agentMcp: [{ serverId: "slack", tools: { include: ["slack_list_threads"] } }],
         manifest: recipeManifest(recipeDir, [
-          { id: "slack", allow: ["slack_list_threads"] },
+          { id: "slack", include: ["slack_list_threads"] },
         ]),
       });
 
@@ -444,9 +443,9 @@ describe("recipe MCP materialization", () => {
         recipeDir,
         env,
         fetch: globalThis.fetch,
-        agentTools: ["mcp:slack/slack_read_channel"],
+        agentMcp: [{ serverId: "slack", tools: { include: ["slack_read_channel"] } }],
         manifest: recipeManifest(recipeDir, [
-          { id: "slack", allow: ["slack_read_channel"] },
+          { id: "slack", include: ["slack_read_channel"] },
         ]),
       });
 
@@ -983,8 +982,8 @@ describe("mcporter CLI end-to-end", () => {
         recipeDir,
         env,
         fetch: globalThis.fetch,
-        agentTools: ["mcp:stub/get_value"],
-        manifest: recipeManifest(recipeDir, [{ id: "stub", allow: ["get_value"] }]),
+        agentMcp: [{ serverId: "stub", tools: { include: ["get_value"] } }],
+        manifest: recipeManifest(recipeDir, [{ id: "stub", include: ["get_value"] }]),
       });
       expect(manifest.servers).toHaveLength(1);
       const configEnv = {
@@ -1040,8 +1039,8 @@ describe("mcporter CLI end-to-end", () => {
         recipeDir,
         env,
         fetch: globalThis.fetch,
-        agentTools: ["mcp:stub/get_value"],
-        manifest: recipeManifest(recipeDir, [{ id: "stub", allow: ["get_value"] }]),
+        agentMcp: [{ serverId: "stub", tools: { include: ["get_value"] } }],
+        manifest: recipeManifest(recipeDir, [{ id: "stub", include: ["get_value"] }]),
       });
       process.env.MCPORTER_CONFIG = env.MCPORTER_CONFIG;
       process.env.STUB_MCP_TOKEN = "stub-token";

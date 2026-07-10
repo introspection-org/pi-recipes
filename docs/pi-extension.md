@@ -282,16 +282,11 @@ by itself.
 `search_*` are invalid. An explicit wildcard opts into tools that the remote
 server may add later; use exact includes when that behavior is not desired.
 
-For compatibility, package `tools.allow` is accepted as a deprecated alias for
-`tools.include`, and validation emits a warning when it is used. An empty
-legacy `allow: []` keeps its previous uncapped meaning and normalizes to
-`include: ["*"]`; new `include: []` explicitly selects no tools. Legacy
-`mcp:<server>/<tool>` entries in an agent's `tools` list remain readable and
-emit `agent.mcp_ref_deprecated`. New recipes should use the separated form
-above.
+Package and agent MCP policies use only `include` and `exclude`. MCP tools are
+selected only through the agent `mcp` block; the ordinary `tools` list remains
+an explicit list of non-MCP tools.
 
-Validation reports explicit codes for migration-affecting configurations:
-`pi.mcp_allow_deprecated`, `agent.mcp_ref_deprecated`,
+Validation reports explicit codes for invalid MCP configurations:
 `agent.mcp_server_undeclared`, `agent.mcp_tool_undeclared`,
 `agent.mcp_include_missing`, `agent.mcp_empty`, and
 `agent.mcp_selector_invalid`. Runtime discovery similarly distinguishes an

@@ -294,16 +294,12 @@ A local or cloud binding never grants access by itself, and a bound server not
 listed in `package.json#pi.mcp.servers` is ignored. An empty package server list
 therefore permits no MCP servers.
 
-Deprecated package `tools.allow` remains readable during migration and emits a
-validation warning. To preserve its historical behavior, `allow: []` means
-uncapped and normalizes to `include: ["*"]`; the new `include: []` spelling
-means no tools.
-
-Legacy agent `mcp:<server>/<tool>` entries also remain readable but emit
-`agent.mcp_ref_deprecated`. Missing package declarations, invalid selectors,
-and package-blocked agent tools are reported as validation errors rather than
-being silently filtered. Runtime binding diagnostics distinguish package,
-agent-selection, explicitly-disabled, and zero-tool-intersection filtering.
+Package and agent MCP policies use only `include` and `exclude`, and MCP tools
+are selected only through the agent `mcp` block. Missing package declarations,
+invalid selectors, and package-blocked agent tools are reported as validation
+errors rather than being silently filtered. Runtime binding diagnostics
+distinguish package, agent-selection, explicitly-disabled, and
+zero-tool-intersection filtering.
 
 Agents with MCP access normally need `bash` or another command-capable
 tool, because MCP endpoint tools are invoked through the session-local CLI.
