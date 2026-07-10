@@ -18,25 +18,79 @@ describe("mcp CLI entry detection", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-entry-"));
     writeFileSync(join(dir, "mcporter.json"), JSON.stringify({ imports: [], mcpServers: {} }));
+    writeFileSync(join(dir, "mcp.json"), JSON.stringify({ servers: [] }));
   });
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function runCli(entry: string, args: string[]): { status: number | null; output: string } {
+  function runCli(
+    entry: string,
+    args: string[],
+    opts: { input?: string; env?: Record<string, string> } = {}
+  ): {
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+    output: string;
+  } {
     const child = spawnSync(process.execPath, [entry, ...args], {
-      env: { ...process.env, MCPORTER_CONFIG: join(dir, "mcporter.json") },
+      env: {
+        ...process.env,
+        MCPORTER_CONFIG: join(dir, "mcporter.json"),
+        PI_RECIPES_MCP_MANIFEST: join(dir, "mcp.json"),
+        ...opts.env,
+      },
       encoding: "utf8",
       timeout: 30_000,
+      input: opts.input,
     });
-    return { status: child.status, output: `${child.stdout}${child.stderr}` };
+    return {
+      status: child.status,
+      signal: child.signal,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      output: `${child.stdout}${child.stderr}`,
+    };
   }
 
   it("runs main when invoked directly", () => {
     const result = runCli(distCli, ["--help"]);
     expect(result.status).toBe(0);
-    expect(result.output).toContain("mcp");
+    expect(result.stdout.length).toBeGreaterThan(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("exits cleanly when a downstream pipeline closes stdout", () => {
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        [
+          'const { spawn } = require("node:child_process");',
+          `const child = spawn(process.execPath, [${JSON.stringify(distCli)}, "--help"], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });`,
+          "let stderr = '';",
+          "child.stderr.setEncoding('utf8');",
+          "child.stderr.on('data', chunk => { stderr += chunk; });",
+          "child.stdout.destroy();",
+          "child.on('close', code => { process.stderr.write(stderr); process.exit(code ?? 1); });",
+        ].join("\n"),
+      ],
+      {
+        env: {
+          ...process.env,
+          MCPORTER_CONFIG: join(dir, "mcporter.json"),
+          PI_RECIPES_MCP_MANIFEST: join(dir, "mcp.json"),
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+      }
+    );
+    expect(probe.status).toBe(0);
+    expect(probe.stderr).not.toContain("EPIPE");
+    expect(probe.stderr).not.toContain("Unhandled 'error' event");
   });
 
   it("runs main when invoked through a symlink (pnpm/npm bin shims)", () => {
@@ -50,16 +104,201 @@ describe("mcp CLI entry detection", () => {
 
     const result = runCli(link, ["--help"]);
     expect(result.status).toBe(0);
-    expect(result.output).toContain("mcp");
+    expect(result.stdout.length).toBeGreaterThan(0);
+    expect(result.stderr).toBe("");
   });
 
-  it("provides wrapper help for search and run subcommands", () => {
-    const search = runCli(distCli, ["search", "--help"]);
-    expect(search.status).toBe(0);
-    expect(search.output.trim().length).toBeGreaterThan(0);
+  it("provides wrapper help for every supported subcommand", () => {
+    for (const command of ["search", "run", "list", "call"]) {
+      const result = runCli(distCli, [command, "--help"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim().length).toBeGreaterThan(0);
+      expect(result.stderr).toBe("");
+    }
+  });
 
-    const run = runCli(distCli, ["run", "--help"]);
-    expect(run.status).toBe(0);
-    expect(run.output.trim().length).toBeGreaterThan(0);
+  it("keeps quiet list output silent", () => {
+    const quiet = runCli(distCli, ["list", "--quiet"]);
+    expect(quiet.status).toBe(0);
+    expect(quiet.output).toBe("");
+  });
+
+  it("keeps delegated list failures machine-readable in JSON mode", () => {
+    writeFileSync(
+      join(dir, "mcp.json"),
+      JSON.stringify({
+        servers: [
+          {
+            id: "offline",
+            base_url: "http://127.0.0.1:9/mcp",
+            tools: [
+              {
+                name: "lookup",
+                input_schema: { type: "object", properties: {} },
+                output_schema: {
+                  type: "object",
+                  properties: { value: { type: "string" } },
+                },
+              },
+            ],
+          },
+        ],
+      })
+    );
+    writeFileSync(
+      join(dir, "mcporter.json"),
+      JSON.stringify({
+        imports: [],
+        mcpServers: {
+          offline: {
+            baseUrl: "http://127.0.0.1:9/mcp",
+            allowedTools: ["lookup"],
+          },
+        },
+      })
+    );
+
+    const result = runCli(distCli, [
+      "list",
+      "offline.lookup",
+      "--json",
+      "--timeout",
+      "100",
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(() => JSON.parse(result.stdout)).not.toThrow();
+    expect(result.stderr).not.toContain("Only exact tool names shown");
+  });
+
+  it("rejects in-session authentication", () => {
+    const auth = runCli(distCli, ["auth", "contacts"]);
+    expect(auth.status).toBe(2);
+    expect(auth.output).toContain("Ask the user to authenticate");
+    expect(auth.output).not.toContain("managed");
+  });
+
+  it("blocks mcporter administration and ad-hoc connection surfaces", () => {
+    for (const args of [
+      ["config", "list"],
+      ["resource", "contacts"],
+      ["generate-cli", "contacts"],
+      ["list", "--http-url", "https://example.test/mcp"],
+    ]) {
+      const result = runCli(distCli, args);
+      expect(result.status).toBe(2);
+      expect(result.output).toContain("unavailable");
+    }
+  });
+
+  it("rejects an empty run script as a usage error", () => {
+    const result = runCli(distCli, ["run"], { input: "  \n" });
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("mcp run: empty script");
+  });
+
+  it("reports unknown servers in run scripts with the available list", () => {
+    const result = runCli(distCli, ["run"], { input: "await tools.ghost.lookup({})" });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Unknown MCP server 'ghost'");
+    expect(result.output).toContain("No MCP servers are configured.");
+  });
+
+  it("force-kills run scripts that never yield", () => {
+    const result = runCli(distCli, ["run"], {
+      input: "while (true) {}",
+      env: { PI_RECIPES_MCP_RUN_TIMEOUT_MS: "500" },
+    });
+    expect(result.signal).toBe("SIGKILL");
+    expect(result.output).toContain("mcp run: killed after 2500ms");
+    expect(result.output).toContain("synchronous busy-loop");
+  });
+
+  it("reports uncertain remote outcome on a yielding timeout", () => {
+    const result = runCli(distCli, ["run"], {
+      input: "await new Promise(() => {})",
+      env: { PI_RECIPES_MCP_RUN_TIMEOUT_MS: "100" },
+    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Remote side effects may already have occurred");
+    expect(result.output).toContain("inspect state before retrying");
+  });
+
+  it("rejects malformed call expressions before the ad-hoc spawn path", () => {
+    const result = runCli(distCli, ["call", 'ghost.lookup(q: "x", limit:']);
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("malformed tool expression");
+    expect(result.output).toContain("balanced quotes and parentheses");
+  });
+
+  it("accepts well-formed call expressions and plain refs with dots", () => {
+    // Balanced expression → not flagged (fails later on the unknown server).
+    const expr = runCli(distCli, ["call", 'ghost.lookup(q: "x")']);
+    expect(expr.output).not.toContain("malformed tool expression");
+    const plain = runCli(distCli, ["call", "ghost.lookup", "q:a"]);
+    expect(plain.output).not.toContain("malformed tool expression");
+  });
+
+  it("rejects non-numeric search limits", () => {
+    const result = runCli(distCli, ["search", "profile", "--limit", "abc"]);
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("--limit expects a positive integer, got 'abc'");
+  });
+
+  it("rejects fractional search limits and unknown options", () => {
+    const fractional = runCli(distCli, ["search", "profile", "--limit", "1.5"]);
+    expect(fractional.status).toBe(2);
+    expect(fractional.output).toContain("--limit expects a positive integer");
+
+    const unknown = runCli(distCli, ["search", "profile", "--limt", "2"]);
+    expect(unknown.status).toBe(2);
+    expect(unknown.output).toContain("Unknown mcp search option '--limt'");
+  });
+
+  it("rejects duplicate call arguments across plain and named-flag syntax", () => {
+    writeFileSync(
+      join(dir, "mcp.json"),
+      JSON.stringify({
+        servers: [
+          {
+            id: "contacts",
+            base_url: "http://127.0.0.1:9/mcp",
+            tools: [
+              {
+                name: "search_contacts",
+                input_schema: {
+                  type: "object",
+                  properties: { query: { type: "string" } },
+                },
+              },
+            ],
+          },
+        ],
+      })
+    );
+
+    for (const callArgs of [
+      ["query=Ada", "query=Grace"],
+      ["query=Ada", "--query", "Grace"],
+      ["--query=Ada", "--query=Grace"],
+    ]) {
+      const result = runCli(distCli, [
+        "call",
+        "contacts.search_contacts",
+        ...callArgs,
+      ]);
+      expect(result.status).toBe(2);
+      expect(result.output).toContain(
+        "argument 'query' was passed more than once"
+      );
+    }
+  });
+
+  it("rejects invalid run timeout configuration", () => {
+    const result = runCli(distCli, ["run"], {
+      input: "return 1",
+      env: { PI_RECIPES_MCP_RUN_TIMEOUT_MS: "NaN" },
+    });
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("PI_RECIPES_MCP_RUN_TIMEOUT_MS expects a positive integer");
   });
 });

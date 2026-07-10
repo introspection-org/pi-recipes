@@ -316,9 +316,9 @@ Agents use:
 
 ```bash
 mcp search "contact lookup"              # find relevant tool references
-mcp list                                 # servers and their tools
-mcp list contacts --schema               # parameter schemas per tool
-mcp list contacts.search_contacts --schema
+mcp list                                 # configured server health/status
+mcp list contacts --brief                # compact tool signatures
+mcp list contacts.search_contacts --schema # inspect one tool's input/output schema
 mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
@@ -326,6 +326,47 @@ const result = await tools.contacts.search_contacts({ query: "Ada Lovelace" })
 console.log(JSON.stringify(result, null, 2))
 EOF
 ```
+
+`mcp list` and `mcp call` delegate listing, argument coercion, tool execution,
+and result formatting to mcporter against the filtered session config. The
+recipe wrapper only enforces the materialized server/tool policy, blocks
+configuration and ad-hoc transport escapes, keeps calls headless, rejects
+ambiguous duplicate or malformed call input, and removes non-actionable error
+stacks. Machine-readable output is forwarded unchanged. For an exact textual
+`mcp list <server.tool> --schema`, the wrapper appends the tool's materialized
+output schema because mcporter 0.12.3 renders it only in JSON mode.
+
+Every `mcp run` tool call must be awaited or its promise chain returned. A
+detached `.then()` or `.catch()` chain that is still pending when the script
+exits fails as a missing await. Duplicate direct-call arguments, invalid limits,
+and invalid timeout configuration also fail with a nonzero usage status instead
+of continuing ambiguously. Run workflows bound per-call time, total calls, and
+concurrency; excess calls wait in a FIFO queue and inherit the remaining run
+deadline. At the deadline queued calls are cancelled and active transports are
+closed. A timeout still reports that a remote mutation may already have
+committed and must be inspected before retrying. Structured MCP errors preserve
+server recovery fields such as `code`, `retryable`, `action`, `request_id`, and
+`outcome` in JavaScript and `--json-errors` output.
+
+If search does not find a match, retry with broader or alternate terms. Use
+`mcp list <server>` only to identify exact tool names, then inspect one candidate with
+`mcp list <server.tool> --schema`; avoid server-wide schema dumps during normal
+agent workflows.
+
+Every tool call returns decoded JSON by default. For a tool that explicitly
+documents another response type, select it on the tool function with
+`.text(args)`, `.markdown(args)`, `.images(args)`, `.content(args)`,
+`.structuredContent(args)`, or `.raw(args)`. All formats share the normal queue,
+deadline, await-detection, typed-error, and allowlist behavior. `mcp run`
+disables interactive OAuth while retaining configured and cached credentials,
+so a headless recipe call cannot unexpectedly launch a browser.
+
+Bounded server instructions received during MCP initialization are carried into
+the runtime prompt after tool filtering. They remain scoped to that server and
+cannot override recipe policy or make filtered tools callable.
+
+The JavaScript runs with the same OS privileges as the active shell sandbox.
+`mcp run` is not an additional sandbox or security boundary.
 
 The `mcp` command is a pi-recipes wrapper backed by mcporter (a package
 dependency), locked to the generated session config via `MCPORTER_CONFIG` — a
@@ -337,6 +378,10 @@ For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
 directory. Workspace config wins over recipe config. To override that path, set
 `PI_RECIPES_MCP_LOCAL_CONFIG`. Header values can reference environment variables
 such as `${CONTACTS_MCP_TOKEN}`.
+Local bindings may instead declare `auth: "oauth"`. The agent-facing CLI is
+always headless; local users complete OAuth with mcporter outside the agent
+session, while hosted environments supply their configured credentials. See
+[MCP authentication](mcp-auth.md).
 
 The extension does not translate or adapt MCP tool names. The server must expose
 the tool names declared by the selected recipe agent, or `mcp call` fails with

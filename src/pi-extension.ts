@@ -41,7 +41,7 @@ import {
   formatMcpDiscoveryDiagnostics,
   materializeSessionMcpCli,
   materializeRecipeMcpManifest,
-  mcpCliPromptLines,
+  mcpSystemPromptLines,
   resolveAgentMcpSelections,
 } from "./mcp.js";
 import {
@@ -167,7 +167,6 @@ interface RecipeLaunchState {
   mcpServerCount: number;
   mcpToolCount: number;
   mcpAvailableTools?: string[];
-  mcpUnavailableTools: string[];
   extensionsLoaded: boolean;
   configured: boolean;
 }
@@ -237,27 +236,19 @@ function applySystemInstructions(
   return [base, instructions.content].filter(Boolean).join("\n\n");
 }
 
-function runtimeContextPrompt(
-  base: string,
-  state: RecipeLaunchState
-): string {
+function mcpSystemPrompt(state: RecipeLaunchState): string | undefined {
   const selections = mcpSelectionsForAgent(state.agent);
-  const mcpRefs = exactAgentMcpToolRefs(selections);
-  const mcpPrompt = selections.length > 0
-    ? mcpCliPromptLines(mcpRefs, {
-          availableTools: state.mcpAvailableTools,
-          unavailableTools: state.mcpUnavailableTools,
-        }).join("\n")
-    : undefined;
+  if (selections.length === 0) return undefined;
+  const lines = mcpSystemPromptLines(state.mcpAvailableTools);
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function runtimeContextPrompt(state: RecipeLaunchState): string {
   return [
-    base,
-    [
-      "## Recipe Runtime Context",
-      "- Current workspace: " + state.cwd,
-      "- Recipe directory: " + state.recipeDir,
-    ].join("\n"),
-    mcpPrompt,
-  ].filter(Boolean).join("\n\n");
+    "## Recipe Runtime Context",
+    "- Current workspace: " + state.cwd,
+    "- Recipe directory: " + state.recipeDir,
+  ].join("\n");
 }
 
 function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
@@ -895,7 +886,6 @@ export function createPiRecipesExtension(
       extensionPaths,
       mcpServerCount: 0,
       mcpToolCount: 0,
-      mcpUnavailableTools: [],
       extensionsLoaded: false,
       configured: false,
     };
@@ -1000,7 +990,6 @@ export function createPiRecipesExtension(
       launchState.mcpServerCount = 0;
       launchState.mcpToolCount = 0;
       launchState.mcpAvailableTools = undefined;
-      launchState.mcpUnavailableTools = [];
       await clearRecipeMcpManifest(env, launchState.cwd);
       return;
     }
@@ -1031,7 +1020,6 @@ export function createPiRecipesExtension(
     const configuredRefs = exactAgentMcpToolRefs(mcpSelections);
     const availability = classifyMcpToolAvailability(configuredRefs, manifest);
     launchState.mcpAvailableTools = availability.availableTools;
-    launchState.mcpUnavailableTools = availability.unavailableTools;
     if (launchState.mcpToolCount > 0) {
       ctx.ui.notify(
         `Recipe MCP: ${launchState.mcpToolCount} tool(s) from ${launchState.mcpServerCount} server(s)`,
@@ -1565,7 +1553,11 @@ export function createPiRecipesExtension(
       if (!launchState) return {};
       const base = loadRecipeSystemPrompt(launchState.recipeDir) ?? event.systemPrompt;
       const recipePrompt = applySystemInstructions(base, launchState.agent.systemInstructions);
-      const systemPrompt = runtimeContextPrompt(recipePrompt, launchState);
+      const systemPrompt = [
+        recipePrompt,
+        mcpSystemPrompt(launchState),
+        runtimeContextPrompt(launchState),
+      ].filter(Boolean).join("\n\n");
       return { systemPrompt };
     });
   };

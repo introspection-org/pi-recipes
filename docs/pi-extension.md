@@ -312,9 +312,9 @@ recipes that provide a custom shell wrapper may intentionally ignore it.
 
 ```bash
 mcp search "contact lookup"              # find relevant tool references
-mcp list                                 # servers and their tools
-mcp list contacts --schema               # parameter schemas per tool
-mcp list contacts.search_contacts --schema
+mcp list                                 # configured server health/status
+mcp list contacts --brief                # compact tool signatures
+mcp list contacts.search_contacts --schema # inspect one tool's input/output schema
 mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
@@ -323,12 +323,20 @@ console.log(JSON.stringify(result, null, 2))
 EOF
 ```
 
-The runtime prompt includes the exact MCP tools that were successfully
-materialized for the session and separately identifies configured refs that
-were unavailable after discovery. That inventory is authoritative. Agents are
-instructed to start with `mcp search` when the right tool is unclear, inspect
-schemas before guessing arguments, and use `mcp --help` for the complete CLI
-guide. The prompt retains concrete examples for search, list, call, and run.
+`mcp list` and `mcp call` delegate listing, argument coercion, tool execution,
+and result formatting to mcporter against the filtered session config. The
+recipe wrapper only enforces the materialized server/tool policy, blocks
+configuration and ad-hoc transport escapes, keeps calls headless, rejects
+ambiguous duplicate or malformed call input, and removes non-actionable error
+stacks. Machine-readable output is forwarded unchanged. For an exact textual
+`mcp list <server.tool> --schema`, the wrapper appends the tool's materialized
+output schema because mcporter 0.12.3 renders it only in JSON mode.
+
+When MCP tools are available, the system prompt includes only a short note to
+use the `mcp` command through shell and consult `mcp --help`. CLI syntax,
+workflow guidance, server instructions, tool discovery, and schemas are not
+injected into runtime context. They remain progressively available through
+`mcp --help`, `mcp list`, and `mcp search`.
 
 Only exact tool names in the runtime inventory or `mcp list` output are
 callable. Upstream tool descriptions can mention related tools that are not
@@ -343,6 +351,39 @@ coercion, or a function-call expression for nested objects and arrays;
 `key=@file.md` reads a value from a file, and `--output json` prints a
 machine-parseable result. Use `mcp run` when a workflow needs multiple calls,
 local filtering, ranking, or deduplication before printing a compact result.
+If search does not find a match, retry with broader or alternate terms. Use
+`mcp list <server>` only to identify exact tool names, then inspect one candidate with
+`mcp list <server.tool> --schema`; avoid server-wide schema dumps during normal
+agent workflows.
+Every tool call in a run script must be awaited or its chain returned; merely
+attaching `.then()` or `.catch()` is insufficient when the chain remains pending
+as the script exits. Run workflows have bounded wall time, per-call time, total
+calls, and concurrency. Calls beyond the concurrency limit wait in FIFO order
+and inherit the remaining workflow deadline. Per-call deadlines are forwarded
+to the MCP client; on a workflow timeout, queued calls are cancelled and active
+transports are closed. Because a remote mutation may already have committed,
+timeout diagnostics still treat its outcome as unknown. Structured MCP errors
+retain recovery fields such as `code`, `retryable`, `action`, `request_id`, and
+`outcome` on the thrown error and in `--json-errors` output.
+
+Every call returns decoded JSON by default. When a tool explicitly documents a
+different response type, select it on the tool function with `.text(args)`,
+`.markdown(args)`, `.images(args)`, `.content(args)`,
+`.structuredContent(args)`, or `.raw(args)`. Calls in every format share the
+same await detection, queue, deadline, typed-error, and allowlist enforcement.
+Interactive OAuth is disabled: configured headers and cached credentials are
+usable, but a failed bearer token cannot launch a browser flow from the agent.
+
+Server instructions negotiated during MCP initialization are bounded, filtered
+alongside the available tool catalog, and included in the recipe runtime prompt.
+They are server-scoped operational guidance and cannot add capabilities or
+override recipe policy, the materialized allowlist, or higher-level safety
+rules.
+
+`mcp run` executes JavaScript with the same OS privileges as the active shell
+sandbox. It is a composition convenience, not a second security boundary; the
+recipe allowlist controls which MCP tools are reachable, while the outer runtime
+remains responsible for filesystem, environment, process, and network isolation.
 
 The `mcp` command is a pi-recipes wrapper backed by mcporter, installed as a
 package dependency; the shim pins `MCPORTER_CONFIG` to the generated session
@@ -357,6 +398,10 @@ The session records the generated paths in `PI_RECIPES_MCP_MANIFEST`,
 For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
 directory. To override that path, set `PI_RECIPES_MCP_LOCAL_CONFIG`. Header
 values can reference environment variables such as `${CONTACTS_MCP_TOKEN}`.
+Local bindings may instead declare `auth: "oauth"`. The agent-facing CLI is
+always headless; local users complete OAuth with mcporter outside the agent
+session, while hosted environments supply their configured credentials. See
+[MCP authentication](mcp-auth.md).
 
 `recipes install` creates the recipe-local `.pi/mcp.local.json` template for MCP
 recipes if it is missing and prints the env vars that need values. The extension

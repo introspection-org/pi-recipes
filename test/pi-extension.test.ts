@@ -428,6 +428,7 @@ describe("Pi recipes launch extension", () => {
                 host: "host.docker.internal",
                 base_url: "http://host.docker.internal:3200/api/mcp",
                 transport: "streamable_http",
+                instructions: "Read with get_value before drawing conclusions.",
                 tools: [
                   {
                     name: "get_value",
@@ -497,6 +498,9 @@ describe("Pi recipes launch extension", () => {
       expect(materialized.servers[0].tools.map((tool: { name: string }) => tool.name)).toEqual([
         "get_value",
       ]);
+      expect(materialized.servers[0].instructions).toBe(
+        "Read with get_value before drawing conclusions."
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -596,7 +600,7 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
-  it("skips MCP discovery when no active recipe agent opts into MCP refs", async () => {
+  it("skips MCP discovery when no active recipe agent opts into MCP", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-no-mcp-"));
     const originalFetch = globalThis.fetch;
     try {
@@ -606,16 +610,6 @@ describe("Pi recipes launch extension", () => {
       const staleManifest = join(projectDir, ".pi", "mcp.json");
       writeFileSync(staleManifest, JSON.stringify({ servers: [{ id: "old", tools: [] }] }));
       const env: NodeJS.ProcessEnv = {
-        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
-          endpoints: [
-            {
-              kind: "mcp",
-              id: "bootstrap",
-              base_url: "http://127.0.0.1:3201/mcp",
-            },
-          ],
-        }),
-        INTROSPECTION_TOKEN: "session-token",
         PI_RECIPES_MCP_MANIFEST: staleManifest,
       };
       const fetchImpl = vi.fn(async () =>
