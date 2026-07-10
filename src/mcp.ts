@@ -1039,7 +1039,7 @@ export function mcpCliPromptLines(
     ...serverInstructionLines,
     '- Use `mcp search "<what you need>"` when you are unsure which tool applies.',
     callableRule,
-    "- Before guessing arguments, inspect the tool with `mcp list <server.tool> --schema`.",
+    "- Use arguments already documented by the active recipe or skill directly. If a required input is genuinely unknown, inspect only that one tool with `mcp list <server.tool> --schema` immediately before calling it. Never batch schema reads or preflight schemas for later steps.",
     "- If no available tool supports the request, explain that the connected capability is unavailable instead of guessing a tool name.",
     "- Run `mcp --help` for the complete CLI guide.",
     "Examples:",
@@ -1048,7 +1048,7 @@ export function mcpCliPromptLines(
     '- `mcp call contacts.search_contacts query="Ada Lovelace"`',
     "- `mcp call 'contacts.search_contacts(query: \"Ada Lovelace\", limit: 5)'`",
     '- Use `mcp run` for workflows involving multiple calls, filtering, or deduplication; tools are functions such as `tools["contacts"]["search_contacts"]({ query: "Ada Lovelace" })`.',
-    "- Every `mcp run` call returns a mcporter CallResult. Use `.json()`, `.text()`, `.markdown()`, `.images()`, `.content()`, or `.structuredContent()` to read it; `.raw` is the untouched MCP envelope.",
+    "- Every `mcp run` tool call returns a mcporter CallResult. Decode it before projecting fields, normally with `const body = call.json()`; never read result fields from the CallResult itself. Other readers are `.text()`, `.markdown()`, `.images()`, `.content()`, and `.structuredContent()`; `.raw` is the untouched MCP envelope.",
   ];
 }
 
