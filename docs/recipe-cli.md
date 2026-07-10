@@ -323,7 +323,7 @@ mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
 const result = await tools.contacts.search_contacts({ query: "Ada Lovelace" })
-console.log(JSON.stringify(result, null, 2))
+console.log(JSON.stringify(result.json(), null, 2))
 EOF
 ```
 
@@ -339,14 +339,13 @@ committed and must be inspected before retrying. Structured MCP errors preserve
 server recovery fields such as `code`, `retryable`, `action`, `request_id`, and
 `outcome` in JavaScript and `--json-errors` output.
 
-Normal calls return JSON-first normalized data. Use
-`tools.server.tool.result(args)` when a workflow needs mcporter's
+Every tool call returns mcporter's `CallResult` directly. Read it with
 `.text()`, `.markdown()`, `.json()`, `.images()`, `.content()`, or
-`.structuredContent()` helpers, and `tools.server.tool.raw(args)` for the
-untouched MCP envelope. These variants share the normal queue, deadline,
-await-detection, typed-error, and allowlist behavior. `mcp run` disables
-interactive OAuth while retaining configured and cached credentials, so a
-headless recipe call cannot unexpectedly launch a browser.
+`.structuredContent()`; `.raw` contains the untouched MCP envelope. This single
+contract preserves mixed-modality content and shares the normal queue,
+deadline, await-detection, typed-error, and allowlist behavior. `mcp run`
+disables interactive OAuth while retaining configured and cached credentials,
+so a headless recipe call cannot unexpectedly launch a browser.
 
 Bounded server instructions received during MCP initialization are carried into
 the runtime prompt after tool filtering. They remain scoped to that server and

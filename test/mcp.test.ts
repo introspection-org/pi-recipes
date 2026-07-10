@@ -1278,15 +1278,14 @@ describe("mcporter CLI end-to-end", () => {
         } catch (error) {
           directTypedError = error.details;
         }
-        const normalizedMultimodal = await tools.stub.get_value({ key: "multimodal" });
-        const richMultimodal = await tools.stub.get_value.result({ key: "multimodal" });
-        const rawMultimodal = await tools.stub.get_value.raw({ key: "multimodal" });
+        const richMultimodal = await tools.stub.get_value({ key: "multimodal" });
         const multimodal = {
-          normalized: normalizedMultimodal,
           json: richMultimodal.json(),
+          text: richMultimodal.text(),
           images: richMultimodal.images(),
           content: richMultimodal.content(),
-          rawStructured: rawMultimodal.structuredContent,
+          structured: richMultimodal.structuredContent(),
+          rawStructured: richMultimodal.raw.structuredContent,
         };
         let unknownServerMessage = null;
         try {
@@ -1310,7 +1309,7 @@ describe("mcporter CLI end-to-end", () => {
           missingVarMessage = error instanceof Error ? error.message : String(error);
         }
         globalThis.__mcpRunSmoke = {
-          result,
+          result: result.text(),
           errorMessage,
           typedError,
           directTypedError,
@@ -1351,8 +1350,8 @@ describe("mcporter CLI end-to-end", () => {
           action: "request_permission",
         },
         multimodal: {
-          normalized: { summary: "ready", count: 1 },
           json: { summary: "ready", count: 1 },
+          text: "human-readable summary",
           images: [
             {
               data: "aGVsbG8=",
@@ -1367,6 +1366,7 @@ describe("mcporter CLI end-to-end", () => {
               mimeType: "image/png",
             },
           ],
+          structured: { summary: "ready", count: 1 },
           rawStructured: { summary: "ready", count: 1 },
         },
         unknownServerMessage:

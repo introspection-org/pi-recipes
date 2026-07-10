@@ -41,12 +41,8 @@ interface ToolCallRecord {
   promise: Promise<unknown>;
 }
 
-type McpRunResultMode = "normalized" | "raw" | "result";
-
 interface McpRunToolFunction {
-  (args?: Record<string, unknown>): Promise<unknown>;
-  raw(args?: Record<string, unknown>): Promise<unknown>;
-  result(args?: Record<string, unknown>): Promise<ReturnType<typeof createCallResult>>;
+  (args?: Record<string, unknown>): Promise<ReturnType<typeof createCallResult>>;
 }
 
 export class McpRunUsageError extends Error {}
@@ -116,7 +112,7 @@ export function mcpCliHelpText(): string {
     "Run a short workflow:",
     "  mcp run --var ID=abc123 <<'EOF'",
     '  const result = await tools["server"]["tool"]({ sessionId: vars.ID, key: "value" })',
-    "  console.log(JSON.stringify(result, null, 2))",
+    "  console.log(JSON.stringify(result.json(), null, 2))",
     "  EOF",
     "  Keep the heredoc quoted (<<'EOF'); pass dynamic values with --var KEY=value (read as vars.KEY).",
     "",
@@ -157,7 +153,7 @@ export function mcpRunHelpText(): string {
     "Always await or return tool-call chains.",
     "Detached .then/.catch calls fail if still pending when the script exits.",
     "Structured MCP errors retain code, retryable, action, request_id, and outcome fields when supplied.",
-    "Use tools.server.tool.result(args) for text/markdown/image/content helpers, or .raw(args) for the untouched MCP envelope.",
+    "Calls return mcporter CallResult objects with text/markdown/json/images/content/structuredContent helpers and .raw.",
     "MCP calls are headless: configured/cached credentials are allowed, but mcp run never starts interactive OAuth.",
     "A synchronous busy-loop is force-killed at the deadline.",
     "Code runs with the same OS privileges as the active shell sandbox; mcp run is not a separate security boundary.",
@@ -165,7 +161,7 @@ export function mcpRunHelpText(): string {
     "Example:",
     "  mcp run --var ID=abc123 <<'EOF'",
     '  const result = await tools["server"]["tool"]({ id: vars.ID })',
-    "  console.log(JSON.stringify(result, null, 2))",
+    "  console.log(JSON.stringify(result.json(), null, 2))",
     "  EOF",
   ].join("\n");
 }
@@ -186,9 +182,10 @@ function readStdin(): Promise<string> {
   });
 }
 
-function checkedCallResult(result: unknown): ReturnType<typeof createCallResult> {
-  const callResult = createCallResult(result);
-  if (asRecord(result).isError === true) {
+function checkedCallResult(
+  callResult: ReturnType<typeof createCallResult>
+): ReturnType<typeof createCallResult> {
+  if (asRecord(callResult.raw).isError === true) {
     // Fail loudly in code mode so a bad call rejects instead of flowing an
     // error string into downstream logic.
     const parsed = callResult.json();
@@ -206,18 +203,6 @@ function checkedCallResult(result: unknown): ReturnType<typeof createCallResult>
     throw new McpRemoteToolResultError({ ...errorObject, message });
   }
   return callResult;
-}
-
-function toolResult(result: unknown, mode: McpRunResultMode): unknown {
-  const callResult = checkedCallResult(result);
-  if (mode === "raw") return result;
-  if (mode === "result") return callResult;
-  const structured = callResult.structuredContent();
-  if (structured !== undefined && structured !== null) return structured;
-  const json = callResult.json();
-  if (json !== null) return json;
-  const text = callResult.text();
-  return text ?? result;
 }
 
 class ToolCallQueue {
@@ -622,9 +607,8 @@ async function createTools(opts: {
       get(_target, property) {
         if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) return undefined;
         const startCall = (
-          args: Record<string, unknown>,
-          mode: McpRunResultMode
-        ): Promise<unknown> => {
+          args: Record<string, unknown>
+        ): Promise<ReturnType<typeof createCallResult>> => {
           const allowedToolNames = knownTools.get(server);
           if (allowedToolNames && !allowedToolNames.includes(property)) {
             throw new McpRunToolError(
@@ -649,23 +633,24 @@ async function createTools(opts: {
                   `mcp run deadline reached before ${server}.${property} started.`
                 );
               }
-              return toolResult(
-                await runtime.callTool(server, property, {
-                  args,
-                  // A queued call must never outlive the workflow that owns
-                  // it. mcporter forwards this timeout to the MCP SDK and
-                  // resets the transport when it fires.
-                  timeoutMs: Math.min(opts.callTimeoutMs, remainingMs),
-                  disableOAuth: true,
-                }),
-                mode
+              return checkedCallResult(
+                createCallResult(
+                  await runtime.callTool(server, property, {
+                    args,
+                    // A queued call must never outlive the workflow that owns
+                    // it. mcporter forwards this timeout to the MCP SDK and
+                    // resets the transport when it fires.
+                    timeoutMs: Math.min(opts.callTimeoutMs, remainingMs),
+                    disableOAuth: true,
+                  })
+                )
               );
             } catch (error) {
               const improved = improveRunToolError(
                 error,
                 server,
                 property,
-                knownTools.get(server) ?? []
+                allowedToolNames ?? []
               );
               const message = improved instanceof Error ? improved.message : String(improved);
               const remoteDetails =
@@ -732,12 +717,8 @@ async function createTools(opts: {
           });
         };
 
-        const callable = ((args: Record<string, unknown> = {}) =>
-          startCall(args, "normalized")) as McpRunToolFunction;
-        callable.raw = (args: Record<string, unknown> = {}) => startCall(args, "raw");
-        callable.result = (args: Record<string, unknown> = {}) =>
-          startCall(args, "result") as Promise<ReturnType<typeof createCallResult>>;
-        return callable;
+        return ((args: Record<string, unknown> = {}) =>
+          startCall(args)) as McpRunToolFunction;
       },
     }) as Record<string, McpRunToolFunction>;
   }

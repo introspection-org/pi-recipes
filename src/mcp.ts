@@ -874,7 +874,7 @@ export function mcpCliPromptLines(
     '- `mcp call contacts.search_contacts query="Ada Lovelace"`',
     "- `mcp call 'contacts.search_contacts(query: \"Ada Lovelace\", limit: 5)'`",
     '- Use `mcp run` for workflows involving multiple calls, filtering, or deduplication; tools are functions such as `tools["contacts"]["search_contacts"]({ query: "Ada Lovelace" })`.',
-    "- In `mcp run`, append `.result(args)` when you need text/markdown/image/content helpers, or `.raw(args)` for the untouched MCP envelope.",
+    "- Every `mcp run` call returns a mcporter CallResult. Use `.json()`, `.text()`, `.markdown()`, `.images()`, `.content()`, or `.structuredContent()` to read it; `.raw` is the untouched MCP envelope.",
   ];
 }
 
