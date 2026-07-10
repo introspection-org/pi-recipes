@@ -301,4 +301,13 @@ describe("mcp CLI entry detection", () => {
     expect(result.status).toBe(2);
     expect(result.output).toContain("PI_RECIPES_MCP_RUN_TIMEOUT_MS expects a positive integer");
   });
+
+  it("rejects invalid run timeout configuration", () => {
+    const result = runCli(distCli, ["run"], {
+      input: "return 1",
+      env: { PI_RECIPES_MCP_RUN_TIMEOUT_MS: "NaN" },
+    });
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("PI_RECIPES_MCP_RUN_TIMEOUT_MS expects a positive integer");
+  });
 });
