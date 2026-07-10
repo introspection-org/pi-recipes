@@ -22,6 +22,7 @@ const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RUN_TOOL_CALLS = 100;
 const DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 16;
+const MAX_SEARCH_DESCRIPTION_CHARS = 600;
 const MCP_MANIFEST_ENV = "PI_RECIPES_MCP_MANIFEST";
 const LEGACY_MCP_MANIFEST_ENV = "INTRO" + "SPECTION_MCP_MANIFEST";
 
@@ -443,7 +444,10 @@ export function searchMcpTools(
         ref,
         server: server.id,
         tool: tool.name,
-        description: tool.description ?? "",
+        description:
+          (tool.description ?? "").length > MAX_SEARCH_DESCRIPTION_CHARS
+            ? `${(tool.description ?? "").slice(0, MAX_SEARCH_DESCRIPTION_CHARS - 14).trimEnd()}… [truncated]`
+            : (tool.description ?? ""),
         required: toolRequired(tool),
         score,
         inspect: `mcp list ${ref} --schema`,
@@ -937,6 +941,7 @@ export async function runMcpJavaScript(
   ) => (tools: unknown, vars: Record<string, string>) => Promise<unknown>;
   const run = new AsyncFunction("tools", "vars", code);
   let timeout: NodeJS.Timeout | undefined;
+  let primaryError: unknown;
   try {
     let scriptError: unknown;
     try {
@@ -1023,9 +1028,19 @@ export async function runMcpJavaScript(
       );
     }
     if (scriptError) throw scriptError;
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
     if (timeout) clearTimeout(timeout);
-    await runtime.close();
+    try {
+      await runtime.close();
+    } catch (closeError) {
+      // Transport cleanup must not replace the typed tool/script error that
+      // tells the agent what actually failed. A close-only failure still
+      // surfaces normally.
+      if (primaryError === undefined) throw closeError;
+    }
   }
 }
 
@@ -1171,8 +1186,13 @@ export function outputSchemaSection(manifest: McpManifest, ref: string): string 
   return `\n  Output schema (response shape):\n${json}\n`;
 }
 
-async function appendOutputSchema(args: string[]): Promise<void> {
-  if (args[0] !== "list" || !args.includes("--schema")) return;
+async function appendOutputSchema(args: string[], exitCode: number): Promise<void> {
+  if (
+    exitCode !== 0 ||
+    args[0] !== "list" ||
+    !args.includes("--schema") ||
+    args.includes("--json")
+  ) return;
   const ref = args[1];
   if (!ref || !ref.includes(".") || ref.startsWith("-")) return;
   try {
@@ -1346,7 +1366,8 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   if (
     args[0] === "list" &&
     !args.slice(1).some(isHelpArg) &&
-    !args.includes("--quiet")
+    !args.includes("--quiet") &&
+    !args.includes("--json")
   ) {
     stderr.write(
       "Only exact tool names shown as `mcp list` entries are callable. Descriptions may mention related tools that are not exposed; those mentions are not entries.\n\n"
@@ -1380,7 +1401,7 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   }
   const delegatedArgs = validated.command.args;
   const code = await delegateToMcporter(delegatedArgs);
-  await appendOutputSchema(delegatedArgs);
+  await appendOutputSchema(delegatedArgs, code);
   return code;
 }
 

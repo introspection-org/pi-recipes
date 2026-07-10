@@ -29,7 +29,13 @@ describe("mcp CLI entry detection", () => {
     entry: string,
     args: string[],
     opts: { input?: string; env?: Record<string, string> } = {}
-  ): { status: number | null; signal: NodeJS.Signals | null; output: string } {
+  ): {
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+    output: string;
+  } {
     const child = spawnSync(process.execPath, [entry, ...args], {
       env: {
         ...process.env,
@@ -41,7 +47,13 @@ describe("mcp CLI entry detection", () => {
       timeout: 30_000,
       input: opts.input,
     });
-    return { status: child.status, signal: child.signal, output: `${child.stdout}${child.stderr}` };
+    return {
+      status: child.status,
+      signal: child.signal,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      output: `${child.stdout}${child.stderr}`,
+    };
   }
 
   it("runs main when invoked directly", () => {
@@ -129,6 +141,55 @@ describe("mcp CLI entry detection", () => {
     const quiet = runCli(distCli, ["list", "--quiet"]);
     expect(quiet.status).toBe(2);
     expect(quiet.output).not.toContain("Only exact tool names shown");
+  });
+
+  it("keeps exact-tool schema JSON machine-readable on delegated failures", () => {
+    writeFileSync(
+      join(dir, "mcp.json"),
+      JSON.stringify({
+        servers: [
+          {
+            id: "offline",
+            base_url: "http://127.0.0.1:9/mcp",
+            tools: [
+              {
+                name: "lookup",
+                input_schema: { type: "object", properties: {} },
+                output_schema: {
+                  type: "object",
+                  properties: { value: { type: "string" } },
+                },
+              },
+            ],
+          },
+        ],
+      })
+    );
+    writeFileSync(
+      join(dir, "mcporter.json"),
+      JSON.stringify({
+        imports: [],
+        mcpServers: {
+          offline: {
+            baseUrl: "http://127.0.0.1:9/mcp",
+            allowedTools: ["lookup"],
+          },
+        },
+      })
+    );
+
+    const result = runCli(distCli, [
+      "list",
+      "offline.lookup",
+      "--schema",
+      "--json",
+      "--timeout",
+      "100",
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(() => JSON.parse(result.stdout)).not.toThrow();
+    expect(result.stdout).not.toContain("Output schema (response shape)");
+    expect(result.stderr).not.toContain("Only exact tool names shown");
   });
 
   it("documents JSON stdin, structured call errors, and headless authentication", () => {

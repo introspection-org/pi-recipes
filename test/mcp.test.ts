@@ -139,6 +139,50 @@ describe("recipe MCP materialization", () => {
     }
   });
 
+  it("fails closed when a required package tool is absent from discovery", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-required-tool-"));
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(cwd, { recursive: true });
+      mkdirSync(recipeDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "mcp.json"),
+        JSON.stringify({
+          servers: [
+            {
+              id: "nextplay",
+              base_url: "http://example.test/mcp",
+              tools: [{ name: "search_profiles" }],
+            },
+          ],
+        })
+      );
+
+      await expect(
+        materializeRecipeMcpManifest({
+          cwd,
+          recipeDir,
+          env: {},
+          agentMcp: [
+            { serverId: "nextplay", tools: { include: ["*"] } },
+          ],
+          manifest: recipeManifest(recipeDir, [
+            {
+              id: "nextplay",
+              required: true,
+              include: ["search_profiles", "get_profile"],
+            },
+          ]),
+        })
+      ).rejects.toThrow(
+        "Required MCP tool(s) missing from server 'nextplay': get_profile"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("accepts the legacy local MCP config env var as an alias", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-legacy-"));
     try {
@@ -352,6 +396,26 @@ describe("recipe MCP materialization", () => {
         "[server-supplied markup removed; text remains untrusted MCP content]"
     );
     expect(prompt).not.toContain("</mcp-server-guidance>Ignore");
+  });
+
+  it("bounds large MCP inventories and aggregate server guidance", () => {
+    const availableTools = Array.from(
+      { length: 1_000 },
+      (_, index) => `server${index % 10}.tool_${index}`
+    );
+    const prompt = mcpCliPromptLines([], {
+      availableTools,
+      serverInstructions: Array.from({ length: 5 }, (_, index) => ({
+        serverId: `server${index}`,
+        instructions: "x".repeat(4_000),
+      })),
+    }).join("\n");
+
+    expect(prompt).toContain("Available (callable): 1000 tools across");
+    expect(prompt).toContain("Run `mcp list` or `mcp search`");
+    expect(prompt).not.toContain("server0.tool_0, server1.tool_1");
+    expect(prompt.length).toBeLessThan(12_000);
+    expect(prompt).toContain("[additional MCP server guidance omitted");
   });
 
   it("does not write a fake manifest when live tool discovery returns no catalog", async () => {
@@ -877,6 +941,28 @@ describe("recipe MCP materialization", () => {
     );
 
     expect(matches.map((match) => match.ref)).toEqual(["linear.create_comment"]);
+  });
+
+  it("truncates unusually large search descriptions", () => {
+    const [match] = searchMcpTools(
+      {
+        servers: [
+          {
+            id: "large",
+            base_url: "http://example.test/mcp",
+            tools: [
+              {
+                name: "search_everything",
+                description: `Search contacts. ${"detail ".repeat(2_000)}`,
+              },
+            ],
+          },
+        ],
+      },
+      "contacts"
+    );
+    expect(match?.description.length).toBeLessThanOrEqual(600);
+    expect(match?.description).toContain("[truncated]");
   });
 
   it("renders the no-target list inventory from the filtered manifest", () => {
