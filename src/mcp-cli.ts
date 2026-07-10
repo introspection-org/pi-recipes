@@ -1239,10 +1239,14 @@ export function duplicateCallArgumentKeys(args: string[]): string[] {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
   for (const token of args.slice(1)) {
-    if (token.startsWith("-")) continue;
-    const match = token.match(/^([A-Za-z_][A-Za-z0-9_.-]*)[:=]/);
-    if (!match) continue;
-    const key = match[1];
+    const plain = token.match(/^([A-Za-z_][A-Za-z0-9_.-]*)[:=]/)?.[1];
+    const flag = token.match(/^--([A-Za-z_][A-Za-z0-9_.-]*)(?:=|$)/)?.[1];
+    const rawKey = plain ?? flag;
+    if (!rawKey) continue;
+    const key = rawKey.replace(
+      /-([a-zA-Z0-9])/g,
+      (_match, char: string) => char.toUpperCase()
+    );
     if (seen.has(key)) duplicates.add(key);
     seen.add(key);
   }
@@ -1339,16 +1343,6 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
       stderr.write(`${malformed}\n`);
       return 2;
     }
-    const duplicates = duplicateCallArgumentKeys(args.slice(1));
-    if (duplicates.length > 0) {
-      stderr.write(
-        `mcp call: argument${duplicates.length === 1 ? "" : "s"} ${duplicates
-          .map((key) => `'${key}'`)
-          .join(", ")} ${duplicates.length === 1 ? "was" : "were"} passed more than once. ` +
-          "Pass each argument exactly once.\n"
-      );
-      return 2;
-    }
   }
   let validated;
   try {
@@ -1364,6 +1358,20 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   if (!validated.command) {
     stderr.write("mcp: invalid session command policy result.\n");
     return 1;
+  }
+  if (args[0] === "call") {
+    const duplicates = duplicateCallArgumentKeys(
+      validated.command.args.slice(1)
+    );
+    if (duplicates.length > 0) {
+      stderr.write(
+        `mcp call: argument${duplicates.length === 1 ? "" : "s"} ${duplicates
+          .map((key) => `'${key}'`)
+          .join(", ")} ${duplicates.length === 1 ? "was" : "were"} passed more than once. ` +
+          "Pass each argument exactly once.\n"
+      );
+      return 2;
+    }
   }
   const delegatedArgs = validated.command.args;
   const code = await delegateToMcporter(delegatedArgs);

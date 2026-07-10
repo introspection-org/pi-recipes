@@ -296,11 +296,43 @@ describe("mcp CLI entry detection", () => {
     expect(unknown.output).toContain("Unknown mcp search option '--limt'");
   });
 
-  it("rejects a call argument key passed more than once", () => {
-    const result = runCli(distCli, ["call", "ghost.lookup", "q:a", "limit:5", "q:b"]);
-    expect(result.status).toBe(2);
-    expect(result.output).toContain("argument 'q' was passed more than once");
-    expect(result.output).not.toContain("argument 'limit'");
+  it("rejects duplicate call arguments across plain and named-flag syntax", () => {
+    writeFileSync(
+      join(dir, "mcp.json"),
+      JSON.stringify({
+        servers: [
+          {
+            id: "contacts",
+            base_url: "http://127.0.0.1:9/mcp",
+            tools: [
+              {
+                name: "search_contacts",
+                input_schema: {
+                  type: "object",
+                  properties: { query: { type: "string" } },
+                },
+              },
+            ],
+          },
+        ],
+      })
+    );
+
+    for (const callArgs of [
+      ["query=Ada", "query=Grace"],
+      ["query=Ada", "--query", "Grace"],
+      ["--query=Ada", "--query=Grace"],
+    ]) {
+      const result = runCli(distCli, [
+        "call",
+        "contacts.search_contacts",
+        ...callArgs,
+      ]);
+      expect(result.status).toBe(2);
+      expect(result.output).toContain(
+        "argument 'query' was passed more than once"
+      );
+    }
   });
 
   it("rejects invalid run timeout configuration", () => {

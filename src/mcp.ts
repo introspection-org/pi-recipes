@@ -21,6 +21,8 @@ export interface McpManifestTool {
 
 export interface McpManifestServer {
   id: string;
+  /** Original endpoint binding ID, retained when the projected server ID changes. */
+  binding_id?: string;
   name?: string;
   host?: string;
   base_url: string;
@@ -88,6 +90,7 @@ interface McpEndpointBinding {
 
 interface McpCatalog {
   id: string;
+  bindingId: string;
   name: string;
   host: string;
   baseUrl: string;
@@ -852,6 +855,7 @@ async function discoverMcpCatalogs(opts: {
     const serverName = result.serverName;
     catalogs.push({
       id: serverName ? safeServerId(serverName) : binding.id,
+      bindingId: binding.id,
       name: serverName || binding.name,
       host: binding.host,
       baseUrl: binding.baseUrl,
@@ -1242,6 +1246,7 @@ function normalizeManifest(
     );
     servers.push({
       id: uniqueServerId(serverId, seenServerIds),
+      ...(server.binding_id ? { binding_id: server.binding_id } : {}),
       name: server.name ?? server.id,
       host: server.host ?? hostForUrl(server.base_url),
       base_url: server.base_url,
@@ -1262,6 +1267,7 @@ function manifestFromCatalogs(catalogs: McpCatalog[]): McpManifest {
   return {
     servers: catalogs.map((catalog) => ({
       id: catalog.id,
+      binding_id: catalog.bindingId,
       name: catalog.name,
       host: catalog.host,
       base_url: catalog.baseUrl,
@@ -1426,8 +1432,10 @@ export function buildMcporterConfig(
   const bindings = bootstrapBindings(env).length > 0 ? [] : localBindings(env, cwd);
   const mcpServers: Record<string, McporterServerConfig> = {};
   for (const server of manifest.servers ?? []) {
+    const bindingId = server.binding_id ?? server.id;
     const binding = bindings.find(
-      (candidate) => candidate.baseUrl === server.base_url
+      (candidate) =>
+        candidate.id === bindingId && candidate.baseUrl === server.base_url
     );
     const headers = binding
       ? binding.rawHeaders
