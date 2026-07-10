@@ -364,6 +364,9 @@ For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
 directory. Workspace config wins over recipe config. To override that path, set
 `PI_RECIPES_MCP_LOCAL_CONFIG`. Header values can reference environment variables
 such as `${CONTACTS_MCP_TOKEN}`.
+Local bindings may instead declare `auth: "oauth"`; managed Introspection
+bindings use host-provided application assertions or stored headers and reject
+interactive OAuth. See [MCP authentication](mcp-auth.md).
 
 The extension does not translate or adapt MCP tool names. The server must expose
 the tool names declared by the selected recipe agent, or `mcp call` fails with

@@ -8,6 +8,7 @@ import {
   createDelegatedErrorFilter,
   describeUnavailableRunTool,
   describeUnknownRunServer,
+  formatMcpSessionInventory,
   outputSchemaSection,
   rebrandDelegatedOutput,
   runMcpJavaScript,
@@ -82,7 +83,15 @@ function jsonResponse(payload: unknown, headers: Record<string, string> = {}): R
 
 function readMcporterConfig(cwd: string): {
   imports: string[];
-  mcpServers: Record<string, { baseUrl: string; headers: Record<string, string>; allowedTools: string[] }>;
+  mcpServers: Record<
+    string,
+    {
+      baseUrl: string;
+      headers: Record<string, string>;
+      allowedTools: string[];
+      auth?: "oauth";
+    }
+  >;
 } {
   return JSON.parse(readFileSync(defaultMcporterConfigPath(cwd), "utf8"));
 }
@@ -154,9 +163,20 @@ describe("recipe MCP materialization", () => {
       const recipeDir = join(root, "recipe");
       mkdirSync(cwd, { recursive: true });
       mkdirSync(recipeDir, { recursive: true });
+      const localConfig = writeLocalConfig(cwd, [
+        {
+          id: "nextplay",
+          transport: "streamable_http",
+          url: "http://mcp.nextplay.test/mcp",
+          headers: { Authorization: "Bearer ${LOCAL_MCP_TOKEN}" },
+          auth: "oauth",
+        },
+      ]);
 
       const env: NodeJS.ProcessEnv = {
         INTROSPECTION_TOKEN: "session-token",
+        LOCAL_MCP_TOKEN: "must-not-be-used",
+        PI_RECIPES_MCP_LOCAL_CONFIG: localConfig,
         INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
           endpoints: [
             {
@@ -169,7 +189,9 @@ describe("recipe MCP materialization", () => {
           ],
         }),
       };
+      const authHeaders: Array<string | undefined> = [];
       const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        authHeaders.push((init?.headers as Record<string, string> | undefined)?.Authorization);
         const body = JSON.parse(String(init?.body ?? "{}")) as {
           method?: string;
           params?: { cursor?: string };
@@ -295,6 +317,8 @@ describe("recipe MCP materialization", () => {
         readOnlyHint: true,
         openWorldHint: false,
       });
+      expect(authHeaders.every((value) => value === "Bearer session-token")).toBe(true);
+      expect(readMcporterConfig(cwd).mcpServers.nextplay).not.toHaveProperty("auth");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -680,6 +704,78 @@ describe("recipe MCP materialization", () => {
     }
   });
 
+  it("preserves configured local OAuth without enabling it for managed bindings", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcporter-oauth-"));
+    try {
+      const localConfig = writeLocalConfig(root, [
+        {
+          id: "linear",
+          transport: "streamable_http",
+          url: "https://mcp.linear.app/mcp",
+          auth: "oauth",
+          oauthClientId: "local-client",
+          oauthClientSecretEnv: "LINEAR_OAUTH_SECRET",
+          oauthRedirectUrl: "http://127.0.0.1:8787/callback",
+          oauthScope: "read write",
+        },
+      ]);
+      const local = buildMcporterConfig(
+        {
+          servers: [
+            {
+              id: "linear",
+              base_url: "https://mcp.linear.app/mcp",
+              tools: [{ name: "list_issues" }],
+            },
+          ],
+        },
+        { cwd: root, env: { PI_RECIPES_MCP_LOCAL_CONFIG: localConfig } }
+      );
+      expect(local.mcpServers.linear).toMatchObject({
+        auth: "oauth",
+        oauthClientId: "local-client",
+        oauthClientSecretEnv: "LINEAR_OAUTH_SECRET",
+        oauthRedirectUrl: "http://127.0.0.1:8787/callback",
+        oauthScope: "read write",
+      });
+
+      const managed = buildMcporterConfig(
+        {
+          servers: [
+            {
+              id: "linear",
+              base_url: "https://mcp.linear.app/mcp",
+              tools: [{ name: "list_issues" }],
+            },
+          ],
+        },
+        {
+          cwd: root,
+          env: {
+            PI_RECIPES_MCP_LOCAL_CONFIG: localConfig,
+            INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
+              endpoints: [
+                {
+                  id: "managed-linear",
+                  name: "linear",
+                  host: "mcp.linear.app",
+                  base_url: "https://mcp.linear.app/mcp",
+                  kind: "mcp",
+                },
+              ],
+            }),
+          },
+        }
+      );
+      expect(managed.mcpServers.linear).not.toHaveProperty("auth");
+      expect(managed.mcpServers.linear.headers).toEqual({
+        Authorization: "Bearer ${INTROSPECTION_TOKEN}",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("clears to an empty mcporter config so stale shims cannot see host servers", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcporter-clear-"));
     try {
@@ -781,6 +877,34 @@ describe("recipe MCP materialization", () => {
     );
 
     expect(matches.map((match) => match.ref)).toEqual(["linear.create_comment"]);
+  });
+
+  it("renders the no-target list inventory from the filtered manifest", () => {
+    const manifest = {
+      servers: [
+        {
+          id: "contacts",
+          name: "Contacts",
+          base_url: "https://contacts.example/mcp",
+          tools: [
+            {
+              name: "search_contacts",
+              description: "Search contacts.\nMore detail.",
+            },
+          ],
+        },
+      ],
+    };
+    expect(formatMcpSessionInventory(manifest)).toContain("contacts.search_contacts");
+    expect(JSON.parse(formatMcpSessionInventory(manifest, { json: true }))).toEqual({
+      servers: [
+        {
+          id: "contacts",
+          name: "Contacts",
+          tools: ["search_contacts"],
+        },
+      ],
+    });
   });
 
   it("rebrands delegated mcporter output as the recipe mcp command", () => {
@@ -1247,6 +1371,16 @@ describe("mcporter CLI end-to-end", () => {
       process.env.MCPORTER_CONFIG = env.MCPORTER_CONFIG;
       process.env.STUB_MCP_TOKEN = "stub-token";
       process.env.PI_RECIPES_MCP_MANIFEST = env.PI_RECIPES_MCP_MANIFEST;
+      // A transport config entry is not a capability grant. Even if that file
+      // is changed independently, mcp run exposes only the filtered manifest.
+      const projectedConfig = readMcporterConfig(cwd);
+      projectedConfig.mcpServers.rogue = {
+        ...projectedConfig.mcpServers.stub,
+      };
+      writeFileSync(
+        defaultMcporterConfigPath(cwd),
+        JSON.stringify(projectedConfig)
+      );
       (globalThis as typeof globalThis & { __mcpRunSmoke?: unknown }).__mcpRunSmoke = undefined;
 
       await runMcpJavaScript(
@@ -1293,6 +1427,12 @@ describe("mcporter CLI end-to-end", () => {
         } catch (error) {
           unknownServerMessage = error instanceof Error ? error.message : String(error);
         }
+        let configOnlyServerMessage = null;
+        try {
+          tools.rogue;
+        } catch (error) {
+          configOnlyServerMessage = error instanceof Error ? error.message : String(error);
+        }
         let unknownToolMessage = null;
         try {
           await tools.stub.get_valu({});
@@ -1315,6 +1455,7 @@ describe("mcporter CLI end-to-end", () => {
           directTypedError,
           multimodal,
           unknownServerMessage,
+          configOnlyServerMessage,
           unknownToolMessage,
           pendingSnapshot,
           missingVarMessage,
@@ -1371,6 +1512,8 @@ describe("mcporter CLI end-to-end", () => {
         },
         unknownServerMessage:
           "Unknown MCP server 'stubb'. Did you mean 'tools.stub'? Available servers: stub.",
+        configOnlyServerMessage:
+          "Unknown MCP server 'rogue'. Available servers: stub.",
         unknownToolMessage:
           "Tool 'get_valu' is not available on server 'stub'. Did you mean 'get_value'? Run `mcp list stub` to see available tools.",
         pendingSnapshot:

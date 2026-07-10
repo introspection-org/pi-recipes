@@ -18,6 +18,7 @@ describe("mcp CLI entry detection", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-entry-"));
     writeFileSync(join(dir, "mcporter.json"), JSON.stringify({ imports: [], mcpServers: {} }));
+    writeFileSync(join(dir, "mcp.json"), JSON.stringify({ servers: [] }));
   });
 
   afterEach(() => {
@@ -30,7 +31,12 @@ describe("mcp CLI entry detection", () => {
     opts: { input?: string; env?: Record<string, string> } = {}
   ): { status: number | null; signal: NodeJS.Signals | null; output: string } {
     const child = spawnSync(process.execPath, [entry, ...args], {
-      env: { ...process.env, MCPORTER_CONFIG: join(dir, "mcporter.json"), ...opts.env },
+      env: {
+        ...process.env,
+        MCPORTER_CONFIG: join(dir, "mcporter.json"),
+        PI_RECIPES_MCP_MANIFEST: join(dir, "mcp.json"),
+        ...opts.env,
+      },
       encoding: "utf8",
       timeout: 30_000,
       input: opts.input,
@@ -67,6 +73,29 @@ describe("mcp CLI entry detection", () => {
     expect(run.status).toBe(0);
     expect(run.output.trim().length).toBeGreaterThan(0);
     expect(run.output).toContain("PI_RECIPES_MCP_RUN_TIMEOUT_MS");
+  });
+
+  it("provides recipe-scoped help for delegated commands", () => {
+    for (const command of ["list", "call", "auth"]) {
+      const result = runCli(distCli, [command, "--help"]);
+      expect(result.status).toBe(0);
+      expect(result.output).toContain("recipe session");
+      expect(result.output).not.toContain("--http-url");
+      expect(result.output).not.toContain("--stdio");
+    }
+  });
+
+  it("blocks mcporter administration and ad-hoc connection surfaces", () => {
+    for (const args of [
+      ["config", "list"],
+      ["resource", "contacts"],
+      ["generate-cli", "contacts"],
+      ["list", "--http-url", "https://example.test/mcp"],
+    ]) {
+      const result = runCli(distCli, args);
+      expect(result.status).toBe(2);
+      expect(result.output).toContain("unavailable");
+    }
   });
 
   it("rejects an empty run script as a usage error", () => {

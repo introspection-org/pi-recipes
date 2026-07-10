@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { stdin as input, stderr, stdout } from "node:process";
 import { Worker } from "node:worker_threads";
 import { createCallResult, createRuntime } from "mcporter";
 import { isDirectEntry } from "./direct-cli.js";
 import {
+  defaultMcporterConfigPath,
   defaultMcpManifestPath,
   mcporterCliEntrypointPath,
   type McpManifest,
   type McpManifestTool,
 } from "./mcp.js";
+import {
+  createMcpCliSessionPolicy,
+  validateDelegatedMcpCommand,
+} from "./mcp-cli-policy.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
@@ -104,10 +110,12 @@ export function mcpCliHelpText(): string {
     "  mcp list",
     "  mcp list <server>",
     "  mcp list <server.tool> --schema",
+    "  Add --brief for compact signatures, --all-parameters for every optional input, or --json for machine output.",
     "",
     "Call one tool:",
     "  mcp call <server>.<tool> key=value ...",
     "  mcp call '<server>.<tool>(key: \"value\")'",
+    "  Calls support --args/--json payloads, --output text|markdown|json|raw, --save-images, --timeout, and @file.",
     "",
     "Run a short workflow:",
     "  mcp run --var ID=abc123 <<'EOF'",
@@ -122,12 +130,65 @@ export function mcpCliHelpText(): string {
     "  Use mcp call for a single simple operation.",
     "  Use mcp run for multiple calls, filtering, ranking, or dedupe.",
     "  Use @file for long text and --output json when piping call output.",
+    "  Configured local OAuth servers may use mcp auth <server>; managed bindings use host-provided authentication.",
     "",
     "Availability:",
     "  Search and list expose only tools callable in this session.",
     "  Only exact tool names returned by mcp list are callable.",
     "  Descriptions may mention related tools that are not exposed; mentions do not grant access.",
     "  If no listed tool supports an action, report that the connected capability is unavailable.",
+  ].join("\n");
+}
+
+export function mcpListHelpText(): string {
+  return [
+    "Usage: mcp list [server | server.tool] [flags]",
+    "",
+    "Lists only servers and tools materialized for this recipe session.",
+    "",
+    "Flags:",
+    "  --brief, --signatures     Compact signatures only.",
+    "  --all-parameters          Include every optional parameter.",
+    "  --schema                  Include JSON input schemas.",
+    "  --json                    Emit machine-readable output.",
+    "  --status                  Show concise server status only.",
+    "  --quiet, --exit-code      Silent/exit-code health checks.",
+    "  --timeout <ms>            Override discovery timeout.",
+    "",
+    "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
+  ].join("\n");
+}
+
+export function mcpCallHelpText(): string {
+  return [
+    "Usage: mcp call <server>.<tool> [arguments] [flags]",
+    "",
+    "Calls only exact tools materialized for this recipe session.",
+    "",
+    "Arguments:",
+    "  key=value / key:value     Named arguments with schema-aware coercion.",
+    "  --key value               Named schema arguments are normalized to key=value.",
+    "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
+    "  --args <json>, --json <json|->  Supply a JSON object directly or from stdin.",
+    "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
+    "  --                         Treat remaining values as literal positional inputs.",
+    "",
+    "Output/runtime flags:",
+    "  --output text|markdown|json|raw",
+    "  --save-images <dir>",
+    "  --timeout <ms>",
+    "  --raw-strings, --no-coerce",
+    "",
+    "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
+  ].join("\n");
+}
+
+export function mcpAuthHelpText(): string {
+  return [
+    "Usage: mcp auth <server> [--reset] [--no-browser] [--json] [--oauth-timeout <ms>]",
+    "",
+    "In a recipe session, authenticates a configured local server whose binding declares auth: oauth.",
+    "Managed Introspection bindings use host-provided application assertions or stored headers and cannot start OAuth.",
   ].join("\n");
 }
 
@@ -393,12 +454,66 @@ export function searchMcpTools(
 }
 
 async function readManifest(): Promise<McpManifest> {
-  const path =
-    process.env[MCP_MANIFEST_ENV] ||
-    process.env[LEGACY_MCP_MANIFEST_ENV] ||
-    defaultMcpManifestPath(process.cwd());
+  const path = sessionManifestPath();
   const data = await readFile(path, "utf8");
   return JSON.parse(data) as McpManifest;
+}
+
+function sessionManifestPath(): string {
+  const workspacePath = defaultMcpManifestPath(sessionRoot());
+  return existsSync(workspacePath)
+    ? workspacePath
+    : process.env[MCP_MANIFEST_ENV] ||
+        process.env[LEGACY_MCP_MANIFEST_ENV] ||
+        workspacePath;
+}
+
+function sessionMcporterConfigPath(): string {
+  const workspacePath = defaultMcporterConfigPath(sessionRoot());
+  return existsSync(workspacePath)
+    ? workspacePath
+    : process.env.MCPORTER_CONFIG || workspacePath;
+}
+
+function sessionRoot(): string {
+  return process.env.PI_RECIPES_MCP_SESSION_ROOT || process.cwd();
+}
+
+function pinSessionMcporterConfig(): void {
+  process.env.MCPORTER_CONFIG = sessionMcporterConfigPath();
+}
+
+async function readMcporterServers(): Promise<Record<string, { auth?: string }>> {
+  const path = sessionMcporterConfigPath();
+  const data = JSON.parse(await readFile(path, "utf8")) as {
+    mcpServers?: Record<string, { auth?: string }>;
+  };
+  return data.mcpServers ?? {};
+}
+
+async function sessionCliPolicy() {
+  return createMcpCliSessionPolicy(await readManifest(), await readMcporterServers());
+}
+
+export function formatMcpSessionInventory(
+  manifest: McpManifest,
+  opts: { json?: boolean } = {}
+): string {
+  const servers = (manifest.servers ?? []).map((server) => ({
+    id: server.id,
+    name: server.name ?? server.id,
+    tools: (server.tools ?? []).map((tool) => tool.name),
+  }));
+  if (opts.json) return JSON.stringify({ servers }, null, 2);
+  if (servers.length === 0) return "No MCP servers or tools are available in this session.";
+  return [
+    ...servers.flatMap((server) => [
+      `${server.id}${server.name !== server.id ? ` (${server.name})` : ""}`,
+      ...server.tools.map((tool) => `  ${server.id}.${tool}`),
+    ]),
+    "",
+    "Use `mcp list <server>` for signatures or `mcp list <server.tool> --schema` for one schema.",
+  ].join("\n");
 }
 
 function parseSearchArgs(
@@ -594,7 +709,11 @@ async function createTools(opts: {
 }) {
   const runtime = await createRuntime();
   const knownTools = await manifestToolNames();
-  const servers = runtime.listServers();
+  // The filtered session manifest is the authority. The mcporter config is a
+  // transport projection, not another capability source, so extra config
+  // entries must never appear on the run proxy.
+  const configuredServers = new Set(runtime.listServers());
+  const servers = [...knownTools.keys()].filter((server) => configuredServers.has(server));
   const calls: ToolCallRecord[] = [];
   let callCount = 0;
   const queue = new ToolCallQueue(opts.maxConcurrentCalls);
@@ -641,7 +760,7 @@ async function createTools(opts: {
                     // it. mcporter forwards this timeout to the MCP SDK and
                     // resets the transport when it fires.
                     timeoutMs: Math.min(opts.callTimeoutMs, remainingMs),
-                    disableOAuth: true,
+                    disableOAuth: runtime.getDefinition(server).auth !== "oauth",
                   })
                 )
               );
@@ -1163,10 +1282,23 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     stdout.write(`${mcpSearchHelpText()}\n`);
     return 0;
   }
+  if (args[0] === "list" && args.slice(1).some(isHelpArg)) {
+    stdout.write(`${mcpListHelpText()}\n`);
+    return 0;
+  }
+  if (args[0] === "call" && args.slice(1).some(isHelpArg)) {
+    stdout.write(`${mcpCallHelpText()}\n`);
+    return 0;
+  }
+  if (args[0] === "auth" && args.slice(1).some(isHelpArg)) {
+    stdout.write(`${mcpAuthHelpText()}\n`);
+    return 0;
+  }
   if (args[0] === "run" && isHelpArg(args[1])) {
     stdout.write(`${mcpRunHelpText()}\n`);
     return 0;
   }
+  pinSessionMcporterConfig();
   if (args[0] === "run") return runCode(args.slice(1));
   if (args[0] === "search") return searchCatalog(args.slice(1));
   if (args[0] === "call") {
@@ -1187,12 +1319,39 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     }
   }
   if (args[0] === "list" && !args.slice(1).some(isHelpArg)) {
-    stdout.write(
+    stderr.write(
       "Only exact tool names shown as `mcp list` entries are callable. Descriptions may mention related tools that are not exposed; those mentions are not entries.\n\n"
     );
   }
-  const code = await delegateToMcporter(args);
-  await appendOutputSchema(args);
+  let validated;
+  try {
+    validated = validateDelegatedMcpCommand(args, await sessionCliPolicy());
+  } catch (error) {
+    stderr.write(`mcp: failed to load the session MCP policy: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+  if (validated.error) {
+    stderr.write(`mcp: ${validated.error}\n`);
+    return 2;
+  }
+  if (!validated.command) {
+    stderr.write("mcp: invalid session command policy result.\n");
+    return 1;
+  }
+  if (
+    args[0] === "list" &&
+    !args.slice(1).some((arg) => !arg.startsWith("-"))
+  ) {
+    stdout.write(
+      `${formatMcpSessionInventory(await readManifest(), {
+        json: args.includes("--json"),
+      })}\n`
+    );
+    return 0;
+  }
+  const delegatedArgs = validated.command.args;
+  const code = await delegateToMcporter(delegatedArgs);
+  await appendOutputSchema(delegatedArgs);
   return code;
 }
 

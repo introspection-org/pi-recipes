@@ -3,6 +3,7 @@ import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { createRuntime, type ServerDefinition } from "mcporter";
 import {
   resolvePiPackageMcpManifestPaths,
   type RecipePackageManifest,
@@ -38,6 +39,27 @@ interface LocalMcpServer {
   transport?: string;
   url?: string;
   headers?: Record<string, string>;
+  auth?: string;
+  tokenCacheDir?: string;
+  clientName?: string;
+  oauthClientId?: string;
+  oauthClientSecretEnv?: string;
+  oauthTokenEndpointAuthMethod?: string;
+  oauthRedirectUrl?: string;
+  oauthScope?: string;
+  httpFetch?: "default" | "node-http1";
+}
+
+interface LocalMcpOAuthSettings {
+  auth: "oauth";
+  tokenCacheDir?: string;
+  clientName?: string;
+  oauthClientId?: string;
+  oauthClientSecretEnv?: string;
+  oauthTokenEndpointAuthMethod?: string;
+  oauthRedirectUrl?: string;
+  oauthScope?: string;
+  httpFetch?: "default" | "node-http1";
 }
 
 interface BootstrapEndpoint {
@@ -61,6 +83,7 @@ interface McpEndpointBinding {
    */
   rawHeaders: Record<string, string>;
   requiresSessionToken: boolean;
+  localOAuth?: LocalMcpOAuthSettings;
 }
 
 interface McpCatalog {
@@ -249,6 +272,8 @@ export async function materializeSessionMcpCli(opts: {
   // Cursor/Claude/VS Code configs) into a recipe session.
   const script = [
     "#!/bin/sh",
+    `PI_RECIPES_MCP_SESSION_ROOT=${shellQuote(opts.cwd)}`,
+    "export PI_RECIPES_MCP_SESSION_ROOT",
     `: "\${${MCPORTER_CONFIG_ENV}:=${doubleQuoteEscape(defaultMcporterConfigPath(opts.cwd))}}"`,
     `export ${MCPORTER_CONFIG_ENV}`,
     `exec ${shellQuote(process.execPath)} ${shellQuote(mcpCliEntrypointPath())} "$@"`,
@@ -365,6 +390,26 @@ function localBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[
         interpolateEnv(value, env),
       ])
     );
+    const localOAuth: LocalMcpOAuthSettings | undefined =
+      server.auth === "oauth"
+        ? {
+            auth: "oauth",
+            ...(server.tokenCacheDir ? { tokenCacheDir: server.tokenCacheDir } : {}),
+            ...(server.clientName ? { clientName: server.clientName } : {}),
+            ...(server.oauthClientId ? { oauthClientId: server.oauthClientId } : {}),
+            ...(server.oauthClientSecretEnv
+              ? { oauthClientSecretEnv: server.oauthClientSecretEnv }
+              : {}),
+            ...(server.oauthTokenEndpointAuthMethod
+              ? { oauthTokenEndpointAuthMethod: server.oauthTokenEndpointAuthMethod }
+              : {}),
+            ...(server.oauthRedirectUrl
+              ? { oauthRedirectUrl: server.oauthRedirectUrl }
+              : {}),
+            ...(server.oauthScope ? { oauthScope: server.oauthScope } : {}),
+            ...(server.httpFetch ? { httpFetch: server.httpFetch } : {}),
+          }
+        : undefined;
     return [{
       id: safeServerId(server.id ?? label),
       name: label,
@@ -373,14 +418,17 @@ function localBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[
       headers,
       rawHeaders,
       requiresSessionToken: false,
+      ...(localOAuth ? { localOAuth } : {}),
     }];
   });
 }
 
 function endpointBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[] {
+  const managed = bootstrapBindings(env);
+  const candidates = managed.length > 0 ? managed : localBindings(env, cwd);
   const seen = new Set<string>();
   const bindings: McpEndpointBinding[] = [];
-  for (const binding of [...bootstrapBindings(env), ...localBindings(env, cwd)]) {
+  for (const binding of candidates) {
     const key = `${binding.id}:${binding.baseUrl}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -395,6 +443,10 @@ function localMcpHeadersForServer(
 ): Record<string, string> | null {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
+  // Bootstrap endpoints identify a managed Introspection session. Their
+  // session-token/egress authentication must never be shadowed by a workspace
+  // or recipe-local binding with the same id or URL.
+  if (bootstrapBindings(env).length > 0) return null;
   const id = safeServerId(serverId);
   const binding = localBindings(env, cwd).find((candidate) => candidate.id === id);
   return binding ? binding.headers : null;
@@ -683,6 +735,89 @@ async function listEndpointTools(
   return { tools, serverName, instructions };
 }
 
+async function listLocalOAuthTools(binding: McpEndpointBinding): Promise<{
+  tools: RemoteMcpTool[];
+  serverName?: string;
+  instructions?: string;
+  diagnostic?: McpDiscoveryDiagnostic;
+}> {
+  if (!binding.localOAuth) return { tools: [] };
+  let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined;
+  try {
+    const definition: ServerDefinition = {
+      name: binding.id,
+      description: binding.name,
+      command: {
+        kind: "http",
+        url: new URL(binding.baseUrl),
+        ...(Object.keys(binding.headers).length > 0 ? { headers: binding.headers } : {}),
+      },
+      ...binding.localOAuth,
+    };
+    runtime = await createRuntime({ servers: [definition] });
+    const context = await runtime.connect(binding.id);
+    const tools: RemoteMcpTool[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_TOOL_LIST_PAGES; page += 1) {
+      const listed = await context.client.listTools(cursor ? { cursor } : undefined);
+      tools.push(
+        ...(listed.tools ?? []).map((tool) => ({
+          name: tool.name,
+          ...(tool.description ? { description: tool.description } : {}),
+          ...(tool.inputSchema && typeof tool.inputSchema === "object"
+            ? { inputSchema: tool.inputSchema as Record<string, unknown> }
+            : {}),
+          ...(tool.outputSchema && typeof tool.outputSchema === "object"
+            ? { outputSchema: tool.outputSchema as Record<string, unknown> }
+            : {}),
+          ...(tool.annotations && typeof tool.annotations === "object"
+            ? { annotations: tool.annotations as Record<string, unknown> }
+            : {}),
+        }))
+      );
+      const nextCursor = listed.nextCursor ?? undefined;
+      if (!nextCursor) break;
+      if (seenCursors.has(nextCursor)) {
+        throw new Error(`Server repeated tools/list cursor '${nextCursor}'.`);
+      }
+      if (page === MAX_TOOL_LIST_PAGES - 1) {
+        throw new Error(`Tool discovery exceeded ${MAX_TOOL_LIST_PAGES} pages.`);
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+    const instructions = await runtime.getInstructions?.(binding.id);
+    return {
+      tools,
+      serverName: binding.name,
+      ...(instructions ? { instructions } : {}),
+      ...(tools.length === 0
+        ? {
+            diagnostic: {
+              serverId: binding.id,
+              url: binding.baseUrl,
+              stage: "tools/list" as const,
+              message: "Server returned 0 tools.",
+            },
+          }
+        : {}),
+    };
+  } catch (error) {
+    return {
+      tools: [],
+      diagnostic: {
+        serverId: binding.id,
+        url: binding.baseUrl,
+        stage: "tools/list",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  } finally {
+    await runtime?.close();
+  }
+}
+
 async function discoverMcpCatalogs(opts: {
   env: NodeJS.ProcessEnv;
   cwd: string;
@@ -709,7 +844,9 @@ async function discoverMcpCatalogs(opts: {
       });
       continue;
     }
-    const result = await listEndpointTools(binding, opts);
+    const result = binding.localOAuth
+      ? await listLocalOAuthTools(binding)
+      : await listEndpointTools(binding, opts);
     if (result.diagnostic) diagnostics.push(result.diagnostic);
     if (result.tools.length === 0) continue;
     const serverName = result.serverName;
@@ -1201,6 +1338,15 @@ export interface McporterServerConfig {
   baseUrl: string;
   headers: Record<string, string>;
   allowedTools: string[];
+  auth?: "oauth";
+  tokenCacheDir?: string;
+  clientName?: string;
+  oauthClientId?: string;
+  oauthClientSecretEnv?: string;
+  oauthTokenEndpointAuthMethod?: string;
+  oauthRedirectUrl?: string;
+  oauthScope?: string;
+  httpFetch?: "default" | "node-http1";
 }
 
 export interface McporterConfig {
@@ -1222,7 +1368,7 @@ export function buildMcporterConfig(
 ): McporterConfig {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
-  const bindings = localBindings(env, cwd);
+  const bindings = bootstrapBindings(env).length > 0 ? [] : localBindings(env, cwd);
   const mcpServers: Record<string, McporterServerConfig> = {};
   for (const server of manifest.servers ?? []) {
     const binding = bindings.find(
@@ -1235,6 +1381,7 @@ export function buildMcporterConfig(
       baseUrl: server.base_url,
       headers,
       allowedTools: (server.tools ?? []).map((tool) => tool.name),
+      ...(binding?.localOAuth ?? {}),
     };
   }
   return { imports: [], mcpServers };
