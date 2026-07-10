@@ -755,7 +755,7 @@ async function listLocalOAuthTools(binding: McpEndpointBinding): Promise<{
       ...binding.localOAuth,
     };
     runtime = await createRuntime({ servers: [definition] });
-    const context = await runtime.connect(binding.id);
+    const context = await runtime.connect(binding.id, { disableOAuth: true });
     const tools: RemoteMcpTool[] = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;

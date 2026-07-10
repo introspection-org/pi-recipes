@@ -387,9 +387,10 @@ The session records the generated paths in `PI_RECIPES_MCP_MANIFEST`,
 For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe
 directory. To override that path, set `PI_RECIPES_MCP_LOCAL_CONFIG`. Header
 values can reference environment variables such as `${CONTACTS_MCP_TOKEN}`.
-Local bindings may instead declare `auth: "oauth"`; managed Introspection
-bindings always use their configured application assertion or stored headers
-and never launch OAuth. See [MCP authentication](mcp-auth.md).
+Local bindings may instead declare `auth: "oauth"`. The agent-facing CLI is
+always headless; local users complete OAuth with mcporter outside the agent
+session, while hosted environments supply their configured credentials. See
+[MCP authentication](mcp-auth.md).
 
 `recipes install` creates the recipe-local `.pi/mcp.local.json` template for MCP
 recipes if it is missing and prints the env vars that need values. The extension

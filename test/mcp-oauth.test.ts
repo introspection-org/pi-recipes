@@ -43,7 +43,7 @@ describe("local MCP OAuth materialization", () => {
     runtime.close.mockClear();
   });
 
-  it("uses mcporter for interactive local OAuth discovery and preserves auth config", async () => {
+  it("uses cached-only mcporter OAuth discovery and preserves auth config", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-local-oauth-"));
     try {
       const cwd = join(root, "workspace");
@@ -101,7 +101,9 @@ describe("local MCP OAuth materialization", () => {
           }),
         ],
       });
-      expect(runtime.connect).toHaveBeenCalledWith("local-oauth");
+      expect(runtime.connect).toHaveBeenCalledWith("local-oauth", {
+        disableOAuth: true,
+      });
       expect(result.servers?.[0]?.tools?.map((tool) => tool.name)).toEqual([
         "get_value",
       ]);

@@ -103,7 +103,7 @@ export class McpRunToolError extends Error {
 export function mcpCliHelpText(): string {
   return [
     "mcp - use available MCP tools",
-    "Supported: search, list, call, run, and auth for configured local OAuth servers.",
+    "Supported: search, list, call, and run.",
     "Run `mcp <command> --help` for complete command syntax.",
     "Use this session-local `mcp` command, not `mcporter` or `npx mcporter`; it enforces the materialized recipe capabilities.",
     "",
@@ -135,7 +135,7 @@ export function mcpCliHelpText(): string {
     "  Use mcp call for a single simple operation.",
     "  Use mcp run for multiple calls, filtering, ranking, or dedupe.",
     "  Use @file for long text and --output json when piping call output.",
-    "  Configured local OAuth servers may use mcp auth <server>; managed bindings use host-provided authentication.",
+    "  Tool commands are always headless. If authentication is required, ask the user to authenticate the MCP connection outside the agent session, then retry.",
     "",
     "Availability:",
     "  Search and list expose only tools callable in this session.",
@@ -193,16 +193,6 @@ export function mcpCallHelpText(): string {
   ].join("\n");
 }
 
-export function mcpAuthHelpText(): string {
-  return [
-    "Usage: mcp auth <server> [--reset] [--no-browser] [--json] [--oauth-timeout <ms>]",
-    "",
-    "In a recipe session, authenticates a configured local server whose binding declares auth: oauth.",
-    "Managed Introspection bindings use host-provided application assertions or stored headers and cannot start OAuth.",
-    "With --no-browser, open the printed URL but keep this command running until the redirect callback completes and tokens are saved.",
-  ].join("\n");
-}
-
 export function mcpSearchHelpText(): string {
   return [
     'Usage: mcp search "what you need" [--limit N] [--json] [--regex]',
@@ -228,7 +218,7 @@ export function mcpRunHelpText(): string {
     "Calls return mcporter CallResult objects with text/markdown/json/images/content/structuredContent helpers and .raw.",
     "Use .json() only for JSON-shaped results; use .text(), .content(), or .raw when the response is not JSON.",
     "--json-errors emits a structured error object on stderr while preserving the nonzero exit code.",
-    "Managed bindings never start OAuth. A configured local auth: oauth server may launch or resume its OAuth flow; use mcp auth first when user interaction is needed.",
+    "MCP calls are always headless. If authentication is required, ask the user to authenticate the connection outside the agent session, then retry.",
     "A synchronous busy-loop is force-killed at the deadline.",
     "Code runs with the same OS privileges as the active shell sandbox; mcp run is not a separate security boundary.",
     "",
@@ -496,16 +486,8 @@ function pinSessionMcporterConfig(): void {
   process.env.MCPORTER_CONFIG = sessionMcporterConfigPath();
 }
 
-async function readMcporterServers(): Promise<Record<string, { auth?: string }>> {
-  const path = sessionMcporterConfigPath();
-  const data = JSON.parse(await readFile(path, "utf8")) as {
-    mcpServers?: Record<string, { auth?: string }>;
-  };
-  return data.mcpServers ?? {};
-}
-
 async function sessionCliPolicy() {
-  return createMcpCliSessionPolicy(await readManifest(), await readMcporterServers());
+  return createMcpCliSessionPolicy(await readManifest());
 }
 
 export function formatMcpSessionInventory(
@@ -667,6 +649,8 @@ const RUN_TOOL_REJECTED_PATTERNS = [
   /\bunknown tool\b/i,
 ];
 const RUN_TOOL_BLOCKED_PATTERN = /is not accessible on server '[^']+' \(blocked by configuration\)/;
+const RUN_AUTH_REQUIRED_PATTERN =
+  /\b(?:authentication required|unauthenticated|HTTP 401|missing (?:access )?token|invalid (?:access )?token|failed to resolve header ['"]Authorization)/i;
 
 export function describeUnavailableRunTool(
   server: string,
@@ -687,6 +671,16 @@ function improveRunToolError(
   knownTools: string[]
 ): unknown {
   const message = error instanceof Error ? error.message : String(error);
+  if (RUN_AUTH_REQUIRED_PATTERN.test(message)) {
+    return new McpRemoteToolResultError({
+      code: "authentication_required",
+      message:
+        `Authentication is required for MCP server '${server}'. ` +
+        "Ask the user to authenticate this MCP connection outside the agent session, then retry.",
+      retryable: false,
+      action: "ask_user_to_authenticate",
+    });
+  }
   if (RUN_TOOL_BLOCKED_PATTERN.test(message)) {
     return new Error(
       `Tool '${tool}' is not enabled for server '${server}' in this session. ` +
@@ -773,7 +767,7 @@ async function createTools(opts: {
                     // it. mcporter forwards this timeout to the MCP SDK and
                     // resets the transport when it fires.
                     timeoutMs: Math.min(opts.callTimeoutMs, remainingMs),
-                    disableOAuth: runtime.getDefinition(server).auth !== "oauth",
+                    disableOAuth: true,
                   })
                 )
               );
@@ -1182,6 +1176,14 @@ export function rebrandDelegatedOutput(text: string): string {
     .replace(
       /is not accessible on server '([^']+)' \(blocked by configuration\)/g,
       "is not enabled for server '$1' in this session. Run `mcp list $1` to inspect the allowlist; if absent, the recipe configuration must grant it"
+    )
+    .replace(
+      /Failed to resolve header 'Authorization' for server '([^']+)': Environment variable\(s\) [A-Z0-9_, ]+ must be set for MCP header substitution\./g,
+      "Authentication is required for MCP server '$1'. Ask the user to authenticate this MCP connection outside the agent session, then retry."
+    )
+    .replace(
+      /Next: run ['`]mcp auth [^'`]+['`] to finish authentication\.?/gi,
+      "Authentication is required. Ask the user to authenticate this MCP connection outside the agent session, then retry."
     );
 }
 
@@ -1301,10 +1303,6 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   }
   if (args[0] === "call" && args.slice(1).some(isHelpArg)) {
     stdout.write(`${mcpCallHelpText()}\n`);
-    return 0;
-  }
-  if (args[0] === "auth" && args.slice(1).some(isHelpArg)) {
-    stdout.write(`${mcpAuthHelpText()}\n`);
     return 0;
   }
   if (args[0] === "run" && isHelpArg(args[1])) {

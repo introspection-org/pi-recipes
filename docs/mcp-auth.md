@@ -27,17 +27,21 @@ Local users may declare OAuth on a server in the workspace- or recipe-local
 }
 ```
 
-Only `auth: "oauth"` enables interactive authorization. Tool discovery during
-local session startup may complete the browser flow and preserves mcporter's
-token cache and refresh behavior for that configured server. After the server
-has materialized, `mcp auth linear --reset` can refresh its credentials;
-`--no-browser` prints the URL for a headless local terminal. Calls and `mcp run`
-may also complete OAuth for that same configured server.
+Only `auth: "oauth"` enables mcporter OAuth for that local definition. Recipe
+startup and the agent-facing `mcp` command use cached credentials only and never
+start a browser flow. A local user completes or refreshes OAuth outside the
+agent session with mcporter directly, using the same server name and OAuth
+settings, then retries the recipe operation. They can use their normal mcporter
+config, or the generated session projection when it exists, for example:
+
+```bash
+npx mcporter auth linear --config .pi/mcporter.json
+```
 
 The session CLI does not accept OAuth URLs, ad-hoc servers, config imports, or
 configuration mutation. A local user configures connectivity outside the agent
-through `.pi/mcp.local.json`; the agent can authenticate only a server already
-present in the filtered session manifest.
+through `.pi/mcp.local.json` or their normal mcporter configuration. The agent
+cannot initiate authentication.
 
 ## Managed Introspection bindings
 
@@ -50,13 +54,20 @@ configured in the project bindings UI with either:
 The sandbox receives a task session token and the endpoint URL. The egress
 layer replaces that token with the configured application assertion or stored
 headers for the destination host; upstream credentials are not written into
-the recipe workspace. `mcp list`, `mcp call`, and `mcp run` force non-interactive
-operation for these bindings, and `mcp auth` rejects them.
+the recipe workspace.
+
+Regardless of where a recipe runs, the agent sees one rule: MCP operations are
+headless. When authentication is missing, it receives a deployment-neutral
+recovery telling it to ask the user to authenticate the connection outside the
+agent session and then retry; `mcp run --json-errors` reports this as
+`authentication_required` with action `ask_user_to_authenticate`.
+Deployment-specific credential handling is not part of the agent's
+instructions.
 
 ## Agent-facing command boundary
 
-Recipe sessions expose only `mcp search`, `mcp list`, `mcp call`, `mcp run`,
-and conditional `mcp auth <configured-local-oauth-server>`. Administrative and
+Recipe sessions expose only `mcp search`, `mcp list`, `mcp call`, and `mcp run`.
+Interactive authentication and administrative and
 developer commands (`config`, `vault`, `generate-cli`, `emit-ts`, `record`,
 `replay`, `daemon`, and `serve`) are intentionally unavailable. URL selectors,
 ad-hoc HTTP/stdio transports, config overrides, and persistence flags are also

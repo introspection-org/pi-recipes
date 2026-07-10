@@ -1005,6 +1005,38 @@ describe("recipe MCP materialization", () => {
     );
   });
 
+  it("turns missing agent credentials into deployment-neutral recovery", () => {
+    expect(
+      rebrandDelegatedOutput(
+        "Failed to resolve header 'Authorization' for server 'linear': Environment variable(s) LINEAR_TOKEN must be set for MCP header substitution."
+      )
+    ).toBe(
+      "Authentication is required for MCP server 'linear'. Ask the user to authenticate this MCP connection outside the agent session, then retry."
+    );
+    expect(
+      rebrandDelegatedOutput(
+        "Next: run 'mcp auth linear' to finish authentication."
+      )
+    ).toBe(
+      "Authentication is required. Ask the user to authenticate this MCP connection outside the agent session, then retry."
+    );
+    expect(
+      JSON.parse(
+        rebrandDelegatedOutput(
+          JSON.stringify({
+            server: "linear",
+            error:
+              "Failed to resolve header 'Authorization' for server 'linear': Environment variable(s) LINEAR_TOKEN must be set for MCP header substitution.",
+          })
+        )
+      )
+    ).toEqual({
+      server: "linear",
+      error:
+        "Authentication is required for MCP server 'linear'. Ask the user to authenticate this MCP connection outside the agent session, then retry.",
+    });
+  });
+
   it("drops upstream stack frames from delegated stderr but keeps message lines", () => {
     const out: string[] = [];
     const filter = createDelegatedErrorFilter((text) => out.push(text));

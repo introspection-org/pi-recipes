@@ -4,7 +4,7 @@ import {
   validateDelegatedMcpCommand,
 } from "../src/mcp-cli-policy.js";
 
-function policy(auth?: string) {
+function policy() {
   return createMcpCliSessionPolicy(
     {
       servers: [
@@ -23,13 +23,12 @@ function policy(auth?: string) {
           ],
         },
       ],
-    },
-    { contacts: auth ? { auth } : {} }
+    }
   );
 }
 
 describe("recipe-session mcporter policy", () => {
-  it("allows documented list flags and forces headless auth for managed bindings", () => {
+  it("allows documented list flags and forces headless authentication", () => {
     expect(
       validateDelegatedMcpCommand(
         ["list", "contacts.search_contacts", "--schema", "--all-parameters"],
@@ -65,7 +64,7 @@ describe("recipe-session mcporter policy", () => {
     expect(result.command?.args.at(-1)).toBe("--no-oauth");
   });
 
-  it("inserts managed no-OAuth mode before literal positional arguments", () => {
+  it("inserts no-OAuth mode before literal positional arguments", () => {
     expect(
       validateDelegatedMcpCommand(
         ["call", "contacts.search_contacts", "--", "--literal-value"],
@@ -114,13 +113,14 @@ describe("recipe-session mcporter policy", () => {
     expect(
       validateDelegatedMcpCommand(
         ["call", "contacts.search_contacts", "--query", "Ada", "--page-size=25"],
-        policy("oauth")
+        policy()
       ).command?.args
     ).toEqual([
       "call",
       "contacts.search_contacts",
       "query=Ada",
       "pageSize=25",
+      "--no-oauth",
     ]);
   });
 
@@ -170,27 +170,23 @@ describe("recipe-session mcporter policy", () => {
     ).toContain("Did you mean 'search_contacts'");
   });
 
-  it("permits interactive OAuth only for an explicitly configured local OAuth server", () => {
+  it("keeps calls headless even when the projected transport uses OAuth", () => {
     expect(
       validateDelegatedMcpCommand(
         ["call", "contacts.search_contacts"],
-        policy("oauth")
+        policy()
       )
     ).toEqual({
       command: {
-        args: ["call", "contacts.search_contacts"],
-        forceNoOAuth: false,
+        args: ["call", "contacts.search_contacts", "--no-oauth"],
+        forceNoOAuth: true,
       },
     });
-    expect(
-      validateDelegatedMcpCommand(["auth", "contacts", "--no-browser"], policy("oauth"))
-        .error
-    ).toBeUndefined();
   });
 
-  it("rejects OAuth for a host-authenticated managed binding", () => {
+  it("rejects interactive authentication with deployment-neutral recovery", () => {
     expect(validateDelegatedMcpCommand(["auth", "contacts"], policy()).error).toContain(
-      "host-provided authentication"
+      "Ask the user to authenticate this MCP connection outside the agent session"
     );
   });
 });

@@ -1,15 +1,10 @@
 import type { McpManifest } from "./mcp.js";
 
-export interface McpCliConfiguredServer {
-  auth?: string;
-}
-
 export interface McpCliSessionPolicy {
   servers: Map<
     string,
     {
       tools: Map<string, Set<string>>;
-      interactiveOAuth: boolean;
     }
   >;
 }
@@ -198,7 +193,6 @@ function validateList(
     return { error: `Unknown or unavailable mcp list option '${flag}'.` };
   }
 
-  let interactiveOAuth = false;
   if (target === undefined) {
     const unsupported = args
       .slice(1)
@@ -217,9 +211,8 @@ function validateList(
     const server = selector?.server ?? target;
     const error = validateExactTarget(policy, server, selector?.tool);
     if (error) return { error };
-    interactiveOAuth = policy.servers.get(server)?.interactiveOAuth === true;
   }
-  const forceNoOAuth = !interactiveOAuth && !hasNoOAuth(args);
+  const forceNoOAuth = !hasNoOAuth(args);
   return {
     command: {
       args: forceNoOAuth ? withNoOAuth(args) : args,
@@ -296,9 +289,7 @@ function validateCall(
     return { error: `Unknown or unavailable mcp call option '${flag}'.` };
   }
 
-  const interactiveOAuth =
-    policy.servers.get(selector.server)?.interactiveOAuth === true;
-  const forceNoOAuth = !interactiveOAuth && !hasNoOAuth(args);
+  const forceNoOAuth = !hasNoOAuth(args);
   return {
     command: {
       args: forceNoOAuth ? withNoOAuth(delegatedArgs) : delegatedArgs,
@@ -307,45 +298,8 @@ function validateCall(
   };
 }
 
-function validateAuth(
-  args: string[],
-  policy: McpCliSessionPolicy
-): McpCliPolicyResult {
-  const server = args[1];
-  if (!server || server.startsWith("-") || /^(?:https?:\/\/|[^/]+\/)/i.test(server)) {
-    return {
-      error:
-        "mcp auth requires the name of a configured local OAuth server; URLs and ad-hoc servers are unavailable.",
-    };
-  }
-  const configured = policy.servers.get(server);
-  if (!configured) return { error: validateExactTarget(policy, server) as string };
-  if (!configured.interactiveOAuth) {
-    return {
-      error: `MCP server '${server}' uses host-provided authentication. Interactive OAuth is unavailable for this binding.`,
-    };
-  }
-  const allowed = new Set(["--reset", "--no-browser", "--json"]);
-  for (let index = 2; index < args.length; index += 1) {
-    const arg = args[index];
-    const flag = flagName(arg);
-    if (flag === "--oauth-timeout") {
-      if (arg !== flag) return { error: `${flag} expects its value as the next argument.` };
-      const consumed = consumeFlagValue(args, index, flag);
-      if (consumed.error) return { error: consumed.error };
-      index = consumed.nextIndex;
-      continue;
-    }
-    if (!allowed.has(flag) || arg !== flag) {
-      return { error: `mcp auth option '${flag}' is unavailable in recipe sessions.` };
-    }
-  }
-  return { command: { args, forceNoOAuth: false } };
-}
-
 export function createMcpCliSessionPolicy(
-  manifest: McpManifest,
-  configuredServers: Readonly<Record<string, McpCliConfiguredServer>>
+  manifest: McpManifest
 ): McpCliSessionPolicy {
   return {
     servers: new Map(
@@ -365,7 +319,6 @@ export function createMcpCliSessionPolicy(
               ];
             })
           ),
-          interactiveOAuth: configuredServers[server.id]?.auth === "oauth",
         },
       ])
     ),
@@ -378,8 +331,10 @@ export function validateDelegatedMcpCommand(
 ): McpCliPolicyResult {
   if (args[0] === "list") return validateList(args, policy);
   if (args[0] === "call") return validateCall(args, policy);
-  if (args[0] === "auth") return validateAuth(args, policy);
   return {
-    error: `mcp command '${args[0] ?? ""}' is unavailable in recipe sessions. Use mcp search, list, call, run${[...policy.servers.values()].some((server) => server.interactiveOAuth) ? ", or auth for a configured local OAuth server" : ""}.`,
+    error:
+      args[0] === "auth"
+        ? "Interactive authentication is unavailable in the agent MCP CLI. Ask the user to authenticate this MCP connection outside the agent session, then retry."
+        : `mcp command '${args[0] ?? ""}' is unavailable in recipe sessions. Use mcp search, list, call, or run.`,
   };
 }
