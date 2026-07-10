@@ -76,6 +76,8 @@ const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "prompts",
 ];
 
+const legacyToolsAllowServers = new WeakSet<RecipePackageMcpServer>();
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
@@ -256,23 +258,32 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
     const id = stringValue(server.id);
     if (!id || seen.has(id)) continue;
     const tools = asRecord(server.tools);
+    const hasLegacyAllow = Object.hasOwn(tools, "allow");
+    const usesLegacyAllow = !Object.hasOwn(tools, "include") && hasLegacyAllow;
+    const legacyAllow = usesLegacyAllow ? stringArray(tools.allow) : undefined;
     const include = Object.hasOwn(tools, "include")
       ? stringArray(tools.include)
-      : Object.hasOwn(tools, "allow")
-        ? stringArray(tools.allow)
+      : legacyAllow !== undefined
+        ? legacyAllow.length > 0
+          ? legacyAllow
+          : ["*"]
         : undefined;
     const exclude = Object.hasOwn(tools, "exclude")
       ? stringArray(tools.exclude)
       : undefined;
     seen.add(id);
-    servers.push({
+    const parsedServer: RecipePackageMcpServer = {
       id,
       required: server.required === true,
       tools: {
         ...(include !== undefined ? { include } : {}),
         ...(exclude !== undefined ? { exclude } : {}),
       },
-    });
+    };
+    if (hasLegacyAllow) {
+      legacyToolsAllowServers.add(parsedServer);
+    }
+    servers.push(parsedServer);
   }
 
   return { manifests, servers };
@@ -708,6 +719,16 @@ export function validatePiPackageManifest(
     );
   }
   for (const server of pkg.mcp.servers) {
+    if (legacyToolsAllowServers.has(server)) {
+      findings.push(
+        finding(
+          "warning",
+          "pi.mcp_allow_deprecated",
+          `MCP server "${server.id}" uses deprecated tools.allow; migrate to tools.include`,
+          pkg.name
+        )
+      );
+    }
     if (server.tools.include === undefined) {
       findings.push(
         finding(

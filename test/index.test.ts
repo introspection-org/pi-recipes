@@ -209,9 +209,10 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("normalizes legacy package MCP tools.allow to include", () => {
+  it("normalizes and warns for legacy package MCP tools.allow", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-allow-"));
     try {
+      mkdirSync(join(root, "agents"), { recursive: true });
       writePiPackageManifest(root, {
         name: "legacy-mcp-policy",
         version: "0.1.0",
@@ -222,13 +223,38 @@ describe("recipe package manifest", () => {
                 id: "partner-mcp",
                 tools: { allow: ["get_value"] },
               },
+              {
+                id: "uncapped-mcp",
+                tools: { allow: [] },
+              },
             ],
           },
         },
       });
 
-      expect(readPiPackageManifest(root).mcp.servers[0]?.tools).toEqual({
+      const manifest = readPiPackageManifest(root);
+      expect(manifest.mcp.servers[0]?.tools).toEqual({
         include: ["get_value"],
+      });
+      expect(manifest.mcp.servers[1]?.tools).toEqual({ include: ["*"] });
+      expect(validatePiPackageManifest(manifest)).toEqual({
+        valid: true,
+        findings: [
+          {
+            severity: "warning",
+            code: "pi.mcp_allow_deprecated",
+            message:
+              'MCP server "partner-mcp" uses deprecated tools.allow; migrate to tools.include',
+            packageName: "legacy-mcp-policy",
+          },
+          {
+            severity: "warning",
+            code: "pi.mcp_allow_deprecated",
+            message:
+              'MCP server "uncapped-mcp" uses deprecated tools.allow; migrate to tools.include',
+            packageName: "legacy-mcp-policy",
+          },
+        ],
       });
     } finally {
       rmSync(root, { recursive: true, force: true });

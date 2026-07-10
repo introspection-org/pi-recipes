@@ -1453,6 +1453,14 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                     None::<String>,
                 );
             }
+            if tools.contains_key("allow") {
+                ctx.warning(
+                    "pi.mcp_allow_deprecated",
+                    &package_path,
+                    format!("package.json#pi.mcp.servers[{index}].tools.allow is deprecated"),
+                    Some("migrate tools.allow to tools.include"),
+                );
+            }
             if tools.contains_key("allow") && tools.contains_key("include") {
                 ctx.error(
                     "pi.mcp_invalid",
@@ -1531,12 +1539,21 @@ fn mcp_tool_policy(value: Option<&JsonValue>) -> Option<McpToolPolicy> {
             continue;
         };
         let tools = server.get("tools").and_then(JsonValue::as_object);
-        let include = tools.and_then(|tools| tools.get("include").or_else(|| tools.get("allow")));
+        let include = tools.and_then(|tools| {
+            if let Some(include) = tools.get("include") {
+                return json_string_set(include);
+            }
+            let mut allow = tools.get("allow").and_then(json_string_set)?;
+            if allow.is_empty() {
+                allow.insert("*".to_owned());
+            }
+            Some(allow)
+        });
         let exclude = tools.and_then(|tools| tools.get("exclude"));
         policy.insert(
             safe_mcp_server_id(&id),
             McpToolSelectors {
-                include: include.and_then(json_string_set),
+                include,
                 exclude: exclude.and_then(json_string_set),
             },
         );
@@ -2270,6 +2287,26 @@ mod tests {
         fs::remove_dir_all(&root).expect("cleanup recipe");
 
         assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn preserves_empty_legacy_allow_as_uncapped_with_warning() {
+        let root = temp_recipe("mcp-legacy-empty-allow");
+        write_recipe(
+            &root,
+            "nextplay",
+            &[],
+            &["mcp:nextplay/search_profiles"],
+            true,
+        );
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "pi.mcp_allow_deprecated" && diagnostic.severity == Severity::Warning
+        }));
     }
 
     #[test]
