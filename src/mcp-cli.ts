@@ -291,7 +291,35 @@ function checkedCallResult(
           : callResult.text() ?? "MCP tool call failed.";
     throw new McpRemoteToolResultError({ ...errorObject, message });
   }
-  return callResult;
+  return new Proxy(callResult, {
+    get(target, property) {
+      if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) {
+        return Reflect.get(target, property, target);
+      }
+      // Promise resolution probes returned values for `.then`.
+      if (property === "then") return undefined;
+      if (property in target) {
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      throw new McpRunUsageError(
+        `CallResult has no property '${property}'. Decode the tool response first, ` +
+          `for example with result.json().${property}; other readers are .text(), ` +
+          ".markdown(), .images(), .content(), .structuredContent(), and .raw."
+      );
+    },
+  });
+}
+
+function validateRunToolArgs(server: string, tool: string, args: Record<string, unknown>): void {
+  const cliStyleKey = Object.keys(args).find((key) => key.includes(":=") || key.includes("="));
+  if (!cliStyleKey) return;
+  const suggestedKey = cliStyleKey.split(/:=|=/, 1)[0];
+  throw new McpRunUsageError(
+    `Invalid JavaScript argument key '${cliStyleKey}' for ${server}.${tool}. ` +
+      `mcp run uses normal JavaScript objects: write { ${suggestedKey}: value }, ` +
+      `not mcporter CLI key=value or key:=value syntax.`
+  );
 }
 
 function decodeCallResult(
