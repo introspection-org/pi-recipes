@@ -107,7 +107,14 @@ describe("recipe child agent tools", () => {
       JSON.stringify({
         name: "child-mcp-shell-test",
         version: "0.1.0",
-        pi: { agents: ["agents/*.yaml"] },
+        pi: {
+          agents: ["agents/*.yaml"],
+          mcp: {
+            servers: [
+              { id: "nextplay", tools: { include: ["search"] } },
+            ],
+          },
+        },
       })
     );
     writeFileSync(
@@ -119,7 +126,10 @@ describe("recipe child agent tools", () => {
         "  thinking_level: low",
         "tools:",
         "  - shell",
-        "  - mcp:nextplay/search",
+        "mcp:",
+        "  nextplay:",
+        "    include:",
+        "      - search",
         "skills: []",
         "subagents: []",
         "system_instructions:",

@@ -209,7 +209,14 @@ describe("Pi recipes launch extension", () => {
         `${JSON.stringify({
           name: "mcp-shell-recipe",
           version: "1.0.0",
-          pi: { agents: ["agents/*.yaml"] },
+          pi: {
+            agents: ["agents/*.yaml"],
+            mcp: {
+              servers: [
+                { id: "nextplay", tools: { include: ["search"] } },
+              ],
+            },
+          },
         })}\n`
       );
       writeFileSync(
@@ -221,7 +228,10 @@ describe("Pi recipes launch extension", () => {
           "  thinking_level: low",
           "tools:",
           "  - shell",
-          "  - mcp:nextplay/search",
+          "mcp:",
+          "  nextplay:",
+          "    include:",
+          "      - search",
           "skills: []",
           "subagents: []",
           "system_instructions:",
@@ -396,7 +406,10 @@ describe("Pi recipes launch extension", () => {
           "  thinking_level: low",
           "tools:",
           "  - bash",
-          "  - mcp:partner-mcp/get_value",
+          "mcp:",
+          "  partner-mcp:",
+          "    include:",
+          "      - get_value",
           "skills: []",
           "subagents: []",
           "system_instructions:",
@@ -447,7 +460,7 @@ describe("Pi recipes launch extension", () => {
                   {
                     id: "partner-mcp",
                     required: true,
-                    tools: { allow: ["get_value"] },
+                    tools: { include: ["get_value"] },
                   },
                 ],
               },
@@ -504,7 +517,10 @@ describe("Pi recipes launch extension", () => {
           "  thinking_level: low",
           "tools:",
           "  - bash",
-          "  - mcp:partner-mcp/get_value",
+          "mcp:",
+          "  partner-mcp:",
+          "    include:",
+          "      - get_value",
           "skills: []",
           "subagents: []",
           "system_instructions:",
@@ -542,7 +558,7 @@ describe("Pi recipes launch extension", () => {
                   {
                     id: "partner-mcp",
                     required: true,
-                    tools: { allow: ["get_value"] },
+                    tools: { include: ["get_value"] },
                   },
                 ],
               },
@@ -648,7 +664,10 @@ describe("Pi recipes launch extension", () => {
           "  thinking_level: low",
           "tools:",
           "  - bash",
-          "  - mcp:slack/slack_list_threads",
+          "mcp:",
+          "  slack:",
+          "    include:",
+          "      - slack_list_threads",
           "skills: []",
           "subagents: []",
           "system_instructions:",
@@ -669,7 +688,7 @@ describe("Pi recipes launch extension", () => {
                   {
                     id: "slack",
                     required: false,
-                    tools: { allow: ["slack_list_threads"] },
+                    tools: { include: ["slack_list_threads"] },
                   },
                 ],
               },

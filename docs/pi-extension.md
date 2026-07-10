@@ -163,8 +163,11 @@ model:
   name: openrouter/anthropic/claude-opus-4.8
 ```
 
-Objects such as `model` and `extensions` merge by key. Arrays such as `tools`,
-`skills`, and `subagents` replace the inherited array.
+Objects such as `model`, `extensions`, and `mcp` merge by key. Arrays such as
+`tools`, `skills`, and `subagents` replace the inherited array. Within
+`extensions`, a child's `include` or `exclude` replaces that selector list.
+Within `mcp`, servers merge by id, and each child's `include` or `exclude`
+replaces that server's corresponding list while inheriting the other list.
 
 `system_instructions.mode` can be:
 
@@ -220,9 +223,9 @@ extensions. `exclude` subtracts matching extension names.
 ## MCP
 
 Recipes can expose MCP endpoint tools through a generated `mcp` CLI manifest.
-The recipe declares MCP server policy in `package.json#pi.mcp`, and agents opt
-into concrete tools with `mcp:<server-id>/<tool-name>` entries in their `tools`
-list.
+The recipe declares an upper-bound MCP server policy in `package.json#pi.mcp`,
+and each agent declares its own MCP selection in a separate `mcp` block.
+Ordinary `tools` remains an exact allowlist of Pi built-ins and extension tools.
 
 Example `package.json`:
 
@@ -237,7 +240,8 @@ Example `package.json`:
           "id": "contacts",
           "required": true,
           "tools": {
-            "allow": ["search_contacts", "get_contact"]
+            "include": ["*"],
+            "exclude": ["delete_workspace", "purge_contacts"]
           }
         }
       ]
@@ -251,21 +255,59 @@ Example agent:
 ```yaml
 tools:
   - bash
-  - mcp:contacts/search_contacts
-  - mcp:contacts/get_contact
+mcp:
+  contacts:
+    include:
+      - "*"
+    exclude:
+      - delete_contact
 ```
 
-The `mcp:*` entries are policy references, not Pi tool names. When the selected
-agent declares MCP refs, the extension writes a session-local shim at
-`.pi/bin/mcp` and prepends `.pi/bin` to `PATH` for commands run from that Pi
-session. When configured endpoints expose matching allowed tools, the extension
-also writes the filtered manifest to `.pi/mcp.json` and an
+Package selectors are local to their server: use `"*"` for all tools or a bare
+tool name for one tool. Agent MCP policy is keyed by server and uses the same
+bare tool names. Every server entry must declare `include`: use `["*"]` for all
+package-permitted tools, an exact list for a subset, or `[]` for none.
+`exclude` subtracts exact names after inclusion. Omitting a server gives the
+agent no access to it; omitting the entire `mcp` block gives it no MCP access.
+Empty package `tools`, agent server (`contacts: {}`), and agent `mcp: {}`
+objects are invalid rather than implicit wildcards.
+
+Package declaration, endpoint binding, and agent selection are independent
+gates. A bound server that is absent from `package.json#pi.mcp.servers` is
+ignored, and an agent cannot select it. An empty package server list therefore
+permits no MCP servers; creating a local or cloud binding never grants access
+by itself.
+
+`"*"` is a reserved whole-toolset sentinel, not a glob. Patterns such as
+`search_*` are invalid. An explicit wildcard opts into tools that the remote
+server may add later; use exact includes when that behavior is not desired.
+
+Package and agent MCP policies use only `include` and `exclude`. MCP tools are
+selected only through the agent `mcp` block; the ordinary `tools` list remains
+an explicit list of non-MCP tools.
+
+`recipes check` owns detailed static MCP diagnostics, including:
+`agent.mcp_server_undeclared`, `agent.mcp_tool_undeclared`,
+`agent.mcp_include_missing`, `agent.mcp_empty`, and
+`agent.mcp_selector_invalid`. The TypeScript runtime uses a generic fail-closed
+guard so an invalid policy cannot launch silently without duplicating those
+diagnostics. Runtime discovery separately distinguishes an
+undeclared package server (`mcp.package_server_undeclared`), an unselected
+agent server (`mcp.agent_server_unselected`), explicit `include: []`
+(`mcp.agent_tools_disabled`), and a zero-tool policy intersection
+(`mcp.tools_filtered`).
+
+When the selected agent declares MCP access, the extension writes a
+session-local shim at `.pi/bin/mcp` and prepends `.pi/bin` to `PATH` for
+commands run from that Pi session. When configured endpoints expose matching
+allowed tools, the extension also writes the filtered manifest to
+`.pi/mcp.json` and an
 [mcporter](https://github.com/openclaw/mcporter) config to `.pi/mcporter.json`
 in the workspace. Agents can use:
 
 Because MCP endpoint tools are invoked through the session-local CLI, agents
 normally need `bash` or another command-capable tool. Recipe validation emits a
-non-blocking warning when an agent declares `mcp:*` entries without `bash`;
+non-blocking warning when an agent declares MCP access without `bash`;
 recipes that provide a custom shell wrapper may intentionally ignore it.
 
 ```bash

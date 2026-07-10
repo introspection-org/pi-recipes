@@ -17,6 +17,7 @@ import {
   clearRecipeMcpManifest,
   configureMcpLocalConfigPath,
   defaultMcporterConfigPath,
+  formatMcpDiscoveryDiagnostics,
   materializeRecipeMcpManifest,
   materializeSessionMcpCli,
   mcpCliEntrypointPath,
@@ -28,7 +29,12 @@ const originalFetch = globalThis.fetch;
 
 function recipeManifest(
   recipeDir: string,
-  servers: Array<{ id: string; required?: boolean; allow?: string[] }>
+  servers: Array<{
+    id: string;
+    required?: boolean;
+    include?: string[];
+    exclude?: string[];
+  }>
 ): RecipePackageManifest {
   return {
     name: "demo",
@@ -45,7 +51,12 @@ function recipeManifest(
       servers: servers.map((server) => ({
         id: server.id,
         required: server.required ?? false,
-        tools: { allow: server.allow ?? [] },
+        tools: {
+          ...(server.include !== undefined
+            ? { include: server.include }
+            : {}),
+          ...(server.exclude !== undefined ? { exclude: server.exclude } : {}),
+        },
       })),
     },
     evals: { suites: [] },
@@ -133,7 +144,7 @@ describe("recipe MCP materialization", () => {
     }
   });
 
-  it("names bootstrap servers from serverInfo.name, then the binding label, never the endpoint id", async () => {
+  it("requires package, binding, and agent gates for bootstrap MCP tools", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-bootstrap-"));
     try {
       const cwd = join(root, "workspace");
@@ -171,13 +182,72 @@ describe("recipe MCP materialization", () => {
         });
       }) as unknown as typeof fetch;
 
+      const bindingOnly = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: fetchImpl,
+        manifest: recipeManifest(recipeDir, []),
+      });
+      expect(bindingOnly.servers).toEqual([]);
+      expect(bindingOnly.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "mcp.package_server_undeclared",
+          serverId: "nextplay",
+          stage: "filter",
+          message: expect.stringContaining(
+            "binding-only MCP access is no longer supported"
+          ),
+        }),
+      ]);
+      expect(
+        formatMcpDiscoveryDiagnostics(bindingOnly.diagnostics ?? [])
+      ).toContain("[mcp.package_server_undeclared]");
+
+      const withoutPackage = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: fetchImpl,
+        agentMcp: [{ serverId: "nextplay", tools: { include: ["*"] } }],
+        manifest: recipeManifest(recipeDir, []),
+      });
+      expect(withoutPackage.servers).toEqual([]);
+      expect(withoutPackage.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "mcp.package_server_undeclared",
+          serverId: "nextplay",
+          stage: "filter",
+        }),
+      ]);
+
+      const withoutAgent = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        env,
+        fetch: fetchImpl,
+        manifest: recipeManifest(recipeDir, [
+          { id: "nextplay", include: ["*"] },
+        ]),
+      });
+      expect(withoutAgent.servers).toEqual([]);
+      expect(withoutAgent.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "mcp.agent_server_unselected",
+          serverId: "nextplay",
+          stage: "filter",
+        }),
+      ]);
+
       const manifest = await materializeRecipeMcpManifest({
         cwd,
         recipeDir,
         env,
         fetch: fetchImpl,
-        agentTools: [],
-        manifest: recipeManifest(recipeDir, []),
+        agentMcp: [{ serverId: "nextplay", tools: { include: ["*"] } }],
+        manifest: recipeManifest(recipeDir, [
+          { id: "nextplay", include: ["*"] },
+        ]),
       });
 
       // Recipes reference cloud MCP servers by their human name (the id the
@@ -185,6 +255,7 @@ describe("recipe MCP materialization", () => {
       // bootstrap endpoint id must never become the server id.
       expect(manifest.servers?.map((server) => server.id)).toEqual(["nextplay"]);
       expect(manifest.servers?.[0]?.name).toBe("nextplay");
+      expect(manifest.diagnostics).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -233,9 +304,9 @@ describe("recipe MCP materialization", () => {
         recipeDir,
         env,
         fetch: fetchImpl,
-        agentTools: ["mcp:slack/slack_list_threads"],
+        agentMcp: [{ serverId: "slack", tools: { include: ["slack_list_threads"] } }],
         manifest: recipeManifest(recipeDir, [
-          { id: "slack", allow: ["slack_list_threads"] },
+          { id: "slack", include: ["slack_list_threads"] },
         ]),
       });
 
@@ -311,14 +382,15 @@ describe("recipe MCP materialization", () => {
           SLACK_MCP_TOKEN: "slack-token",
         },
         fetch: fetchImpl,
-        agentTools: ["mcp:slack/slack_list_threads"],
+        agentMcp: [{ serverId: "slack", tools: { include: ["slack_list_threads"] } }],
         manifest: recipeManifest(recipeDir, [
-          { id: "slack", allow: ["slack_list_threads"] },
+          { id: "slack", include: ["slack_list_threads"] },
         ]),
       });
 
       expect(manifest.servers).toEqual([]);
       expect(manifest.diagnostics?.[0]).toMatchObject({
+        code: "mcp.tools_filtered",
         serverId: "slack",
         stage: "filter",
       });
@@ -371,9 +443,9 @@ describe("recipe MCP materialization", () => {
         recipeDir,
         env,
         fetch: globalThis.fetch,
-        agentTools: ["mcp:slack/slack_read_channel"],
+        agentMcp: [{ serverId: "slack", tools: { include: ["slack_read_channel"] } }],
         manifest: recipeManifest(recipeDir, [
-          { id: "slack", allow: ["slack_read_channel"] },
+          { id: "slack", include: ["slack_read_channel"] },
         ]),
       });
 
@@ -398,6 +470,90 @@ describe("recipe MCP materialization", () => {
           },
         },
       });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies package and agent MCP include/exclude selectors with exclusion precedence", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-selectors-"));
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(cwd, { recursive: true });
+      mkdirSync(recipeDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "mcp.json"),
+        JSON.stringify({
+          servers: [
+            {
+              id: "salesforce",
+              base_url: "https://salesforce.example/mcp",
+              tools: [
+                { name: "search_accounts" },
+                { name: "update_account" },
+                { name: "export_all" },
+                { name: "delete_org" },
+              ],
+            },
+            {
+              id: "hubspot",
+              base_url: "https://hubspot.example/mcp",
+              tools: [{ name: "get_contacts" }],
+            },
+          ],
+        })
+      );
+
+      const manifest = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        agentMcp: [
+          {
+            serverId: "salesforce",
+            tools: {
+              include: ["*"],
+              exclude: ["export_all"],
+            },
+          },
+        ],
+        manifest: recipeManifest(recipeDir, [
+          {
+            id: "salesforce",
+            include: ["*"],
+            exclude: ["delete_org"],
+          },
+          { id: "hubspot", include: ["*"] },
+        ]),
+      });
+
+      expect(manifest.servers?.map((server) => server.id)).toEqual(["salesforce"]);
+      expect(manifest.servers?.[0]?.tools?.map((tool) => tool.name)).toEqual([
+        "search_accounts",
+        "update_account",
+      ]);
+
+      const none = await materializeRecipeMcpManifest({
+        cwd,
+        recipeDir,
+        agentMcp: [{ serverId: "salesforce", tools: { include: [] } }],
+        manifest: recipeManifest(recipeDir, [
+          { id: "salesforce", include: ["*"] },
+        ]),
+      });
+      expect(none.servers).toEqual([]);
+      expect(none.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "mcp.agent_tools_disabled",
+          serverId: "salesforce",
+          stage: "filter",
+        }),
+        expect.objectContaining({
+          code: "mcp.package_server_undeclared",
+          serverId: "hubspot",
+          stage: "filter",
+        }),
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -826,8 +982,8 @@ describe("mcporter CLI end-to-end", () => {
         recipeDir,
         env,
         fetch: globalThis.fetch,
-        agentTools: ["mcp:stub/get_value"],
-        manifest: recipeManifest(recipeDir, [{ id: "stub", allow: ["get_value"] }]),
+        agentMcp: [{ serverId: "stub", tools: { include: ["get_value"] } }],
+        manifest: recipeManifest(recipeDir, [{ id: "stub", include: ["get_value"] }]),
       });
       expect(manifest.servers).toHaveLength(1);
       const configEnv = {
@@ -883,8 +1039,8 @@ describe("mcporter CLI end-to-end", () => {
         recipeDir,
         env,
         fetch: globalThis.fetch,
-        agentTools: ["mcp:stub/get_value"],
-        manifest: recipeManifest(recipeDir, [{ id: "stub", allow: ["get_value"] }]),
+        agentMcp: [{ serverId: "stub", tools: { include: ["get_value"] } }],
+        manifest: recipeManifest(recipeDir, [{ id: "stub", include: ["get_value"] }]),
       });
       process.env.MCPORTER_CONFIG = env.MCPORTER_CONFIG;
       process.env.STUB_MCP_TOKEN = "stub-token";

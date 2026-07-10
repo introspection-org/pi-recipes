@@ -16,6 +16,7 @@ import {
   REQUIRED_RECIPE_AGENT_FIELDS,
   resolveRecipeAgentDefinition,
   validateResolvedRecipeAgentDefinition,
+  type RecipeAgentMcp,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
 import {
@@ -24,8 +25,9 @@ import {
 } from "./recipe-model.js";
 import {
   executableRecipeToolNames,
+  exactAgentMcpToolRefs,
   mcpCliPromptLines,
-  parseAgentMcpToolRef,
+  resolveAgentMcpSelections,
 } from "./mcp.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
@@ -131,12 +133,12 @@ function runtimeContextPrompt(
   workspaceDir: string,
   recipeDir: string,
   tools: readonly string[],
+  mcp: RecipeAgentMcp | undefined,
   mcpAvailableTools: readonly string[] | undefined
 ): string {
-  const mcpRefs = tools
-    .map((tool) => parseAgentMcpToolRef(tool))
-    .filter((tool): tool is NonNullable<typeof tool> => Boolean(tool));
-  const mcpPrompt = mcpRefs.length > 0
+  const selections = resolveAgentMcpSelections(mcp);
+  const mcpRefs = exactAgentMcpToolRefs(selections);
+  const mcpPrompt = selections.length > 0
     ? mcpCliPromptLines(mcpRefs, { availableTools: mcpAvailableTools }).join("\n")
     : undefined;
   return [
@@ -325,6 +327,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
             this.opts.workspaceDir,
             this.opts.recipeDir,
             agent.tools,
+            agent.mcp,
             this.opts.mcpAvailableTools
           ),
         ],

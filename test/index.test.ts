@@ -166,7 +166,10 @@ describe("recipe package manifest", () => {
               {
                 id: "partner-mcp",
                 required: true,
-                tools: { allow: ["get_value"] },
+                tools: {
+                  include: ["*"],
+                  exclude: ["delete_value"],
+                },
               },
             ],
           },
@@ -193,11 +196,75 @@ describe("recipe package manifest", () => {
           {
             id: "partner-mcp",
             required: true,
-            tools: { allow: ["get_value"] },
+            tools: {
+              include: ["*"],
+              exclude: ["delete_value"],
+            },
           },
         ],
       });
       expect(report).toEqual({ valid: true, findings: [] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed on an invalid package MCP policy", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-include-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "missing-package-mcp-include",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [{ id: "salesforce", tools: {} }],
+          },
+        },
+      });
+
+      expect(validatePiPackageManifest(readPiPackageManifest(root))).toMatchObject({
+        valid: false,
+        findings: [
+          expect.objectContaining({
+            code: "pi.mcp_invalid",
+            severity: "error",
+          }),
+        ],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("collapses package MCP policy failures into one runtime error", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-selector-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "invalid-package-mcp-selector",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [
+              {
+                id: "salesforce",
+                tools: { include: ["search_*"], exclude: ["*"] },
+              },
+            ],
+          },
+        },
+      });
+
+      expect(validatePiPackageManifest(readPiPackageManifest(root))).toMatchObject({
+        valid: false,
+        findings: [
+          expect.objectContaining({
+            code: "pi.mcp_invalid",
+            severity: "error",
+          }),
+        ],
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -352,7 +419,7 @@ describe("recipe package manifest", () => {
             servers: [
               {
                 id: "partner",
-                tools: { allow: ["search"] },
+                tools: { include: ["search"] },
               },
             ],
           },
@@ -400,7 +467,7 @@ describe("recipe package manifest", () => {
             servers: [
               {
                 id: "partner-mcp",
-                tools: { allow: ["search"] },
+                tools: { include: ["search"] },
               },
             ],
           },
@@ -447,7 +514,7 @@ describe("recipe package manifest", () => {
             servers: [
               {
                 id: "partner",
-                tools: { allow: ["search"] },
+                tools: { include: ["search"] },
               },
             ],
           },
@@ -1418,6 +1485,12 @@ describe("recipe agent definitions", () => {
           "    - \"*\"",
           "  exclude:",
           "    - optional-runtime",
+          "mcp:",
+          "  salesforce:",
+          "    include:",
+          "      - \"*\"",
+          "    exclude:",
+          "      - delete_org",
           "system_instructions:",
           "  mode: append",
           "  content: Base prompt",
@@ -1437,6 +1510,11 @@ describe("recipe agent definitions", () => {
           "  exclude:",
           "    - optional-runtime",
           "    - tracing",
+          "mcp:",
+          "  salesforce:",
+          "    exclude:",
+          "      - delete_org",
+          "      - purge_records",
           "",
         ].join("\n")
       );
@@ -1460,6 +1538,12 @@ describe("recipe agent definitions", () => {
           extensions: {
             include: ["*"],
             exclude: ["optional-runtime", "tracing"],
+          },
+          mcp: {
+            salesforce: {
+              include: ["*"],
+              exclude: ["delete_org", "purge_records"],
+            },
           },
           systemInstructions: {
             mode: "append",
@@ -1560,7 +1644,7 @@ describe("recipe child agents", () => {
     }
   });
 
-  it("warns when resolved agent tools include MCP refs without bash", () => {
+  it("leaves advisory MCP diagnostics to recipe-check", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agent-mcp-tools-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -1569,6 +1653,14 @@ describe("recipe child agents", () => {
         version: "0.1.0",
         pi: {
           agents: ["agents/*.yaml"],
+          mcp: {
+            servers: [
+              {
+                id: "contacts",
+                tools: { include: ["search_contacts"] },
+              },
+            ],
+          },
         },
       });
       writeFileSync(
@@ -1580,7 +1672,10 @@ describe("recipe child agents", () => {
           "  thinking_level: low",
           "tools:",
           "  - bash",
-          "  - mcp:contacts/search_contacts",
+          "mcp:",
+          "  contacts:",
+          "    include:",
+          "      - search_contacts",
           "skills: []",
           "subagents: []",
           "system_instructions:",
@@ -1595,7 +1690,7 @@ describe("recipe child agents", () => {
           "name: worker",
           "from: base",
           "tools:",
-          "  - mcp:contacts/search_contacts",
+          "  - read",
           "",
         ].join("\n")
       );
@@ -1613,27 +1708,12 @@ describe("recipe child agents", () => {
           agentName: "worker",
           requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
         })
-      ).toEqual([
-        {
-          agentName: "worker",
-          field: "tools",
-          code: "mcp_requires_bash",
-          severity: "warning",
-          message:
-            'Recipe agent "worker" declares MCP tools without bash; ensure another active tool can execute the session-local mcp CLI',
-        },
-      ]);
-
+      ).toEqual([]);
       const report = validateRecipeDirectory(root);
       expect(report.valid).toBe(true);
-      expect(report.findings).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            severity: "warning",
-            code: "agent.mcp_requires_bash",
-          }),
-        ])
-      );
+      expect(
+        report.findings.filter((finding) => finding.code.includes("mcp"))
+      ).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1687,6 +1767,83 @@ describe("recipe child agents", () => {
           message: 'Recipe agent "worker" must declare name',
         },
       ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("collapses agent MCP policy failures into one runtime error per agent", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agent-mcp-selector-"));
+    try {
+      mkdirSync(join(root, "agents"), { recursive: true });
+      writePiPackageManifest(root, {
+        name: "invalid-mcp-selector",
+        version: "0.1.0",
+        pi: {
+          agents: ["agents/*.yaml"],
+          mcp: {
+            servers: [
+              {
+                id: "salesforce",
+                tools: { include: ["search_accounts"] },
+              },
+            ],
+          },
+        },
+      });
+      const writeAgent = (name: string, mcpLines: string[]) =>
+        writeFileSync(
+          join(root, "agents", `${name}.yaml`),
+          [
+            `name: ${name}`,
+            "model:",
+            "  name: test/provider-model",
+            "  thinking_level: low",
+            "tools:",
+            "  - bash",
+            ...mcpLines,
+            "skills: []",
+            "subagents: []",
+            "system_instructions:",
+            "  mode: append",
+            "  content: Test instructions",
+            "",
+          ].join("\n")
+        );
+      writeAgent("missing-include", ["mcp:", "  salesforce: {}"]);
+      writeAgent("empty-mcp", ["mcp: {}"]);
+      writeAgent("undeclared-server", [
+        "mcp:",
+        "  nextplay:",
+        "    include:",
+        "      - \"*\"",
+      ]);
+      writeAgent("package-blocked-tool", [
+        "mcp:",
+        "  salesforce:",
+        "    include:",
+        "      - delete_org",
+      ]);
+      writeAgent("invalid-patterns", [
+        "mcp:",
+        "  salesforce:",
+        "    include:",
+        "      - search_*",
+        "    exclude:",
+        "      - \"*\"",
+      ]);
+
+      const findings = validateRecipeAgentDefinitions(root);
+      expect(findings.map((finding) => finding.agentName).sort()).toEqual([
+        "empty-mcp",
+        "invalid-patterns",
+        "missing-include",
+        "package-blocked-tool",
+        "undeclared-server",
+      ]);
+      expect(findings.every((finding) =>
+        finding.field === "mcp" && finding.code === "mcp_invalid"
+      )).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
