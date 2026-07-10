@@ -217,6 +217,10 @@ extensions:
 Omitting `extensions` or `extensions.include` loads all declared recipe
 extensions. `exclude` subtracts matching extension names.
 
+`recipes check` rejects an agent that activates a tool while disabling every
+declared recipe extension that statically registers that tool. Keep at least
+one registering extension enabled, or remove the tool from the agent.
+
 ## MCP
 
 Recipes can expose MCP endpoint tools through a generated `mcp` CLI manifest.

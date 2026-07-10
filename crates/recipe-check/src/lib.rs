@@ -72,9 +72,23 @@ struct RawAgent {
     path: PathBuf,
     from: Option<String>,
     fields: HashSet<AgentField>,
+    tools: Option<BTreeSet<String>>,
+    extensions: AgentExtensionSelectors,
 }
 
 type McpToolPolicy = BTreeMap<String, BTreeSet<String>>;
+
+#[derive(Debug, Clone, Default)]
+struct AgentExtensionSelectors {
+    include: Option<BTreeSet<String>>,
+    exclude: Option<BTreeSet<String>>,
+}
+
+#[derive(Debug, Clone)]
+struct ExtensionTools {
+    path: PathBuf,
+    tools: BTreeSet<String>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AgentField {
@@ -199,7 +213,15 @@ pub fn check_recipe(recipe_dir: impl AsRef<Path>, profile: CheckProfile) -> Resu
             .and_then(|pi| mcp_tool_policy(pi.get("mcp")));
         let agent_paths = resolve_agents(&resources, &mut ctx);
         ctx.resources.insert("agents".to_owned(), agent_paths.len());
-        validate_agents(&agent_paths, mcp_tool_policy.as_ref(), &mut ctx);
+        validate_agents(
+            &agent_paths,
+            resources
+                .get("extensions")
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            mcp_tool_policy.as_ref(),
+            &mut ctx,
+        );
         for key in ["extensions", "skills", "prompts"] {
             if let Some(paths) = resources.get(key) {
                 ctx.resources.insert(key.to_owned(), paths.len());
@@ -561,6 +583,7 @@ fn resolve_agents(
 
 fn validate_agents(
     agent_paths: &[PathBuf],
+    extension_paths: &[PathBuf],
     mcp_tool_policy: Option<&McpToolPolicy>,
     ctx: &mut CheckContext,
 ) {
@@ -585,6 +608,7 @@ fn validate_agents(
 
     let mut unique_names: Vec<String> = raw_by_name.keys().cloned().collect();
     unique_names.sort();
+    let extension_tools = inspect_extension_tools(extension_paths);
     for name in unique_names {
         validate_agent_inheritance(&name, &raw_by_name, &aliases, ctx);
         for field in AgentField::REQUIRED {
@@ -604,6 +628,7 @@ fn validate_agents(
                 );
             }
         }
+        validate_agent_extension_tools(&name, &raw_by_name, &aliases, &extension_tools, ctx);
     }
 }
 
@@ -725,7 +750,8 @@ fn read_agent(
         ctx,
     );
     validate_agent_system_instructions(map, path, &mut fields, ctx);
-    validate_agent_extensions(map, path, ctx);
+    let extensions = validate_agent_extensions(map, path, ctx);
+    let tools = yaml_value(map, "tools").and_then(|value| yaml_string_array_values(value).ok());
 
     Some(RawAgent {
         name,
@@ -734,6 +760,8 @@ fn read_agent(
         path: path.to_owned(),
         from,
         fields,
+        tools,
+        extensions,
     })
 }
 
@@ -912,9 +940,14 @@ fn validate_agent_system_instructions(
     }
 }
 
-fn validate_agent_extensions(map: &serde_yaml::Mapping, path: &Path, ctx: &mut CheckContext) {
+fn validate_agent_extensions(
+    map: &serde_yaml::Mapping,
+    path: &Path,
+    ctx: &mut CheckContext,
+) -> AgentExtensionSelectors {
+    let mut selectors = AgentExtensionSelectors::default();
     let Some(value) = yaml_value(map, "extensions") else {
-        return;
+        return selectors;
     };
     let Some(extensions) = value.as_mapping() else {
         ctx.error(
@@ -923,20 +956,30 @@ fn validate_agent_extensions(map: &serde_yaml::Mapping, path: &Path, ctx: &mut C
             "Agent extensions must be an object",
             None::<String>,
         );
-        return;
+        return selectors;
     };
     for key in ["include", "exclude"] {
         if let Some(value) = yaml_value(extensions, key) {
-            if let Err(message) = yaml_string_array(value) {
-                ctx.error(
-                    "agent.extensions_invalid",
-                    path,
-                    format!("extensions.{key}: {message}"),
-                    None::<String>,
-                );
+            match yaml_string_array_values(value) {
+                Ok(values) => {
+                    if key == "include" {
+                        selectors.include = Some(values);
+                    } else {
+                        selectors.exclude = Some(values);
+                    }
+                }
+                Err(message) => {
+                    ctx.error(
+                        "agent.extensions_invalid",
+                        path,
+                        format!("extensions.{key}: {message}"),
+                        None::<String>,
+                    );
+                }
             }
         }
     }
+    selectors
 }
 
 fn validate_agent_names(sources: &[RawAgent], ctx: &mut CheckContext) {
@@ -1054,6 +1097,374 @@ fn resolve_agent_name(
             .cloned()
             .unwrap_or_else(|| name.to_owned())
     }
+}
+
+fn validate_agent_extension_tools(
+    name: &str,
+    raw_by_name: &HashMap<String, &RawAgent>,
+    aliases: &HashMap<String, String>,
+    extension_tools: &[ExtensionTools],
+    ctx: &mut CheckContext,
+) {
+    let Some(tools) = resolved_agent_tools(name, raw_by_name, aliases, &mut Vec::new()) else {
+        return;
+    };
+    let selectors = resolved_agent_extension_selectors(name, raw_by_name, aliases);
+    let Some(agent) = raw_by_name.get(&resolve_agent_name(name, raw_by_name, aliases)) else {
+        return;
+    };
+
+    for tool in tools {
+        if parse_mcp_tool_ref(&tool).is_some() {
+            continue;
+        }
+        let providers: Vec<&ExtensionTools> = extension_tools
+            .iter()
+            .filter(|extension| extension.tools.contains(&tool))
+            .collect();
+        if providers.is_empty()
+            || providers
+                .iter()
+                .any(|extension| extension_selected(&ctx.root, &extension.path, &selectors))
+        {
+            continue;
+        }
+
+        let disabled = providers
+            .iter()
+            .map(|extension| ctx.display_path(&extension.path))
+            .collect::<Vec<_>>()
+            .join(", ");
+        ctx.error(
+            "agent.extension_tool_disabled",
+            &agent.path,
+            format!(
+                "Recipe agent '{name}' activates tool '{tool}', but every recipe extension that registers it is disabled: {disabled}"
+            ),
+            Some("include an extension that registers the tool or remove the tool from the agent"),
+        );
+    }
+}
+
+fn resolved_agent_tools(
+    name: &str,
+    raw_by_name: &HashMap<String, &RawAgent>,
+    aliases: &HashMap<String, String>,
+    stack: &mut Vec<String>,
+) -> Option<BTreeSet<String>> {
+    let resolved = resolve_agent_name(name, raw_by_name, aliases);
+    if stack.contains(&resolved) {
+        return None;
+    }
+    let agent = raw_by_name.get(&resolved)?;
+    if let Some(tools) = &agent.tools {
+        return Some(tools.clone());
+    }
+    let parent = agent.from.as_ref()?;
+    stack.push(resolved);
+    resolved_agent_tools(parent, raw_by_name, aliases, stack)
+}
+
+fn resolved_agent_extension_selectors(
+    name: &str,
+    raw_by_name: &HashMap<String, &RawAgent>,
+    aliases: &HashMap<String, String>,
+) -> AgentExtensionSelectors {
+    fn resolve(
+        name: &str,
+        raw_by_name: &HashMap<String, &RawAgent>,
+        aliases: &HashMap<String, String>,
+        stack: &mut Vec<String>,
+    ) -> AgentExtensionSelectors {
+        let resolved = resolve_agent_name(name, raw_by_name, aliases);
+        if stack.contains(&resolved) {
+            return AgentExtensionSelectors::default();
+        }
+        let Some(agent) = raw_by_name.get(&resolved) else {
+            return AgentExtensionSelectors::default();
+        };
+        let mut selectors = if let Some(parent) = &agent.from {
+            stack.push(resolved);
+            resolve(parent, raw_by_name, aliases, stack)
+        } else {
+            AgentExtensionSelectors::default()
+        };
+        if agent.extensions.include.is_some() {
+            selectors.include = agent.extensions.include.clone();
+        }
+        if agent.extensions.exclude.is_some() {
+            selectors.exclude = agent.extensions.exclude.clone();
+        }
+        selectors
+    }
+
+    resolve(name, raw_by_name, aliases, &mut Vec::new())
+}
+
+fn extension_selected(
+    recipe_dir: &Path,
+    extension_path: &Path,
+    selectors: &AgentExtensionSelectors,
+) -> bool {
+    let included = match &selectors.include {
+        None => true,
+        Some(include) => include
+            .iter()
+            .any(|selector| extension_selector_matches(recipe_dir, extension_path, selector)),
+    };
+    let excluded = selectors.exclude.as_ref().is_some_and(|exclude| {
+        exclude
+            .iter()
+            .any(|selector| extension_selector_matches(recipe_dir, extension_path, selector))
+    });
+    included && !excluded
+}
+
+fn extension_selector_matches(recipe_dir: &Path, extension_path: &Path, selector: &str) -> bool {
+    let normalized = normalize_extension_selector(selector);
+    if normalized.is_empty() {
+        return false;
+    }
+    if normalized == "*" {
+        return true;
+    }
+    extension_selector_set(recipe_dir, extension_path).contains(&normalized)
+}
+
+fn extension_selector_set(recipe_dir: &Path, extension_path: &Path) -> BTreeSet<String> {
+    let relative = extension_path
+        .strip_prefix(recipe_dir)
+        .map(path_to_slashes)
+        .unwrap_or_else(|_| path_to_slashes(extension_path));
+    let without_extension = normalize_extension_selector(&relative);
+    let base = extension_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let mut selectors = BTreeSet::from([relative, without_extension, base.clone()]);
+    if base == "index" {
+        if let Some(parent) = extension_path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+        {
+            selectors.insert(parent.to_owned());
+        }
+    }
+    selectors
+}
+
+fn normalize_extension_selector(value: &str) -> String {
+    let normalized = normalize_slashes(value.trim())
+        .trim_start_matches("./")
+        .to_owned();
+    let Some(last_slash) = normalized.rfind('/') else {
+        return normalized
+            .rsplit_once('.')
+            .map(|(stem, _)| stem.to_owned())
+            .unwrap_or(normalized);
+    };
+    let (directory, file) = normalized.split_at(last_slash + 1);
+    file.rsplit_once('.')
+        .map(|(stem, _)| format!("{directory}{stem}"))
+        .unwrap_or(normalized)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum JsToken {
+    Ident(String),
+    String(String),
+    Punct(char),
+}
+
+fn inspect_extension_tools(extension_paths: &[PathBuf]) -> Vec<ExtensionTools> {
+    extension_paths
+        .iter()
+        .filter(|path| is_loadable_extension_file(path))
+        .filter_map(|path| {
+            let source = fs::read_to_string(path).ok()?;
+            let tools = registered_tool_names(&source);
+            (!tools.is_empty()).then(|| ExtensionTools {
+                path: path.clone(),
+                tools,
+            })
+        })
+        .collect()
+}
+
+fn registered_tool_names(source: &str) -> BTreeSet<String> {
+    let tokens = tokenize_javascript(source);
+    let variables = named_tool_variables(&tokens);
+    let mut tools = BTreeSet::new();
+
+    for index in 0..tokens.len() {
+        if tokens.get(index) != Some(&JsToken::Ident("registerTool".to_owned()))
+            || tokens.get(index + 1) != Some(&JsToken::Punct('('))
+        {
+            continue;
+        }
+        let argument_start = index + 2;
+        if let Some(tool) = root_object_name(&tokens, argument_start, ')') {
+            tools.insert(tool);
+            continue;
+        }
+        if let Some(JsToken::Ident(variable)) = tokens.get(argument_start) {
+            if let Some(tool) = variables.get(variable) {
+                tools.insert(tool.clone());
+            }
+        }
+    }
+    tools
+}
+
+fn named_tool_variables(tokens: &[JsToken]) -> HashMap<String, String> {
+    let mut variables = HashMap::new();
+    for index in 0..tokens.len() {
+        if !matches!(
+            tokens.get(index),
+            Some(JsToken::Ident(keyword)) if keyword == "const" || keyword == "let" || keyword == "var"
+        ) {
+            continue;
+        }
+        let Some(JsToken::Ident(variable)) = tokens.get(index + 1) else {
+            continue;
+        };
+        let Some(equals_offset) = tokens[index + 2..]
+            .iter()
+            .position(|token| matches!(token, JsToken::Punct('=' | ';')))
+        else {
+            continue;
+        };
+        let equals_index = index + 2 + equals_offset;
+        if tokens.get(equals_index) != Some(&JsToken::Punct('=')) {
+            continue;
+        }
+        if let Some(tool) = root_object_name(tokens, equals_index + 1, ';') {
+            variables.insert(variable.clone(), tool);
+        }
+    }
+    variables
+}
+
+fn root_object_name(tokens: &[JsToken], start: usize, boundary: char) -> Option<String> {
+    let mut paren_depth = 0usize;
+    let mut object_start = None;
+    for index in start..tokens.len() {
+        match tokens.get(index) {
+            Some(JsToken::Punct(ch)) if *ch == boundary && paren_depth == 0 => return None,
+            Some(JsToken::Punct('(')) => paren_depth += 1,
+            Some(JsToken::Punct(')')) if paren_depth > 0 => paren_depth -= 1,
+            Some(JsToken::Punct('{')) => {
+                object_start = Some(index);
+                break;
+            }
+            Some(JsToken::Punct(';')) if boundary == ')' => return None,
+            _ => {}
+        }
+    }
+
+    let mut brace_depth = 0usize;
+    for index in object_start?..tokens.len() {
+        match tokens.get(index) {
+            Some(JsToken::Punct('{')) => brace_depth += 1,
+            Some(JsToken::Punct('}')) => {
+                brace_depth = brace_depth.saturating_sub(1);
+                if brace_depth == 0 {
+                    return None;
+                }
+            }
+            Some(JsToken::Ident(key) | JsToken::String(key))
+                if brace_depth == 1 && key == "name" =>
+            {
+                if let (Some(JsToken::Punct(':')), Some(JsToken::String(value))) =
+                    (tokens.get(index + 1), tokens.get(index + 2))
+                {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        return Some(value.to_owned());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn tokenize_javascript(source: &str) -> Vec<JsToken> {
+    let chars: Vec<char> = source.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch.is_whitespace() {
+            index += 1;
+            continue;
+        }
+        if ch == '/' && chars.get(index + 1) == Some(&'/') {
+            index += 2;
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if ch == '/' && chars.get(index + 1) == Some(&'*') {
+            index += 2;
+            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
+                index += 1;
+            }
+            index = (index + 2).min(chars.len());
+            continue;
+        }
+        if ch == '\'' || ch == '"' || ch == '`' {
+            let quote = ch;
+            let mut value = String::new();
+            let mut interpolated = false;
+            index += 1;
+            while index < chars.len() {
+                let current = chars[index];
+                if current == '\\' {
+                    if let Some(escaped) = chars.get(index + 1) {
+                        value.push(*escaped);
+                        index += 2;
+                    } else {
+                        index += 1;
+                    }
+                    continue;
+                }
+                if quote == '`' && current == '$' && chars.get(index + 1) == Some(&'{') {
+                    interpolated = true;
+                }
+                if current == quote {
+                    index += 1;
+                    break;
+                }
+                value.push(current);
+                index += 1;
+            }
+            if !interpolated {
+                tokens.push(JsToken::String(value));
+            }
+            continue;
+        }
+        if ch.is_ascii_alphabetic() || ch == '_' || ch == '$' {
+            let start = index;
+            index += 1;
+            while index < chars.len()
+                && (chars[index].is_ascii_alphanumeric()
+                    || chars[index] == '_'
+                    || chars[index] == '$')
+            {
+                index += 1;
+            }
+            tokens.push(JsToken::Ident(chars[start..index].iter().collect()));
+            continue;
+        }
+        tokens.push(JsToken::Punct(ch));
+        index += 1;
+    }
+    tokens
 }
 
 fn validate_mcp_tool_refs(
@@ -1693,15 +2104,23 @@ fn yaml_string(map: &serde_yaml::Mapping, key: &str) -> Option<String> {
 }
 
 fn yaml_string_array(value: &YamlValue) -> std::result::Result<(), String> {
+    yaml_string_array_values(value).map(|_| ())
+}
+
+fn yaml_string_array_values(value: &YamlValue) -> std::result::Result<BTreeSet<String>, String> {
     let Some(items) = value.as_sequence() else {
         return Err("field must be an array of strings".to_owned());
     };
+    let mut values = BTreeSet::new();
     for (index, item) in items.iter().enumerate() {
-        if !matches!(item, YamlValue::String(value) if !value.trim().is_empty()) {
-            return Err(format!("item {index} must be a non-empty string"));
+        match item {
+            YamlValue::String(value) if !value.trim().is_empty() => {
+                values.insert(value.trim().to_owned());
+            }
+            _ => return Err(format!("item {index} must be a non-empty string")),
         }
     }
-    Ok(())
+    Ok(values)
 }
 
 fn valid_model_spec(value: &str) -> bool {
@@ -1785,6 +2204,10 @@ fn path_to_slashes(path: &Path) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn normalize_slashes(value: &str) -> String {
+    value.replace('\\', "/")
 }
 
 #[cfg(test)]
@@ -1944,8 +2367,133 @@ mod tests {
             diagnostic.code == "agent.mcp_requires_bash" && diagnostic.severity == Severity::Warning
         }));
     }
-}
 
-fn normalize_slashes(value: &str) -> String {
-    value.replace('\\', "/")
+    #[test]
+    fn rejects_active_tools_registered_only_by_disabled_extensions() {
+        let root = temp_recipe("disabled-extension-tool");
+        fs::create_dir_all(root.join("extensions")).expect("create extensions");
+        fs::write(
+            root.join("package.json"),
+            serde_json::to_string_pretty(&json!({
+                "name": "extension-tool-test",
+                "version": "0.1.0",
+                "pi": {
+                    "agents": ["agents/*.yaml"],
+                    "extensions": ["extensions/*.ts"]
+                }
+            }))
+            .expect("serialize package"),
+        )
+        .expect("write package");
+        fs::write(
+            root.join("agents/agent.yaml"),
+            concat!(
+                "name: agent\n",
+                "description: Test agent\n",
+                "model:\n",
+                "  name: test/provider-model\n",
+                "  thinking_level: low\n",
+                "tools:\n",
+                "  - setup_git\n",
+                "skills: []\n",
+                "subagents: []\n",
+                "system_instructions:\n",
+                "  mode: append\n",
+                "  content: Test instructions\n",
+                "extensions:\n",
+                "  exclude:\n",
+                "    - setup-git\n",
+            ),
+        )
+        .expect("write agent");
+        fs::write(
+            root.join("extensions/setup-git.ts"),
+            concat!(
+                "export default (pi) => {\n",
+                "  pi.registerTool({\n",
+                "    name: 'setup_git',\n",
+                "    parameters: {},\n",
+                "    async execute() {},\n",
+                "  });\n",
+                "};\n",
+            ),
+        )
+        .expect("write extension");
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.extension_tool_disabled"
+                && diagnostic.message.contains("setup_git")
+                && diagnostic.message.contains("extensions/setup-git.ts")
+        }));
+    }
+
+    #[test]
+    fn accepts_active_tools_when_one_registering_extension_remains_enabled() {
+        let root = temp_recipe("enabled-extension-tool");
+        fs::create_dir_all(root.join("extensions")).expect("create extensions");
+        fs::write(
+            root.join("package.json"),
+            serde_json::to_string_pretty(&json!({
+                "name": "extension-tool-test",
+                "version": "0.1.0",
+                "pi": {
+                    "agents": ["agents/*.yaml"],
+                    "extensions": ["extensions/*.ts"]
+                }
+            }))
+            .expect("serialize package"),
+        )
+        .expect("write package");
+        fs::write(
+            root.join("agents/agent.yaml"),
+            concat!(
+                "name: agent\n",
+                "description: Test agent\n",
+                "model:\n",
+                "  name: test/provider-model\n",
+                "  thinking_level: low\n",
+                "tools:\n",
+                "  - setup_git\n",
+                "skills: []\n",
+                "subagents: []\n",
+                "system_instructions:\n",
+                "  mode: append\n",
+                "  content: Test instructions\n",
+                "extensions:\n",
+                "  exclude:\n",
+                "    - optional-runtime\n",
+            ),
+        )
+        .expect("write agent");
+        fs::write(
+            root.join("extensions/setup-git.ts"),
+            concat!(
+                "const setupGit = defineTool({\n",
+                "  name: `setup_git`,\n",
+                "  parameters: {},\n",
+                "  async execute() {},\n",
+                "});\n",
+                "export default (pi) => pi.registerTool(setupGit);\n",
+            ),
+        )
+        .expect("write extension");
+        fs::write(
+            root.join("extensions/optional-runtime.ts"),
+            "export default () => {};\n",
+        )
+        .expect("write optional extension");
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+        assert!(!report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.extension_tool_disabled"));
+    }
 }

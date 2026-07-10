@@ -162,7 +162,9 @@ recipes check .
 
 `check` checks the manifest, resolves declared resources, catches missing
 required agent globs, validates Harbor eval suite pins, and warns when no
-default agent can be inferred.
+default agent can be inferred. It also rejects agents whose extension policy
+disables every declared recipe extension that statically registers one of the
+agent's active tools.
 
 Use the CI profile when validation should block a pull request or push:
 
