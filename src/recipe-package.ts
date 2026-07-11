@@ -247,6 +247,24 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function normalizedMcpServerId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function unknownKeys(
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>
+): string[] {
+  return Object.keys(value).filter((key) => !allowed.has(key));
+}
+
+const MCP_SERVER_KEYS = new Set(["id", "required", "tools"]);
+const MCP_TOOL_KEYS = new Set(["include", "exclude"]);
+
 function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
   if (typeof value === "string") {
     return { ...emptyMcpConfig(), manifests: stringArray([value]).map(normalizeResourcePath) };
@@ -265,11 +283,36 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
   const seen = new Set<string>();
   const servers: RecipePackageMcpServer[] = [];
   for (const raw of Array.isArray(data.servers) ? data.servers : []) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new RecipePackageError("pi.mcp.servers entries must be objects");
+    }
     const server = raw as Record<string, unknown>;
-    const id = stringValue(server.id);
-    if (!id || seen.has(id)) continue;
+    const extraServerKeys = unknownKeys(server, MCP_SERVER_KEYS);
+    if (extraServerKeys.length > 0) {
+      throw new RecipePackageError(
+        `MCP server contains unsupported field${extraServerKeys.length === 1 ? "" : "s"}: ${extraServerKeys.join(", ")}`
+      );
+    }
+    const sourceId = stringValue(server.id);
+    if (!sourceId) {
+      throw new RecipePackageError("MCP server id must be a non-empty string");
+    }
+    const id = normalizedMcpServerId(sourceId);
+    if (!id) {
+      throw new RecipePackageError(
+        `MCP server id "${sourceId}" must contain a letter, number, underscore, or dash`
+      );
+    }
+    if (seen.has(id)) {
+      throw new RecipePackageError(`Duplicate MCP server id after normalization: "${id}"`);
+    }
     const tools = asRecord(server.tools);
+    const extraToolKeys = unknownKeys(tools, MCP_TOOL_KEYS);
+    if (extraToolKeys.length > 0) {
+      throw new RecipePackageError(
+        `MCP server "${id}" tools contains unsupported field${extraToolKeys.length === 1 ? "" : "s"}: ${extraToolKeys.join(", ")}`
+      );
+    }
     const include = Object.hasOwn(tools, "include")
       ? stringArray(tools.include)
       : undefined;
