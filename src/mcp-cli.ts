@@ -1352,7 +1352,7 @@ function delegateToMcporter(args: string[]): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [mcporterCliEntrypointPath(), ...args], {
       stdio: ["inherit", "pipe", "pipe"],
-      env: process.env,
+      env: { ...process.env, PI_RECIPES_MCP_CLI: "1" },
     });
     const preserve = usesMachineReadableOutput(args);
     const stderrFilter = createDelegatedErrorFilter((text) => stderr.write(text));
