@@ -15,7 +15,6 @@ import {
 } from "../src/mcp-cli.js";
 import {
   buildMcporterConfig,
-  classifyMcpToolAvailability,
   clearRecipeMcpManifest,
   configureMcpLocalConfigPath,
   defaultMcporterConfigPath,
@@ -1040,37 +1039,6 @@ describe("recipe MCP materialization", () => {
     );
   });
 
-});
-
-describe("recipe MCP availability", () => {
-  const configured = [
-    { serverId: "contacts", toolName: "search_contacts", raw: "search_contacts" },
-    { serverId: "contacts", toolName: "create_contact", raw: "create_contact" },
-  ];
-
-  it("classifies materialized and missing configured tools", () => {
-    expect(
-      classifyMcpToolAvailability(configured, {
-        servers: [
-          {
-            id: "contacts",
-            base_url: "https://example.test/mcp",
-            tools: [{ name: "search_contacts" }],
-          },
-        ],
-      })
-    ).toEqual({
-      availableTools: ["contacts.search_contacts"],
-      unavailableTools: ["contacts.create_contact"],
-    });
-  });
-
-  it("classifies every configured ref as unavailable when discovery is empty", () => {
-    expect(classifyMcpToolAvailability(configured, { servers: [] })).toEqual({
-      availableTools: [],
-      unavailableTools: ["contacts.create_contact", "contacts.search_contacts"],
-    });
-  });
 });
 
 describe("mcporter CLI end-to-end", () => {

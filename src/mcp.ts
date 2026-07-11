@@ -803,12 +803,6 @@ async function discoverMcpCatalogs(opts: {
   return { catalogs, diagnostics };
 }
 
-export interface AgentMcpToolRef {
-  serverId: string;
-  toolName: string;
-  raw: string;
-}
-
 export interface ScopedMcpToolSelection {
   serverId: string;
   tools: RecipeMcpToolSelection;
@@ -823,65 +817,8 @@ export function resolveAgentMcpSelections(
   }));
 }
 
-export function exactAgentMcpToolRefs(
-  selections: readonly ScopedMcpToolSelection[]
-): AgentMcpToolRef[] {
-  const refs: AgentMcpToolRef[] = [];
-  for (const selection of selections) {
-    for (const raw of selection.tools.include ?? []) {
-      const toolName = raw.trim();
-      if (toolName === "*" || !mcpSelectionAllowsTool(selection.tools, toolName)) continue;
-      refs.push({
-        serverId: selection.serverId,
-        toolName,
-        raw,
-      });
-    }
-  }
-  return refs;
-}
-
 export function executableRecipeToolNames(tools: readonly string[]): string[] {
   return [...tools];
-}
-
-export function mcpManifestToolRefs(manifest: McpManifest): string[] {
-  return (manifest.servers ?? []).flatMap((server) =>
-    (server.tools ?? []).map((tool) => `${server.id}.${tool.name}`)
-  );
-}
-
-export interface McpToolAvailability {
-  availableTools: string[];
-  unavailableTools: string[];
-}
-
-export function classifyMcpToolAvailability(
-  configuredRefs: readonly AgentMcpToolRef[],
-  manifest: McpManifest
-): McpToolAvailability {
-  const availableTools = [...new Set(mcpManifestToolRefs(manifest))].sort();
-  const available = new Set(availableTools);
-  const unavailableTools = [...new Set(
-    configuredRefs
-      .map((tool) => `${tool.serverId}.${tool.toolName}`)
-      .filter((tool) => !available.has(tool))
-  )].sort();
-  return { availableTools, unavailableTools };
-}
-
-/**
- * Short system-prompt notice for the session-local `mcp` capability. Complete
- * CLI guidance stays progressively disclosed through `mcp --help`.
- */
-export function mcpSystemPromptLines(
-  availableTools: readonly string[] | undefined
-): string[] {
-  if (availableTools?.length === 0) return [];
-  return [
-    "## MCP",
-    "Use the `mcp` command through shell to discover and call MCP tools. Run `mcp --help` for commands and usage.",
-  ];
 }
 
 export function formatMcpDiscoveryDiagnostics(
