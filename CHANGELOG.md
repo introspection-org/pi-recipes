@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/introspection-org/pi-recipes/compare/v0.6.1...v0.6.2) (2026-07-11)
+
+
+### Bug Fixes
+
+* include MCP CLI help in npm package ([#45](https://github.com/introspection-org/pi-recipes/issues/45)) ([952a2ab](https://github.com/introspection-org/pi-recipes/commit/952a2abb10fc6318a435764568ffdece1b6828b7))
+
 ## [0.6.1](https://github.com/introspection-org/pi-recipes/compare/v0.6.0...v0.6.1) (2026-07-10)
 
 
