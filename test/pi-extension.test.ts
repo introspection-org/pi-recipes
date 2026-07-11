@@ -310,15 +310,9 @@ describe("Pi recipes launch extension", () => {
       );
       expect(promptResults).toEqual([
         {
-          systemPrompt: expect.stringContaining("Base recipe prompt"),
+          systemPrompt: "Base recipe prompt\n\nAgent-specific prompt",
         },
       ]);
-      expect((promptResults[0] as { systemPrompt: string }).systemPrompt).toContain(
-        "Current workspace: " + projectDir
-      );
-      expect((promptResults[0] as { systemPrompt: string }).systemPrompt).toContain(
-        "Agent-specific prompt"
-      );
 
       await pi.commands.get("recipe")?.handler("", ctx as any);
       expect(notify).toHaveBeenCalledWith(
@@ -428,7 +422,6 @@ describe("Pi recipes launch extension", () => {
                 host: "host.docker.internal",
                 base_url: "http://host.docker.internal:3200/api/mcp",
                 transport: "streamable_http",
-                instructions: "Read with get_value before drawing conclusions.",
                 tools: [
                   {
                     name: "get_value",
@@ -498,9 +491,6 @@ describe("Pi recipes launch extension", () => {
       expect(materialized.servers[0].tools.map((tool: { name: string }) => tool.name)).toEqual([
         "get_value",
       ]);
-      expect(materialized.servers[0].instructions).toBe(
-        "Read with get_value before drawing conclusions."
-      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -788,7 +778,7 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
-  it("keeps runtime context when agent system instructions replace recipe prompts", async () => {
+  it("uses only agent system instructions when they replace the recipe prompt", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {
       const recipeDir = writeRecipe(root);
@@ -828,12 +818,11 @@ describe("Pi recipes launch extension", () => {
         } as any,
         extensionContext(projectDir)
       );
-      const systemPrompt = (promptResults[0] as { systemPrompt: string }).systemPrompt;
-      expect(systemPrompt).toContain("Agent replacement prompt");
-      expect(systemPrompt).toContain("Recipe Runtime Context");
-      expect(systemPrompt).toContain("Current workspace: " + projectDir);
-      expect(systemPrompt).not.toContain("Base recipe prompt");
-      expect(systemPrompt).not.toContain("Default Pi prompt");
+      expect(promptResults).toEqual([
+        {
+          systemPrompt: "Agent replacement prompt",
+        },
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

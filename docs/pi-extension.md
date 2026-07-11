@@ -85,11 +85,10 @@ On session startup, the extension:
 7. Sets the model and thinking level from the selected agent when specified.
 8. Selects active tools from the selected agent.
 9. Returns recipe resources for skills and prompts.
-10. Composes the runtime system prompt from Pi defaults, `SYSTEM.md`, selected agent instructions, and recipe runtime context.
+10. Composes the runtime system prompt from recipe-owned `SYSTEM.md` and selected agent instructions, falling back to Pi defaults when the recipe has no system prompt.
 
-The current Pi working directory remains the user's project workspace. The
-recipe directory is available in runtime context, but it does not become the
-workspace.
+The current Pi working directory remains the user's project workspace. Recipe
+metadata and filesystem paths are not injected into the system prompt.
 
 ## Manifest File
 
@@ -179,15 +178,11 @@ Use `content: ""` when an agent intentionally adds no instructions beyond
 
 ## Session Prompt
 
-The session prompt is assembled from:
-
-1. Pi's base system prompt
-2. recipe `SYSTEM.md`, when present
-3. selected agent `system_instructions`
-4. runtime context containing the current workspace and recipe directory
-
-This lets recipes carry durable workflow guidance without changing where the
-user is working.
+The session prompt uses recipe `SYSTEM.md` when present, otherwise Pi's base
+system prompt, then applies the selected agent's `system_instructions` according
+to its `append` or `replace` mode. Pi-recipes does not add capability notices,
+filesystem paths, or other implicit instructions. Recipes own all durable
+workflow guidance without changing where the user is working.
 
 ## Tools
 
@@ -332,11 +327,11 @@ stacks. Machine-readable output is forwarded unchanged. For an exact textual
 `mcp list <server.tool> --schema`, the wrapper appends the tool's materialized
 output schema because mcporter 0.12.3 renders it only in JSON mode.
 
-When MCP tools are available, the system prompt includes only a short note to
-use the `mcp` command through shell and consult `mcp --help`. CLI syntax,
-workflow guidance, server instructions, tool discovery, and schemas are not
-injected into runtime context. They remain progressively available through
-`mcp --help`, `mcp list`, and `mcp search`.
+Pi-recipes does not add MCP instructions to the system prompt. A recipe that
+wants its agent to use the session-local `mcp` command must say so explicitly in
+its own `SYSTEM.md` or selected agent instructions. CLI syntax, server
+tool discovery, and schemas remain progressively available through `mcp
+--help`, `mcp list`, and `mcp search`.
 
 Only exact tool names in the runtime inventory or `mcp list` output are
 callable. Upstream tool descriptions can mention related tools that are not
@@ -373,12 +368,6 @@ different response type, select it on the tool function with `.text(args)`,
 same await detection, queue, deadline, typed-error, and allowlist enforcement.
 Interactive OAuth is disabled: configured headers and cached credentials are
 usable, but a failed bearer token cannot launch a browser flow from the agent.
-
-Server instructions negotiated during MCP initialization are bounded, filtered
-alongside the available tool catalog, and included in the recipe runtime prompt.
-They are server-scoped operational guidance and cannot add capabilities or
-override recipe policy, the materialized allowlist, or higher-level safety
-rules.
 
 `mcp run` executes JavaScript with the same OS privileges as the active shell
 sandbox. It is a composition convenience, not a second security boundary; the

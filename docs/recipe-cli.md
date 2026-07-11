@@ -302,10 +302,9 @@ uses a generic fail-closed policy guard, while binding diagnostics distinguish
 package, agent-selection, explicitly-disabled, and zero-tool-intersection
 filtering.
 
-Agents with MCP access normally need `bash` or another command-capable
-tool, because MCP endpoint tools are invoked through the session-local CLI.
-`recipes check` emits a non-blocking warning when `bash` is missing; recipes
-that provide a custom shell wrapper may intentionally ignore it.
+Recipes decide how their agents invoke the session-local MCP CLI. Recipe-check
+validates MCP policy and selections without assuming a particular execution
+tool name.
 
 The extension writes `.pi/bin/mcp` and makes that shim available on `PATH` for
 bash commands run inside the launched Pi session. When configured endpoints
@@ -360,10 +359,6 @@ documents another response type, select it on the tool function with
 deadline, await-detection, typed-error, and allowlist behavior. `mcp run`
 disables interactive OAuth while retaining configured and cached credentials,
 so a headless recipe call cannot unexpectedly launch a browser.
-
-Bounded server instructions received during MCP initialization are carried into
-the runtime prompt after tool filtering. They remain scoped to that server and
-cannot override recipe policy or make filtered tools callable.
 
 The JavaScript runs with the same OS privileges as the active shell sandbox.
 `mcp run` is not an additional sandbox or security boundary.

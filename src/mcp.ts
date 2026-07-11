@@ -27,7 +27,6 @@ export interface McpManifestServer {
   host?: string;
   base_url: string;
   transport?: string;
-  instructions?: string;
   tools?: McpManifestTool[];
 }
 
@@ -85,7 +84,6 @@ interface McpCatalog {
   name: string;
   host: string;
   baseUrl: string;
-  instructions?: string;
   tools: RemoteMcpTool[];
 }
 
@@ -155,7 +153,6 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set([
   "2025-03-26",
 ]);
 const MAX_TOOL_LIST_PAGES = 64;
-const MAX_SERVER_INSTRUCTIONS_CHARS = 4_000;
 const RECIPE_ENV_PREFIX = "PI_RECIPES_";
 const MCP_MANIFEST_ENV = `${RECIPE_ENV_PREFIX}MCP_MANIFEST`;
 // mcporter's own config env var — the sandbox `mcp` CLI is mcporter, and the
@@ -491,14 +488,12 @@ async function initializeSession(
 ): Promise<{
   sessionId?: string;
   serverName?: string;
-  instructions?: string;
   protocolVersion?: string;
   diagnostic?: McpDiscoveryDiagnostic;
 }> {
   const result = await postJsonRpc<{
     protocolVersion?: unknown;
     serverInfo?: { name?: unknown };
-    instructions?: unknown;
   }>(
     io,
     server,
@@ -547,11 +542,6 @@ async function initializeSession(
     typeof rawServerName === "string" && rawServerName.trim()
       ? rawServerName.trim()
       : undefined;
-  const rawInstructions = result.parsed?.result?.instructions;
-  const instructions =
-    typeof rawInstructions === "string" && rawInstructions.trim()
-      ? rawInstructions.trim().slice(0, MAX_SERVER_INSTRUCTIONS_CHARS)
-      : undefined;
   if (sessionId) {
     await postJsonRpc(
       io,
@@ -564,7 +554,6 @@ async function initializeSession(
   return {
     sessionId,
     serverName,
-    instructions,
     protocolVersion: protocolVersion ?? PROTOCOL_VERSION,
   };
 }
@@ -575,7 +564,6 @@ async function listEndpointTools(
 ): Promise<{
   tools: RemoteMcpTool[];
   serverName?: string;
-  instructions?: string;
   diagnostic?: McpDiscoveryDiagnostic;
 }> {
   const manifestServer: McpManifestServer = {
@@ -589,7 +577,6 @@ async function listEndpointTools(
   const initialized = await initializeSession(opts, manifestServer);
   if (initialized.diagnostic) return { tools: [], diagnostic: initialized.diagnostic };
   const serverName = initialized.serverName;
-  const instructions = initialized.instructions;
   const tools: RemoteMcpTool[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
@@ -672,7 +659,6 @@ async function listEndpointTools(
     return {
       tools,
       serverName,
-      instructions,
       diagnostic: {
         serverId: binding.id,
         url: binding.baseUrl,
@@ -681,13 +667,12 @@ async function listEndpointTools(
       },
     };
   }
-  return { tools, serverName, instructions };
+  return { tools, serverName };
 }
 
 async function listLocalOAuthTools(binding: McpEndpointBinding): Promise<{
   tools: RemoteMcpTool[];
   serverName?: string;
-  instructions?: string;
   diagnostic?: McpDiscoveryDiagnostic;
 }> {
   if (!binding.localOAuth) return { tools: [] };
@@ -736,11 +721,9 @@ async function listLocalOAuthTools(binding: McpEndpointBinding): Promise<{
       seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
-    const instructions = await runtime.getInstructions?.(binding.id);
     return {
       tools,
       serverName: binding.name,
-      ...(instructions ? { instructions } : {}),
       ...(tools.length === 0
         ? {
             diagnostic: {
@@ -796,17 +779,10 @@ async function discoverMcpCatalogs(opts: {
       name: serverName || binding.name,
       host: binding.host,
       baseUrl: binding.baseUrl,
-      instructions: result.instructions,
       tools: result.tools,
     });
   }
   return { catalogs, diagnostics };
-}
-
-export interface AgentMcpToolRef {
-  serverId: string;
-  toolName: string;
-  raw: string;
 }
 
 export interface ScopedMcpToolSelection {
@@ -823,65 +799,8 @@ export function resolveAgentMcpSelections(
   }));
 }
 
-export function exactAgentMcpToolRefs(
-  selections: readonly ScopedMcpToolSelection[]
-): AgentMcpToolRef[] {
-  const refs: AgentMcpToolRef[] = [];
-  for (const selection of selections) {
-    for (const raw of selection.tools.include ?? []) {
-      const toolName = raw.trim();
-      if (toolName === "*" || !mcpSelectionAllowsTool(selection.tools, toolName)) continue;
-      refs.push({
-        serverId: selection.serverId,
-        toolName,
-        raw,
-      });
-    }
-  }
-  return refs;
-}
-
 export function executableRecipeToolNames(tools: readonly string[]): string[] {
   return [...tools];
-}
-
-export function mcpManifestToolRefs(manifest: McpManifest): string[] {
-  return (manifest.servers ?? []).flatMap((server) =>
-    (server.tools ?? []).map((tool) => `${server.id}.${tool.name}`)
-  );
-}
-
-export interface McpToolAvailability {
-  availableTools: string[];
-  unavailableTools: string[];
-}
-
-export function classifyMcpToolAvailability(
-  configuredRefs: readonly AgentMcpToolRef[],
-  manifest: McpManifest
-): McpToolAvailability {
-  const availableTools = [...new Set(mcpManifestToolRefs(manifest))].sort();
-  const available = new Set(availableTools);
-  const unavailableTools = [...new Set(
-    configuredRefs
-      .map((tool) => `${tool.serverId}.${tool.toolName}`)
-      .filter((tool) => !available.has(tool))
-  )].sort();
-  return { availableTools, unavailableTools };
-}
-
-/**
- * Short system-prompt notice for the session-local `mcp` capability. Complete
- * CLI guidance stays progressively disclosed through `mcp --help`.
- */
-export function mcpSystemPromptLines(
-  availableTools: readonly string[] | undefined
-): string[] {
-  if (availableTools?.length === 0) return [];
-  return [
-    "## MCP",
-    "Use the `mcp` command through shell to discover and call MCP tools. Run `mcp --help` for commands and usage.",
-  ];
 }
 
 export function formatMcpDiscoveryDiagnostics(
@@ -1006,20 +925,6 @@ function unavailableToolNames(
     .sort((a, b) => b.length - a.length);
 }
 
-function filteredServerInstructions(
-  serverId: string,
-  instructions: string | undefined,
-  allTools: readonly McpManifestTool[],
-  tools: readonly McpManifestTool[]
-): string | undefined {
-  const trimmed = instructions?.trim();
-  if (!trimmed) return undefined;
-  return scrubUnavailableToolReferences(
-    trimmed,
-    unavailableToolNames(serverId, allTools, tools)
-  )?.slice(0, MAX_SERVER_INSTRUCTIONS_CHARS);
-}
-
 function normalizeManifest(
   manifest: McpManifest,
   mcp: RecipePackageMcpConfig,
@@ -1066,12 +971,6 @@ function normalizeManifest(
       return true;
     });
     if (tools.length === 0) continue;
-    const instructions = filteredServerInstructions(
-      serverId,
-      server.instructions,
-      server.tools ?? [],
-      tools
-    );
     servers.push({
       id: uniqueServerId(serverId, seenServerIds),
       ...(server.binding_id ? { binding_id: server.binding_id } : {}),
@@ -1079,7 +978,6 @@ function normalizeManifest(
       host: server.host ?? hostForUrl(server.base_url),
       base_url: server.base_url,
       transport: server.transport ?? "streamable_http",
-      ...(instructions ? { instructions } : {}),
       tools: scrubFilteredToolDescriptions(serverId, server.tools ?? [], tools),
     });
   }
@@ -1100,7 +998,6 @@ function manifestFromCatalogs(catalogs: McpCatalog[]): McpManifest {
       host: catalog.host,
       base_url: catalog.baseUrl,
       transport: "streamable_http",
-      ...(catalog.instructions ? { instructions: catalog.instructions } : {}),
       tools: catalog.tools.map((tool) => ({
         name: tool.name,
         description: tool.description ?? "",

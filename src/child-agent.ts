@@ -16,7 +16,6 @@ import {
   REQUIRED_RECIPE_AGENT_FIELDS,
   resolveRecipeAgentDefinition,
   validateResolvedRecipeAgentDefinition,
-  type RecipeAgentMcp,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
 import {
@@ -25,8 +24,6 @@ import {
 } from "./recipe-model.js";
 import {
   executableRecipeToolNames,
-  mcpSystemPromptLines,
-  resolveAgentMcpSelections,
 } from "./mcp.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
@@ -36,7 +33,6 @@ export interface CreateRecipeChildAgentRunnerOptions {
   env?: NodeJS.ProcessEnv;
   authStorage?: AuthStorage;
   modelRegistry?: ModelRegistry;
-  mcpAvailableTools?: readonly string[];
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
 }
@@ -126,24 +122,6 @@ function applySystemInstructions(
   if (!instructions) return base;
   if (instructions.mode === "replace") return instructions.content;
   return [base, instructions.content].filter(Boolean).join("\n\n");
-}
-
-function mcpSystemPrompt(
-  mcp: RecipeAgentMcp | undefined,
-  mcpAvailableTools: readonly string[] | undefined
-): string | undefined {
-  const selections = resolveAgentMcpSelections(mcp);
-  if (selections.length === 0) return undefined;
-  const lines = mcpSystemPromptLines(mcpAvailableTools);
-  return lines.length > 0 ? lines.join("\n") : undefined;
-}
-
-function runtimeContextPrompt(workspaceDir: string, recipeDir: string): string {
-  return [
-    "## Recipe Runtime Context",
-    "- Current workspace: " + workspaceDir,
-    "- Recipe directory: " + recipeDir,
-  ].join("\n");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -316,11 +294,6 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
             loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
             agent.systemInstructions
           ),
-        appendSystemPromptOverride: (base) => [
-          ...base,
-          mcpSystemPrompt(agent.mcp, this.opts.mcpAvailableTools),
-          runtimeContextPrompt(this.opts.workspaceDir, this.opts.recipeDir),
-        ].filter((value): value is string => Boolean(value)),
       },
     });
 

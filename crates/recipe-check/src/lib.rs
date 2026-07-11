@@ -615,10 +615,7 @@ fn validate_agents(
     }
 }
 
-fn read_agent(
-    path: &Path,
-    ctx: &mut CheckContext,
-) -> Option<RawAgent> {
+fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(err) => {
@@ -704,23 +701,9 @@ fn read_agent(
 
     let mut fields = HashSet::new();
     validate_agent_model(map, path, &name, &mut fields, ctx);
-    validate_agent_string_array(
-        map,
-        "tools",
-        AgentField::Tools,
-        path,
-        &mut fields,
-        ctx,
-    );
+    validate_agent_string_array(map, "tools", AgentField::Tools, path, &mut fields, ctx);
     let mcp = validate_agent_mcp(map, path, ctx);
-    validate_agent_string_array(
-        map,
-        "skills",
-        AgentField::Skills,
-        path,
-        &mut fields,
-        ctx,
-    );
+    validate_agent_string_array(map, "skills", AgentField::Skills, path, &mut fields, ctx);
     validate_agent_string_array(
         map,
         "subagents",
@@ -731,7 +714,6 @@ fn read_agent(
     );
     validate_agent_system_instructions(map, path, &mut fields, ctx);
     validate_agent_extensions(map, path, ctx);
-    validate_mcp_requires_bash(map, path, ctx);
 
     Some(RawAgent {
         name,
@@ -820,35 +802,6 @@ fn validate_agent_string_array(
             message,
             None::<String>,
         ),
-    }
-}
-
-fn validate_mcp_requires_bash(map: &serde_yaml::Mapping, path: &Path, ctx: &mut CheckContext) {
-    let tool_items = yaml_value(map, "tools").and_then(YamlValue::as_sequence);
-    let has_agent_mcp = yaml_value(map, "mcp")
-        .and_then(YamlValue::as_mapping)
-        .is_some_and(|mcp| {
-            mcp.values().any(|server| {
-                server
-                    .as_mapping()
-                    .and_then(|server| yaml_value(server, "include"))
-                    .and_then(YamlValue::as_sequence)
-                    .is_some_and(|items| !items.is_empty())
-            })
-        });
-    let has_bash = tool_items.is_some_and(|items| {
-        items
-            .iter()
-            .filter_map(YamlValue::as_str)
-            .any(|tool| tool == "bash")
-    });
-    if has_agent_mcp && !has_bash {
-        ctx.warning(
-            "agent.mcp_requires_bash",
-            path,
-            "Agent declares MCP access without bash",
-            Some("add bash or ensure another active tool can execute the session-local mcp CLI"),
-        );
     }
 }
 
@@ -1461,7 +1414,9 @@ fn mcp_tool_policy(value: Option<&JsonValue>) -> Option<McpToolPolicy> {
             continue;
         };
         let tools = server.get("tools").and_then(JsonValue::as_object);
-        let include = tools.and_then(|tools| tools.get("include")).and_then(json_string_set);
+        let include = tools
+            .and_then(|tools| tools.get("include"))
+            .and_then(json_string_set);
         let exclude = tools.and_then(|tools| tools.get("exclude"));
         policy.insert(
             safe_mcp_server_id(&id),
@@ -2070,25 +2025,6 @@ mod tests {
             ),
         )
         .expect("write agent");
-    }
-
-    #[test]
-    fn warns_for_agent_mcp_selection_without_bash() {
-        let root = temp_recipe("mcp-requires-bash");
-        write_selector_recipe(
-            &root,
-            json!({ "include": ["search"] }),
-            "  salesforce:\n    include:\n      - search\n",
-            false,
-        );
-
-        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
-        fs::remove_dir_all(&root).expect("cleanup recipe");
-
-        assert!(report.valid, "{:?}", report.diagnostics);
-        assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "agent.mcp_requires_bash" && diagnostic.severity == Severity::Warning
-        }));
     }
 
     #[test]
