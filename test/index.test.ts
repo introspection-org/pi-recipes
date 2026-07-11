@@ -270,6 +270,80 @@ describe("recipe package manifest", () => {
     }
   });
 
+  it("normalizes MCP ids and rejects duplicate normalized ids", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-id-"));
+    try {
+      writePiPackageManifest(root, {
+        name: "normalized-package-mcp-ids",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [
+              { id: "Git Hub", tools: { include: ["*"] } },
+            ],
+          },
+        },
+      });
+      expect(readPiPackageManifest(root).mcp.servers[0]?.id).toBe("git-hub");
+
+      writePiPackageManifest(root, {
+        name: "duplicate-package-mcp-ids",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [
+              { id: "Git Hub", tools: { include: ["*"] } },
+              { id: "git-hub", tools: { include: ["*"] } },
+            ],
+          },
+        },
+      });
+      expect(() => readPiPackageManifest(root)).toThrow(
+        'Duplicate MCP server id after normalization: "git-hub"'
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unusable MCP ids and unsupported tools.allow", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-invalid-"));
+    try {
+      writePiPackageManifest(root, {
+        name: "invalid-package-mcp-id",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [{ id: "!!!", tools: { include: ["*"] } }],
+          },
+        },
+      });
+      expect(() => readPiPackageManifest(root)).toThrow(
+        "must contain a letter, number, underscore, or dash"
+      );
+
+      writePiPackageManifest(root, {
+        name: "invalid-package-mcp-tools",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [
+              {
+                id: "github",
+                tools: { allow: ["*"] },
+              },
+            ],
+          },
+        },
+      });
+      expect(() => readPiPackageManifest(root)).toThrow(
+        "tools contains unsupported field: allow"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reads Harbor eval suite pins from package.json pi blocks", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-evals-"));
     try {
