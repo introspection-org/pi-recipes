@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/introspection-org/pi-recipes/compare/v0.6.2...v0.6.3) (2026-07-11)
+
+
+### Bug Fixes
+
+* Remove implicit system prompt additions ([#48](https://github.com/introspection-org/pi-recipes/issues/48)) ([9bf3b4b](https://github.com/introspection-org/pi-recipes/commit/9bf3b4b87f39ab03fd3afa3af06a16b1bf768e00))
+
 ## [0.6.2](https://github.com/introspection-org/pi-recipes/compare/v0.6.1...v0.6.2) (2026-07-11)
 
 
