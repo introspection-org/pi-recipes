@@ -166,56 +166,6 @@ export function mcpCallHelpText(): string {
   ].join("\n");
 }
 
-export function mcpListHelpText(): string {
-  return [
-    "Usage: mcp list [server | server.tool] [flags]",
-    "",
-    "Delegates listing and schema rendering to mcporter for servers materialized in this recipe session.",
-    "",
-    "Flags:",
-    "  --brief, --signatures     Compact signatures only.",
-    "  --all-parameters          Include every optional parameter.",
-    "  --schema                  Include the input schema and, for one exact tool, its output schema.",
-    "  --json                    Emit mcporter's machine-readable output unchanged.",
-    "  --status                  Show concise status for an exact server target.",
-    "  --quiet, --exit-code      Health checks for an exact server target.",
-    "  --timeout <ms>            Override discovery timeout for an exact target.",
-    "  --no-oauth                Use cached credentials without starting OAuth.",
-    "  Use only one output-mode flag at a time: --brief, --schema, --all-parameters, --json, or --status.",
-    "  Exact --schema output includes both input and output schemas, with the output schema after the input schema. Do not truncate it with head or sed.",
-    "",
-    "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
-  ].join("\n");
-}
-
-export function mcpCallHelpText(): string {
-  return [
-    "Usage: mcp call <server>.<tool> [arguments] [flags]",
-    "",
-    "Delegates argument parsing and tool execution to mcporter for exact tools materialized in this recipe session.",
-    "",
-    "Arguments:",
-    "  key=value / key:value     Named arguments with mcporter's schema-aware coercion.",
-    "  --key value               Named schema arguments supported by mcporter.",
-    "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
-    "  --args <json|->, --json <json|->  Supply a JSON object directly or from stdin.",
-    "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
-    "  --                         Treat remaining values as literal positional inputs.",
-    "  Quote argument tokens containing shell operators such as |, <, >, &, or ;. JSON stdin avoids nested shell quoting.",
-    "",
-    "Output/runtime flags:",
-    "  --output text|markdown|json|raw",
-    "  --save-images <dir>",
-    "  --timeout <ms>",
-    "  --no-oauth, --oauth-timeout <ms>",
-    "  --raw-strings, --no-coerce",
-    "  Machine-readable output is forwarded unchanged.",
-    "  When parsing JSON, keep stderr separate and do not truncate stdout with head or sed.",
-    "",
-    "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
-  ].join("\n");
-}
-
 export function mcpSearchHelpText(): string {
   return [
     'Usage: mcp search "what you need" [--limit N] [--json] [--regex]',
@@ -338,89 +288,6 @@ function validateRunToolArgs(server: string, tool: string, args: Record<string, 
       `mcp run uses normal JavaScript objects: write { ${suggestedKey}: value }, ` +
       `not mcporter CLI key=value or key:=value syntax.`
   );
-}
-
-function decodeCallResult(
-  callResult: ReturnType<typeof createCallResult>,
-  format: McpRunResultFormat,
-  ref: string
-): unknown {
-  switch (format) {
-    case "json": {
-      const decoded = callResult.json();
-      if (decoded === null && callResult.structuredContent() == null && callResult.text() != null) {
-        throw new McpRunUsageError(
-          `${ref} did not return JSON. Its documentation should name the response type; ` +
-            `for plain text call tools[${JSON.stringify(ref.split(".")[0])}]` +
-            `[${JSON.stringify(ref.slice(ref.indexOf(".") + 1))}].text(args).`
-        );
-      }
-      return decoded;
-    }
-    case "text":
-      return callResult.text();
-    case "markdown":
-      return callResult.markdown();
-    case "images":
-      return callResult.images();
-    case "content":
-      return callResult.content();
-    case "structuredContent":
-      return callResult.structuredContent();
-    case "raw":
-      return callResult.raw;
-  }
-}
-
-function validateRunToolArgs(server: string, tool: string, args: Record<string, unknown>): void {
-  const cliStyleKey = Object.keys(args).find((key) => key.includes(":=") || key.includes("="));
-  if (!cliStyleKey) return;
-  const suggestedKey = cliStyleKey.split(/:=|=/, 1)[0];
-  throw new McpRunUsageError(
-    `Invalid JavaScript argument key '${cliStyleKey}' for ${server}.${tool}. ` +
-      `mcp run uses normal JavaScript objects: write { ${suggestedKey}: value }, ` +
-      `not mcporter CLI key=value or key:=value syntax.`
-  );
-}
-
-class ToolCallQueue {
-  private active = 0;
-  private readonly waiting: Array<{
-    resolve: (release: () => void) => void;
-    reject: (error: unknown) => void;
-  }> = [];
-  private cancelled: unknown;
-
-  constructor(private readonly limit: number) {}
-
-  acquire(): Promise<() => void> {
-    if (this.cancelled !== undefined) return Promise.reject(this.cancelled);
-    if (this.active < this.limit) {
-      this.active += 1;
-      return Promise.resolve(this.releaseHandle());
-    }
-    return new Promise((resolve, reject) => this.waiting.push({ resolve, reject }));
-  }
-
-  cancel(error: unknown): void {
-    if (this.cancelled !== undefined) return;
-    this.cancelled = error;
-    for (const waiter of this.waiting.splice(0)) waiter.reject(error);
-  }
-
-  private releaseHandle(): () => void {
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const next = this.waiting.shift();
-      if (next && this.cancelled === undefined) {
-        next.resolve(this.releaseHandle());
-        return;
-      }
-      this.active -= 1;
-    };
-  }
 }
 
 class ToolCallQueue {
@@ -1446,44 +1313,6 @@ export function duplicateCallArgumentKeys(args: string[]): string[] {
   return [...duplicates];
 }
 
-export function malformedCallExpression(args: string[]): string | null {
-  const ref = args.find((arg) => !arg.startsWith("-"));
-  if (!ref || !/[()]/.test(ref)) return null;
-  let depth = 0;
-  let inString: '"' | "'" | null = null;
-  for (let index = 0; index < ref.length; index += 1) {
-    const char = ref[index];
-    if (inString) {
-      if (char === "\\") index += 1;
-      else if (char === inString) inString = null;
-      continue;
-    }
-    if (char === '"' || char === "'") inString = char;
-    else if (char === "(") depth += 1;
-    else if (char === ")") depth -= 1;
-    if (depth < 0) break;
-  }
-  if (depth === 0 && inString === null && /^[\w-]+\.[\w-]+\(.*\)$/s.test(ref)) return null;
-  return (
-    `mcp call: malformed tool expression '${ref}'. ` +
-    `Use mcp call '<server>.<tool>(key: "value")' with balanced quotes and parentheses, ` +
-    `or plain arguments: mcp call <server>.<tool> key:value.`
-  );
-}
-
-function usesMachineReadableOutput(args: readonly string[]): boolean {
-  if (args[0] === "list") return args.includes("--json");
-  if (args[0] !== "call") return false;
-  return args.some(
-    (arg, index) =>
-      arg === "--output=json" ||
-      (arg === "--output" && args[index + 1] === "json")
-  );
-}
-
-// A mangled expression form (unbalanced quotes/parens) falls through to the
-// upstream ad-hoc command path, which tries to SPAWN the text and dies with a
-// baffling ENOENT. Catch it here with a usable message instead.
 export function malformedCallExpression(args: string[]): string | null {
   const ref = args.find((arg) => !arg.startsWith("-"));
   if (!ref || !/[()]/.test(ref)) return null;

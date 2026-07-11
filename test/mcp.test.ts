@@ -423,6 +423,42 @@ describe("recipe MCP materialization", () => {
     }
   });
 
+  it("reports a required configured server's discovery failure instead of calling its binding missing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-required-unavailable-"));
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(recipeDir, { recursive: true });
+      const localConfig = writeLocalConfig(cwd, [
+        {
+          id: "notion-api",
+          transport: "streamable_http",
+          url: "https://invalid.example/mcp",
+        },
+      ]);
+      const fetchImpl = vi.fn(
+        async () => new Response("not found", { status: 404 })
+      ) as unknown as typeof fetch;
+
+      await expect(
+        materializeRecipeMcpManifest({
+          cwd,
+          recipeDir,
+          env: { PI_RECIPES_MCP_LOCAL_CONFIG: localConfig },
+          fetch: fetchImpl,
+          agentMcp: [{ serverId: "notion-api", tools: { include: ["*"] } }],
+          manifest: recipeManifest(recipeDir, [
+            { id: "notion-api", required: true, include: ["*"] },
+          ]),
+        })
+      ).rejects.toThrow(
+        "Required MCP server connection(s) failed: notion-api initialize HTTP 404: Response body: not found"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports discovered MCP tools that do not match recipe policy refs", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-filter-"));
     try {

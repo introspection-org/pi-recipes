@@ -564,6 +564,7 @@ async function initializeSession(
   return {
     sessionId,
     serverName,
+    instructions,
     protocolVersion: protocolVersion ?? PROTOCOL_VERSION,
   };
 }
@@ -686,6 +687,7 @@ async function listEndpointTools(
 async function listLocalOAuthTools(binding: McpEndpointBinding): Promise<{
   tools: RemoteMcpTool[];
   serverName?: string;
+  instructions?: string;
   diagnostic?: McpDiscoveryDiagnostic;
 }> {
   if (!binding.localOAuth) return { tools: [] };
@@ -734,9 +736,11 @@ async function listLocalOAuthTools(binding: McpEndpointBinding): Promise<{
       seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
+    const instructions = await runtime.getInstructions?.(binding.id);
     return {
       tools,
       serverName: binding.name,
+      ...(instructions ? { instructions } : {}),
       ...(tools.length === 0
         ? {
             diagnostic: {
@@ -815,6 +819,17 @@ export function resolveAgentMcpSelections(
 
 export function executableRecipeToolNames(tools: readonly string[]): string[] {
   return [...tools];
+}
+
+/** Short notice; complete session-local MCP guidance is exposed by `mcp --help`. */
+export function mcpSystemPromptLines(
+  availableTools: readonly string[] | undefined
+): string[] {
+  if (availableTools?.length === 0) return [];
+  return [
+    "## MCP",
+    "Use the `mcp` command through shell to discover and call MCP tools. Run `mcp --help` for commands and usage.",
+  ];
 }
 
 export function formatMcpDiscoveryDiagnostics(
@@ -939,10 +954,25 @@ function unavailableToolNames(
     .sort((a, b) => b.length - a.length);
 }
 
+function filteredServerInstructions(
+  serverId: string,
+  instructions: string | undefined,
+  allTools: readonly McpManifestTool[],
+  tools: readonly McpManifestTool[]
+): string | undefined {
+  const trimmed = instructions?.trim();
+  if (!trimmed) return undefined;
+  return scrubUnavailableToolReferences(
+    trimmed,
+    unavailableToolNames(serverId, allTools, tools)
+  )?.slice(0, MAX_SERVER_INSTRUCTIONS_CHARS);
+}
+
 function normalizeManifest(
   manifest: McpManifest,
   mcp: RecipePackageMcpConfig,
-  agentSelections: readonly ScopedMcpToolSelection[]
+  agentSelections: readonly ScopedMcpToolSelection[],
+  diagnostics: readonly McpDiscoveryDiagnostic[] = []
 ): McpManifest {
   const recipePolicy = recipeMcpPolicy(mcp);
   const seenServerIds = new Set<string>();
@@ -1004,6 +1034,16 @@ function normalizeManifest(
   }
 
   const missingRequired = [...recipePolicy.required].filter((serverId) => !matched.has(serverId));
+  const unavailableRequired = missingRequired.filter((serverId) =>
+    diagnostics.some((diagnostic) => diagnostic.serverId === serverId)
+  );
+  if (unavailableRequired.length > 0) {
+    const unavailable = new Set(unavailableRequired);
+    const details = formatMcpDiscoveryDiagnostics(
+      diagnostics.filter((diagnostic) => unavailable.has(diagnostic.serverId))
+    );
+    throw new Error(`Required MCP server connection(s) failed: ${details}`);
+  }
   if (missingRequired.length > 0) {
     throw new Error(`Required MCP server binding(s) missing: ${missingRequired.join(", ")}`);
   }
@@ -1237,7 +1277,12 @@ export async function materializeRecipeMcpManifest(
     diagnostics = discovery.diagnostics;
     rawManifest = manifestFromCatalogs(discovery.catalogs);
   }
-  const mcpManifest = normalizeManifest(rawManifest, opts.manifest.mcp, agentSelections);
+  const mcpManifest = normalizeManifest(
+    rawManifest,
+    opts.manifest.mcp,
+    agentSelections,
+    diagnostics
+  );
   diagnostics.push(
     ...filterDiagnostics(rawManifest, opts.manifest.mcp, agentSelections)
   );
