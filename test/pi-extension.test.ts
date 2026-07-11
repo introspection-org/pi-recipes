@@ -612,6 +612,7 @@ describe("Pi recipes launch extension", () => {
               kind: "mcp",
               id: "bootstrap",
               base_url: "http://127.0.0.1:3201/mcp",
+              metadata: { mcp_server_id: "bootstrap" },
             },
           ],
         }),

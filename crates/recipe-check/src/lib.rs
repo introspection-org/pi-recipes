@@ -25,6 +25,20 @@ pub struct Report {
     pub package_name: Option<String>,
     pub diagnostics: Vec<Diagnostic>,
     pub resources: BTreeMap<String, usize>,
+    pub mcp_servers: Vec<NormalizedMcpServer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NormalizedMcpServer {
+    pub id: String,
+    pub required: bool,
+    pub tools: NormalizedMcpTools,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NormalizedMcpTools {
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,9 +204,11 @@ pub fn check_recipe(recipe_dir: impl AsRef<Path>, profile: CheckProfile) -> Resu
         )
     })?;
     let mut ctx = CheckContext::new(root.clone(), profile);
+    let mut mcp_servers = Vec::new();
 
     let package = read_package(&root, &mut ctx);
     if let Some(package) = package {
+        mcp_servers = normalized_mcp_servers(package.pi.as_ref());
         ctx.package_name = package.name.clone();
         validate_package_identity(&package, &mut ctx);
         validate_runtime_dependencies(&package, &mut ctx);
@@ -225,6 +241,7 @@ pub fn check_recipe(recipe_dir: impl AsRef<Path>, profile: CheckProfile) -> Resu
         package_name: ctx.package_name,
         diagnostics: ctx.diagnostics,
         resources: ctx.resources,
+        mcp_servers,
     })
 }
 
@@ -615,10 +632,7 @@ fn validate_agents(
     }
 }
 
-fn read_agent(
-    path: &Path,
-    ctx: &mut CheckContext,
-) -> Option<RawAgent> {
+fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(err) => {
@@ -704,23 +718,9 @@ fn read_agent(
 
     let mut fields = HashSet::new();
     validate_agent_model(map, path, &name, &mut fields, ctx);
-    validate_agent_string_array(
-        map,
-        "tools",
-        AgentField::Tools,
-        path,
-        &mut fields,
-        ctx,
-    );
+    validate_agent_string_array(map, "tools", AgentField::Tools, path, &mut fields, ctx);
     let mcp = validate_agent_mcp(map, path, ctx);
-    validate_agent_string_array(
-        map,
-        "skills",
-        AgentField::Skills,
-        path,
-        &mut fields,
-        ctx,
-    );
+    validate_agent_string_array(map, "skills", AgentField::Skills, path, &mut fields, ctx);
     validate_agent_string_array(
         map,
         "subagents",
@@ -1343,6 +1343,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
         );
         return;
     };
+    let mut seen_ids = BTreeSet::new();
     for (index, server) in servers.iter().enumerate() {
         let JsonValue::Object(server) = server else {
             ctx.error(
@@ -1353,7 +1354,17 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             );
             continue;
         };
-        if string_value(server.get("id")).is_none() {
+        if let Some(id) = string_value(server.get("id")) {
+            let id = safe_mcp_server_id(&id);
+            if !seen_ids.insert(id.clone()) {
+                ctx.error(
+                    "pi.mcp_id_duplicate",
+                    &package_path,
+                    format!("package.json#pi.mcp.servers contains duplicate normalized id '{id}'"),
+                    None::<String>,
+                );
+            }
+        } else {
             ctx.error(
                 "pi.mcp_invalid",
                 &package_path,
@@ -1443,6 +1454,43 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
     }
 }
 
+fn normalized_mcp_servers(pi: Option<&JsonValue>) -> Vec<NormalizedMcpServer> {
+    let Some(servers) = pi
+        .and_then(JsonValue::as_object)
+        .and_then(|pi| pi.get("mcp"))
+        .and_then(JsonValue::as_object)
+        .and_then(|mcp| mcp.get("servers"))
+        .and_then(JsonValue::as_array)
+    else {
+        return Vec::new();
+    };
+
+    servers
+        .iter()
+        .filter_map(JsonValue::as_object)
+        .filter_map(|server| {
+            let id = safe_mcp_server_id(&string_value(server.get("id"))?);
+            let tools = server.get("tools")?.as_object()?;
+            let include = tools.get("include").and_then(json_string_set)?;
+            let exclude = tools
+                .get("exclude")
+                .and_then(json_string_set)
+                .unwrap_or_default();
+            Some(NormalizedMcpServer {
+                id,
+                required: server
+                    .get("required")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(false),
+                tools: NormalizedMcpTools {
+                    include: include.into_iter().collect(),
+                    exclude: exclude.into_iter().collect(),
+                },
+            })
+        })
+        .collect()
+}
+
 fn mcp_tool_policy(value: Option<&JsonValue>) -> Option<McpToolPolicy> {
     let JsonValue::Object(map) = value? else {
         return None;
@@ -1461,7 +1509,9 @@ fn mcp_tool_policy(value: Option<&JsonValue>) -> Option<McpToolPolicy> {
             continue;
         };
         let tools = server.get("tools").and_then(JsonValue::as_object);
-        let include = tools.and_then(|tools| tools.get("include")).and_then(json_string_set);
+        let include = tools
+            .and_then(|tools| tools.get("include"))
+            .and_then(json_string_set);
         let exclude = tools.and_then(|tools| tools.get("exclude"));
         policy.insert(
             safe_mcp_server_id(&id),
@@ -2114,6 +2164,17 @@ mod tests {
         fs::remove_dir_all(&root).expect("cleanup recipe");
 
         assert!(report.valid, "{:?}", report.diagnostics);
+        assert_eq!(
+            report.mcp_servers,
+            vec![NormalizedMcpServer {
+                id: "salesforce".to_owned(),
+                required: false,
+                tools: NormalizedMcpTools {
+                    include: vec!["*".to_owned()],
+                    exclude: vec!["delete_org".to_owned()],
+                },
+            }]
+        );
     }
 
     #[test]

@@ -44,6 +44,9 @@ interface BootstrapEndpoint {
   host?: string;
   base_url?: string | null;
   kind?: string;
+  metadata?: {
+    mcp_server_id?: string | null;
+  };
 }
 
 interface McpEndpointBinding {
@@ -324,12 +327,17 @@ function bootstrapBindings(env: NodeJS.ProcessEnv): McpEndpointBinding[] {
     return [];
   }
   return (parsed.endpoints ?? [])
-    .filter((endpoint) => endpoint.kind === "mcp" && !!endpoint.base_url)
+    .filter(
+      (endpoint) =>
+        endpoint.kind === "mcp" &&
+        !!endpoint.base_url &&
+        !!endpoint.metadata?.mcp_server_id
+    )
     .map((endpoint) => {
       const baseUrl = endpoint.base_url as string;
       const label = endpoint.name ?? endpoint.host ?? baseUrl;
       return {
-        id: safeServerId(label),
+        id: normalizeMcpServerId(endpoint.metadata?.mcp_server_id ?? ""),
         name: label,
         host: endpoint.host ?? hostForUrl(baseUrl),
         baseUrl,
@@ -631,7 +639,7 @@ async function discoverMcpCatalogs(opts: {
     if (result.tools.length === 0) continue;
     const serverName = result.serverName;
     catalogs.push({
-      id: serverName ? safeServerId(serverName) : binding.id,
+      id: binding.id,
       name: serverName || binding.name,
       host: binding.host,
       baseUrl: binding.baseUrl,

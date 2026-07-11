@@ -162,6 +162,7 @@ describe("recipe MCP materialization", () => {
               host: "mcp.nextplay.test",
               base_url: "http://mcp.nextplay.test/mcp",
               kind: "mcp",
+              metadata: { mcp_server_id: "nextplay" },
             },
           ],
         }),
@@ -172,7 +173,7 @@ describe("recipe MCP materialization", () => {
           return jsonResponse({
             jsonrpc: "2.0",
             id: 1,
-            result: { serverInfo: { name: "nextplay", version: "0.1.0" } },
+            result: { serverInfo: { name: "renamed-upstream", version: "0.1.0" } },
           });
         }
         return jsonResponse({
@@ -250,11 +251,11 @@ describe("recipe MCP materialization", () => {
         ]),
       });
 
-      // Recipes reference cloud MCP servers by their human name (the id the
-      // server reports, falling back to the endpoint label) — the opaque
-      // bootstrap endpoint id must never become the server id.
+      // Recipe identity comes only from Endpoint.metadata.mcp_server_id. The
+      // Endpoint label, opaque row id, and remote serverInfo.name are display
+      // data and must not retarget package or agent policy.
       expect(manifest.servers?.map((server) => server.id)).toEqual(["nextplay"]);
-      expect(manifest.servers?.[0]?.name).toBe("nextplay");
+      expect(manifest.servers?.[0]?.name).toBe("renamed-upstream");
       expect(manifest.diagnostics).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
