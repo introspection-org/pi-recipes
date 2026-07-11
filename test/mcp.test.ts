@@ -232,7 +232,7 @@ describe("recipe MCP materialization", () => {
             id: 1,
             result: {
               protocolVersion: "2025-11-25",
-              serverInfo: { name: "nextplay", version: "0.1.0" },
+              serverInfo: { name: "renamed-upstream", version: "0.1.0" },
               instructions:
                 "Search compact results first, then use get_profile for selected people.",
             },
@@ -330,10 +330,10 @@ describe("recipe MCP materialization", () => {
         ]),
       });
 
-      // The server-reported name becomes the callable id; the configured
-      // binding id remains available for credential projection.
+      // The configured binding id remains the callable identity. A remote
+      // serverInfo.name is display data and cannot retarget Recipe policy.
       expect(manifest.servers?.map((server) => server.id)).toEqual(["nextplay"]);
-      expect(manifest.servers?.[0]?.name).toBe("nextplay");
+      expect(manifest.servers?.[0]?.name).toBe("renamed-upstream");
       expect(manifest.diagnostics).toEqual([]);
       expect(manifest.servers?.[0]?.instructions).toBe(
         "Search compact results first, then use get_profile for selected people."

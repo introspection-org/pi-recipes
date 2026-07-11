@@ -791,7 +791,7 @@ async function discoverMcpCatalogs(opts: {
     if (result.tools.length === 0) continue;
     const serverName = result.serverName;
     catalogs.push({
-      id: serverName ? safeServerId(serverName) : binding.id,
+      id: binding.id,
       bindingId: binding.id,
       name: serverName || binding.name,
       host: binding.host,
