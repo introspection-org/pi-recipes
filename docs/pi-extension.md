@@ -330,8 +330,8 @@ output schema because mcporter 0.12.3 renders it only in JSON mode.
 Pi-recipes does not add MCP instructions to the system prompt. A recipe that
 wants its agent to use the session-local `mcp` command must say so explicitly in
 its own `SYSTEM.md` or selected agent instructions. CLI syntax, server
-instructions, tool discovery, and schemas remain progressively available
-through `mcp --help`, `mcp list`, and `mcp search`.
+tool discovery, and schemas remain progressively available through `mcp
+--help`, `mcp list`, and `mcp search`.
 
 Only exact tool names in the runtime inventory or `mcp list` output are
 callable. Upstream tool descriptions can mention related tools that are not
@@ -368,12 +368,6 @@ different response type, select it on the tool function with `.text(args)`,
 same await detection, queue, deadline, typed-error, and allowlist enforcement.
 Interactive OAuth is disabled: configured headers and cached credentials are
 usable, but a failed bearer token cannot launch a browser flow from the agent.
-
-Server instructions negotiated during MCP initialization are bounded, filtered
-alongside the available tool catalog, and included in the recipe runtime prompt.
-They are server-scoped operational guidance and cannot add capabilities or
-override recipe policy, the materialized allowlist, or higher-level safety
-rules.
 
 `mcp run` executes JavaScript with the same OS privileges as the active shell
 sandbox. It is a composition convenience, not a second security boundary; the

@@ -232,8 +232,6 @@ describe("recipe MCP materialization", () => {
             result: {
               protocolVersion: "2025-11-25",
               serverInfo: { name: "nextplay", version: "0.1.0" },
-              instructions:
-                "Search compact results first, then use get_profile for selected people.",
             },
           });
         }
@@ -334,9 +332,6 @@ describe("recipe MCP materialization", () => {
       expect(manifest.servers?.map((server) => server.id)).toEqual(["nextplay"]);
       expect(manifest.servers?.[0]?.name).toBe("nextplay");
       expect(manifest.diagnostics).toEqual([]);
-      expect(manifest.servers?.[0]?.instructions).toBe(
-        "Search compact results first, then use get_profile for selected people."
-      );
       expect(manifest.servers?.[0]?.tools?.map((tool) => tool.name)).toEqual([
         "search_positions",
         "get_profile",
@@ -508,8 +503,6 @@ describe("recipe MCP materialization", () => {
             {
               id: "slack",
               base_url: "https://mcp.slack.com/mcp",
-              instructions:
-                "Use slack_search_channels before slack_read_channel, then slack_read_thread.",
               tools: [
                 {
                   name: "slack_read_channel",
@@ -549,10 +542,6 @@ describe("recipe MCP materialization", () => {
       expect(description).not.toContain("slack_search_channels");
       expect(description).not.toContain("slack_read_thread");
       expect(description).toContain("[unavailable MCP tool]");
-      expect(manifest.servers?.[0]?.instructions).toBe(
-        "Use [unavailable MCP tool] before slack_read_channel, then [unavailable MCP tool]."
-      );
-
       // The mcporter config mirrors the filtered static manifest. Static
       // public endpoints have no implicit deployment-specific credentials.
       expect(env.MCPORTER_CONFIG).toBe(defaultMcporterConfigPath(cwd));
