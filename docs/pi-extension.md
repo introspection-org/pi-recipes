@@ -401,12 +401,12 @@ MCP error.
 
 `connectors` is an **Introspection-platform extension**, not part of the core Pi
 recipe format — it lets an agent act on an outbound provider on a customer's
-behalf, backed by the Introspection connector broker and Person Server. The
-runtime loader parses and merges the block (so recipes validate everywhere), but
-it only *does* anything when the recipe runs on Introspection.
+behalf, with per-action human approval. The runtime loader parses and merges the
+block (so recipes validate everywhere), but it only *does* anything when the
+recipe runs on Introspection.
 
 See [`introspection-platform.md`](./introspection-platform.md#connectors) for the
-full spec and the other platform extensions (managed resources, managed runtime).
+full spec and the other platform extensions (runtime, resources).
 
 ## Commands
 
