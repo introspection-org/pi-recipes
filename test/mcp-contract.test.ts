@@ -123,6 +123,24 @@ describe("compact MCP contracts", () => {
     );
   });
 
+  it("caps generated array examples while preserving minItems in the contract", () => {
+    const contract = renderToolContract("server", {
+      name: "bulk",
+      inputSchema: {
+        type: "object",
+        properties: {
+          items: { type: "array", minItems: 10_000, items: { type: "string" } },
+        },
+        required: ["items"],
+      },
+    });
+    expect(contract).toContain("items: string[] [minItems=10000]");
+    expect(contract).toContain(
+      `mcp call server.bulk --json '{"items":["<value>","<value>","<value>"]}'`
+    );
+    expect(contract.length).toBeLessThan(1_000);
+  });
+
   it("uses populated JSON for required structured inputs", () => {
     const contract = renderToolContract("server", {
       name: "structured",
@@ -163,6 +181,24 @@ describe("compact MCP contracts", () => {
     expect(contract).toContain("  q: string");
     expect(contract).toContain("  limit?: integer [1..]");
     expect(contract).toContain("mcp call server.composed q='<q>'");
+    expect(
+      renderToolSignature("server", {
+        name: "composed",
+        inputSchema: {
+          allOf: [
+            {
+              type: "object",
+              properties: { q: { type: "string" } },
+              required: ["q"],
+            },
+            {
+              type: "object",
+              properties: { limit: { type: "integer", minimum: 1 } },
+            },
+          ],
+        },
+      })
+    ).toBe("server.composed(q: string, limit?: integer [1..])");
   });
 
   it("shell-quotes schema-provided call values", () => {
@@ -178,6 +214,22 @@ describe("compact MCP contracts", () => {
     });
     expect(contract).toContain(`mode='$TOKEN $(touch /tmp/nope) it'"'"'s'`);
     expect(contract).not.toContain(`mode="$TOKEN`);
+  });
+
+  it("uses JSON for unsafe parameter names and quotes unsafe selectors", () => {
+    const contract = renderToolContract("unsafe server", {
+      name: "lookup; touch /tmp/nope",
+      inputSchema: {
+        type: "object",
+        properties: { "q; touch /tmp/nope": { type: "string" } },
+        required: ["q; touch /tmp/nope"],
+      },
+    });
+    expect(contract).toContain(
+      `mcp call 'unsafe server.lookup; touch /tmp/nope' --json '{"q; touch /tmp/nope":"<q; touch /tmp/nope>"}'`
+    );
+    expect(contract).not.toContain("mcp call unsafe server.lookup; touch");
+    expect(contract).not.toContain(" q; touch /tmp/nope=");
   });
 
   it("compacts descriptions by default and preserves them in verbose contracts", () => {

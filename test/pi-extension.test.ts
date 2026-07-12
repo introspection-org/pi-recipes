@@ -111,6 +111,36 @@ describe("Pi recipes launch extension", () => {
     );
   });
 
+  it("does not reuse exported resolved values as later launch inputs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-inputs-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const env: NodeJS.ProcessEnv = {
+        PI_RECIPE_DIR: recipeDir,
+        PI_AGENT_NAME: "explorer",
+      };
+      const pi = createMockExtensionAPI();
+      const notify = vi.fn();
+      const ctx = extensionContext(root, notify);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension({ env })(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      expect(env.PI_AGENT_NAME).toBe("main");
+
+      pi.flagValues.delete("agent");
+      notify.mockClear();
+      await pi.commands.get("recipe")?.handler("", ctx);
+
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("Agent: explorer"), "info");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports a friendly message when the selected recipe is missing", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-missing-"));
     try {

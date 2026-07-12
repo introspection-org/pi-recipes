@@ -2,6 +2,10 @@ import type { McpManifestTool } from "./mcp.js";
 
 type Schema = Record<string, unknown>;
 
+const MAX_EXAMPLE_ARRAY_ITEMS = 3;
+const SAFE_CLI_KEY = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+const SAFE_SHELL_TOKEN = /^[A-Za-z0-9_./:@+-]+$/;
+
 function record(value: unknown): Schema | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Schema)
@@ -169,6 +173,14 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+function shellToken(value: string): string {
+  return SAFE_SHELL_TOKEN.test(value) ? value : shellQuote(value);
+}
+
+function toolSelector(server: string, tool: string): string {
+  return shellToken(`${server}.${tool}`);
+}
+
 function exampleValue(value: unknown, name: string): unknown {
   const schema = renderSchema(value) ?? {};
   const union = Array.isArray(schema.anyOf)
@@ -184,7 +196,10 @@ function exampleValue(value: unknown, name: string): unknown {
     return number(schema.minimum) ?? 1;
   }
   if (schema.type === "array") {
-    const count = Math.max(1, number(schema.minItems) ?? 1);
+    const count = Math.min(
+      MAX_EXAMPLE_ARRAY_ITEMS,
+      Math.max(1, number(schema.minItems) ?? 1)
+    );
     return Array.from({ length: count }, () => exampleValue(schema.items, "value"));
   }
   if (schema.type === "object" || record(schema.properties)) {
@@ -214,17 +229,26 @@ function callExample(server: string, tool: ContractTool): string {
   const required = Array.isArray(schema?.required)
     ? schema.required.filter((entry): entry is string => typeof entry === "string")
     : [];
-  if (required.some((name) => Boolean(structuredBranch(properties[name], "object") ?? structuredBranch(properties[name], "array")))) {
+  if (
+    required.some(
+      (name) =>
+        !SAFE_CLI_KEY.test(name) ||
+        Boolean(
+          structuredBranch(properties[name], "object") ??
+            structuredBranch(properties[name], "array")
+        )
+    )
+  ) {
     const json = JSON.stringify(
       Object.fromEntries(required.map((name) => [name, exampleValue(properties[name], name)]))
     );
-    return `mcp call ${server}.${tool.name} --json ${shellQuote(json)}`;
+    return `mcp call ${toolSelector(server, tool.name)} --json ${shellQuote(json)}`;
   }
   const args = required.map((name) => {
     const descriptor = record(properties[name]) ?? {};
     return `${name}=${callValue(descriptor, name)}`;
   });
-  return `mcp call ${server}.${tool.name}${args.length > 0 ? ` ${args.join(" ")}` : ""}`;
+  return `mcp call ${toolSelector(server, tool.name)}${args.length > 0 ? ` ${args.join(" ")}` : ""}`;
 }
 
 function structuredBranch(value: unknown, kind: "object" | "array"): Schema | undefined {
@@ -263,7 +287,7 @@ function structuredCallExample(server: string, tool: ContractTool): string | und
         ...requiredValues,
         ...(!required.has(name) ? { [name]: exampleValue(branch, name) } : {}),
       });
-      return `mcp call ${server}.${tool.name} --json ${shellQuote(json)}`;
+      return `mcp call ${toolSelector(server, tool.name)} --json ${shellQuote(json)}`;
     }
   }
   return undefined;
@@ -316,7 +340,7 @@ export function renderToolSignature(
   tool: ContractTool,
   options: { allParameters?: boolean } = {}
 ): string {
-  const schema = record(tool.inputSchema);
+  const schema = renderSchema(tool.inputSchema);
   const properties = record(schema?.properties) ?? {};
   const required = new Set(
     Array.isArray(schema?.required)
