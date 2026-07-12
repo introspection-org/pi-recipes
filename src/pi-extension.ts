@@ -781,12 +781,18 @@ export function createPiRecipesExtension(
     };
   }
 
+  // Launch selection is immutable for the lifetime of this extension. Resolved
+  // values are exported below for shell tools, but must not become inputs to a
+  // later session load in the same process.
+  const launchRecipeDir = stringFlag(env.PI_RECIPE_DIR);
+  const launchAgentName = stringFlag(env.PI_AGENT_NAME);
+
   function recipeFlag(pi: Parameters<ExtensionFactory>[0]): string | undefined {
-    return stringFlag(pi.getFlag("recipe")) ?? stringFlag(env.PI_RECIPE_DIR);
+    return stringFlag(pi.getFlag("recipe")) ?? launchRecipeDir;
   }
 
   function selectedAgentName(pi: Parameters<ExtensionFactory>[0]): string | undefined {
-    return stringFlag(pi.getFlag("agent")) ?? stringFlag(env.PI_AGENT_NAME);
+    return stringFlag(pi.getFlag("agent")) ?? launchAgentName;
   }
 
   function loadState(pi: Parameters<ExtensionFactory>[0], cwd: string): RecipeLaunchState | null {
@@ -853,6 +859,12 @@ export function createPiRecipesExtension(
       packageResourcePaths(manifest, "extensions"),
       resolved.agent
     );
+
+    // Keep the recipe selected by CLI flags visible to shell commands and
+    // recipe-authored instructions. In production `env` is process.env, so
+    // built-in shell tools and child agents inherit these resolved values.
+    env.PI_RECIPE_DIR = recipeDir;
+    env.PI_AGENT_NAME = resolved.agentName;
 
     state = {
       key,

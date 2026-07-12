@@ -5,13 +5,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  aggregateListExitCode,
+  callJsonArgumentError,
   createDelegatedErrorFilter,
   describeUnavailableRunTool,
   describeUnknownRunServer,
   McpRunToolError,
-  outputSchemaSection,
+  parseListTimeoutMs,
   runMcpJavaScript,
   searchMcpTools,
+  withListTimeout,
 } from "../src/mcp-cli.js";
 import {
   buildMcporterConfig,
@@ -27,6 +30,18 @@ import {
 } from "../src/index.js";
 
 const originalFetch = globalThis.fetch;
+
+describe("aggregate MCP list exit behavior", () => {
+  it("tolerates unavailable optional servers by default", () => {
+    expect(aggregateListExitCode(true, [])).toBe(0);
+  });
+
+  it("reports unavailable servers when explicitly requested", () => {
+    expect(aggregateListExitCode(true, ["--quiet"])).toBe(1);
+    expect(aggregateListExitCode(true, ["--exit-code"])).toBe(1);
+    expect(aggregateListExitCode(false, ["--exit-code"])).toBe(0);
+  });
+});
 
 function recipeManifest(
   recipeDir: string,
@@ -941,30 +956,6 @@ describe("recipe MCP materialization", () => {
     expect(match?.description).toContain("[truncated]");
   });
 
-  it("adds the response contract that mcporter omits from text schema output", () => {
-    const manifest = {
-      servers: [
-        {
-          id: "nextplay",
-          base_url: "http://127.0.0.1:3210/mcp",
-          tools: [
-            {
-              name: "verify_shortlist",
-              output_schema: {
-                type: "object",
-                properties: { checked: { type: "number" } },
-                required: ["checked"],
-              },
-            },
-          ],
-        },
-      ],
-    };
-    const section = outputSchemaSection(manifest, "nextplay.verify_shortlist");
-    expect(section).toContain("Output schema (response shape):");
-    expect(section).toContain('"checked"');
-  });
-
   it("keeps useful delegated errors while removing implementation stacks", () => {
     const output: string[] = [];
     const filter = createDelegatedErrorFilter((text) => output.push(text));
@@ -990,6 +981,17 @@ describe("recipe MCP materialization", () => {
       "Authentication is required for MCP server 'linear'. Ask the user to authenticate this MCP connection outside the agent session, then retry.\n"
     );
     expect(output.join("")).not.toContain("LINEAR_TOKEN");
+  });
+
+  it("parses and enforces compact list timeouts", async () => {
+    expect(parseListTimeoutMs(["list", "nextplay", "--timeout", "25"])).toBe(25);
+    expect(parseListTimeoutMs(["list", "nextplay", "--timeout=40"])).toBe(40);
+    expect(parseListTimeoutMs(["list", "nextplay", "--timeout", "0"])).toContain(
+      "positive integer"
+    );
+    await expect(
+      withListTimeout(new Promise(() => undefined), 5)
+    ).rejects.toThrow("timed out after 5ms");
   });
 
   it("adds recovery context when bearer auth falls through to OAuth discovery", () => {
@@ -1031,6 +1033,19 @@ describe("recipe MCP materialization", () => {
 });
 
 describe("mcporter CLI end-to-end", () => {
+  it("explains missing structured call arguments before delegating", () => {
+    expect(callJsonArgumentError(["nextplay.search_profiles", "limit:=15", "--json"])).toContain(
+      "--json expects a JSON object or - for stdin"
+    );
+    expect(
+      callJsonArgumentError([
+        "nextplay.search_profiles",
+        "--json",
+        '{"limit":15}',
+      ])
+    ).toBeNull();
+  });
+
   function startStubMcpServer(expectedAuth: string): Promise<{
     server: Server;
     url: string;
@@ -1313,12 +1328,29 @@ describe("mcporter CLI end-to-end", () => {
       expect(listed.status).toBe("ok");
       expect(listed.tools.map((tool) => tool.name)).toEqual(["get_value"]);
 
-      const wrappedList = await runMcpCli(["list", "stub", "--json"], configEnv, "");
-      expect(wrappedList.code).toBe(list.code);
-      expect(wrappedList.stderr).toBe(list.stderr);
-      const wrappedListed = JSON.parse(wrappedList.stdout) as typeof listed;
-      expect(wrappedListed.status).toBe(listed.status);
-      expect(wrappedListed.tools).toEqual(listed.tools);
+      const wrappedList = await runMcpCli(["list", "stub"], configEnv, "");
+      expect(wrappedList.code).toBe(0);
+      expect(wrappedList.stderr).toBe("");
+      expect(wrappedList.stdout).toContain("stub.get_value(key: string)");
+
+      const serverList = await runMcpCli(["list"], configEnv, "");
+      expect(serverList).toEqual({ code: 0, stdout: "stub — 1 tool\n", stderr: "" });
+
+      const metadataJson = await runMcpCli(["list", "stub", "--json"], configEnv, "");
+      expect(metadataJson.code).toBe(2);
+      expect(metadataJson.stdout).toBe("");
+      expect(metadataJson.stderr).toContain("JSON is reserved for tool results");
+
+      const withoutCredential: Record<string, string> = { ...configEnv };
+      delete withoutCredential.STUB_MCP_TOKEN;
+      const missingCredential = await runMcpCli(
+        ["list", "stub"],
+        withoutCredential,
+        ""
+      );
+      expect(missingCredential.code).toBe(1);
+      expect(missingCredential.stderr).toContain("Authentication is required");
+      expect(missingCredential.stderr).not.toContain("STUB_MCP_TOKEN");
 
       const wrappedTextSchema = await runMcpCli(
         ["list", "stub.get_value", "--schema"],
@@ -1326,8 +1358,22 @@ describe("mcporter CLI end-to-end", () => {
         ""
       );
       expect(wrappedTextSchema.code).toBe(0);
-      expect(wrappedTextSchema.stdout).toContain("Output schema (response shape):");
-      expect(wrappedTextSchema.stdout).toContain('"value"');
+      expect(wrappedTextSchema.stdout).toBe(
+        [
+          "stub.get_value",
+          "Get a value",
+          "",
+          "input",
+          "  key: string",
+          "",
+          "output",
+          "  value: string",
+          "",
+          "call",
+          "  mcp call stub.get_value key='<key>'",
+          "",
+        ].join("\n")
+      );
 
       const call = await runMcporter(
         ["call", "stub.get_value", "key=mcporter", "--no-oauth"],
@@ -1354,17 +1400,6 @@ describe("mcporter CLI end-to-end", () => {
         ""
       );
       expect(wrappedJsonCall).toEqual(directJsonCall);
-
-      const directNamedFlag = await runMcporter(
-        ["call", "stub.get_value", "--key", "color", "--no-oauth"],
-        configEnv
-      );
-      const wrappedNamedFlag = await runMcpCli(
-        ["call", "stub.get_value", "--key", "color"],
-        configEnv,
-        ""
-      );
-      expect(wrappedNamedFlag).toEqual(directNamedFlag);
 
       // allowedTools gates calls, not just listings.
       const blocked = await runMcporter(["call", "stub.hidden_tool"], configEnv);

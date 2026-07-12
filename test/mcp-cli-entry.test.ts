@@ -63,6 +63,21 @@ describe("mcp CLI entry detection", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("presents one primary discovery-to-call flow and keeps run as composition", () => {
+    const result = runCli(distCli, ["--help"]);
+    const search = result.stdout.indexOf('mcp search "what you need"');
+    const schema = result.stdout.indexOf("mcp list <server.tool> --schema");
+    const call = result.stdout.indexOf("mcp call <server>.<tool> key=value");
+
+    expect(search).toBeGreaterThanOrEqual(0);
+    expect(schema).toBeGreaterThan(search);
+    expect(call).toBeGreaterThan(schema);
+    expect(result.stdout).toContain("Batch or compose multiple calls in JavaScript");
+    expect(result.stdout).toContain("mcp run <<'JS'");
+    expect(result.stdout).not.toContain("mcp run <<'EOF'");
+    expect(result.stdout).not.toContain("--save-images");
+  });
+
   it("exits cleanly when a downstream pipeline closes stdout", () => {
     const probe = spawnSync(
       process.execPath,
@@ -123,7 +138,21 @@ describe("mcp CLI entry detection", () => {
     expect(quiet.output).toBe("");
   });
 
-  it("keeps delegated list failures machine-readable in JSON mode", () => {
+  it("rejects schema mode without an exact tool target", () => {
+    const result = runCli(distCli, ["list", "--schema"]);
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("requires one exact tool");
+  });
+
+  it("rejects unknown compact list options", () => {
+    const result = runCli(distCli, ["list", "--scheam"]);
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Unknown mcp list option '--scheam'");
+  });
+
+  it("keeps list metadata failures compact", () => {
     writeFileSync(
       join(dir, "mcp.json"),
       JSON.stringify({
@@ -166,8 +195,13 @@ describe("mcp CLI entry detection", () => {
       "100",
     ]);
     expect(result.status).not.toBe(0);
-    expect(() => JSON.parse(result.stdout)).not.toThrow();
-    expect(result.stderr).not.toContain("Only exact tool names shown");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("JSON is reserved for tool results");
+    expect(result.stderr).not.toContain(" at ");
+
+    const quiet = runCli(distCli, ["list", "offline", "--quiet", "--timeout", "100"]);
+    expect(quiet.status).not.toBe(0);
+    expect(quiet.output).toBe("");
   });
 
   it("rejects in-session authentication", () => {
@@ -223,19 +257,17 @@ describe("mcp CLI entry detection", () => {
     expect(result.output).toContain("inspect state before retrying");
   });
 
-  it("rejects malformed call expressions before the ad-hoc spawn path", () => {
+  it("rejects function-call expressions before the delegated path", () => {
     const result = runCli(distCli, ["call", 'ghost.lookup(q: "x", limit:']);
     expect(result.status).toBe(2);
-    expect(result.output).toContain("malformed tool expression");
-    expect(result.output).toContain("balanced quotes and parentheses");
+    expect(result.output).toContain("function-call expressions are unavailable");
+    expect(result.output).toContain("key=value or --json");
   });
 
-  it("accepts well-formed call expressions and plain refs with dots", () => {
-    // Balanced expression → not flagged (fails later on the unknown server).
+  it("rejects well-formed function-call expressions too", () => {
     const expr = runCli(distCli, ["call", 'ghost.lookup(q: "x")']);
-    expect(expr.output).not.toContain("malformed tool expression");
-    const plain = runCli(distCli, ["call", "ghost.lookup", "q:a"]);
-    expect(plain.output).not.toContain("malformed tool expression");
+    expect(expr.status).toBe(2);
+    expect(expr.output).toContain("function-call expressions are unavailable");
   });
 
   it("rejects non-numeric search limits", () => {
@@ -276,21 +308,14 @@ describe("mcp CLI entry detection", () => {
       })
     );
 
-    for (const callArgs of [
-      ["query=Ada", "query=Grace"],
-      ["query=Ada", "--query", "Grace"],
-      ["--query=Ada", "--query=Grace"],
-    ]) {
-      const result = runCli(distCli, [
-        "call",
-        "contacts.search_contacts",
-        ...callArgs,
-      ]);
-      expect(result.status).toBe(2);
-      expect(result.output).toContain(
-        "argument 'query' was passed more than once"
-      );
-    }
+    const result = runCli(distCli, [
+      "call",
+      "contacts.search_contacts",
+      "query=Ada",
+      "query=Grace",
+    ]);
+    expect(result.status).toBe(2);
+    expect(result.output).toContain("argument 'query' was passed more than once");
   });
 
   it("rejects invalid run timeout configuration", () => {

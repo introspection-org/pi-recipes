@@ -5,6 +5,12 @@ import { readFile } from "node:fs/promises";
 import { stdin as input, stderr, stdout } from "node:process";
 import { Worker } from "node:worker_threads";
 import { createCallResult, createRuntime } from "mcporter";
+import {
+  manifestOutputSchema,
+  renderToolContract,
+  renderToolSignature,
+  type ContractTool,
+} from "./mcp-contract.js";
 import { isDirectEntry } from "./direct-cli.js";
 import { mcpCliHelpText } from "./mcp-cli-help.js";
 import {
@@ -21,6 +27,7 @@ import {
 
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
+const DEFAULT_LIST_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RUN_TOOL_CALLS = 100;
 const DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 16;
 const MAX_SEARCH_DESCRIPTION_CHARS = 600;
@@ -120,19 +127,16 @@ export function mcpListHelpText(): string {
   return [
     "Usage: mcp list [server | server.tool] [flags]",
     "",
-    "Delegates listing and schema rendering to mcporter for servers materialized in this recipe session.",
+    "Shows a compact view of tools materialized in this recipe session.",
     "",
     "Flags:",
-    "  --brief, --signatures     Compact signatures only.",
     "  --all-parameters          Include every optional parameter.",
-    "  --schema                  Include the input schema and, for one exact tool, its output schema.",
-    "  --json                    Emit mcporter's machine-readable output unchanged.",
+    "  --schema                  Show a compact input/output contract for one exact tool.",
+    "  --verbose                 Include full tool and parameter descriptions.",
     "  --status                  Show concise status for an exact server target.",
     "  --quiet, --exit-code      Health checks for an exact server target.",
     "  --timeout <ms>            Override discovery timeout for an exact target.",
-    "  --no-oauth                Use cached credentials without starting OAuth.",
-    "  Use only one output-mode flag at a time: --brief, --schema, --all-parameters, --json, or --status.",
-    "  Exact --schema output includes both input and output schemas, with the output schema after the input schema. Do not truncate it with head or sed.",
+    "  JSON is reserved for actual tool results; metadata is compact text.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
   ].join("\n");
@@ -145,20 +149,16 @@ export function mcpCallHelpText(): string {
     "Delegates argument parsing and tool execution to mcporter for exact tools materialized in this recipe session.",
     "",
     "Arguments:",
-    "  key=value / key:value     Named arguments with mcporter's schema-aware coercion.",
-    "  --key value               Named schema arguments supported by mcporter.",
+    "  key=value                 Named arguments with schema-aware coercion.",
     "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
-    "  --args <json|->, --json <json|->  Supply a JSON object directly or from stdin.",
-    "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
-    "  --                         Treat remaining values as literal positional inputs.",
+    "  --json <json|->           Supply a structured JSON object directly or from stdin.",
+    '  Array example: mcp call server.tool --json \'{"tags":["a","b"]}\'.',
     "  Quote argument tokens containing shell operators such as |, <, >, &, or ;. JSON stdin avoids nested shell quoting.",
     "",
     "Output/runtime flags:",
     "  --output text|markdown|json|raw",
     "  --save-images <dir>",
     "  --timeout <ms>",
-    "  --no-oauth, --oauth-timeout <ms>",
-    "  --raw-strings, --no-coerce",
     "  Machine-readable output is forwarded unchanged.",
     "  When parsing JSON, keep stderr separate and do not truncate stdout with head or sed.",
     "",
@@ -168,10 +168,10 @@ export function mcpCallHelpText(): string {
 
 export function mcpSearchHelpText(): string {
   return [
-    'Usage: mcp search "what you need" [--limit N] [--json] [--regex]',
+    'Usage: mcp search "what you need" [--limit N] [--regex]',
     "",
     "Searches only MCP tools available in this session.",
-    "Results include the exact tool ref, required fields, an inspection command, and a call example.",
+    "Results include the exact tool ref, description, and required fields.",
     "Try broader or alternate terms when no result matches.",
     "Use `mcp list <server>` only to identify exact tool names, then inspect one candidate with `mcp list <server.tool> --schema`.",
   ].join("\n");
@@ -199,12 +199,12 @@ export function mcpRunHelpText(): string {
     "A synchronous busy-loop is force-killed at the deadline.",
     "Code runs with the same OS privileges as the active shell sandbox; mcp run is not a separate security boundary.",
     "",
-    "Example:",
-    "  mcp run <<'EOF'",
+    "Example — batch or compose multiple calls:",
+    "  mcp run <<'JS'",
     '  const ids = ["id-1", "id-2", "id-3"]',
     '  const results = await Promise.all(ids.map(id => tools["server"]["tool"]({ id })))',
     "  console.log(JSON.stringify(results.map(result => ({ id: result.id, name: result.name })), null, 2))",
-    "  EOF",
+    "  JS",
   ].join("\n");
 }
 
@@ -515,18 +515,14 @@ async function sessionCliPolicy() {
 function parseSearchArgs(
   args: string[]
 ):
-  | { query: string; limit: number; json: boolean; regex: boolean; error?: undefined }
+  | { query: string; limit: number; regex: boolean; error?: undefined }
   | { error: string } {
   const queryParts: string[] = [];
   let limit = 8;
-  let json = false;
   let regex = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--json") {
-      json = true;
-      continue;
-    }
+    if (arg === "--json") return { error: "mcp search metadata is compact text; JSON is reserved for tool results." };
     if (arg === "--regex") {
       regex = true;
       continue;
@@ -543,7 +539,7 @@ function parseSearchArgs(
     if (arg.startsWith("-")) return { error: `Unknown mcp search option '${arg}'.` };
     queryParts.push(arg);
   }
-  return { query: queryParts.join(" "), limit, json, regex };
+  return { query: queryParts.join(" "), limit, regex };
 }
 
 async function searchCatalog(args: string[]): Promise<number> {
@@ -552,9 +548,9 @@ async function searchCatalog(args: string[]): Promise<number> {
     stderr.write(`${parsed.error}\n`);
     return 2;
   }
-  const { query, limit, json, regex } = parsed;
+  const { query, limit, regex } = parsed;
   if (!query.trim()) {
-    stderr.write("Usage: mcp search \"what you need\" [--limit N] [--json] [--regex]\n");
+    stderr.write("Usage: mcp search \"what you need\" [--limit N] [--regex]\n");
     return 2;
   }
   let matches: ToolSearchMatch[];
@@ -567,10 +563,6 @@ async function searchCatalog(args: string[]): Promise<number> {
     }
     throw err;
   }
-  if (json) {
-    stdout.write(`${JSON.stringify({ query, matches }, null, 2)}\n`);
-    return 0;
-  }
   if (matches.length === 0) {
     stdout.write(`No matching tools found for "${query}".\n`);
     stdout.write("Try broader or alternate terms.\n");
@@ -579,18 +571,226 @@ async function searchCatalog(args: string[]): Promise<number> {
     );
     return 0;
   }
-  stdout.write(`Found ${matches.length} available matching tool${matches.length === 1 ? "" : "s"}\n\n`);
   for (const match of matches) {
-    stdout.write(`${match.ref}\n`);
-    if (match.description) stdout.write(`  ${match.description}\n`);
-    if (match.required.length > 0) stdout.write(`  Required: ${match.required.join(", ")}\n`);
-    if (match.annotations && Object.keys(match.annotations).length > 0) {
-      stdout.write(`  Safety: ${JSON.stringify(match.annotations)}\n`);
-    }
-    stdout.write(`  Inspect: ${match.inspect}\n`);
-    stdout.write(`  Example: ${match.call}\n\n`);
+    stdout.write(`${match.ref}${match.description ? ` — ${match.description}` : ""}\n`);
+    if (match.required.length > 0) stdout.write(`  required: ${match.required.join(", ")}\n`);
   }
   return 0;
+}
+
+function exactToolTarget(value: string | undefined): { server: string; tool: string } | null {
+  if (!value) return null;
+  const dot = value.indexOf(".");
+  if (dot < 1 || dot === value.length - 1) return null;
+  return { server: value.slice(0, dot), tool: value.slice(dot + 1) };
+}
+
+function manifestTool(
+  manifest: McpManifest,
+  server: string,
+  tool: string
+): McpManifestTool | undefined {
+  return manifest.servers
+    ?.find((entry) => entry.id === server)
+    ?.tools?.find((entry) => entry.name === tool);
+}
+
+function toolCount(count: number): string {
+  return `${count} tool${count === 1 ? "" : "s"}`;
+}
+
+export function parseListTimeoutMs(args: readonly string[]): number | string {
+  const configured = process.env.MCPORTER_LIST_TIMEOUT;
+  let raw = configured && /^[1-9]\d*$/.test(configured) ? configured : String(DEFAULT_LIST_TIMEOUT_MS);
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--timeout") {
+      const value = args[index + 1];
+      if (!value) return "mcp list: --timeout requires a value.";
+      raw = value;
+      break;
+    }
+    if (arg?.startsWith("--timeout=")) {
+      raw = arg.slice("--timeout=".length);
+      break;
+    }
+  }
+  if (!/^[1-9]\d*$/.test(raw)) {
+    return "mcp list: --timeout must be a positive integer (milliseconds).";
+  }
+  const timeout = Number(raw);
+  return Number.isSafeInteger(timeout)
+    ? timeout
+    : "mcp list: --timeout must be a positive integer (milliseconds).";
+}
+
+export function withListTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+export function aggregateListExitCode(
+  hadFailure: boolean,
+  args: readonly string[]
+): number {
+  return hadFailure && (args.includes("--quiet") || args.includes("--exit-code"))
+    ? 1
+    : 0;
+}
+
+function writeCompactListError(error: unknown): void {
+  const filter = createDelegatedErrorFilter((text) => stderr.write(text));
+  const message = error instanceof Error ? error.stack ?? error.message : String(error);
+  filter.push(`mcp list: ${message.endsWith("\n") ? message : `${message}\n`}`);
+  filter.flush();
+}
+
+function compactListArgumentError(args: readonly string[]): string | undefined {
+  const flags = new Set([
+    "--all-parameters",
+    "--schema",
+    "--verbose",
+    "--status",
+    "--quiet",
+    "--exit-code",
+    "--no-oauth",
+  ]);
+  const start = args[1] && !args[1].startsWith("-") ? 2 : 1;
+  for (let index = start; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--timeout") {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--timeout=")) continue;
+    if (flags.has(arg)) continue;
+    return arg.startsWith("-")
+      ? `Unknown mcp list option '${arg}'.`
+      : `Unexpected mcp list argument '${arg}'.`;
+  }
+  return undefined;
+}
+
+async function compactList(args: string[]): Promise<number> {
+  if (args.includes("--json")) {
+    stderr.write("mcp list metadata is compact text; JSON is reserved for tool results.\n");
+    return 2;
+  }
+  const argumentError = compactListArgumentError(args);
+  if (argumentError) {
+    stderr.write(`${argumentError}\n`);
+    return 2;
+  }
+  const target = args[1] && !args[1].startsWith("-") ? args[1] : undefined;
+  const schema = args.includes("--schema");
+  const status = args.includes("--status");
+  const verbose = args.includes("--verbose");
+  const allParameters = args.includes("--all-parameters");
+  const quiet = args.includes("--quiet");
+  const timeout = parseListTimeoutMs(args);
+  if (typeof timeout === "string") {
+    stderr.write(`${timeout}\n`);
+    return 2;
+  }
+  if (schema && !target) {
+    stderr.write("mcp list --schema requires one exact tool: mcp list <server>.<tool> --schema\n");
+    return 2;
+  }
+  const manifest = await readManifest();
+  if (!target) {
+    const runtime = await createRuntime();
+    let exitCode = 0;
+    try {
+      for (const server of manifest.servers ?? []) {
+        try {
+          const tools = await withListTimeout(
+            runtime.listTools(server.id, {
+              includeSchema: false,
+              autoAuthorize: false,
+              allowCachedAuth: true,
+              disableOAuth: true,
+            }),
+            timeout
+          );
+          if (!quiet) stdout.write(`${server.id} — ${toolCount(tools.length)}\n`);
+        } catch {
+          exitCode = 1;
+          if (!quiet) stdout.write(`${server.id} — unavailable\n`);
+        }
+      }
+    } finally {
+      await runtime.close();
+    }
+    return aggregateListExitCode(exitCode !== 0, args);
+  }
+  const exact = exactToolTarget(target);
+  const server = exact?.server ?? target;
+  if (schema && !exact) {
+    stderr.write("mcp list --schema requires one exact tool: mcp list <server>.<tool> --schema\n");
+    return 2;
+  }
+  const runtime = await createRuntime();
+  try {
+    const tools = (await withListTimeout(
+      runtime.listTools(server, {
+        includeSchema: true,
+        autoAuthorize: false,
+        allowCachedAuth: true,
+        disableOAuth: true,
+      }),
+      timeout
+    )) as ContractTool[];
+    if (quiet) return 0;
+    if (status) {
+      stdout.write(`${server} ok — ${toolCount(tools.length)}\n`);
+      return 0;
+    }
+    const selected = exact ? tools.filter((tool) => tool.name === exact.tool) : tools;
+    if (exact && selected.length === 0) {
+      stderr.write(`Tool '${exact.tool}' is not available on server '${server}'.\n`);
+      return 1;
+    }
+    if (schema && exact) {
+      const tool = selected[0];
+      if (!tool) return 1;
+      const outputSchema =
+        tool.outputSchema ?? manifestOutputSchema(manifestTool(manifest, server, exact.tool));
+      stdout.write(
+        renderToolContract(
+          server,
+          { ...tool, outputSchema },
+          { verboseDescriptions: verbose }
+        )
+      );
+      return 0;
+    }
+    for (const tool of selected) {
+      stdout.write(`${renderToolSignature(server, tool, { allParameters })}\n`);
+      if (verbose && tool.description?.trim()) {
+        stdout.write(`  ${tool.description.trim().replace(/\s+/g, " ")}\n`);
+      }
+    }
+    return 0;
+  } catch (error) {
+    if (!quiet) writeCompactListError(error);
+    return 1;
+  } finally {
+    await runtime.close();
+  }
 }
 
 // Property names scripts and runtimes probe on plain objects; returning
@@ -1216,36 +1416,6 @@ async function runCode(args: string[]): Promise<number> {
   return 0;
 }
 
-export function outputSchemaSection(manifest: McpManifest, ref: string): string | null {
-  const dot = ref.indexOf(".");
-  if (dot < 1) return null;
-  const serverId = ref.slice(0, dot);
-  const toolName = ref.slice(dot + 1);
-  const tool = manifest.servers
-    ?.find((server) => server.id === serverId)
-    ?.tools?.find((entry) => entry.name === toolName);
-  if (!tool?.output_schema) return null;
-  const json = JSON.stringify(tool.output_schema, null, 2).replace(/^/gm, "      ");
-  return `\n  Output schema (response shape):\n${json}\n`;
-}
-
-async function appendOutputSchema(args: string[], exitCode: number): Promise<void> {
-  if (
-    exitCode !== 0 ||
-    args[0] !== "list" ||
-    !args.includes("--schema") ||
-    args.includes("--json")
-  ) return;
-  const ref = args[1];
-  if (!ref || !ref.includes(".") || ref.startsWith("-")) return;
-  try {
-    const section = outputSchemaSection(await readManifest(), ref);
-    if (section) stdout.write(section);
-  } catch {
-    // The manifest is a session artifact; mcporter's input schema still rendered.
-  }
-}
-
 export function createDelegatedErrorFilter(write: (text: string) => void): {
   push(chunk: string): void;
   flush(): void;
@@ -1299,9 +1469,7 @@ export function duplicateCallArgumentKeys(args: string[]): string[] {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
   for (const token of args.slice(1)) {
-    const plain = token.match(/^([A-Za-z_][A-Za-z0-9_.-]*)[:=]/)?.[1];
-    const flag = token.match(/^--([A-Za-z_][A-Za-z0-9_.-]*)(?:=|$)/)?.[1];
-    const rawKey = plain ?? flag;
+    const rawKey = token.match(/^([A-Za-z_][A-Za-z0-9_.-]*)=/)?.[1];
     if (!rawKey) continue;
     const key = rawKey.replace(
       /-([a-zA-Z0-9])/g,
@@ -1313,33 +1481,34 @@ export function duplicateCallArgumentKeys(args: string[]): string[] {
   return [...duplicates];
 }
 
+export function callJsonArgumentError(args: readonly string[]): string | null {
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") {
+      const value = args[index + 1];
+      if (value === undefined || (value.startsWith("--") && value !== "-")) {
+        return `mcp call: ${arg} expects a JSON object or - for stdin. Example: mcp call server.tool --json '{"tags":["a","b"]}'`;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg === "--json=") {
+      return `mcp call: ${arg.slice(0, -1)} expects a JSON object or - for stdin.`;
+    }
+  }
+  return null;
+}
+
 export function malformedCallExpression(args: string[]): string | null {
   const ref = args.find((arg) => !arg.startsWith("-"));
   if (!ref || !/[()]/.test(ref)) return null;
-  let depth = 0;
-  let inString: '"' | "'" | null = null;
-  for (let index = 0; index < ref.length; index += 1) {
-    const char = ref[index];
-    if (inString) {
-      if (char === "\\") index += 1;
-      else if (char === inString) inString = null;
-      continue;
-    }
-    if (char === '"' || char === "'") inString = char;
-    else if (char === "(") depth += 1;
-    else if (char === ")") depth -= 1;
-    if (depth < 0) break;
-  }
-  if (depth === 0 && inString === null && /^[\w-]+\.[\w-]+\(.*\)$/s.test(ref)) return null;
   return (
-    `mcp call: malformed tool expression '${ref}'. ` +
-    `Use mcp call '<server>.<tool>(key: "value")' with balanced quotes and parentheses, ` +
-    `or plain arguments: mcp call <server>.<tool> key:value.`
+    `mcp call: function-call expressions are unavailable. ` +
+    `Use mcp call <server>.<tool> key=value or --json for structured arguments.`
   );
 }
 
 function usesMachineReadableOutput(args: readonly string[]): boolean {
-  if (args[0] === "list") return args.includes("--json");
   if (args[0] !== "call") return false;
   return args.some(
     (arg, index) =>
@@ -1403,6 +1572,11 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
       stderr.write(`${malformed}\n`);
       return 2;
     }
+    const jsonArgumentError = callJsonArgumentError(args.slice(1));
+    if (jsonArgumentError) {
+      stderr.write(`${jsonArgumentError}\n`);
+      return 2;
+    }
   }
   let validated;
   try {
@@ -1434,8 +1608,8 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     }
   }
   const delegatedArgs = validated.command.args;
+  if (delegatedArgs[0] === "list") return compactList(delegatedArgs);
   const code = await delegateToMcporter(delegatedArgs);
-  await appendOutputSchema(delegatedArgs, code);
   return code;
 }
 
