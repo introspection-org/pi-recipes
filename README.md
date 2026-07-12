@@ -1,14 +1,13 @@
-<div align="center">
+<h1 align="center">
   <a href="https://pi.recipes">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset=".github/images/logo-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset=".github/images/logo-light.svg">
-      <img alt="Pi Recipes" src=".github/images/logo-light.svg" width="64">
+      <img alt="Pi" src=".github/images/logo-light.svg" width="30">
     </picture>
+    <samp>/ RECIPES</samp>
   </a>
-</div>
-
-<h1 align="center"><a href="https://pi.recipes">Pi Recipes</a></h1>
+</h1>
 
 <h4 align="center">Reproducible frontier-grade agents</h4>
 
