@@ -399,69 +399,14 @@ MCP error.
 
 ## Connectors
 
-> **Introspection-platform extension.** Unlike the core recipe fields
-> (`model`, `tools`, `skills`, `subagents`, `system_instructions`) and the
-> MCP-standard `mcp` block, `connectors` is **specific to the Introspection
-> platform**. It has no meaning in a standalone pi runtime — it depends on the
-> Introspection Control Plane for the connector registry, the `getToken` broker,
-> the Person Server, and missions. The runtime loader parses and merges the block
-> everywhere (so recipes validate), but it only *does* anything when run on
-> Introspection.
+`connectors` is an **Introspection-platform extension**, not part of the core Pi
+recipe format — it lets an agent act on an outbound provider on a customer's
+behalf, backed by the Introspection connector broker and Person Server. The
+runtime loader parses and merges the block (so recipes validate everywhere), but
+it only *does* anything when the recipe runs on Introspection.
 
-Connectors let an agent act on an outbound provider (Gmail, a booking API, a
-payments API) on a customer's behalf. They are the connector analogue of the
-`mcp` block, with one key difference: the connector **definition** — endpoints,
-client credentials, Person Server, and approval policy — lives **org-side in the
-Control Plane**, never in the recipe. The recipe only **references** connectors
-by slug and **scopes** what the agent may do with them (the same split as an MCP
-server, which is registered in the org and merely referenced here).
-
-Each agent declares its connector access in a `connectors` block, keyed by the
-connector's org-side slug:
-
-```yaml
-tools:
-  - bash
-connectors:
-  booking:
-    subject: person             # on whose authority the token is minted
-    scopes:                     # subset of the connector's scopes
-      - booking.reserve
-  gmail:
-    subject: person
-    scopes:
-      - gmail.send
-    approval_policy: human      # optional, tighten-only (see below)
-```
-
-Selector fields:
-
-- **`subject`** — whose authority the minted token carries: `app` (the org's own
-  connection), `user`, or `person` (a customer the agent acts on behalf of). The
-  platform binds the concrete identity; the recipe only names the *kind*.
-- **`scopes`** — the subset of the connector's scopes this agent may request. It
-  must be ⊆ the connector's org-side scopes; the platform enforces the
-  intersection. Omitting `scopes` requests none.
-- **`approval_policy`** *(optional)* — `human`, `judge_advises_human`, or
-  `judge_auto_within_envelope`. This is a **tighten-only** override: an agent may
-  demand *stronger* approval than the connector default (e.g. force `human` where
-  the connector allows judge-auto) but can never loosen it. The org-side
-  `connectors.approval_policy` is the hard ceiling. Most agents omit it and
-  inherit the connector default.
-
-Selectors merge along the `from:` inheritance chain per connector, the same way
-`mcp` selectors do. Omitting a connector gives the agent no access to it;
-omitting the entire `connectors` block gives it no connector access.
-
-The **mission** — the concrete per-action envelope (recipient, amount ceiling,
-window) that a human approves — is *not* declared here. It is authored at
-runtime when the agent requests a token, because its values are specific to each
-action. The recipe stops at *which connectors, on whose behalf, which scopes*.
-
-> The runtime loader accepts and merges this block; end-to-end token minting is
-> the separate `getToken` rail. Until that lands, an agent that declares
-> connectors should describe the intended action and the approval it needs
-> rather than assume a live token.
+See [`introspection-platform.md`](./introspection-platform.md#connectors) for the
+full spec and the other platform extensions (managed resources, managed runtime).
 
 ## Commands
 
