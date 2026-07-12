@@ -21,8 +21,9 @@
 
 <br>
 
-Experimental Pi recipe tooling with a `recipes` CLI and Pi extension
-support.
+A Pi recipe captures the expertise behind a frontier-grade agent so the same
+workflow can be run, measured, and improved anywhere Pi runs. Install one from
+Git and customize it locally.
 
 Recipes are Pi packages: folders with a `package.json` manifest containing a
 `pi` block, plus agent YAML files, prompts, skills, and optional TypeScript
