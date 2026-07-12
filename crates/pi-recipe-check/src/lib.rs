@@ -1,12 +1,23 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fs;
-use std::path::{Component, Path, PathBuf};
+//! Pure validation engine for Pi recipe packages.
+//!
+//! The core API is I/O-free: [`check_recipe_files`] takes an in-memory
+//! [`RecipeFiles`] snapshot of a recipe directory and returns a [`Report`].
+//! Hosts (the bundled `recipe-check` binary, npm wrapper, future wasm/PyO3
+//! bindings) are responsible for reading files. The `fs` feature (default)
+//! provides [`check_recipe`], a filesystem front-end that walks a recipe
+//! directory and feeds the pure core.
 
-use anyhow::{Context, Result};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::{Component, Path};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use serde_yaml::Value as YamlValue;
-use walkdir::WalkDir;
+
+#[cfg(feature = "fs")]
+pub mod fs;
+
+#[cfg(feature = "fs")]
+pub use fs::check_recipe;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -14,6 +25,43 @@ pub enum CheckProfile {
     Local,
     Ci,
     Publish,
+}
+
+/// In-memory snapshot of a recipe directory.
+///
+/// Paths are relative to the recipe root and use `/` separators. Every
+/// ancestor of a file path is implicitly a directory; `directories` only
+/// needs entries for directories that contain no files.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecipeFiles {
+    pub files: Vec<RecipeFile>,
+    #[serde(default)]
+    pub directories: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecipeFile {
+    pub path: String,
+    /// File content, when the host chose to read it. `None` means the file
+    /// exists but its content was not supplied; checks that need the content
+    /// report it as unreadable.
+    pub content: Option<String>,
+}
+
+impl RecipeFile {
+    pub fn new(path: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            content: Some(content.into()),
+        }
+    }
+
+    pub fn unread(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            content: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,9 +80,18 @@ pub struct Diagnostic {
     pub severity: Severity,
     pub code: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<Span>,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
+}
+
+/// 1-based source location of a diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Span {
+    pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +106,8 @@ impl Severity {
         matches!(self, Self::Error)
     }
 }
+
+type JsonMap = serde_json::Map<String, JsonValue>;
 
 #[derive(Debug, Clone)]
 struct Package {
@@ -69,7 +128,7 @@ struct RawAgent {
     name: String,
     fallback_name: String,
     explicit_name: bool,
-    path: PathBuf,
+    path: String,
     from: Option<String>,
     fields: HashSet<AgentField>,
     mcp: Option<BTreeMap<String, McpToolSelectors>>,
@@ -115,38 +174,90 @@ impl AgentField {
     }
 }
 
-#[derive(Debug, Clone)]
 struct CheckContext {
-    root: PathBuf,
     profile: CheckProfile,
+    files: BTreeMap<String, Option<String>>,
+    directories: BTreeSet<String>,
     package_name: Option<String>,
     diagnostics: Vec<Diagnostic>,
     resources: BTreeMap<String, usize>,
 }
 
 impl CheckContext {
-    fn new(root: PathBuf, profile: CheckProfile) -> Self {
+    fn new(input: &RecipeFiles, profile: CheckProfile) -> Self {
+        let mut files = BTreeMap::new();
+        let mut directories = BTreeSet::new();
+        for file in &input.files {
+            let path = normalize_relative(&file.path);
+            if path.is_empty() {
+                continue;
+            }
+            for ancestor in ancestor_dirs(&path) {
+                directories.insert(ancestor);
+            }
+            files.insert(path, file.content.clone());
+        }
+        for directory in &input.directories {
+            let path = normalize_relative(directory);
+            if path.is_empty() {
+                continue;
+            }
+            for ancestor in ancestor_dirs(&path) {
+                directories.insert(ancestor);
+            }
+            directories.insert(path);
+        }
         Self {
-            root,
             profile,
+            files,
+            directories,
             package_name: None,
             diagnostics: Vec::new(),
             resources: BTreeMap::new(),
         }
     }
 
+    fn has_file(&self, path: &str) -> bool {
+        self.files.contains_key(path)
+    }
+
+    fn has_dir(&self, path: &str) -> bool {
+        self.directories.contains(path)
+    }
+
+    fn path_exists(&self, path: &str) -> bool {
+        self.has_file(path) || self.has_dir(path)
+    }
+
+    fn content(&self, path: &str) -> Option<&str> {
+        self.files.get(path).and_then(Option::as_deref)
+    }
+
+    /// Files that are direct children of `dir`.
+    fn child_files(&self, dir: &str) -> Vec<&str> {
+        let prefix = format!("{dir}/");
+        self.files
+            .range(prefix.clone()..)
+            .take_while(|(path, _)| path.starts_with(&prefix))
+            .filter(|(path, _)| !path[prefix.len()..].contains('/'))
+            .map(|(path, _)| path.as_str())
+            .collect()
+    }
+
     fn push(
         &mut self,
         severity: Severity,
         code: impl Into<String>,
-        path: impl AsRef<Path>,
+        path: impl Into<String>,
+        span: Option<Span>,
         message: impl Into<String>,
         help: Option<impl Into<String>>,
     ) {
         self.diagnostics.push(Diagnostic {
             severity,
             code: code.into(),
-            path: self.display_path(path.as_ref()),
+            path: path.into(),
+            span,
             message: message.into(),
             help: help.map(Into::into),
         });
@@ -155,43 +266,40 @@ impl CheckContext {
     fn error(
         &mut self,
         code: impl Into<String>,
-        path: impl AsRef<Path>,
+        path: impl Into<String>,
         message: impl Into<String>,
         help: Option<impl Into<String>>,
     ) {
-        self.push(Severity::Error, code, path, message, help);
+        self.push(Severity::Error, code, path, None, message, help);
+    }
+
+    fn error_at(
+        &mut self,
+        code: impl Into<String>,
+        path: impl Into<String>,
+        span: Option<Span>,
+        message: impl Into<String>,
+        help: Option<impl Into<String>>,
+    ) {
+        self.push(Severity::Error, code, path, span, message, help);
     }
 
     fn warning(
         &mut self,
         code: impl Into<String>,
-        path: impl AsRef<Path>,
+        path: impl Into<String>,
         message: impl Into<String>,
         help: Option<impl Into<String>>,
     ) {
-        self.push(Severity::Warning, code, path, message, help);
-    }
-
-    fn display_path(&self, path: &Path) -> String {
-        let path = if path.is_absolute() {
-            path.strip_prefix(&self.root).unwrap_or(path)
-        } else {
-            path
-        };
-        path_to_slashes(path)
+        self.push(Severity::Warning, code, path, None, message, help);
     }
 }
 
-pub fn check_recipe(recipe_dir: impl AsRef<Path>, profile: CheckProfile) -> Result<Report> {
-    let root = recipe_dir.as_ref().canonicalize().with_context(|| {
-        format!(
-            "failed to resolve recipe directory {}",
-            recipe_dir.as_ref().display()
-        )
-    })?;
-    let mut ctx = CheckContext::new(root.clone(), profile);
+/// Validate an in-memory recipe snapshot. Pure: no filesystem access.
+pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report {
+    let mut ctx = CheckContext::new(input, profile);
 
-    let package = read_package(&root, &mut ctx);
+    let package = read_package(&mut ctx);
     if let Some(package) = package {
         ctx.package_name = package.name.clone();
         validate_package_identity(&package, &mut ctx);
@@ -204,7 +312,7 @@ pub fn check_recipe(recipe_dir: impl AsRef<Path>, profile: CheckProfile) -> Resu
             .as_ref()
             .and_then(JsonValue::as_object)
             .and_then(|pi| mcp_tool_policy(pi.get("mcp")));
-        let agent_paths = resolve_agents(&resources, &mut ctx);
+        let agent_paths = resolve_agents(&resources, &ctx);
         ctx.resources.insert("agents".to_owned(), agent_paths.len());
         validate_agents(&agent_paths, mcp_tool_policy.as_ref(), &mut ctx);
         for key in ["extensions", "skills", "prompts"] {
@@ -218,14 +326,14 @@ pub fn check_recipe(recipe_dir: impl AsRef<Path>, profile: CheckProfile) -> Resu
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity.is_error());
-    Ok(Report {
+    Report {
         valid,
         profile,
-        recipe_dir: root.display().to_string(),
+        recipe_dir: ".".to_owned(),
         package_name: ctx.package_name,
         diagnostics: ctx.diagnostics,
         resources: ctx.resources,
-    })
+    }
 }
 
 pub fn render_human(report: &Report) -> String {
@@ -244,7 +352,13 @@ pub fn render_human(report: &Report) -> String {
             diagnostic.message
         ));
         if !diagnostic.path.is_empty() {
-            out.push_str(&format!(" ({})", diagnostic.path));
+            match diagnostic.span {
+                Some(span) => out.push_str(&format!(
+                    " ({}:{}:{})",
+                    diagnostic.path, span.line, span.column
+                )),
+                None => out.push_str(&format!(" ({})", diagnostic.path)),
+            }
         }
         out.push('\n');
         if let Some(help) = &diagnostic.help {
@@ -263,36 +377,39 @@ pub fn render_human(report: &Report) -> String {
     out
 }
 
-fn read_package(root: &Path, ctx: &mut CheckContext) -> Option<Package> {
-    let path = root.join("package.json");
-    let content = match fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            ctx.error(
-                "package.manifest_missing",
-                &path,
-                "Recipe is missing package.json",
-                Some("add package.json with a non-empty pi object"),
-            );
-            return None;
-        }
-        Err(err) => {
-            ctx.error(
-                "package.manifest_unreadable",
-                &path,
-                format!("Failed to read package.json: {err}"),
-                None::<String>,
-            );
-            return None;
-        }
+const PACKAGE_JSON: &str = "package.json";
+
+fn read_package(ctx: &mut CheckContext) -> Option<Package> {
+    if !ctx.has_file(PACKAGE_JSON) {
+        ctx.error(
+            "package.manifest_missing",
+            PACKAGE_JSON,
+            "Recipe is missing package.json",
+            Some("add package.json with a non-empty pi object"),
+        );
+        return None;
+    }
+    let Some(content) = ctx.content(PACKAGE_JSON).map(str::to_owned) else {
+        ctx.error(
+            "package.manifest_unreadable",
+            PACKAGE_JSON,
+            "package.json content was not provided",
+            Some("supply package.json content to the validator"),
+        );
+        return None;
     };
 
     let parsed: JsonValue = match serde_json::from_str(&content) {
         Ok(value) => value,
         Err(err) => {
-            ctx.error(
+            let span = Some(Span {
+                line: err.line(),
+                column: err.column(),
+            });
+            ctx.error_at(
                 "package.manifest_malformed",
-                &path,
+                PACKAGE_JSON,
+                span,
                 format!("package.json is not valid JSON: {err}"),
                 Some("fix package.json syntax"),
             );
@@ -303,7 +420,7 @@ fn read_package(root: &Path, ctx: &mut CheckContext) -> Option<Package> {
     let Some(object) = parsed.as_object() else {
         ctx.error(
             "package.manifest_invalid",
-            &path,
+            PACKAGE_JSON,
             "package.json must be an object",
             None::<String>,
         );
@@ -314,7 +431,7 @@ fn read_package(root: &Path, ctx: &mut CheckContext) -> Option<Package> {
     if !matches!(pi.as_ref(), Some(JsonValue::Object(map)) if !map.is_empty()) {
         ctx.error(
             "package.pi_missing",
-            &path,
+            PACKAGE_JSON,
             "package.json is missing a non-empty pi object",
             Some("add package.json#pi with recipe resources"),
         );
@@ -333,7 +450,7 @@ fn validate_package_identity(package: &Package, ctx: &mut CheckContext) {
     if package.name.is_none() {
         ctx.error(
             "package.name_missing",
-            ctx.root.join("package.json"),
+            PACKAGE_JSON,
             "Package is missing name",
             Some("set package.json#name to the recipe identifier"),
         );
@@ -341,7 +458,7 @@ fn validate_package_identity(package: &Package, ctx: &mut CheckContext) {
     if package.description.is_none() {
         ctx.warning(
             "package.description_missing",
-            ctx.root.join("package.json"),
+            PACKAGE_JSON,
             "Package is missing description",
             Some("add a short package.json#description for humans browsing recipes"),
         );
@@ -349,7 +466,7 @@ fn validate_package_identity(package: &Package, ctx: &mut CheckContext) {
 }
 
 fn validate_runtime_dependencies(package: &Package, ctx: &mut CheckContext) {
-    if !package.runtime_dependencies || has_dependency_lockfile(&ctx.root) {
+    if !package.runtime_dependencies || has_dependency_lockfile(ctx) {
         return;
     }
     let severity = match ctx.profile {
@@ -359,7 +476,8 @@ fn validate_runtime_dependencies(package: &Package, ctx: &mut CheckContext) {
     ctx.push(
         severity,
         "package.lockfile_missing",
-        ctx.root.join("package.json"),
+        PACKAGE_JSON,
+        None,
         "Recipe declares runtime dependencies but has no lockfile",
         Some("commit package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, or yarn.lock"),
     );
@@ -368,12 +486,11 @@ fn validate_runtime_dependencies(package: &Package, ctx: &mut CheckContext) {
 fn validate_pi_config(
     package: &Package,
     ctx: &mut CheckContext,
-) -> HashMap<&'static str, Vec<PathBuf>> {
+) -> HashMap<&'static str, Vec<String>> {
     let mut resolved = HashMap::new();
     let Some(JsonValue::Object(pi)) = package.pi.as_ref() else {
         return resolved;
     };
-    let package_path = ctx.root.join("package.json");
     let known: HashSet<&str> = ["agents", "extensions", "skills", "prompts", "mcp", "evals"]
         .into_iter()
         .collect();
@@ -381,7 +498,7 @@ fn validate_pi_config(
         if !known.contains(key.as_str()) {
             ctx.warning(
                 "pi.unknown_key",
-                &package_path,
+                PACKAGE_JSON,
                 format!("package.json#pi contains unknown key '{key}'"),
                 Some("remove unknown pi keys or update recipe-check if this is a new recipe field"),
             );
@@ -403,7 +520,7 @@ fn validate_pi_config(
         if required && paths.is_empty() {
             ctx.error(
                 "package.agents_missing",
-                &package_path,
+                PACKAGE_JSON,
                 "Recipe declares no loadable agents",
                 Some("add agents/*.yaml or configure package.json#pi.agents"),
             );
@@ -423,7 +540,6 @@ fn resource_patterns(
     required: bool,
     ctx: &mut CheckContext,
 ) -> ResourcePatterns {
-    let package_path = ctx.root.join("package.json");
     match value {
         Some(JsonValue::Array(items)) => {
             let mut patterns = Vec::with_capacity(items.len());
@@ -432,7 +548,7 @@ fn resource_patterns(
                     Some(pattern) => patterns.push(pattern),
                     None => ctx.error(
                         format!("pi.{key}_invalid"),
-                        &package_path,
+                        PACKAGE_JSON,
                         format!("package.json#pi.{key}[{index}] must be a non-empty string"),
                         None::<String>,
                     ),
@@ -446,7 +562,7 @@ fn resource_patterns(
         Some(_) => {
             ctx.error(
                 format!("pi.{key}_invalid"),
-                &package_path,
+                PACKAGE_JSON,
                 format!("package.json#pi.{key} must be an array of strings"),
                 None::<String>,
             );
@@ -456,9 +572,8 @@ fn resource_patterns(
             }
         }
         None => {
-            let conventional = ctx.root.join(key);
             let patterns = if required || key != "extensions" {
-                if conventional.exists() {
+                if ctx.path_exists(key) {
                     vec![key.to_owned()]
                 } else {
                     Vec::new()
@@ -479,20 +594,20 @@ fn resolve_resource_patterns(
     patterns: &ResourcePatterns,
     required: bool,
     ctx: &mut CheckContext,
-) -> Vec<PathBuf> {
+) -> Vec<String> {
     let mut resolved = BTreeSet::new();
     for pattern in &patterns.patterns {
         if let Err(message) = validate_relative_pattern(pattern) {
             ctx.error(
                 format!("package.{key}_invalid"),
-                ctx.root.join("package.json"),
+                PACKAGE_JSON,
                 message,
                 Some("use paths relative to the recipe directory"),
             );
             continue;
         }
 
-        let matches = match_paths(&ctx.root, pattern);
+        let matches = match_paths(ctx, pattern);
         if matches.is_empty() {
             let severity = if required {
                 Severity::Error
@@ -502,16 +617,17 @@ fn resolve_resource_patterns(
             ctx.push(
                 severity,
                 format!("package.{key}_unmatched"),
-                ctx.root.join("package.json"),
+                PACKAGE_JSON,
+                None,
                 format!("package.json#pi.{key} pattern '{pattern}' matched no files"),
                 Some("update or remove the unmatched resource pattern"),
             );
         }
         for path in matches {
-            if key == "extensions" && !is_loadable_extension_file(&path) {
+            if key == "extensions" && !is_loadable_extension_file(ctx, &path) {
                 ctx.warning(
                     "package.extensions_non_loadable",
-                    &path,
+                    path.clone(),
                     format!(
                         "package.json#pi.extensions pattern '{pattern}' matched a file that is not a loadable extension module"
                     ),
@@ -525,7 +641,7 @@ fn resolve_resource_patterns(
     if required && !patterns.explicit && patterns.patterns.is_empty() {
         ctx.error(
             "package.agents_missing",
-            ctx.root.join("package.json"),
+            PACKAGE_JSON,
             "Recipe has no package.json#pi.agents and no conventional agents directory",
             Some("add agents/*.yaml or configure package.json#pi.agents"),
         );
@@ -535,31 +651,20 @@ fn resolve_resource_patterns(
 }
 
 fn resolve_agents(
-    resources: &HashMap<&'static str, Vec<PathBuf>>,
-    ctx: &mut CheckContext,
-) -> Vec<PathBuf> {
+    resources: &HashMap<&'static str, Vec<String>>,
+    ctx: &CheckContext,
+) -> Vec<String> {
     let mut agents = BTreeSet::new();
     for path in resources.get("agents").into_iter().flatten() {
-        if path.is_file() {
-            if is_yaml_file(path) {
+        if ctx.has_file(path) {
+            if is_yaml_path(path) {
                 agents.insert(path.clone());
             }
-        } else if path.is_dir() {
-            match fs::read_dir(path) {
-                Ok(entries) => {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file() && is_yaml_file(&path) {
-                            agents.insert(path);
-                        }
-                    }
+        } else if ctx.has_dir(path) {
+            for child in ctx.child_files(path) {
+                if is_yaml_path(child) {
+                    agents.insert(child.to_owned());
                 }
-                Err(err) => ctx.error(
-                    "package.agents_unreadable",
-                    path,
-                    format!("Failed to read agents directory: {err}"),
-                    None::<String>,
-                ),
             }
         }
     }
@@ -567,7 +672,7 @@ fn resolve_agents(
 }
 
 fn validate_agents(
-    agent_paths: &[PathBuf],
+    agent_paths: &[String],
     mcp_tool_policy: Option<&McpToolPolicy>,
     ctx: &mut CheckContext,
 ) {
@@ -615,32 +720,32 @@ fn validate_agents(
     }
 }
 
-fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
-    let content = match fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(err) => {
-            ctx.error(
-                "agent.unreadable",
-                path,
-                format!("Failed to read agent YAML: {err}"),
-                None::<String>,
-            );
-            return None;
-        }
+fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
+    let Some(content) = ctx.content(path).map(str::to_owned) else {
+        ctx.error(
+            "agent.unreadable",
+            path,
+            "Agent YAML content was not provided",
+            Some("supply agent YAML content to the validator"),
+        );
+        return None;
     };
-    let parsed: YamlValue = match serde_yaml::from_str(&content) {
+    let parsed: JsonValue = match serde_saphyr::from_str(&content) {
         Ok(value) => value,
         Err(err) => {
-            ctx.error(
+            let message = err.to_string();
+            let span = span_from_message(&message);
+            ctx.error_at(
                 "agent.yaml_malformed",
                 path,
-                format!("Agent file is not valid YAML: {err}"),
+                span,
+                format!("Agent file is not valid YAML: {message}"),
                 Some("fix the YAML syntax"),
             );
             return None;
         }
     };
-    let Some(map) = parsed.as_mapping() else {
+    let Some(map) = parsed.as_object() else {
         ctx.error(
             "agent.invalid",
             path,
@@ -650,12 +755,8 @@ fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
         return None;
     };
 
-    let fallback_name = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("agent")
-        .to_owned();
-    let explicit_name = yaml_string(map, "name").filter(|value| !value.trim().is_empty());
+    let fallback_name = file_stem(path).unwrap_or("agent").to_owned();
+    let explicit_name = obj_string(map, "name").filter(|value| !value.trim().is_empty());
     let name = explicit_name
         .clone()
         .unwrap_or_else(|| fallback_name.clone());
@@ -667,7 +768,7 @@ fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
             Some("add a non-empty name field to the agent YAML"),
         );
     }
-    if yaml_has_key(map, "name") && explicit_name.is_none() {
+    if map.contains_key("name") && explicit_name.is_none() {
         ctx.error(
             "agent.name_invalid",
             path,
@@ -676,7 +777,7 @@ fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
         );
     }
 
-    if yaml_string(map, "description").is_none() {
+    if obj_string(map, "description").is_none() {
         ctx.warning(
             "agent.description_missing",
             path,
@@ -685,8 +786,8 @@ fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
         );
     }
 
-    let from = match yaml_value(map, "from") {
-        Some(YamlValue::String(value)) if !value.trim().is_empty() => Some(value.trim().to_owned()),
+    let from = match map.get("from") {
+        Some(JsonValue::String(value)) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         Some(_) => {
             ctx.error(
                 "agent.from_invalid",
@@ -727,16 +828,16 @@ fn read_agent(path: &Path, ctx: &mut CheckContext) -> Option<RawAgent> {
 }
 
 fn validate_agent_model(
-    map: &serde_yaml::Mapping,
-    path: &Path,
+    map: &JsonMap,
+    path: &str,
     name: &str,
     fields: &mut HashSet<AgentField>,
     ctx: &mut CheckContext,
 ) {
-    let Some(value) = yaml_value(map, "model") else {
+    let Some(value) = map.get("model") else {
         return;
     };
-    let Some(model) = value.as_mapping() else {
+    let Some(model) = value.as_object() else {
         ctx.error(
             "agent.model_invalid",
             path,
@@ -746,7 +847,7 @@ fn validate_agent_model(
         return;
     };
 
-    if let Some(model_name) = yaml_string(model, "name") {
+    if let Some(model_name) = obj_string(model, "name") {
         fields.insert(AgentField::ModelName);
         if !valid_model_spec(&model_name) {
             ctx.error(
@@ -758,7 +859,7 @@ fn validate_agent_model(
                 None::<String>,
             );
         }
-    } else if yaml_has_key(model, "name") {
+    } else if model.contains_key("name") {
         ctx.error(
             "agent.model.name_invalid",
             path,
@@ -767,11 +868,10 @@ fn validate_agent_model(
         );
     }
 
-    if yaml_string(model, "thinking_level").is_some()
-        || yaml_string(model, "thinkingLevel").is_some()
+    if obj_string(model, "thinking_level").is_some() || obj_string(model, "thinkingLevel").is_some()
     {
         fields.insert(AgentField::ModelThinkingLevel);
-    } else if yaml_has_key(model, "thinking_level") || yaml_has_key(model, "thinkingLevel") {
+    } else if model.contains_key("thinking_level") || model.contains_key("thinkingLevel") {
         ctx.error(
             "agent.model.thinkingLevel_invalid",
             path,
@@ -782,17 +882,17 @@ fn validate_agent_model(
 }
 
 fn validate_agent_string_array(
-    map: &serde_yaml::Mapping,
+    map: &JsonMap,
     key: &'static str,
     field: AgentField,
-    path: &Path,
+    path: &str,
     fields: &mut HashSet<AgentField>,
     ctx: &mut CheckContext,
 ) {
-    let Some(value) = yaml_value(map, key) else {
+    let Some(value) = map.get(key) else {
         return;
     };
-    match yaml_string_array(value) {
+    match string_array(value) {
         Ok(()) => {
             fields.insert(field);
         }
@@ -806,14 +906,12 @@ fn validate_agent_string_array(
 }
 
 fn validate_agent_mcp(
-    map: &serde_yaml::Mapping,
-    path: &Path,
+    map: &JsonMap,
+    path: &str,
     ctx: &mut CheckContext,
 ) -> Option<BTreeMap<String, McpToolSelectors>> {
-    let Some(value) = yaml_value(map, "mcp") else {
-        return None;
-    };
-    let Some(mcp) = value.as_mapping() else {
+    let value = map.get("mcp")?;
+    let Some(mcp) = value.as_object() else {
         ctx.error(
             "agent.mcp_invalid",
             path,
@@ -833,7 +931,7 @@ fn validate_agent_mcp(
 
     let mut parsed = BTreeMap::new();
     for (server_key, value) in mcp {
-        let Some(server_id) = server_key.as_str().filter(|value| !value.trim().is_empty()) else {
+        if server_key.trim().is_empty() {
             ctx.error(
                 "agent.mcp_server_invalid",
                 path,
@@ -841,8 +939,9 @@ fn validate_agent_mcp(
                 None::<String>,
             );
             continue;
-        };
-        let Some(server) = value.as_mapping() else {
+        }
+        let server_id = server_key.as_str();
+        let Some(server) = value.as_object() else {
             ctx.error(
                 "agent.mcp_invalid",
                 path,
@@ -853,10 +952,10 @@ fn validate_agent_mcp(
         };
         let mut selectors = McpToolSelectors::default();
         for key in ["include", "exclude"] {
-            let Some(value) = yaml_value(server, key) else {
+            let Some(value) = server.get(key) else {
                 continue;
             };
-            if let Err(message) = yaml_string_array(value) {
+            if let Err(message) = string_array(value) {
                 ctx.error(
                     "agent.mcp_invalid",
                     path,
@@ -865,12 +964,12 @@ fn validate_agent_mcp(
                 );
                 continue;
             }
-            let Some(items) = value.as_sequence() else {
+            let Some(items) = value.as_array() else {
                 continue;
             };
             let values = items
                 .iter()
-                .filter_map(YamlValue::as_str)
+                .filter_map(JsonValue::as_str)
                 .map(str::trim)
                 .map(str::to_owned)
                 .collect::<BTreeSet<_>>();
@@ -908,13 +1007,13 @@ fn validate_agent_mcp(
 }
 
 fn validate_agent_system_instructions(
-    map: &serde_yaml::Mapping,
-    path: &Path,
+    map: &JsonMap,
+    path: &str,
     fields: &mut HashSet<AgentField>,
     ctx: &mut CheckContext,
 ) {
-    if let Some(prompt) = yaml_value(map, "prompt") {
-        if matches!(prompt, YamlValue::String(value) if !value.trim().is_empty()) {
+    if let Some(prompt) = map.get("prompt") {
+        if matches!(prompt, JsonValue::String(value) if !value.trim().is_empty()) {
             fields.insert(AgentField::SystemInstructions);
         } else {
             ctx.error(
@@ -926,12 +1025,13 @@ fn validate_agent_system_instructions(
         }
     }
 
-    let Some(value) =
-        yaml_value(map, "system_instructions").or_else(|| yaml_value(map, "systemInstructions"))
+    let Some(value) = map
+        .get("system_instructions")
+        .or_else(|| map.get("systemInstructions"))
     else {
         return;
     };
-    let Some(system) = value.as_mapping() else {
+    let Some(system) = value.as_object() else {
         ctx.error(
             "agent.systemInstructions_invalid",
             path,
@@ -940,8 +1040,8 @@ fn validate_agent_system_instructions(
         );
         return;
     };
-    match yaml_value(system, "content") {
-        Some(YamlValue::String(_)) => {
+    match system.get("content") {
+        Some(JsonValue::String(_)) => {
             fields.insert(AgentField::SystemInstructions);
         }
         Some(_) => ctx.error(
@@ -957,10 +1057,10 @@ fn validate_agent_system_instructions(
             None::<String>,
         ),
     }
-    if let Some(mode) = yaml_value(system, "mode") {
+    if let Some(mode) = system.get("mode") {
         match mode {
-            YamlValue::String(value) if value == "append" || value == "replace" => {}
-            YamlValue::String(_) => ctx.error(
+            JsonValue::String(value) if value == "append" || value == "replace" => {}
+            JsonValue::String(_) => ctx.error(
                 "agent.systemInstructions_invalid",
                 path,
                 "Agent system_instructions.mode must be append or replace",
@@ -976,11 +1076,11 @@ fn validate_agent_system_instructions(
     }
 }
 
-fn validate_agent_extensions(map: &serde_yaml::Mapping, path: &Path, ctx: &mut CheckContext) {
-    let Some(value) = yaml_value(map, "extensions") else {
+fn validate_agent_extensions(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
+    let Some(value) = map.get("extensions") else {
         return;
     };
-    let Some(extensions) = value.as_mapping() else {
+    let Some(extensions) = value.as_object() else {
         ctx.error(
             "agent.extensions_invalid",
             path,
@@ -990,8 +1090,8 @@ fn validate_agent_extensions(map: &serde_yaml::Mapping, path: &Path, ctx: &mut C
         return;
     };
     for key in ["include", "exclude"] {
-        if let Some(value) = yaml_value(extensions, key) {
-            if let Err(message) = yaml_string_array(value) {
+        if let Some(value) = extensions.get(key) {
+            if let Err(message) = string_array(value) {
                 ctx.error(
                     "agent.extensions_invalid",
                     path,
@@ -1016,7 +1116,7 @@ fn validate_agent_names(sources: &[RawAgent], ctx: &mut CheckContext) {
         if count > 1 {
             ctx.error(
                 "agent.name_duplicate",
-                ctx.root.join("agents"),
+                "agents",
                 format!("Recipe agent name '{name}' is declared by multiple files"),
                 Some("choose unique agent names"),
             );
@@ -1028,7 +1128,7 @@ fn validate_agent_names(sources: &[RawAgent], ctx: &mut CheckContext) {
         {
             ctx.error(
                 "agent.name_alias_conflict",
-                &source.path,
+                source.path.clone(),
                 format!(
                     "Recipe agent file alias '{}' conflicts with an explicit agent name",
                     source.fallback_name
@@ -1058,7 +1158,7 @@ fn validate_agent_inheritance(
         if stack.contains(&parent) || parent == current {
             ctx.error(
                 "agent.from_cycle",
-                &agent.path,
+                agent.path.clone(),
                 format!("Recipe agent '{}' has cyclic from chain", agent.name),
                 Some("remove the inheritance cycle"),
             );
@@ -1067,7 +1167,7 @@ fn validate_agent_inheritance(
         if !raw_by_name.contains_key(&parent) {
             ctx.error(
                 "agent.from_missing",
-                &agent.path,
+                agent.path.clone(),
                 format!(
                     "Recipe agent '{}' inherits from missing agent '{}'",
                     agent.name, from
@@ -1165,7 +1265,7 @@ fn validate_resolved_agent_mcp(
         let Some(include) = selection.include else {
             ctx.error(
                 "agent.mcp_include_missing",
-                &path,
+                path.clone(),
                 format!(
                     "Recipe agent '{name}' MCP server '{server_id}' must declare include; use ['*'] for all tools or [] for none"
                 ),
@@ -1176,7 +1276,7 @@ fn validate_resolved_agent_mcp(
         let Some(server_policy) = mcp_tool_policy.and_then(|policy| policy.get(&server_id)) else {
             ctx.error(
                 "agent.mcp_server_undeclared",
-                &path,
+                path.clone(),
                 format!("Recipe agent '{name}' references undeclared MCP server '{server_id}'"),
                 Some("add the server to package.json#pi.mcp.servers or remove it from the agent"),
             );
@@ -1188,7 +1288,7 @@ fn validate_resolved_agent_mcp(
             }
             ctx.error(
                 "agent.mcp_tool_undeclared",
-                &path,
+                path.clone(),
                 format!(
                     "Recipe agent '{name}' MCP tool '{server_id}/{tool}' is not included by the package policy"
                 ),
@@ -1217,7 +1317,6 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
     let Some(value) = value else {
         return;
     };
-    let package_path = ctx.root.join("package.json");
     match value {
         JsonValue::String(path) => validate_mcp_manifest_pattern(path, ctx),
         JsonValue::Array(items) => {
@@ -1227,7 +1326,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 } else {
                     ctx.error(
                         "pi.mcp_invalid",
-                        &package_path,
+                        PACKAGE_JSON,
                         format!("package.json#pi.mcp[{index}] must be a non-empty string"),
                         None::<String>,
                     );
@@ -1241,7 +1340,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 } else {
                     ctx.error(
                         "pi.mcp_invalid",
-                        &package_path,
+                        PACKAGE_JSON,
                         "package.json#pi.mcp.manifest must be a non-empty string",
                         None::<String>,
                     );
@@ -1256,7 +1355,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                             } else {
                                 ctx.error(
                                     "pi.mcp_invalid",
-                                    &package_path,
+                                    PACKAGE_JSON,
                                     format!("package.json#pi.mcp.manifests[{index}] must be a non-empty string"),
                                     None::<String>,
                                 );
@@ -1265,7 +1364,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                     }
                     _ => ctx.error(
                         "pi.mcp_invalid",
-                        &package_path,
+                        PACKAGE_JSON,
                         "package.json#pi.mcp.manifests must be an array of strings",
                         None::<String>,
                     ),
@@ -1275,7 +1374,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
         }
         _ => ctx.error(
             "pi.mcp_invalid",
-            &package_path,
+            PACKAGE_JSON,
             "package.json#pi.mcp must be an object, string, or string array",
             None::<String>,
         ),
@@ -1286,11 +1385,10 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
     let Some(value) = value else {
         return;
     };
-    let package_path = ctx.root.join("package.json");
     let JsonValue::Array(servers) = value else {
         ctx.error(
             "pi.mcp_invalid",
-            &package_path,
+            PACKAGE_JSON,
             "package.json#pi.mcp.servers must be an array",
             None::<String>,
         );
@@ -1300,7 +1398,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
         let JsonValue::Object(server) = server else {
             ctx.error(
                 "pi.mcp_invalid",
-                &package_path,
+                PACKAGE_JSON,
                 format!("package.json#pi.mcp.servers[{index}] must be an object"),
                 None::<String>,
             );
@@ -1309,7 +1407,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
         if string_value(server.get("id")).is_none() {
             ctx.error(
                 "pi.mcp_invalid",
-                &package_path,
+                PACKAGE_JSON,
                 format!("package.json#pi.mcp.servers[{index}].id must be a non-empty string"),
                 None::<String>,
             );
@@ -1318,7 +1416,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             if !required.is_boolean() {
                 ctx.error(
                     "pi.mcp_invalid",
-                    &package_path,
+                    PACKAGE_JSON,
                     format!("package.json#pi.mcp.servers[{index}].required must be boolean"),
                     None::<String>,
                 );
@@ -1328,7 +1426,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             let JsonValue::Object(tools) = tools else {
                 ctx.error(
                     "pi.mcp_invalid",
-                    &package_path,
+                    PACKAGE_JSON,
                     format!("package.json#pi.mcp.servers[{index}].tools must be an object"),
                     None::<String>,
                 );
@@ -1337,7 +1435,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             if !tools.contains_key("include") {
                 ctx.error(
                     "pi.mcp_include_missing",
-                    &package_path,
+                    PACKAGE_JSON,
                     format!(
                         "package.json#pi.mcp.servers[{index}].tools must declare include; use ['*'] for all tools or [] for none"
                     ),
@@ -1368,7 +1466,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                         if !valid {
                             ctx.error(
                                 "pi.mcp_selector_invalid",
-                                &package_path,
+                                PACKAGE_JSON,
                                 format!(
                                     "package.json#pi.mcp.servers[{index}].tools.{key} entry '{selector}' must be {}",
                                     if key == "include" {
@@ -1386,7 +1484,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
         } else {
             ctx.error(
                 "pi.mcp_include_missing",
-                &package_path,
+                PACKAGE_JSON,
                 format!(
                     "package.json#pi.mcp.servers[{index}] must declare tools.include; use ['*'] for all tools or [] for none"
                 ),
@@ -1433,46 +1531,49 @@ fn validate_mcp_manifest_pattern(pattern: &str, ctx: &mut CheckContext) {
     if let Err(message) = validate_relative_pattern(pattern) {
         ctx.error(
             "pi.mcp_manifest_invalid",
-            ctx.root.join("package.json"),
+            PACKAGE_JSON,
             message,
             Some("use manifest paths relative to the recipe directory"),
         );
         return;
     }
-    let matches = match_paths(&ctx.root, pattern);
+    let matches = match_paths(ctx, pattern);
     if matches.is_empty() {
         ctx.error(
             "pi.mcp_manifest_missing",
-            ctx.root.join("package.json"),
+            PACKAGE_JSON,
             format!("MCP manifest pattern '{pattern}' matched no files"),
             Some("add the manifest file or update package.json#pi.mcp"),
         );
     }
 }
 
+const MCP_LOCAL_EXAMPLE: &str = ".pi/mcp.local.example.json";
+
 fn validate_mcp_local_example(ctx: &mut CheckContext) {
-    let path = ctx.root.join(".pi").join("mcp.local.example.json");
-    if !path.exists() {
+    if !ctx.has_file(MCP_LOCAL_EXAMPLE) {
         return;
     }
-    let content = match fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(err) => {
-            ctx.error(
-                "mcp.local_example_unreadable",
-                &path,
-                format!("Failed to read MCP local example: {err}"),
-                None::<String>,
-            );
-            return;
-        }
+    let Some(content) = ctx.content(MCP_LOCAL_EXAMPLE).map(str::to_owned) else {
+        ctx.error(
+            "mcp.local_example_unreadable",
+            MCP_LOCAL_EXAMPLE,
+            "MCP local example content was not provided",
+            Some("supply .pi/mcp.local.example.json content to the validator"),
+        );
+        return;
     };
     let parsed: JsonValue = match serde_json::from_str(&content) {
         Ok(value) => value,
         Err(err) => {
-            ctx.error(
+            let span = Some(Span {
+                line: err.line(),
+                column: err.column(),
+            });
+            ctx.error_at(
                 "mcp.local_example_malformed",
-                &path,
+                MCP_LOCAL_EXAMPLE,
+                span,
                 format!(".pi/mcp.local.example.json is not valid JSON: {err}"),
                 Some("fix the local MCP config template JSON"),
             );
@@ -1482,7 +1583,7 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
     let JsonValue::Object(map) = parsed else {
         ctx.error(
             "mcp.local_example_invalid",
-            &path,
+            MCP_LOCAL_EXAMPLE,
             ".pi/mcp.local.example.json must be an object",
             None::<String>,
         );
@@ -1494,7 +1595,7 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
     let JsonValue::Array(servers) = servers else {
         ctx.error(
             "mcp.local_example_invalid",
-            &path,
+            MCP_LOCAL_EXAMPLE,
             ".pi/mcp.local.example.json servers must be an array",
             None::<String>,
         );
@@ -1504,7 +1605,7 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
         let JsonValue::Object(server) = server else {
             ctx.error(
                 "mcp.local_example_invalid",
-                &path,
+                MCP_LOCAL_EXAMPLE,
                 format!("servers[{index}] must be an object"),
                 None::<String>,
             );
@@ -1515,7 +1616,7 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
                 if string_value(Some(value)).is_none() {
                     ctx.error(
                         "mcp.local_example_invalid",
-                        &path,
+                        MCP_LOCAL_EXAMPLE,
                         format!("servers[{index}].{key} must be a non-empty string"),
                         None::<String>,
                     );
@@ -1526,7 +1627,7 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
             let JsonValue::Object(headers) = headers else {
                 ctx.error(
                     "mcp.local_example_invalid",
-                    &path,
+                    MCP_LOCAL_EXAMPLE,
                     format!("servers[{index}].headers must be an object"),
                     None::<String>,
                 );
@@ -1536,7 +1637,7 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
                 if !matches!(value, JsonValue::String(_)) {
                     ctx.error(
                         "mcp.local_example_invalid",
-                        &path,
+                        MCP_LOCAL_EXAMPLE,
                         format!("servers[{index}].headers.{key} must be a string"),
                         None::<String>,
                     );
@@ -1550,11 +1651,10 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
     let Some(value) = value else {
         return;
     };
-    let package_path = ctx.root.join("package.json");
     let JsonValue::Object(evals) = value else {
         ctx.error(
             "evals.suite_invalid",
-            &package_path,
+            PACKAGE_JSON,
             "package.json#pi.evals must be an object with a suites array",
             None::<String>,
         );
@@ -1566,7 +1666,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
     let JsonValue::Array(suites) = suites else {
         ctx.error(
             "evals.suite_invalid",
-            &package_path,
+            PACKAGE_JSON,
             "package.json#pi.evals.suites must be an array",
             None::<String>,
         );
@@ -1579,7 +1679,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
         let JsonValue::Object(suite) = suite else {
             ctx.error(
                 "evals.suite_invalid",
-                &package_path,
+                PACKAGE_JSON,
                 format!("{label} must be an object"),
                 None::<String>,
             );
@@ -1590,7 +1690,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             if let Some(first) = seen.insert(name.clone(), index) {
                 ctx.error(
                     "evals.name_duplicate",
-                    &package_path,
+                    PACKAGE_JSON,
                     format!("{label} reuses suite name '{name}' already declared at pi.evals.suites[{first}]"),
                     None::<String>,
                 );
@@ -1598,7 +1698,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
         } else {
             ctx.error(
                 "evals.suite_invalid",
-                &package_path,
+                PACKAGE_JSON,
                 format!("{label} must declare a non-empty name"),
                 None::<String>,
             );
@@ -1609,7 +1709,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             Some("git") => validate_git_eval_suite(suite, &label, ctx),
             _ => ctx.error(
                 "evals.suite_invalid",
-                &package_path,
+                PACKAGE_JSON,
                 format!("{label} must use type 'registry' or 'git'"),
                 None::<String>,
             ),
@@ -1617,16 +1717,11 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
     }
 }
 
-fn validate_registry_eval_suite(
-    suite: &serde_json::Map<String, JsonValue>,
-    label: &str,
-    ctx: &mut CheckContext,
-) {
-    let package_path = ctx.root.join("package.json");
+fn validate_registry_eval_suite(suite: &JsonMap, label: &str, ctx: &mut CheckContext) {
     if string_value(suite.get("dataset")).is_none() {
         ctx.error(
             "evals.suite_invalid",
-            &package_path,
+            PACKAGE_JSON,
             format!("{label} registry suite must declare dataset"),
             None::<String>,
         );
@@ -1635,29 +1730,24 @@ fn validate_registry_eval_suite(
         Some(version) if fixed_registry_tag(&version) => {}
         Some(version) => ctx.error(
             "evals.pin_mutable",
-            &package_path,
+            PACKAGE_JSON,
             format!("{label} registry version must be an explicit Harbor registry tag, not a mutable alias or range: {version}"),
             None::<String>,
         ),
         None => ctx.error(
             "evals.suite_invalid",
-            &package_path,
+            PACKAGE_JSON,
             format!("{label} registry suite must declare version"),
             None::<String>,
         ),
     }
 }
 
-fn validate_git_eval_suite(
-    suite: &serde_json::Map<String, JsonValue>,
-    label: &str,
-    ctx: &mut CheckContext,
-) {
-    let package_path = ctx.root.join("package.json");
+fn validate_git_eval_suite(suite: &JsonMap, label: &str, ctx: &mut CheckContext) {
     if string_value(suite.get("repo")).is_none() {
         ctx.error(
             "evals.suite_invalid",
-            &package_path,
+            PACKAGE_JSON,
             format!("{label} git suite must declare repo"),
             None::<String>,
         );
@@ -1666,13 +1756,13 @@ fn validate_git_eval_suite(
         Some(rev) if fixed_git_rev(&rev) => {}
         Some(rev) => ctx.error(
             "evals.pin_mutable",
-            &package_path,
+            PACKAGE_JSON,
             format!("{label} git rev must be a 7-40 character hex commit SHA: {rev}"),
             None::<String>,
         ),
         None => ctx.error(
             "evals.suite_invalid",
-            &package_path,
+            PACKAGE_JSON,
             format!("{label} git suite must declare rev"),
             None::<String>,
         ),
@@ -1680,7 +1770,7 @@ fn validate_git_eval_suite(
     if string_value(suite.get("dataset")).is_none() {
         ctx.error(
             "evals.suite_invalid",
-            &package_path,
+            PACKAGE_JSON,
             format!("{label} git suite must declare dataset"),
             None::<String>,
         );
@@ -1688,11 +1778,10 @@ fn validate_git_eval_suite(
 }
 
 fn validate_json_string_array(value: &JsonValue, label: &str, code: &str, ctx: &mut CheckContext) {
-    let package_path = ctx.root.join("package.json");
     let JsonValue::Array(items) = value else {
         ctx.error(
             code,
-            &package_path,
+            PACKAGE_JSON,
             format!("{label} must be an array of strings"),
             None::<String>,
         );
@@ -1702,7 +1791,7 @@ fn validate_json_string_array(value: &JsonValue, label: &str, code: &str, ctx: &
         if string_value(Some(item)).is_none() {
             ctx.error(
                 code,
-                &package_path,
+                PACKAGE_JSON,
                 format!("{label}[{index}] must be a non-empty string"),
                 None::<String>,
             );
@@ -1710,28 +1799,28 @@ fn validate_json_string_array(value: &JsonValue, label: &str, code: &str, ctx: &
     }
 }
 
-fn match_paths(root: &Path, pattern: &str) -> Vec<PathBuf> {
+fn match_paths(ctx: &CheckContext, pattern: &str) -> Vec<String> {
     let normalized = normalize_slashes(pattern.trim().trim_start_matches("./"));
-    let absolute = root.join(normalized.as_str());
     if !has_glob(&normalized) {
-        return absolute.exists().then_some(absolute).into_iter().collect();
+        return ctx
+            .path_exists(&normalized)
+            .then_some(normalized)
+            .into_iter()
+            .collect();
     }
 
-    let entries: Vec<PathBuf> = WalkDir::new(root)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().to_owned())
-        .collect();
-    entries
-        .into_iter()
-        .filter(|path| {
-            let Ok(relative) = path.strip_prefix(root) else {
-                return false;
-            };
-            glob_matches(&normalized, &path_to_slashes(relative))
-        })
-        .collect()
+    let mut matches = BTreeSet::new();
+    for path in ctx
+        .files
+        .keys()
+        .map(String::as_str)
+        .chain(ctx.directories.iter().map(String::as_str))
+    {
+        if glob_matches(&normalized, path) {
+            matches.insert(path.to_owned());
+        }
+    }
+    matches.into_iter().collect()
 }
 
 fn glob_matches(pattern: &str, path: &str) -> bool {
@@ -1785,7 +1874,7 @@ fn segment_match(pattern: &str, text: &str) -> bool {
     pi == pattern.len()
 }
 
-fn validate_relative_pattern(pattern: &str) -> std::result::Result<(), String> {
+fn validate_relative_pattern(pattern: &str) -> Result<(), String> {
     let trimmed = pattern.trim();
     if trimmed.is_empty() {
         return Err("resource pattern must be non-empty".to_owned());
@@ -1810,7 +1899,7 @@ fn validate_relative_pattern(pattern: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 
-fn has_dependency_lockfile(root: &Path) -> bool {
+fn has_dependency_lockfile(ctx: &CheckContext) -> bool {
     [
         "package-lock.json",
         "npm-shrinkwrap.json",
@@ -1818,7 +1907,7 @@ fn has_dependency_lockfile(root: &Path) -> bool {
         "yarn.lock",
     ]
     .iter()
-    .any(|name| root.join(name).exists())
+    .any(|name| ctx.path_exists(name))
 }
 
 fn has_non_empty_object(value: Option<&JsonValue>) -> bool {
@@ -1832,27 +1921,19 @@ fn string_value(value: Option<&JsonValue>) -> Option<String> {
     }
 }
 
-fn yaml_value<'a>(map: &'a serde_yaml::Mapping, key: &str) -> Option<&'a YamlValue> {
-    map.get(YamlValue::String(key.to_owned()))
-}
-
-fn yaml_has_key(map: &serde_yaml::Mapping, key: &str) -> bool {
-    map.contains_key(YamlValue::String(key.to_owned()))
-}
-
-fn yaml_string(map: &serde_yaml::Mapping, key: &str) -> Option<String> {
-    match yaml_value(map, key) {
-        Some(YamlValue::String(value)) if !value.trim().is_empty() => Some(value.trim().to_owned()),
+fn obj_string(map: &JsonMap, key: &str) -> Option<String> {
+    match map.get(key) {
+        Some(JsonValue::String(value)) if !value.trim().is_empty() => Some(value.trim().to_owned()),
         _ => None,
     }
 }
 
-fn yaml_string_array(value: &YamlValue) -> std::result::Result<(), String> {
-    let Some(items) = value.as_sequence() else {
+fn string_array(value: &JsonValue) -> Result<(), String> {
+    let Some(items) = value.as_array() else {
         return Err("field must be an array of strings".to_owned());
     };
     for (index, item) in items.iter().enumerate() {
-        if !matches!(item, YamlValue::String(value) if !value.trim().is_empty()) {
+        if !matches!(item, JsonValue::String(value) if !value.trim().is_empty()) {
             return Err(format!("item {index} must be a non-empty string"));
         }
     }
@@ -1931,53 +2012,95 @@ fn has_glob(value: &str) -> bool {
     value.chars().any(|ch| matches!(ch, '*' | '?'))
 }
 
-fn is_yaml_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|extension| extension.to_str()),
-        Some("yaml" | "yml")
-    )
+fn is_yaml_path(path: &str) -> bool {
+    matches!(extension(path), Some("yaml" | "yml"))
 }
 
-fn is_loadable_extension_file(path: &Path) -> bool {
-    path.is_file()
+fn is_loadable_extension_file(ctx: &CheckContext, path: &str) -> bool {
+    ctx.has_file(path)
         && matches!(
-            path.extension().and_then(|extension| extension.to_str()),
+            extension(path),
             Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs")
         )
 }
 
-fn path_to_slashes(path: &Path) -> String {
-    path.components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/")
+fn extension(path: &str) -> Option<&str> {
+    let name = path.rsplit('/').next()?;
+    let (stem, extension) = name.rsplit_once('.')?;
+    (!stem.is_empty()).then_some(extension)
+}
+
+fn file_stem(path: &str) -> Option<&str> {
+    let name = path.rsplit('/').next()?;
+    if name.is_empty() {
+        return None;
+    }
+    match name.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => Some(stem),
+        _ => Some(name),
+    }
+}
+
+fn normalize_slashes(value: &str) -> String {
+    value.replace('\\', "/")
+}
+
+fn normalize_relative(path: &str) -> String {
+    let mut normalized = normalize_slashes(path.trim());
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_owned();
+    }
+    normalized.trim_matches('/').to_owned()
+}
+
+fn ancestor_dirs(path: &str) -> Vec<String> {
+    let mut ancestors = Vec::new();
+    for (index, ch) in path.char_indices() {
+        if ch == '/' {
+            ancestors.push(path[..index].to_owned());
+        }
+    }
+    ancestors
+}
+
+/// Best-effort extraction of "line N column M" from a parser error message.
+fn span_from_message(message: &str) -> Option<Span> {
+    fn number_after<'a>(message: &'a str, keyword: &str) -> Option<(usize, &'a str)> {
+        let start = message.find(keyword)? + keyword.len();
+        let rest = message[start..].trim_start();
+        let digits_len = rest.chars().take_while(char::is_ascii_digit).count();
+        if digits_len == 0 {
+            return None;
+        }
+        let value = rest[..digits_len].parse().ok()?;
+        Some((value, &rest[digits_len..]))
+    }
+
+    let (line, rest) = number_after(message, "line")?;
+    let column = number_after(rest, "column").map(|(value, _)| value)?;
+    Some(Span { line, column })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn temp_recipe(name: &str) -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock before unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("recipe-check-{name}-{suffix}"));
-        fs::create_dir_all(root.join("agents")).expect("create recipe dirs");
-        root
+    fn recipe_files(files: &[(&str, &str)]) -> RecipeFiles {
+        RecipeFiles {
+            files: files
+                .iter()
+                .map(|(path, content)| RecipeFile::new(*path, *content))
+                .collect(),
+            directories: Vec::new(),
+        }
     }
 
-    fn write_selector_recipe(
-        root: &Path,
+    fn selector_recipe(
         package_tools: JsonValue,
         agent_mcp: &str,
         include_bash: bool,
-    ) {
+    ) -> RecipeFiles {
         let package = json!({
             "name": "mcp-selector-test",
             "version": "0.1.0",
@@ -1991,47 +2114,39 @@ mod tests {
                 }
             }
         });
-        fs::write(
-            root.join("package.json"),
-            format!(
-                "{}\n",
-                serde_json::to_string_pretty(&package).expect("serialize package")
-            ),
-        )
-        .expect("write package");
-
         let bash = if include_bash { "  - bash\n" } else { "" };
-        fs::write(
-            root.join("agents").join("agent.yaml"),
-            format!(
-                concat!(
-                    "name: agent\n",
-                    "description: Test agent\n",
-                    "model:\n",
-                    "  name: test/provider-model\n",
-                    "  thinking_level: low\n",
-                    "tools:\n",
-                    "  - read\n",
-                    "{}",
-                    "mcp:\n",
-                    "{}",
-                    "skills: []\n",
-                    "subagents: []\n",
-                    "system_instructions:\n",
-                    "  mode: append\n",
-                    "  content: Test instructions\n",
-                ),
-                bash, agent_mcp
+        let agent = format!(
+            concat!(
+                "name: agent\n",
+                "description: Test agent\n",
+                "model:\n",
+                "  name: test/provider-model\n",
+                "  thinking_level: low\n",
+                "tools:\n",
+                "  - read\n",
+                "{}",
+                "mcp:\n",
+                "{}",
+                "skills: []\n",
+                "subagents: []\n",
+                "system_instructions:\n",
+                "  mode: append\n",
+                "  content: Test instructions\n",
             ),
-        )
-        .expect("write agent");
+            bash, agent_mcp
+        );
+        recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/agent.yaml", &agent),
+        ])
     }
 
     #[test]
     fn accepts_package_and_agent_mcp_include_exclude_selectors() {
-        let root = temp_recipe("mcp-selectors");
-        write_selector_recipe(
-            &root,
+        let input = selector_recipe(
             json!({
                 "include": ["*"],
                 "exclude": ["delete_org"]
@@ -2046,17 +2161,14 @@ mod tests {
             true,
         );
 
-        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
-        fs::remove_dir_all(&root).expect("cleanup recipe");
+        let report = check_recipe_files(&input, CheckProfile::Ci);
 
         assert!(report.valid, "{:?}", report.diagnostics);
     }
 
     #[test]
     fn rejects_agent_exact_selector_excluded_by_package_policy() {
-        let root = temp_recipe("mcp-selector-excluded");
-        write_selector_recipe(
-            &root,
+        let input = selector_recipe(
             json!({
                 "include": ["*"],
                 "exclude": ["delete_org"]
@@ -2065,8 +2177,7 @@ mod tests {
             true,
         );
 
-        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
-        fs::remove_dir_all(&root).expect("cleanup recipe");
+        let report = check_recipe_files(&input, CheckProfile::Ci);
 
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|diagnostic| {
@@ -2077,16 +2188,13 @@ mod tests {
 
     #[test]
     fn rejects_malformed_agent_mcp_selectors() {
-        let root = temp_recipe("mcp-selector-invalid");
-        write_selector_recipe(
-            &root,
+        let input = selector_recipe(
             json!({ "include": ["*"] }),
             "  salesforce:\n    include:\n      - search_*\n",
             true,
         );
 
-        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
-        fs::remove_dir_all(&root).expect("cleanup recipe");
+        let report = check_recipe_files(&input, CheckProfile::Ci);
 
         assert!(!report.valid);
         assert!(report
@@ -2097,11 +2205,9 @@ mod tests {
 
     #[test]
     fn requires_explicit_package_and_agent_mcp_includes() {
-        let root = temp_recipe("mcp-selector-missing-include");
-        write_selector_recipe(&root, json!({}), "  salesforce: {}\n", true);
+        let input = selector_recipe(json!({}), "  salesforce: {}\n", true);
 
-        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
-        fs::remove_dir_all(&root).expect("cleanup recipe");
+        let report = check_recipe_files(&input, CheckProfile::Ci);
 
         assert!(!report.valid);
         assert!(report
@@ -2116,9 +2222,7 @@ mod tests {
 
     #[test]
     fn rejects_agent_mcp_access_without_package_server_policy() {
-        let root = temp_recipe("mcp-package-policy-missing");
-        write_selector_recipe(
-            &root,
+        let mut input = selector_recipe(
             json!({ "include": ["search_profiles"] }),
             "  salesforce:\n    include:\n      - search_profiles\n",
             true,
@@ -2128,17 +2232,12 @@ mod tests {
             "version": "0.1.0",
             "pi": { "agents": ["agents/*.yaml"] }
         });
-        fs::write(
-            root.join("package.json"),
-            format!(
-                "{}\n",
-                serde_json::to_string_pretty(&package).expect("serialize package")
-            ),
-        )
-        .expect("write package");
+        input.files[0] = RecipeFile::new(
+            "package.json",
+            serde_json::to_string_pretty(&package).expect("serialize package"),
+        );
 
-        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
-        fs::remove_dir_all(&root).expect("cleanup recipe");
+        let report = check_recipe_files(&input, CheckProfile::Ci);
 
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|diagnostic| {
@@ -2146,8 +2245,152 @@ mod tests {
                 && diagnostic.message.contains("salesforce")
         }));
     }
-}
 
-fn normalize_slashes(value: &str) -> String {
-    value.replace('\\', "/")
+    #[test]
+    fn reports_missing_package_manifest() {
+        let report = check_recipe_files(&RecipeFiles::default(), CheckProfile::Local);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "package.manifest_missing"));
+    }
+
+    #[test]
+    fn reports_unread_file_content_as_unreadable() {
+        let input = RecipeFiles {
+            files: vec![RecipeFile::unread("package.json")],
+            directories: Vec::new(),
+        };
+
+        let report = check_recipe_files(&input, CheckProfile::Local);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "package.manifest_unreadable"));
+    }
+
+    #[test]
+    fn malformed_package_json_has_span() {
+        let input = recipe_files(&[("package.json", "{\n  \"name\": ,\n}\n")]);
+
+        let report = check_recipe_files(&input, CheckProfile::Local);
+
+        let diagnostic = report
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "package.manifest_malformed")
+            .expect("malformed diagnostic");
+        let span = diagnostic.span.expect("span");
+        assert_eq!(span.line, 2);
+    }
+
+    #[test]
+    fn lockfile_requirement_escalates_by_profile() {
+        let package = json!({
+            "name": "lockfile-test",
+            "description": "Test",
+            "dependencies": { "left-pad": "^1.0.0" },
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let agent = concat!(
+            "name: agent\n",
+            "description: Test agent\n",
+            "model:\n",
+            "  name: test/provider-model\n",
+            "  thinking_level: low\n",
+            "tools: []\n",
+            "skills: []\n",
+            "subagents: []\n",
+            "system_instructions:\n",
+            "  content: Test instructions\n",
+        );
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/agent.yaml", agent),
+        ]);
+
+        let local = check_recipe_files(&input, CheckProfile::Local);
+        assert!(local.valid, "{:?}", local.diagnostics);
+        assert!(local
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "package.lockfile_missing"
+                && diagnostic.severity == Severity::Warning));
+
+        let ci = check_recipe_files(&input, CheckProfile::Ci);
+        assert!(!ci.valid);
+
+        let mut with_lockfile = input.clone();
+        with_lockfile
+            .files
+            .push(RecipeFile::new("pnpm-lock.yaml", "lockfileVersion: 9\n"));
+        let report = check_recipe_files(&with_lockfile, CheckProfile::Ci);
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn resolves_agents_from_conventional_directory() {
+        let package = json!({
+            "name": "conventional-agents",
+            "description": "Test",
+            "pi": { "agents": ["agents"] }
+        });
+        let agent = concat!(
+            "name: helper\n",
+            "description: Helper agent\n",
+            "model:\n",
+            "  name: test/provider-model\n",
+            "  thinking_level: low\n",
+            "tools: []\n",
+            "skills: []\n",
+            "subagents: []\n",
+            "system_instructions:\n",
+            "  content: Test instructions\n",
+        );
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/helper.yaml", agent),
+            ("agents/notes.md", "not an agent\n"),
+            ("agents/nested/inner.yaml", "name: inner\n"),
+        ]);
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert_eq!(report.resources.get("agents"), Some(&1));
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn malformed_agent_yaml_is_reported() {
+        let package = json!({
+            "name": "malformed-agent",
+            "description": "Test",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/agent.yaml", "name: [unterminated\n"),
+        ]);
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.yaml_malformed"));
+    }
 }

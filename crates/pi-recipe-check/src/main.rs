@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use recipe_check::{check_recipe, render_human, CheckProfile};
+use pi_recipe_check::{check_recipe, render_human, CheckProfile};
 
 #[derive(Debug, Parser)]
 #[command(name = "recipe-check", about = "Check a Pi recipe package")]

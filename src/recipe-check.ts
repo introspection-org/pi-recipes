@@ -11,10 +11,16 @@ export interface RecipeCheckOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+export interface RecipeCheckSpan {
+  line: number;
+  column: number;
+}
+
 export interface RecipeCheckDiagnostic {
   severity: "error" | "warning";
   code: string;
   path: string;
+  span?: RecipeCheckSpan;
   message: string;
   help?: string;
 }
@@ -64,7 +70,7 @@ function recipeCheckCommand(env: NodeJS.ProcessEnv): RecipeCheckCommand {
   );
   if (existsSync(packaged)) return { command: packaged, args: [] };
 
-  const crateDir = resolve(root, "crates", "recipe-check");
+  const crateDir = resolve(root, "crates", "pi-recipe-check");
   for (const targetRoot of [resolve(root, "target"), resolve(crateDir, "target")]) {
     for (const profile of ["release", "debug"]) {
       const candidate = resolve(targetRoot, profile, executableName());

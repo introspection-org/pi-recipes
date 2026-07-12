@@ -2435,8 +2435,8 @@ describe("package boundary", () => {
       expect.arrayContaining([
         "Cargo.toml",
         "Cargo.lock",
-        "crates/recipe-check/Cargo.toml",
-        "crates/recipe-check/src",
+        "crates/pi-recipe-check/Cargo.toml",
+        "crates/pi-recipe-check/src",
         "harbor",
       ])
     );
