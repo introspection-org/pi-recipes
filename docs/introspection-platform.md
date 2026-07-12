@@ -13,11 +13,16 @@ services (identity, a connector broker, a Person Server, resource mounting,
 telemetry). The Pi recipe loader parses and merges them everywhere so recipes
 still **validate** off-platform; they simply do nothing there.
 
-| Extension | Authored in the recipe? | Provided by the platform |
+"You declare it" = the recipe author writes it into the recipe files
+(`agent.yaml` / the `.introspection` manifest). "Platform provides" = supplied
+automatically at deploy/run time without being written in the recipe.
+
+| Extension | You declare it in the recipe | Platform provides |
 | --- | --- | --- |
-| **Connectors** (`connectors:` on an agent) | yes — references + scopes | connector registry, `getToken` broker, Person Server, missions |
-| **Managed resources** (repos / files / memories / skills / mounts) | no — injected at run time | the task/deployment context |
-| **Managed runtime** (deployment, LLM mode, telemetry) | partly (`runtime.llm_mode`) | the deployment + observability plane |
+| **Connectors** (`connectors:` on an agent) | **yes** — reference + scope connectors in `agent.yaml` | connector registry, `getToken` broker, Person Server, missions |
+| **Managed resources** (repos / files / memories / skills / mounts) | **no** — injected at run time | the mounted resources from the task/deployment context |
+| **Compute** (sandbox size — vCPU / memory) | **no** — provisioned per deployment | the sized sandbox the agent runs in, metered as compute-seconds |
+| **Managed runtime** (deployment, LLM mode, telemetry) | **partly** — `runtime.llm_mode` in the manifest | the deployment, managed LLM access, telemetry export |
 
 Core Pi fields (`model`, `tools`, `skills`, `subagents`, `system_instructions`)
 and the MCP-standard `mcp` block are documented in
@@ -108,6 +113,27 @@ does not author them. The distinction from Pi's own `resources_discover` (the
 are recipe-local skill/prompt folders, whereas managed resources come from the
 deployment. See `introspection-cloud/docs/design/task-spawn-contract.md` and
 `sandbox-sessions.md` for how they are assembled.
+
+---
+
+## Compute
+
+The platform provisions the **sandbox the agent runs in** at a size tier. Each
+tier has a guaranteed request and a burst limit for vCPU and memory:
+
+| Tier | Request (vCPU / memory) | Burst limit (vCPU / memory) |
+| --- | --- | --- |
+| **S** | 0.5 vCPU / 1 GiB | 1 vCPU / 2 GiB |
+| **M** (default) | 2 vCPU / 4 GiB | 4 vCPU / 8 GiB |
+| **L** | 4 vCPU / 8 GiB | 8 vCPU / 16 GiB |
+
+Compute is **provisioned by the platform per deployment, not declared in the
+recipe** — the deployment size is an operator/deployment knob. Usage is metered
+as **compute-seconds** (`vcpu_seconds = tier.vcpus × active_seconds`), so a
+larger tier costs proportionally more per active second. An idle sandbox is
+paused/reclaimed by the runtime lifecycle, so you are billed for active compute,
+not wall-clock. See `introspection-cloud/docs/design/sandbox-sessions.md` and the
+compute-pricing tiers for details.
 
 ---
 
