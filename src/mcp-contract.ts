@@ -67,7 +67,18 @@ export function compactSchemaType(value: unknown): string {
   return `${typeof type === "string" ? type : "unknown"}${constraintSuffix(schema)}`;
 }
 
-function schemaLines(value: unknown, indent: string): string[] {
+function descriptionText(value: unknown, verbose: boolean): string {
+  if (typeof value !== "string" || !value.trim()) return "";
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (verbose || normalized.length <= 160) return normalized;
+  return `${normalized.slice(0, 159).trimEnd()}…`;
+}
+
+function schemaLines(
+  value: unknown,
+  indent: string,
+  options: { verboseDescriptions?: boolean } = {}
+): string[] {
   const schema = record(value);
   if (!schema) return [`${indent}unknown`];
   const properties = record(schema.properties);
@@ -81,14 +92,15 @@ function schemaLines(value: unknown, indent: string): string[] {
   for (const [name, descriptorValue] of Object.entries(properties)) {
     const descriptor = record(descriptorValue) ?? {};
     const optional = required.has(name) ? "" : "?";
-    const description =
-      typeof descriptor.description === "string" && descriptor.description.trim()
-        ? ` — ${descriptor.description.trim().replace(/\s+/g, " ")}`
-        : "";
+    const compactDescription = descriptionText(
+      descriptor.description,
+      options.verboseDescriptions === true
+    );
+    const description = compactDescription ? ` — ${compactDescription}` : "";
     const nested = record(descriptor.properties);
     if (nested) {
       lines.push(`${indent}${name}${optional}: {`);
-      lines.push(...schemaLines(descriptor, `${indent}  `));
+      lines.push(...schemaLines(descriptor, `${indent}  `, options));
       lines.push(`${indent}}${description}`);
     } else {
       lines.push(`${indent}${name}${optional}: ${compactSchemaType(descriptor)}${description}`);
@@ -137,6 +149,67 @@ function callExample(server: string, tool: ContractTool): string {
   return `mcp call ${server}.${tool.name}${args.length > 0 ? ` ${args.join(" ")}` : ""}`;
 }
 
+function structuredBranch(value: unknown, kind: "object" | "array"): Schema | undefined {
+  const schema = record(value);
+  if (!schema) return undefined;
+  if (
+    (kind === "array" && schema.type === "array") ||
+    (kind === "object" && (schema.type === "object" || record(schema.properties)))
+  ) {
+    return schema;
+  }
+  const union = Array.isArray(schema.anyOf)
+    ? schema.anyOf
+    : Array.isArray(schema.oneOf)
+      ? schema.oneOf
+      : [];
+  return union.map((branch) => structuredBranch(branch, kind)).find(Boolean);
+}
+
+function jsonExample(value: unknown, name: string): unknown {
+  const schema = record(value) ?? {};
+  if (schema.const !== undefined) return schema.const;
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+  if (schema.type === "boolean") return true;
+  if (schema.type === "number" || schema.type === "integer") {
+    return number(schema.minimum) ?? 1;
+  }
+  if (schema.type === "array") {
+    const count = Math.max(1, number(schema.minItems) ?? 1);
+    return Array.from({ length: count }, () => jsonExample(schema.items, "value"));
+  }
+  if (schema.type === "object" || record(schema.properties)) {
+    const properties = record(schema.properties) ?? {};
+    const required = Array.isArray(schema.required)
+      ? schema.required.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    return Object.fromEntries(
+      required.map((field) => [field, jsonExample(properties[field], field)])
+    );
+  }
+  return `<${name}>`;
+}
+
+function structuredCallExample(server: string, tool: ContractTool): string | undefined {
+  const schema = record(tool.inputSchema);
+  const properties = record(schema?.properties) ?? {};
+  const required = new Set(
+    Array.isArray(schema?.required)
+      ? schema.required.filter((entry): entry is string => typeof entry === "string")
+      : []
+  );
+  for (const kind of ["object", "array"] as const) {
+    for (const [name, descriptor] of Object.entries(properties)) {
+      if (required.has(name)) continue;
+      const branch = structuredBranch(descriptor, kind);
+      if (!branch) continue;
+      const json = JSON.stringify({ [name]: jsonExample(branch, name) });
+      return `mcp call ${server}.${tool.name} --json '${json}'`;
+    }
+  }
+  return undefined;
+}
+
 export interface ContractTool {
   name: string;
   description?: string;
@@ -144,18 +217,30 @@ export interface ContractTool {
   outputSchema?: unknown;
 }
 
-export function renderToolContract(server: string, tool: ContractTool): string {
+export function renderToolContract(
+  server: string,
+  tool: ContractTool,
+  options: { verboseDescriptions?: boolean } = {}
+): string {
   const lines = [`${server}.${tool.name}`];
-  if (tool.description?.trim()) {
-    lines.push(tool.description.trim().replace(/\s+/g, " "));
+  const description = descriptionText(
+    tool.description,
+    options.verboseDescriptions === true
+  );
+  if (description) {
+    lines.push(description);
   }
-  lines.push("", "input", ...schemaLines(tool.inputSchema, "  "));
+  lines.push("", "input", ...schemaLines(tool.inputSchema, "  ", options));
   lines.push(
     "",
     "output",
-    ...(schemaObject(tool.outputSchema) ? schemaLines(tool.outputSchema, "  ") : ["  unspecified"])
+    ...(schemaObject(tool.outputSchema)
+      ? schemaLines(tool.outputSchema, "  ", options)
+      : ["  unspecified"])
   );
   lines.push("", "call", `  ${callExample(server, tool)}`);
+  const structured = structuredCallExample(server, tool);
+  if (structured) lines.push(`  structured: ${structured}`);
   return `${lines.join("\n")}\n`;
 }
 

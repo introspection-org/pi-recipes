@@ -58,6 +58,7 @@ describe("compact MCP contracts", () => {
         "",
         "call",
         '  mcp call nextplay.search_profiles q="<q>"',
+        `  structured: mcp call nextplay.search_profiles --json '{"group":{"field":"<field>"}}'`,
         "",
       ].join("\n")
     );
@@ -120,5 +121,22 @@ describe("compact MCP contracts", () => {
     expect(contract).toContain(
       `mcp call server.constrained limit=0 tags='["<value>","<value>"]'`
     );
+  });
+
+  it("compacts descriptions by default and preserves them in verbose contracts", () => {
+    const description = `Important field. ${"detail ".repeat(40)}`;
+    const tool = {
+      name: "described",
+      description,
+      inputSchema: {
+        type: "object",
+        properties: { q: { type: "string", description } },
+      },
+    };
+    const compact = renderToolContract("server", tool);
+    const verbose = renderToolContract("server", tool, { verboseDescriptions: true });
+    expect(compact).toContain("…");
+    expect(compact.length).toBeLessThan(verbose.length);
+    expect(verbose).toContain(description.trim().replace(/\s+/g, " "));
   });
 });

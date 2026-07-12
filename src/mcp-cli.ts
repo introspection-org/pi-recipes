@@ -132,7 +132,7 @@ export function mcpListHelpText(): string {
     "Flags:",
     "  --all-parameters          Include every optional parameter.",
     "  --schema                  Show a compact input/output contract for one exact tool.",
-    "  --verbose                 Include tool descriptions.",
+    "  --verbose                 Include full tool and parameter descriptions.",
     "  --status                  Show concise status for an exact server target.",
     "  --quiet, --exit-code      Health checks for an exact server target.",
     "  --timeout <ms>            Override discovery timeout for an exact target.",
@@ -734,7 +734,13 @@ async function compactList(args: string[]): Promise<number> {
       if (!tool) return 1;
       const outputSchema =
         tool.outputSchema ?? manifestOutputSchema(manifestTool(manifest, server, exact.tool));
-      stdout.write(renderToolContract(server, { ...tool, outputSchema }));
+      stdout.write(
+        renderToolContract(
+          server,
+          { ...tool, outputSchema },
+          { verboseDescriptions: verbose }
+        )
+      );
       return 0;
     }
     for (const tool of selected) {

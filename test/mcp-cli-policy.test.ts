@@ -111,6 +111,15 @@ describe("recipe-session mcporter policy", () => {
     ).toContain("positional arguments are unavailable");
   });
 
+  it("corrects a split server and tool selector", () => {
+    expect(
+      validateDelegatedMcpCommand(
+        ["call", "contacts", "search_contacts", '{"query":"Ada"}'],
+        policy()
+      ).error
+    ).toContain("Use mcp call contacts.search_contacts key=value or --json");
+  });
+
   it.each([
     ["list", "contacts", "--brief"],
     ["list", "contacts", "--signatures"],
@@ -119,9 +128,9 @@ describe("recipe-session mcporter policy", () => {
     ["call", "contacts.search_contacts", "--no-oauth"],
     ["call", "contacts.search_contacts", "--raw-strings"],
   ])("rejects removed compatibility syntax: %j", (...args) => {
-    expect(validateDelegatedMcpCommand(args as string[], policy()).error).toContain(
-      "unavailable"
-    );
+    const error = validateDelegatedMcpCommand(args as string[], policy()).error;
+    if (args.includes("--args")) expect(error).toContain("use --json");
+    else expect(error).toContain("unavailable");
   });
 
   it.each([

@@ -212,6 +212,18 @@ function validateCall(
   const rawSelector = args[1];
   const selector = rawSelector ? toolSelector(rawSelector) : null;
   if (!selector) {
+    const splitTool = rawSelector ? args[2] : undefined;
+    if (
+      rawSelector &&
+      splitTool &&
+      policy.servers.get(rawSelector)?.tools.has(splitTool)
+    ) {
+      return {
+        error:
+          `mcp call requires a dotted tool selector. ` +
+          `Use mcp call ${rawSelector}.${splitTool} key=value or --json for structured arguments.`,
+      };
+    }
     return {
       error:
         "mcp call requires an exact session tool selector: mcp call <server>.<tool> key=value ...",
@@ -223,6 +235,11 @@ function validateCall(
   const targetError = validateExactTarget(policy, selector.server, selector.tool);
   if (targetError) return { error: targetError };
   const blocked = forbiddenFlag(args.slice(2));
+  if (blocked === "--args") {
+    return {
+      error: "mcp call option '--args' was removed; use --json <object|-> for structured tool arguments.",
+    };
+  }
   if (blocked) return { error: `mcp call option '${blocked}' is unavailable in recipe sessions.` };
   const syntaxError = callSyntaxError(args.slice(2));
   if (syntaxError) return { error: syntaxError };
