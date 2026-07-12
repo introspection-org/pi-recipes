@@ -113,27 +113,47 @@ function schemaObject(value: unknown): Schema | undefined {
   return record(value);
 }
 
-function callValue(value: unknown, name: string): string {
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function exampleValue(value: unknown, name: string): unknown {
   const schema = record(value) ?? {};
   const union = Array.isArray(schema.anyOf)
     ? schema.anyOf
     : Array.isArray(schema.oneOf)
       ? schema.oneOf
       : undefined;
-  if (union?.length) return callValue(union[0], name);
-  if (schema.const !== undefined) return quoted(schema.const);
-  if (Array.isArray(schema.enum) && schema.enum.length > 0) return quoted(schema.enum[0]);
-  if (schema.type === "boolean") return "true";
+  if (union?.length) return exampleValue(union[0], name);
+  if (schema.const !== undefined) return schema.const;
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+  if (schema.type === "boolean") return true;
   if (schema.type === "number" || schema.type === "integer") {
-    return String(number(schema.minimum) ?? 1);
+    return number(schema.minimum) ?? 1;
   }
   if (schema.type === "array") {
     const count = Math.max(1, number(schema.minItems) ?? 1);
-    const item = callValue(schema.items, "value");
-    return `'[${Array.from({ length: count }, () => item).join(",")}]'`;
+    return Array.from({ length: count }, () => exampleValue(schema.items, "value"));
   }
-  if (schema.type === "object" || record(schema.properties)) return "'{}'";
-  return `"<${name}>"`;
+  if (schema.type === "object" || record(schema.properties)) {
+    const properties = record(schema.properties) ?? {};
+    const required = Array.isArray(schema.required)
+      ? schema.required.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    return Object.fromEntries(
+      required.map((field) => [field, exampleValue(properties[field], field)])
+    );
+  }
+  return `<${name}>`;
+}
+
+function callValue(value: unknown, name: string): string {
+  const example = exampleValue(value, name);
+  return typeof example === "string"
+    ? shellQuote(example)
+    : typeof example === "object"
+      ? shellQuote(JSON.stringify(example))
+      : String(example);
 }
 
 function callExample(server: string, tool: ContractTool): string {
@@ -166,30 +186,6 @@ function structuredBranch(value: unknown, kind: "object" | "array"): Schema | un
   return union.map((branch) => structuredBranch(branch, kind)).find(Boolean);
 }
 
-function jsonExample(value: unknown, name: string): unknown {
-  const schema = record(value) ?? {};
-  if (schema.const !== undefined) return schema.const;
-  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
-  if (schema.type === "boolean") return true;
-  if (schema.type === "number" || schema.type === "integer") {
-    return number(schema.minimum) ?? 1;
-  }
-  if (schema.type === "array") {
-    const count = Math.max(1, number(schema.minItems) ?? 1);
-    return Array.from({ length: count }, () => jsonExample(schema.items, "value"));
-  }
-  if (schema.type === "object" || record(schema.properties)) {
-    const properties = record(schema.properties) ?? {};
-    const required = Array.isArray(schema.required)
-      ? schema.required.filter((entry): entry is string => typeof entry === "string")
-      : [];
-    return Object.fromEntries(
-      required.map((field) => [field, jsonExample(properties[field], field)])
-    );
-  }
-  return `<${name}>`;
-}
-
 function structuredCallExample(server: string, tool: ContractTool): string | undefined {
   const schema = record(tool.inputSchema);
   const properties = record(schema?.properties) ?? {};
@@ -203,8 +199,8 @@ function structuredCallExample(server: string, tool: ContractTool): string | und
       if (required.has(name)) continue;
       const branch = structuredBranch(descriptor, kind);
       if (!branch) continue;
-      const json = JSON.stringify({ [name]: jsonExample(branch, name) });
-      return `mcp call ${server}.${tool.name} --json '${json}'`;
+      const json = JSON.stringify({ [name]: exampleValue(branch, name) });
+      return `mcp call ${server}.${tool.name} --json ${shellQuote(json)}`;
     }
   }
   return undefined;

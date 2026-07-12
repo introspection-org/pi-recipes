@@ -675,6 +675,10 @@ async function compactList(args: string[]): Promise<number> {
     stderr.write(`${timeout}\n`);
     return 2;
   }
+  if (schema && !target) {
+    stderr.write("mcp list --schema requires one exact tool: mcp list <server>.<tool> --schema\n");
+    return 2;
+  }
   const manifest = await readManifest();
   if (!target) {
     const runtime = await createRuntime();

@@ -57,7 +57,7 @@ describe("compact MCP contracts", () => {
         "  found: integer [0..]",
         "",
         "call",
-        '  mcp call nextplay.search_profiles q="<q>"',
+        "  mcp call nextplay.search_profiles q='<q>'",
         `  structured: mcp call nextplay.search_profiles --json '{"group":{"field":"<field>"}}'`,
         "",
       ].join("\n")
@@ -121,6 +121,21 @@ describe("compact MCP contracts", () => {
     expect(contract).toContain(
       `mcp call server.constrained limit=0 tags='["<value>","<value>"]'`
     );
+  });
+
+  it("shell-quotes schema-provided call values", () => {
+    const contract = renderToolContract("server", {
+      name: "unsafe",
+      inputSchema: {
+        type: "object",
+        properties: {
+          mode: { enum: ["$TOKEN $(touch /tmp/nope) it's"] },
+        },
+        required: ["mode"],
+      },
+    });
+    expect(contract).toContain(`mode='$TOKEN $(touch /tmp/nope) it'"'"'s'`);
+    expect(contract).not.toContain(`mode="$TOKEN`);
   });
 
   it("compacts descriptions by default and preserves them in verbose contracts", () => {

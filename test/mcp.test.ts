@@ -1370,7 +1370,7 @@ describe("mcporter CLI end-to-end", () => {
           "  value: string",
           "",
           "call",
-          '  mcp call stub.get_value key="<key>"',
+          "  mcp call stub.get_value key='<key>'",
           "",
         ].join("\n")
       );

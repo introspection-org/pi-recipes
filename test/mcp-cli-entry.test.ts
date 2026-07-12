@@ -138,6 +138,13 @@ describe("mcp CLI entry detection", () => {
     expect(quiet.output).toBe("");
   });
 
+  it("rejects schema mode without an exact tool target", () => {
+    const result = runCli(distCli, ["list", "--schema"]);
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("requires one exact tool");
+  });
+
   it("keeps list metadata failures compact", () => {
     writeFileSync(
       join(dir, "mcp.json"),
