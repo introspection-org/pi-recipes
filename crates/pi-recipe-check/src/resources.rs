@@ -1,13 +1,14 @@
 //! Validation for Kubernetes-style compute resource overrides.
 //!
-//! Recipes may declare sandbox CPU/memory overrides (for example under an
-//! Introspection manifest's `runtime.resources`):
+//! Recipes may declare sandbox CPU/memory/storage overrides (for example
+//! under an Introspection manifest's `runtime.resources`):
 //!
 //! ```yaml
 //! resources:
 //!   requests:
 //!     cpu: 500m
 //!     memory: 1.5Gi
+//!     storage: 10Gi
 //!   limits:
 //!     cpu: 1500m
 //!     memory: 1.5Gi
@@ -18,7 +19,9 @@
 //! `introspection-cli`'s manifest validator, wasm/Python bindings) applies the
 //! same rules. Quantity grammar is the practical subset of Kubernetes
 //! quantities: `500m` millicores or decimal cores for CPU; bytes with binary
-//! (`Ki`/`Mi`/`Gi`/`Ti`) or decimal (`k`/`M`/`G`/`T`) suffixes for memory.
+//! (`Ki`/`Mi`/`Gi`/`Ti`) or decimal (`k`/`M`/`G`/`T`) suffixes for memory and
+//! storage. `storage` is the sandbox scratch-volume size, request-only like
+//! a PVC (`spec.resources.requests.storage`).
 //! Enforcement of platform ceilings (tier clamps) is the server's job — this
 //! module checks shape, quantity grammar, and internal consistency only.
 
@@ -27,7 +30,8 @@ use serde_json::Value as JsonValue;
 use crate::{Diagnostic, Severity};
 
 const KNOWN_SECTIONS: [&str; 2] = ["requests", "limits"];
-const KNOWN_QUANTITIES: [&str; 2] = ["cpu", "memory"];
+const KNOWN_REQUEST_QUANTITIES: [&str; 3] = ["cpu", "memory", "storage"];
+const KNOWN_LIMIT_QUANTITIES: [&str; 2] = ["cpu", "memory"];
 
 #[derive(Debug, Clone, Copy, Default)]
 struct ResourceSection {
@@ -135,14 +139,24 @@ fn validate_section(
             Some("add a cpu or memory quantity, or omit the section"),
         );
     }
+    let known: &[&str] = if section == "requests" {
+        &KNOWN_REQUEST_QUANTITIES
+    } else {
+        &KNOWN_LIMIT_QUANTITIES
+    };
     for key in map.keys() {
-        if !KNOWN_QUANTITIES.contains(&key.as_str()) {
+        if !known.contains(&key.as_str()) {
+            let help = if section == "requests" {
+                "only cpu, memory, and storage are supported"
+            } else {
+                "only cpu and memory are supported (storage is request-only, like a PVC)"
+            };
             push(
                 diagnostics,
                 "resources.unknown_key",
                 path,
                 format!("resources.{section} contains unknown key '{key}'"),
-                Some("only cpu and memory are supported"),
+                Some(help),
             );
         }
     }
@@ -169,6 +183,27 @@ fn validate_section(
                 format!("resources.{section}.memory {message}"),
                 Some("use quantities like '512Mi', '1.5Gi', or plain bytes"),
             ),
+        }
+    }
+    if section == "requests" {
+        if let Some(storage) = map.get("storage") {
+            match memory_quantity_from_value(storage) {
+                Ok(bytes) if bytes < 1 << 30 => push(
+                    diagnostics,
+                    "resources.storage_invalid",
+                    path,
+                    format!("resources.{section}.storage is below the 1Gi minimum"),
+                    Some("request at least 1Gi of scratch storage"),
+                ),
+                Ok(_) => {}
+                Err(message) => push(
+                    diagnostics,
+                    "resources.storage_invalid",
+                    path,
+                    format!("resources.{section}.storage {message}"),
+                    Some("use quantities like '10Gi', '0.1T', or plain bytes"),
+                ),
+            }
         }
     }
     parsed
@@ -339,13 +374,38 @@ mod tests {
     #[test]
     fn rejects_unknown_keys() {
         assert_eq!(
-            codes(&json!({ "requests": { "cpu": "1" }, "storage": {} })),
-            ["resources.unknown_key"]
+            codes(&json!({ "requests": { "cpu": "1" }, "disk": {} })),
+            ["resources.unknown_key"],
+            "the retired disk block stays rejected"
         );
         assert_eq!(
             codes(&json!({ "requests": { "cpu": "1", "gpu": "1" } })),
             ["resources.unknown_key"]
         );
+    }
+
+    #[test]
+    fn storage_is_request_only_like_a_pvc() {
+        assert!(codes(&json!({ "requests": { "storage": "10Gi" } })).is_empty());
+        assert!(codes(&json!({ "requests": { "storage": "0.1T" } })).is_empty());
+        assert_eq!(
+            codes(&json!({ "limits": { "storage": "10Gi" } })),
+            ["resources.unknown_key"]
+        );
+        assert_eq!(
+            codes(&json!({ "requests": { "storage": "big" } })),
+            ["resources.storage_invalid"]
+        );
+        assert_eq!(
+            codes(&json!({ "requests": { "storage": "0Gi" } })),
+            ["resources.storage_invalid"]
+        );
+        assert_eq!(
+            codes(&json!({ "requests": { "storage": "512Mi" } })),
+            ["resources.storage_invalid"],
+            "1Gi is the validated minimum"
+        );
+        assert!(codes(&json!({ "requests": { "storage": "1Gi" } })).is_empty());
     }
 
     #[test]
