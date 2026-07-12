@@ -1401,17 +1401,6 @@ describe("mcporter CLI end-to-end", () => {
       );
       expect(wrappedJsonCall).toEqual(directJsonCall);
 
-      const directNamedFlag = await runMcporter(
-        ["call", "stub.get_value", "--key", "color", "--no-oauth"],
-        configEnv
-      );
-      const wrappedNamedFlag = await runMcpCli(
-        ["call", "stub.get_value", "--key", "color"],
-        configEnv,
-        ""
-      );
-      expect(wrappedNamedFlag).toEqual(directNamedFlag);
-
       // allowedTools gates calls, not just listings.
       const blocked = await runMcporter(["call", "stub.hidden_tool"], configEnv);
       expect(blocked.code).toBe(1);

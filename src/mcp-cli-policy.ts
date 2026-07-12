@@ -38,11 +38,16 @@ const FORBIDDEN_DELEGATED_FLAGS = new Set([
   "--server",
   "--tool",
   "--tail-log",
+  "--brief",
+  "--signatures",
+  "--args",
+  "--no-oauth",
+  "--oauth-timeout",
+  "--raw-strings",
+  "--no-coerce",
 ]);
 
 const LIST_OUTPUT_MODES = new Map([
-  ["--brief", "brief"],
-  ["--signatures", "brief"],
   ["--schema", "schema"],
   ["--all-parameters", "all-parameters"],
   ["--status", "status"],
@@ -54,17 +59,11 @@ function flagName(value: string): string {
 }
 
 function toolSelector(value: string): { server: string; tool: string } | null {
-  const expression = value.indexOf("(");
-  const ref = (expression === -1 ? value : value.slice(0, expression)).trim();
+  const ref = value.trim();
+  if (/[()]/.test(ref)) return null;
   const dot = ref.indexOf(".");
   if (dot < 1 || dot === ref.length - 1) return null;
   return { server: ref.slice(0, dot), tool: ref.slice(dot + 1) };
-}
-
-function hasNoOAuth(args: readonly string[]): boolean {
-  const literalSeparator = args.indexOf("--");
-  const options = literalSeparator === -1 ? args : args.slice(0, literalSeparator);
-  return options.some((arg) => flagName(arg) === "--no-oauth");
 }
 
 function withNoOAuth(args: readonly string[]): string[] {
@@ -92,7 +91,7 @@ function listOutputModeError(args: readonly string[]): string | undefined {
       .filter((mode): mode is string => Boolean(mode))
   );
   return modes.size > 1
-    ? "mcp list accepts only one output mode: --brief, --schema, --all-parameters, or --status."
+    ? "mcp list accepts only one output mode: --schema, --all-parameters, or --status."
     : undefined;
 }
 
@@ -172,12 +171,38 @@ function validateList(
     const error = validateExactTarget(policy, server, selector?.tool);
     if (error) return { error };
   }
-  const forceNoOAuth = !hasNoOAuth(args);
   return {
     command: {
-      args: forceNoOAuth ? withNoOAuth(args) : args,
+      args: withNoOAuth(args),
     },
   };
+}
+
+const CALL_FLAGS_WITH_VALUE = new Set([
+  "--json",
+  "--output",
+  "--save-images",
+  "--timeout",
+]);
+
+function callSyntaxError(args: readonly string[]): string | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--") {
+      return "mcp call positional arguments are unavailable; use key=value or --json instead.";
+    }
+    if (arg.startsWith("--")) {
+      const flag = flagName(arg);
+      if (!CALL_FLAGS_WITH_VALUE.has(flag)) {
+        return `mcp call option '${flag}' is unavailable; use key=value or --json for tool arguments.`;
+      }
+      if (!arg.includes("=")) index += 1;
+      continue;
+    }
+    if (/^[A-Za-z_][A-Za-z0-9_.-]*=/.test(arg)) continue;
+    return `mcp call argument '${arg}' must use key=value syntax or be supplied through --json.`;
+  }
+  return undefined;
 }
 
 function validateCall(
@@ -199,11 +224,12 @@ function validateCall(
   if (targetError) return { error: targetError };
   const blocked = forbiddenFlag(args.slice(2));
   if (blocked) return { error: `mcp call option '${blocked}' is unavailable in recipe sessions.` };
+  const syntaxError = callSyntaxError(args.slice(2));
+  if (syntaxError) return { error: syntaxError };
 
-  const forceNoOAuth = !hasNoOAuth(args);
   return {
     command: {
-      args: forceNoOAuth ? withNoOAuth(args) : args,
+      args: withNoOAuth(args),
     },
   };
 }

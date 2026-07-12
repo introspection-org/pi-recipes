@@ -130,14 +130,12 @@ export function mcpListHelpText(): string {
     "Shows a compact view of tools materialized in this recipe session.",
     "",
     "Flags:",
-    "  --brief, --signatures     Compact signatures (the default).",
     "  --all-parameters          Include every optional parameter.",
     "  --schema                  Show a compact input/output contract for one exact tool.",
     "  --verbose                 Include tool descriptions.",
     "  --status                  Show concise status for an exact server target.",
     "  --quiet, --exit-code      Health checks for an exact server target.",
     "  --timeout <ms>            Override discovery timeout for an exact target.",
-    "  --no-oauth                Use cached credentials without starting OAuth.",
     "  JSON is reserved for actual tool results; metadata is compact text.",
     "",
     "URLs, ad-hoc transports, config overrides, and persistence are unavailable in recipe sessions.",
@@ -152,10 +150,8 @@ export function mcpCallHelpText(): string {
     "",
     "Arguments:",
     "  key=value                 Named arguments with schema-aware coercion.",
-    "  --key value               Named schema arguments supported by mcporter.",
     "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
-    "  --args <json|->, --json <json|->  Supply a JSON object directly or from stdin.",
-    "  --                         Treat remaining values as literal positional inputs.",
+    "  --json <json|->           Supply a structured JSON object directly or from stdin.",
     '  Array example: mcp call server.tool --json \'{"tags":["a","b"]}\'.',
     "  Quote argument tokens containing shell operators such as |, <, >, &, or ;. JSON stdin avoids nested shell quoting.",
     "",
@@ -163,8 +159,6 @@ export function mcpCallHelpText(): string {
     "  --output text|markdown|json|raw",
     "  --save-images <dir>",
     "  --timeout <ms>",
-    "  --no-oauth, --oauth-timeout <ms>",
-    "  --raw-strings, --no-coerce",
     "  Machine-readable output is forwarded unchanged.",
     "  When parsing JSON, keep stderr separate and do not truncate stdout with head or sed.",
     "",
@@ -205,12 +199,12 @@ export function mcpRunHelpText(): string {
     "A synchronous busy-loop is force-killed at the deadline.",
     "Code runs with the same OS privileges as the active shell sandbox; mcp run is not a separate security boundary.",
     "",
-    "Example:",
-    "  mcp run <<'EOF'",
+    "Example — batch or compose multiple calls:",
+    "  mcp run <<'JS'",
     '  const ids = ["id-1", "id-2", "id-3"]',
     '  const results = await Promise.all(ids.map(id => tools["server"]["tool"]({ id })))',
     "  console.log(JSON.stringify(results.map(result => ({ id: result.id, name: result.name })), null, 2))",
-    "  EOF",
+    "  JS",
   ].join("\n");
 }
 
@@ -1434,9 +1428,7 @@ export function duplicateCallArgumentKeys(args: string[]): string[] {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
   for (const token of args.slice(1)) {
-    const plain = token.match(/^([A-Za-z_][A-Za-z0-9_.-]*)[:=]/)?.[1];
-    const flag = token.match(/^--([A-Za-z_][A-Za-z0-9_.-]*)(?:=|$)/)?.[1];
-    const rawKey = plain ?? flag;
+    const rawKey = token.match(/^([A-Za-z_][A-Za-z0-9_.-]*)=/)?.[1];
     if (!rawKey) continue;
     const key = rawKey.replace(
       /-([a-zA-Z0-9])/g,
@@ -1451,7 +1443,7 @@ export function duplicateCallArgumentKeys(args: string[]): string[] {
 export function callJsonArgumentError(args: readonly string[]): string | null {
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--json" || arg === "--args") {
+    if (arg === "--json") {
       const value = args[index + 1];
       if (value === undefined || (value.startsWith("--") && value !== "-")) {
         return `mcp call: ${arg} expects a JSON object or - for stdin. Example: mcp call server.tool --json '{"tags":["a","b"]}'`;
@@ -1459,7 +1451,7 @@ export function callJsonArgumentError(args: readonly string[]): string | null {
       index += 1;
       continue;
     }
-    if (arg === "--json=" || arg === "--args=") {
+    if (arg === "--json=") {
       return `mcp call: ${arg.slice(0, -1)} expects a JSON object or - for stdin.`;
     }
   }
@@ -1469,25 +1461,9 @@ export function callJsonArgumentError(args: readonly string[]): string | null {
 export function malformedCallExpression(args: string[]): string | null {
   const ref = args.find((arg) => !arg.startsWith("-"));
   if (!ref || !/[()]/.test(ref)) return null;
-  let depth = 0;
-  let inString: '"' | "'" | null = null;
-  for (let index = 0; index < ref.length; index += 1) {
-    const char = ref[index];
-    if (inString) {
-      if (char === "\\") index += 1;
-      else if (char === inString) inString = null;
-      continue;
-    }
-    if (char === '"' || char === "'") inString = char;
-    else if (char === "(") depth += 1;
-    else if (char === ")") depth -= 1;
-    if (depth < 0) break;
-  }
-  if (depth === 0 && inString === null && /^[\w-]+\.[\w-]+\(.*\)$/s.test(ref)) return null;
   return (
-    `mcp call: malformed tool expression '${ref}'. ` +
-    `Use mcp call '<server>.<tool>(key: "value")' with balanced quotes and parentheses, ` +
-    `or plain arguments: mcp call <server>.<tool> key:value.`
+    `mcp call: function-call expressions are unavailable. ` +
+    `Use mcp call <server>.<tool> key=value or --json for structured arguments.`
   );
 }
 

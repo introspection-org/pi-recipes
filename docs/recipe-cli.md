@@ -319,11 +319,10 @@ mcp list                                 # configured servers and tool counts
 mcp list contacts                         # compact tool signatures
 mcp list contacts.search_contacts --schema # compact input/output contract
 mcp call contacts.search_contacts query="Ada Lovelace"
-mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
-mcp run <<'EOF'                          # multi-step JavaScript workflow
+mcp run <<'JS'                           # batch or compose calls in JavaScript
 const result = await tools.contacts.search_contacts({ query: "Ada Lovelace" })
 console.log(JSON.stringify(result, null, 2))
-EOF
+JS
 ```
 
 `mcp list` and `mcp call` delegate listing, argument coercion, tool execution,

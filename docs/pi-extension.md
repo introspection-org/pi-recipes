@@ -311,11 +311,10 @@ mcp list                                 # configured servers and tool counts
 mcp list contacts                         # compact tool signatures
 mcp list contacts.search_contacts --schema # compact input/output contract
 mcp call contacts.search_contacts query="Ada Lovelace"
-mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
-mcp run <<'EOF'                          # multi-step JavaScript workflow
+mcp run <<'JS'                           # batch or compose calls in JavaScript
 const result = await tools["contacts"]["search_contacts"]({ query: "Ada Lovelace" })
 console.log(JSON.stringify(result, null, 2))
-EOF
+JS
 ```
 
 `mcp list` and `mcp call` delegate listing, argument coercion, tool execution,
@@ -342,8 +341,8 @@ the connected capability is unavailable rather than guessing an unlisted tool.
 Use `mcp search` to find relevant tool references without printing every schema.
 Search covers tool names, descriptions, argument names, and argument
 descriptions. Arguments are `key=value` pairs with automatic type
-coercion, or a function-call expression for nested objects and arrays;
-`key=@file.md` reads a value from a file, and `--output json` prints a
+coercion; use `--json` for nested objects and arrays. `key=@file.md` reads a
+value from a file, and `--output json` prints a
 machine-parseable result. Use `mcp run` when a workflow needs multiple calls,
 local filtering, ranking, or deduplication before printing a compact result.
 If search does not find a match, retry with broader or alternate terms. Use
