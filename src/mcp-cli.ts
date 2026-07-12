@@ -659,9 +659,40 @@ function writeCompactListError(error: unknown): void {
   filter.flush();
 }
 
+function compactListArgumentError(args: readonly string[]): string | undefined {
+  const flags = new Set([
+    "--all-parameters",
+    "--schema",
+    "--verbose",
+    "--status",
+    "--quiet",
+    "--exit-code",
+    "--no-oauth",
+  ]);
+  const start = args[1] && !args[1].startsWith("-") ? 2 : 1;
+  for (let index = start; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--timeout") {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--timeout=")) continue;
+    if (flags.has(arg)) continue;
+    return arg.startsWith("-")
+      ? `Unknown mcp list option '${arg}'.`
+      : `Unexpected mcp list argument '${arg}'.`;
+  }
+  return undefined;
+}
+
 async function compactList(args: string[]): Promise<number> {
   if (args.includes("--json")) {
     stderr.write("mcp list metadata is compact text; JSON is reserved for tool results.\n");
+    return 2;
+  }
+  const argumentError = compactListArgumentError(args);
+  if (argumentError) {
+    stderr.write(`${argumentError}\n`);
     return 2;
   }
   const target = args[1] && !args[1].startsWith("-") ? args[1] : undefined;

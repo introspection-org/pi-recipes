@@ -58,7 +58,7 @@ describe("compact MCP contracts", () => {
         "",
         "call",
         "  mcp call nextplay.search_profiles q='<q>'",
-        `  structured: mcp call nextplay.search_profiles --json '{"group":{"field":"<field>"}}'`,
+        `  structured: mcp call nextplay.search_profiles --json '{"q":"<q>","group":{"field":"<field>"}}'`,
         "",
       ].join("\n")
     );
@@ -119,8 +119,50 @@ describe("compact MCP contracts", () => {
       },
     });
     expect(contract).toContain(
-      `mcp call server.constrained limit=0 tags='["<value>","<value>"]'`
+      `mcp call server.constrained --json '{"limit":0,"tags":["<value>","<value>"]}'`
     );
+  });
+
+  it("uses populated JSON for required structured inputs", () => {
+    const contract = renderToolContract("server", {
+      name: "structured",
+      inputSchema: {
+        type: "object",
+        properties: {
+          request: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+        required: ["request"],
+      },
+    });
+    expect(contract).toContain(
+      `mcp call server.structured --json '{"request":{"query":"<query>"}}'`
+    );
+  });
+
+  it("merges object allOf branches", () => {
+    const contract = renderToolContract("server", {
+      name: "composed",
+      inputSchema: {
+        allOf: [
+          {
+            type: "object",
+            properties: { q: { type: "string" } },
+            required: ["q"],
+          },
+          {
+            type: "object",
+            properties: { limit: { type: "integer", minimum: 1 } },
+          },
+        ],
+      },
+    });
+    expect(contract).toContain("  q: string");
+    expect(contract).toContain("  limit?: integer [1..]");
+    expect(contract).toContain("mcp call server.composed q='<q>'");
   });
 
   it("shell-quotes schema-provided call values", () => {

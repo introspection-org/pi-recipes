@@ -16,6 +16,40 @@ function quoted(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function renderSchema(value: unknown): Schema | undefined {
+  const schema = record(value);
+  if (!schema || !Array.isArray(schema.allOf)) return schema;
+  const branches = schema.allOf.map(renderSchema).filter((branch): branch is Schema => Boolean(branch));
+  const baseProperties = record(schema.properties) ?? {};
+  const objectLike = branches.every(
+    (branch) => branch.type === "object" || Boolean(record(branch.properties))
+  );
+  if (!objectLike) return { ...schema, allOf: branches };
+  const properties = Object.assign(
+    {},
+    baseProperties,
+    ...branches.map((branch) => record(branch.properties) ?? {})
+  );
+  const required = new Set<string>(
+    Array.isArray(schema.required)
+      ? schema.required.filter((entry): entry is string => typeof entry === "string")
+      : []
+  );
+  for (const branch of branches) {
+    if (!Array.isArray(branch.required)) continue;
+    for (const entry of branch.required) {
+      if (typeof entry === "string") required.add(entry);
+    }
+  }
+  const { allOf: _allOf, ...rest } = schema;
+  return {
+    ...rest,
+    type: "object",
+    properties,
+    ...(required.size > 0 ? { required: [...required] } : {}),
+  };
+}
+
 function constraintSuffix(schema: Schema): string {
   const constraints: string[] = [];
   const minimum = number(schema.minimum);
@@ -36,8 +70,11 @@ function constraintSuffix(schema: Schema): string {
 }
 
 export function compactSchemaType(value: unknown): string {
-  const schema = record(value);
+  const schema = renderSchema(value);
   if (!schema) return "unknown";
+  if (Array.isArray(schema.allOf)) {
+    return schema.allOf.map(compactSchemaType).join(" & ");
+  }
   if (schema.const !== undefined) return quoted(schema.const);
   if (Array.isArray(schema.enum)) return schema.enum.map(quoted).join(" | ");
   const union = Array.isArray(schema.anyOf)
@@ -94,7 +131,7 @@ function schemaLines(
   indent: string,
   options: { verboseDescriptions?: boolean } = {}
 ): string[] {
-  const schema = record(value);
+  const schema = renderSchema(value);
   if (!schema) return [`${indent}unknown`];
   const properties = record(schema.properties);
   if (!properties) return [`${indent}${compactSchemaType(schema)}`];
@@ -133,7 +170,7 @@ function shellQuote(value: string): string {
 }
 
 function exampleValue(value: unknown, name: string): unknown {
-  const schema = record(value) ?? {};
+  const schema = renderSchema(value) ?? {};
   const union = Array.isArray(schema.anyOf)
     ? schema.anyOf
     : Array.isArray(schema.oneOf)
@@ -172,11 +209,17 @@ function callValue(value: unknown, name: string): string {
 }
 
 function callExample(server: string, tool: ContractTool): string {
-  const schema = record(tool.inputSchema);
+  const schema = renderSchema(tool.inputSchema);
   const properties = record(schema?.properties) ?? {};
   const required = Array.isArray(schema?.required)
     ? schema.required.filter((entry): entry is string => typeof entry === "string")
     : [];
+  if (required.some((name) => Boolean(structuredBranch(properties[name], "object") ?? structuredBranch(properties[name], "array")))) {
+    const json = JSON.stringify(
+      Object.fromEntries(required.map((name) => [name, exampleValue(properties[name], name)]))
+    );
+    return `mcp call ${server}.${tool.name} --json ${shellQuote(json)}`;
+  }
   const args = required.map((name) => {
     const descriptor = record(properties[name]) ?? {};
     return `${name}=${callValue(descriptor, name)}`;
@@ -185,7 +228,7 @@ function callExample(server: string, tool: ContractTool): string {
 }
 
 function structuredBranch(value: unknown, kind: "object" | "array"): Schema | undefined {
-  const schema = record(value);
+  const schema = renderSchema(value);
   if (!schema) return undefined;
   if (
     (kind === "array" && schema.type === "array") ||
@@ -202,19 +245,24 @@ function structuredBranch(value: unknown, kind: "object" | "array"): Schema | un
 }
 
 function structuredCallExample(server: string, tool: ContractTool): string | undefined {
-  const schema = record(tool.inputSchema);
+  const schema = renderSchema(tool.inputSchema);
   const properties = record(schema?.properties) ?? {};
   const required = new Set(
     Array.isArray(schema?.required)
       ? schema.required.filter((entry): entry is string => typeof entry === "string")
       : []
   );
+  const requiredValues = Object.fromEntries(
+    [...required].map((name) => [name, exampleValue(properties[name], name)])
+  );
   for (const kind of ["object", "array"] as const) {
     for (const [name, descriptor] of Object.entries(properties)) {
-      if (required.has(name)) continue;
       const branch = structuredBranch(descriptor, kind);
       if (!branch) continue;
-      const json = JSON.stringify({ [name]: exampleValue(branch, name) });
+      const json = JSON.stringify({
+        ...requiredValues,
+        ...(!required.has(name) ? { [name]: exampleValue(branch, name) } : {}),
+      });
       return `mcp call ${server}.${tool.name} --json ${shellQuote(json)}`;
     }
   }

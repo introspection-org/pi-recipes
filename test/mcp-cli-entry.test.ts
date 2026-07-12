@@ -145,6 +145,13 @@ describe("mcp CLI entry detection", () => {
     expect(result.stderr).toContain("requires one exact tool");
   });
 
+  it("rejects unknown compact list options", () => {
+    const result = runCli(distCli, ["list", "--scheam"]);
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Unknown mcp list option '--scheam'");
+  });
+
   it("keeps list metadata failures compact", () => {
     writeFileSync(
       join(dir, "mcp.json"),
