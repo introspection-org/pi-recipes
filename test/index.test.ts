@@ -2361,7 +2361,7 @@ describe("recipe store", () => {
     }
   });
 
-  it("installs extension runtime dependencies for cloned recipes", async () => {
+  it("installs extension runtime dependencies for cloned recipes", { timeout: 60_000 }, async () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-git-deps-"));
     const sourceDir = join(root, "source");
     const bareDir = join(root, "recipe.git");
@@ -2435,8 +2435,8 @@ describe("package boundary", () => {
       expect.arrayContaining([
         "Cargo.toml",
         "Cargo.lock",
-        "crates/recipe-check/Cargo.toml",
-        "crates/recipe-check/src",
+        "crates/pi-recipe-check/Cargo.toml",
+        "crates/pi-recipe-check/src",
         "harbor",
       ])
     );

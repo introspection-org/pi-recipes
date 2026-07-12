@@ -1,7 +1,30 @@
-# @introspection-ai/pi-recipes
+<div align="center">
+  <a href="https://pi.recipes">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/images/logo-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset=".github/images/logo-light.svg">
+      <img alt="Pi Recipes" src=".github/images/logo-light.svg" width="165">
+    </picture>
+  </a>
+</div>
 
-Experimental Pi recipe tooling with a `recipes` CLI and Pi extension
-support.
+<h4 align="center">Reproducible frontier-grade agents</h4>
+
+<div align="center">
+  <a href="https://pi.recipes"><img src="https://img.shields.io/badge/website-pi.recipes-blue" alt="Website"></a>
+  <a href="https://github.com/introspection-org/pi-recipes/actions/workflows/ci.yml"><img src="https://github.com/introspection-org/pi-recipes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/@introspection-ai/pi-recipes"><img src="https://img.shields.io/npm/v/@introspection-ai/pi-recipes?label=npm" alt="npm version"></a>
+  <a href="https://crates.io/crates/pi-recipe-check"><img src="https://img.shields.io/crates/v/pi-recipe-check?label=crates.io" alt="crates.io version"></a>
+  <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
+</div>
+
+<br>
+
+A Pi recipe captures the expertise behind a frontier-grade agent so the same
+workflow can be run, measured, and improved anywhere Pi runs. Install one from
+Git and customize it locally.
+
+## Overview
 
 Recipes are Pi packages: folders with a `package.json` manifest containing a
 `pi` block, plus agent YAML files, prompts, skills, and optional TypeScript
@@ -27,6 +50,10 @@ and prompts.
 - `@introspection-ai/pi-recipes`: extension factory and recipe-loading helpers.
 - `@introspection-ai/pi-recipes/pi-extension`: Pi extension entrypoint.
 - `@introspection-ai/pi-recipes/recipe-store`: recipe install and resolution helpers.
+- [`pi-recipe-check`](https://crates.io/crates/pi-recipe-check) (Rust crate,
+  [`crates/pi-recipe-check`](crates/pi-recipe-check)): the pure recipe
+  validation engine behind the vendored `recipe-check` binary, embeddable by
+  other hosts such as `introspection-cli`.
 
 ## Quick Start
 
@@ -101,21 +128,12 @@ recipes check pi-codex
 pi --recipe pi-codex
 ```
 
-## Development
+## Contributing
 
-```bash
-pnpm install
-pnpm typecheck
-pnpm test
-pnpm build
-```
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
+development setup (TypeScript and the Rust validator), commit conventions,
+and the release process.
 
-Install from a local clone into Pi:
+## License
 
-```bash
-pnpm build
-pi install "$(pwd)"
-```
-
-Pi records the local package path in `~/.pi/agent/settings.json`. Re-run
-`pnpm build` after changing extension source.
+Apache-2.0

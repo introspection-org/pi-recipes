@@ -6,7 +6,18 @@
     ".": {
       "release-type": "node",
       "bump-minor-pre-major": true
+    },
+    "crates/pi-recipe-check": {
+      "release-type": "rust",
+      "component": "pi-recipe-check",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
     }
   },
+  "plugins": [
+    {
+      "type": "cargo-workspace"
+    }
+  ],
   "bump-minor-pre-major": true
 }
