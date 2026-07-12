@@ -27,6 +27,7 @@ import {
 
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
+const DEFAULT_LIST_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RUN_TOOL_CALLS = 100;
 const DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 16;
 const MAX_SEARCH_DESCRIPTION_CHARS = 600;
@@ -604,6 +605,57 @@ function toolCount(count: number): string {
   return `${count} tool${count === 1 ? "" : "s"}`;
 }
 
+export function parseListTimeoutMs(args: readonly string[]): number | string {
+  const configured = process.env.MCPORTER_LIST_TIMEOUT;
+  let raw = configured && /^[1-9]\d*$/.test(configured) ? configured : String(DEFAULT_LIST_TIMEOUT_MS);
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--timeout") {
+      const value = args[index + 1];
+      if (!value) return "mcp list: --timeout requires a value.";
+      raw = value;
+      break;
+    }
+    if (arg?.startsWith("--timeout=")) {
+      raw = arg.slice("--timeout=".length);
+      break;
+    }
+  }
+  if (!/^[1-9]\d*$/.test(raw)) {
+    return "mcp list: --timeout must be a positive integer (milliseconds).";
+  }
+  const timeout = Number(raw);
+  return Number.isSafeInteger(timeout)
+    ? timeout
+    : "mcp list: --timeout must be a positive integer (milliseconds).";
+}
+
+export function withListTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+function writeCompactListError(error: unknown): void {
+  const filter = createDelegatedErrorFilter((text) => stderr.write(text));
+  const message = error instanceof Error ? error.stack ?? error.message : String(error);
+  filter.push(`mcp list: ${message.endsWith("\n") ? message : `${message}\n`}`);
+  filter.flush();
+}
+
 async function compactList(args: string[]): Promise<number> {
   if (args.includes("--json")) {
     stderr.write("mcp list metadata is compact text; JSON is reserved for tool results.\n");
@@ -615,6 +667,11 @@ async function compactList(args: string[]): Promise<number> {
   const verbose = args.includes("--verbose");
   const allParameters = args.includes("--all-parameters");
   const quiet = args.includes("--quiet");
+  const timeout = parseListTimeoutMs(args);
+  if (typeof timeout === "string") {
+    stderr.write(`${timeout}\n`);
+    return 2;
+  }
   const manifest = await readManifest();
   if (!target) {
     const runtime = await createRuntime();
@@ -622,12 +679,15 @@ async function compactList(args: string[]): Promise<number> {
     try {
       for (const server of manifest.servers ?? []) {
         try {
-          const tools = await runtime.listTools(server.id, {
-            includeSchema: false,
-            autoAuthorize: false,
-            allowCachedAuth: true,
-            disableOAuth: true,
-          });
+          const tools = await withListTimeout(
+            runtime.listTools(server.id, {
+              includeSchema: false,
+              autoAuthorize: false,
+              allowCachedAuth: true,
+              disableOAuth: true,
+            }),
+            timeout
+          );
           if (!quiet) stdout.write(`${server.id} — ${toolCount(tools.length)}\n`);
         } catch {
           exitCode = 1;
@@ -647,12 +707,15 @@ async function compactList(args: string[]): Promise<number> {
   }
   const runtime = await createRuntime();
   try {
-    const tools = (await runtime.listTools(server, {
-      includeSchema: true,
-      autoAuthorize: false,
-      allowCachedAuth: true,
-      disableOAuth: true,
-    })) as ContractTool[];
+    const tools = (await withListTimeout(
+      runtime.listTools(server, {
+        includeSchema: true,
+        autoAuthorize: false,
+        allowCachedAuth: true,
+        disableOAuth: true,
+      }),
+      timeout
+    )) as ContractTool[];
     if (quiet) return 0;
     if (status) {
       stdout.write(`${server} ok — ${toolCount(tools.length)}\n`);
@@ -679,7 +742,7 @@ async function compactList(args: string[]): Promise<number> {
     }
     return 0;
   } catch (error) {
-    stderr.write(`mcp list: ${error instanceof Error ? error.message : String(error)}\n`);
+    writeCompactListError(error);
     return 1;
   } finally {
     await runtime.close();

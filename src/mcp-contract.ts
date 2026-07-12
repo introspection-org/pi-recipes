@@ -158,7 +158,18 @@ export function renderToolSignature(
       : []
   );
   const entries = Object.entries(properties);
-  const visible = options.allParameters ? entries : entries.slice(0, 5);
+  const included = new Set(
+    entries.filter(([name]) => required.has(name)).map(([name]) => name)
+  );
+  if (!options.allParameters) {
+    for (const [name] of entries) {
+      if (included.size >= 5) break;
+      included.add(name);
+    }
+  }
+  const visible = options.allParameters
+    ? entries
+    : entries.filter(([name]) => included.has(name));
   const parameters = visible.map(([name, descriptor]) => {
     const optional = required.has(name) ? "" : "?";
     return `${name}${optional}: ${compactSchemaType(descriptor)}`;

@@ -10,8 +10,10 @@ import {
   describeUnavailableRunTool,
   describeUnknownRunServer,
   McpRunToolError,
+  parseListTimeoutMs,
   runMcpJavaScript,
   searchMcpTools,
+  withListTimeout,
 } from "../src/mcp-cli.js";
 import {
   buildMcporterConfig,
@@ -968,6 +970,17 @@ describe("recipe MCP materialization", () => {
     expect(output.join("")).not.toContain("LINEAR_TOKEN");
   });
 
+  it("parses and enforces compact list timeouts", async () => {
+    expect(parseListTimeoutMs(["list", "nextplay", "--timeout", "25"])).toBe(25);
+    expect(parseListTimeoutMs(["list", "nextplay", "--timeout=40"])).toBe(40);
+    expect(parseListTimeoutMs(["list", "nextplay", "--timeout", "0"])).toContain(
+      "positive integer"
+    );
+    await expect(
+      withListTimeout(new Promise(() => undefined), 5)
+    ).rejects.toThrow("timed out after 5ms");
+  });
+
   it("adds recovery context when bearer auth falls through to OAuth discovery", () => {
     const output: string[] = [];
     const filter = createDelegatedErrorFilter((text) => output.push(text));
@@ -1314,6 +1327,17 @@ describe("mcporter CLI end-to-end", () => {
       expect(metadataJson.code).toBe(2);
       expect(metadataJson.stdout).toBe("");
       expect(metadataJson.stderr).toContain("JSON is reserved for tool results");
+
+      const withoutCredential: Record<string, string> = { ...configEnv };
+      delete withoutCredential.STUB_MCP_TOKEN;
+      const missingCredential = await runMcpCli(
+        ["list", "stub"],
+        withoutCredential,
+        ""
+      );
+      expect(missingCredential.code).toBe(1);
+      expect(missingCredential.stderr).toContain("Authentication is required");
+      expect(missingCredential.stderr).not.toContain("STUB_MCP_TOKEN");
 
       const wrappedTextSchema = await runMcpCli(
         ["list", "stub.get_value", "--schema"],

@@ -84,4 +84,20 @@ describe("compact MCP contracts", () => {
       )
     ).not.toContain("...");
   });
+
+  it("always keeps required parameters visible regardless of property order", () => {
+    const properties = Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => [`field${index}`, { type: "string" }])
+    );
+    const signature = renderToolSignature("nextplay", {
+      name: "ordered",
+      inputSchema: {
+        type: "object",
+        properties,
+        required: ["field7"],
+      },
+    });
+    expect(signature).toContain("field7: string");
+    expect(signature).toContain("… +3 optional");
+  });
 });
