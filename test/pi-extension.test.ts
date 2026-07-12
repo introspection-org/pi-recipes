@@ -485,6 +485,8 @@ describe("Pi recipes launch extension", () => {
       );
       expect(env.PI_RECIPES_MCP_MANIFEST).toBe(join(projectDir, ".pi", "mcp.json"));
       expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(projectDir, ".pi", "bin"));
+      expect(env.PI_RECIPE_DIR).toBe(recipeDir);
+      expect(env.PI_AGENT_NAME).toBe("main");
       expect(env.PATH?.split(delimiter)[0]).toBe(join(projectDir, ".pi", "bin"));
       expect(existsSync(join(projectDir, ".pi", "bin", "mcp"))).toBe(true);
       const materialized = JSON.parse(readFileSync(env.PI_RECIPES_MCP_MANIFEST!, "utf8"));

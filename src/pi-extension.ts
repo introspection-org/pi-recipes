@@ -854,6 +854,12 @@ export function createPiRecipesExtension(
       resolved.agent
     );
 
+    // Keep the recipe selected by CLI flags visible to shell commands and
+    // recipe-authored instructions. In production `env` is process.env, so
+    // built-in shell tools and child agents inherit these resolved values.
+    env.PI_RECIPE_DIR = recipeDir;
+    env.PI_AGENT_NAME = resolved.agentName;
+
     state = {
       key,
       cwd,
