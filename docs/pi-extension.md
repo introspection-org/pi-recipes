@@ -399,6 +399,15 @@ MCP error.
 
 ## Connectors
 
+> **Introspection-platform extension.** Unlike the core recipe fields
+> (`model`, `tools`, `skills`, `subagents`, `system_instructions`) and the
+> MCP-standard `mcp` block, `connectors` is **specific to the Introspection
+> platform**. It has no meaning in a standalone pi runtime — it depends on the
+> Introspection Control Plane for the connector registry, the `getToken` broker,
+> the Person Server, and missions. The runtime loader parses and merges the block
+> everywhere (so recipes validate), but it only *does* anything when run on
+> Introspection.
+
 Connectors let an agent act on an outbound provider (Gmail, a booking API, a
 payments API) on a customer's behalf. They are the connector analogue of the
 `mcp` block, with one key difference: the connector **definition** — endpoints,
