@@ -32,6 +32,12 @@ one level, never recursively), and the `cli` feature builds the `recipe-check`
 binary that ships inside the `@introspection-ai/pi-recipes` npm package.
 Build with `--no-default-features` to get only the pure core.
 
+A standalone `resources` module validates Kubernetes-style compute
+overrides (`requests`/`limits` with `cpu`/`memory` quantities such as `500m`
+or `1.5Gi`) so hosts that carry a resources block — e.g. an Introspection
+manifest's `runtime.resources` — share one quantity grammar and consistency
+rule.
+
 Diagnostics carry a stable `code`, a recipe-relative `path`, an optional
 1-based `span` (line/column, populated for JSON/YAML parse errors), a
 `message`, and an optional `help` string. Profiles (`local`, `ci`, `publish`)
