@@ -146,3 +146,23 @@ pi install "$(pwd)"
 
 Pi records the local package path in `~/.pi/agent/settings.json`. Re-run
 `pnpm build` after changing extension source.
+
+## Contributing
+
+Contributions are welcome:
+
+1. Fork the repository and create a branch.
+2. Keep `pnpm typecheck`, `pnpm test`, and `pnpm build` green; for changes to
+   the Rust validator also run `cargo fmt --check`, `cargo clippy`, and
+   `cargo test -p pi-recipe-check`.
+3. Use [Conventional Commit](https://www.conventionalcommits.org) messages
+   (`fix:`, `feat:`, `feat!:`/`BREAKING CHANGE:`) — release-please derives
+   versions and changelogs from them, so never bump package versions by hand.
+4. Open a pull request and make sure CI passes.
+
+Releases follow SemVer and are cut automatically by release-please for both
+the npm package and the `pi-recipe-check` crate.
+
+## License
+
+Apache-2.0
