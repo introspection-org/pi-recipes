@@ -1,13 +1,12 @@
-<h1 align="center">
+<div align="center">
   <a href="https://pi.recipes">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset=".github/images/logo-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset=".github/images/logo-light.svg">
-      <img alt="Pi" src=".github/images/logo-light.svg" width="30">
+      <img alt="Pi Recipes" src=".github/images/logo-light.svg" width="165">
     </picture>
-    <samp>/ RECIPES</samp>
   </a>
-</h1>
+</div>
 
 <h4 align="center">Reproducible frontier-grade agents</h4>
 
@@ -24,6 +23,8 @@
 A Pi recipe captures the expertise behind a frontier-grade agent so the same
 workflow can be run, measured, and improved anywhere Pi runs. Install one from
 Git and customize it locally.
+
+## Overview
 
 Recipes are Pi packages: folders with a `package.json` manifest containing a
 `pi` block, plus agent YAML files, prompts, skills, and optional TypeScript
