@@ -9,9 +9,10 @@ format.
 This page defines those extensions. They are **not part of the core Pi recipe
 spec** and have no effect in a standalone Pi runtime — they only mean something
 when a recipe is deployed on Introspection, which supplies the surrounding
-services (identity, a connector broker, a Person Server, resource mounting,
-telemetry). The Pi recipe loader parses and merges them everywhere so recipes
-still **validate** off-platform; they simply do nothing there.
+services (identity, a connector broker, a Person Server, the sized sandbox,
+mounted context, telemetry). The Pi recipe loader parses and merges them
+everywhere so recipes still **validate** off-platform; they simply do nothing
+there.
 
 "You declare it" = the recipe author writes it into the recipe files
 (`agent.yaml` / the `.introspection` manifest). "Platform provides" = supplied
@@ -20,9 +21,9 @@ automatically at deploy/run time without being written in the recipe.
 | Extension | You declare it in the recipe | Platform provides |
 | --- | --- | --- |
 | **Connectors** (`connectors:` on an agent) | **yes** — reference + scope connectors in `agent.yaml` | connector registry, `getToken` broker, Person Server, missions |
-| **Managed resources** (repos / files / memories / skills / mounts) | **no** — injected at run time | the mounted resources from the task/deployment context |
-| **Compute** (sandbox size — vCPU / memory) | **no** — provisioned per deployment | the sized sandbox the agent runs in, metered as compute-seconds |
-| **Managed runtime** (deployment, LLM mode, telemetry) | **partly** — `runtime.llm_mode` in the manifest | the deployment, managed LLM access, telemetry export |
+| **Runtime** (the `.introspection` manifest) | **yes** — `name` / `path` / `runtime.llm_mode` | the deployment + versioning, managed LLM access, telemetry export |
+| **Resources** (`runtime.resources`) | **yes** — `requests` / `limits` (cpu, memory, storage) | the sandbox sized to your request, clamped to platform ceilings, metered as compute-seconds |
+| **Mounted context** (repos / files / memories / skills / mounts) | **no** — injected at run time | the mounted resources from the task/deployment context |
 
 Core Pi fields (`model`, `tools`, `skills`, `subagents`, `system_instructions`)
 and the MCP-standard `mcp` block are documented in
@@ -92,14 +93,76 @@ Canonical design: `introspection-cloud/docs/design/connectors-aauth-b2b2c.md`
 
 ---
 
-## Managed resources
+## Runtime
 
-When a recipe runs on Introspection, the platform mounts a set of **managed
-resources** into the sandbox from the task/deployment context — the runtime
-reports them at launch, e.g. `resources repos=1 files=0 memories=0 skills=0
-files_mounts=1`:
+A recipe deployed on Introspection becomes a **runtime** (a deployable agent
+unit; multiple runtime rows share a runtime group as versions iterate). The
+`.introspection/*.yaml` manifest carries the platform binding:
 
-- **repos** — git repositories linked to the project (the recipe repo, plus any
+```yaml
+name: travel-agent
+runtime_name: travel-agent
+path: .
+runtime:
+  llm_mode: managed          # the platform provides + meters model access
+  resources:                 # optional sandbox compute overrides — see below
+    requests: { cpu: 500m, memory: 1.5Gi }
+    limits:   { cpu: 1500m, memory: 1.5Gi }
+```
+
+The platform supplies managed LLM access (`llm_mode: managed`), OpenTelemetry
+export, and the deployment + versioning lifecycle. `name`/`path`/`llm_mode` are
+recipe-authored; the deployment behaviour itself is the platform's. Canonical
+references: the Introspection Control Plane design docs (`layered-architecture.md`,
+`task-spawn-contract.md`).
+
+---
+
+## Resources
+
+`runtime.resources` declares **Kubernetes-style compute overrides** for the
+sandbox the agent runs in. It is recipe-authored and validated by `recipe-check`
+(the `resources` module), so the same rules apply in the CLI, the
+`introspection-cli` manifest validator, and any wasm/Python binding.
+
+```yaml
+runtime:
+  resources:
+    requests:              # guaranteed floor
+      cpu: 500m            # millicores (500m) or decimal cores (0.5, 1, 2)
+      memory: 1.5Gi        # Ki/Mi/Gi/Ti (binary) or k/M/G/T (decimal)
+    limits:                # burst ceiling
+      cpu: 1500m
+      memory: 1.5Gi
+```
+
+Rules `recipe-check` enforces (shape, quantity grammar, internal consistency):
+
+- Only `requests` and `limits` sections; only `cpu` and `memory` quantities
+  (unknown keys are flagged).
+- `requests.cpu` may not exceed `limits.cpu`, and likewise for `memory`.
+- CPU is millicores or decimal cores; memory takes binary (`Ki`/`Mi`/`Gi`/`Ti`)
+  or decimal (`k`/`M`/`G`/`T`) suffixes.
+
+`recipe-check` validates the *shape*; the **platform enforces its own ceilings**
+(clamping a request to the deployment's tier) and **meters usage as
+compute-seconds** — a larger request costs proportionally more per active second,
+and an idle sandbox is paused/reclaimed so you pay for active compute, not
+wall-clock. See `introspection-cloud/docs/design/sandbox-sessions.md`.
+
+> A `storage` quantity (e.g. `storage: 10Gi`) is being added to `runtime.resources`
+> for sandbox disk overrides; it follows the same memory-style quantity grammar.
+
+---
+
+## Mounted context
+
+Separate from `runtime.resources` (which sizes the sandbox), the platform also
+**mounts a set of context resources** into the sandbox from the task/deployment
+at launch — the runtime reports them, e.g. `resources repos=1 files=0 memories=0
+skills=0 files_mounts=1`:
+
+- **repos** — git repositories linked to the project (the recipe repo + any
   additional linked repos), materialized read-only or checked out.
 - **files** — Data-Plane files attached to the task.
 - **memories** — the agent's persisted memories.
@@ -108,50 +171,8 @@ files_mounts=1`:
 - **file mounts** — additional mounted paths.
 
 These are **injected by the platform, not declared in `agent.yaml`** — the recipe
-does not author them. The distinction from Pi's own `resources_discover` (the
-`## Resources` section in [`pi-extension.md`](./pi-extension.md)) is that those
-are recipe-local skill/prompt folders, whereas managed resources come from the
-deployment. See `introspection-cloud/docs/design/task-spawn-contract.md` and
-`sandbox-sessions.md` for how they are assembled.
-
----
-
-## Compute
-
-The platform provisions the **sandbox the agent runs in** at a size tier. Each
-tier has a guaranteed request and a burst limit for vCPU and memory:
-
-| Tier | Request (vCPU / memory) | Burst limit (vCPU / memory) |
-| --- | --- | --- |
-| **S** | 0.5 vCPU / 1 GiB | 1 vCPU / 2 GiB |
-| **M** (default) | 2 vCPU / 4 GiB | 4 vCPU / 8 GiB |
-| **L** | 4 vCPU / 8 GiB | 8 vCPU / 16 GiB |
-
-Compute is **provisioned by the platform per deployment, not declared in the
-recipe** — the deployment size is an operator/deployment knob. Usage is metered
-as **compute-seconds** (`vcpu_seconds = tier.vcpus × active_seconds`), so a
-larger tier costs proportionally more per active second. An idle sandbox is
-paused/reclaimed by the runtime lifecycle, so you are billed for active compute,
-not wall-clock. See `introspection-cloud/docs/design/sandbox-sessions.md` and the
-compute-pricing tiers for details.
-
----
-
-## Managed runtime
-
-A recipe deployed on Introspection becomes a **runtime** (a deployable agent
-unit; multiple runtime rows share a runtime group as versions iterate). The
-recipe's `.introspection/*.yaml` manifest carries the platform binding, e.g.:
-
-```yaml
-name: travel-agent
-runtime_name: travel-agent
-path: .
-runtime:
-  llm_mode: managed        # the platform provides + meters model access
-```
-
-The platform supplies managed LLM access (`llm_mode: managed`), OpenTelemetry
-export, and the deployment lifecycle. These are deployment concerns rather than
-recipe-format keys; the canonical references are the Introspection Control Plane
-design docs (`layered-architecture.md`, `task-spawn-contract.md`).
+does not author them. (Distinct from Pi's own `resources_discover`, the
+`## Resources` section in [`pi-extension.md`](./pi-extension.md), which is
+recipe-local skill/prompt folders.) See
+`introspection-cloud/docs/design/task-spawn-contract.md` and `sandbox-sessions.md`
+for how they are assembled.
