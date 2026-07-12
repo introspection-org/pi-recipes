@@ -6,6 +6,7 @@ description = "Pure validation engine for Pi recipe packages (package.json#pi, a
 license = "MIT"
 repository = "https://github.com/introspection-org/pi-recipes"
 homepage = "https://pi.recipes"
+readme = "README.md"
 keywords = ["pi", "recipes", "validation", "lint", "agents"]
 categories = ["development-tools"]
 
