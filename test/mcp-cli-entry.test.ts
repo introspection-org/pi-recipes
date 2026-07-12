@@ -123,7 +123,7 @@ describe("mcp CLI entry detection", () => {
     expect(quiet.output).toBe("");
   });
 
-  it("keeps delegated list failures machine-readable in JSON mode", () => {
+  it("keeps list metadata failures compact", () => {
     writeFileSync(
       join(dir, "mcp.json"),
       JSON.stringify({
@@ -166,8 +166,9 @@ describe("mcp CLI entry detection", () => {
       "100",
     ]);
     expect(result.status).not.toBe(0);
-    expect(() => JSON.parse(result.stdout)).not.toThrow();
-    expect(result.stderr).not.toContain("Only exact tool names shown");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("JSON is reserved for tool results");
+    expect(result.stderr).not.toContain(" at ");
   });
 
   it("rejects in-session authentication", () => {

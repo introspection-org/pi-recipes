@@ -50,10 +50,8 @@ describe("recipe-session mcporter policy", () => {
 
   it.each([
     ["--brief", "--schema"],
-    ["--signatures", "--json"],
     ["--schema", "--all-parameters"],
-    ["--schema", "--json"],
-    ["--json", "--status"],
+    ["--brief", "--status"],
   ])("rejects combined list output modes: %s %s", (left, right) => {
     expect(
       validateDelegatedMcpCommand(
@@ -61,7 +59,7 @@ describe("recipe-session mcporter policy", () => {
         policy()
       ).error
     ).toBe(
-      "mcp list accepts only one output mode: --brief, --schema, --all-parameters, --json, or --status."
+      "mcp list accepts only one output mode: --brief, --schema, --all-parameters, or --status."
     );
   });
 

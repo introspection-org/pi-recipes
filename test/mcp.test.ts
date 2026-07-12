@@ -9,7 +9,6 @@ import {
   describeUnavailableRunTool,
   describeUnknownRunServer,
   McpRunToolError,
-  outputSchemaSection,
   runMcpJavaScript,
   searchMcpTools,
 } from "../src/mcp-cli.js";
@@ -941,30 +940,6 @@ describe("recipe MCP materialization", () => {
     expect(match?.description).toContain("[truncated]");
   });
 
-  it("adds the response contract that mcporter omits from text schema output", () => {
-    const manifest = {
-      servers: [
-        {
-          id: "nextplay",
-          base_url: "http://127.0.0.1:3210/mcp",
-          tools: [
-            {
-              name: "verify_shortlist",
-              output_schema: {
-                type: "object",
-                properties: { checked: { type: "number" } },
-                required: ["checked"],
-              },
-            },
-          ],
-        },
-      ],
-    };
-    const section = outputSchemaSection(manifest, "nextplay.verify_shortlist");
-    expect(section).toContain("Output schema (response shape):");
-    expect(section).toContain('"checked"');
-  });
-
   it("keeps useful delegated errors while removing implementation stacks", () => {
     const output: string[] = [];
     const filter = createDelegatedErrorFilter((text) => output.push(text));
@@ -1313,12 +1288,15 @@ describe("mcporter CLI end-to-end", () => {
       expect(listed.status).toBe("ok");
       expect(listed.tools.map((tool) => tool.name)).toEqual(["get_value"]);
 
-      const wrappedList = await runMcpCli(["list", "stub", "--json"], configEnv, "");
-      expect(wrappedList.code).toBe(list.code);
-      expect(wrappedList.stderr).toBe(list.stderr);
-      const wrappedListed = JSON.parse(wrappedList.stdout) as typeof listed;
-      expect(wrappedListed.status).toBe(listed.status);
-      expect(wrappedListed.tools).toEqual(listed.tools);
+      const wrappedList = await runMcpCli(["list", "stub"], configEnv, "");
+      expect(wrappedList.code).toBe(0);
+      expect(wrappedList.stderr).toBe("");
+      expect(wrappedList.stdout).toContain("stub.get_value(key: string)");
+
+      const metadataJson = await runMcpCli(["list", "stub", "--json"], configEnv, "");
+      expect(metadataJson.code).toBe(2);
+      expect(metadataJson.stdout).toBe("");
+      expect(metadataJson.stderr).toContain("JSON is reserved for tool results");
 
       const wrappedTextSchema = await runMcpCli(
         ["list", "stub.get_value", "--schema"],
@@ -1326,8 +1304,22 @@ describe("mcporter CLI end-to-end", () => {
         ""
       );
       expect(wrappedTextSchema.code).toBe(0);
-      expect(wrappedTextSchema.stdout).toContain("Output schema (response shape):");
-      expect(wrappedTextSchema.stdout).toContain('"value"');
+      expect(wrappedTextSchema.stdout).toBe(
+        [
+          "stub.get_value",
+          "Get a value",
+          "",
+          "input",
+          "  key: string",
+          "",
+          "output",
+          "  value: string",
+          "",
+          "call",
+          '  mcp call stub.get_value key="<key>"',
+          "",
+        ].join("\n")
+      );
 
       const call = await runMcporter(
         ["call", "stub.get_value", "key=mcporter", "--no-oauth"],

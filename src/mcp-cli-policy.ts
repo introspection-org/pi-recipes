@@ -45,7 +45,6 @@ const LIST_OUTPUT_MODES = new Map([
   ["--signatures", "brief"],
   ["--schema", "schema"],
   ["--all-parameters", "all-parameters"],
-  ["--json", "json"],
   ["--status", "status"],
 ]);
 
@@ -93,7 +92,7 @@ function listOutputModeError(args: readonly string[]): string | undefined {
       .filter((mode): mode is string => Boolean(mode))
   );
   return modes.size > 1
-    ? "mcp list accepts only one output mode: --brief, --schema, --all-parameters, --json, or --status."
+    ? "mcp list accepts only one output mode: --brief, --schema, --all-parameters, or --status."
     : undefined;
 }
 

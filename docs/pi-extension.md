@@ -307,9 +307,9 @@ recipes that provide a custom shell wrapper may intentionally ignore it.
 
 ```bash
 mcp search "contact lookup"              # find relevant tool references
-mcp list                                 # configured server health/status
-mcp list contacts --brief                # compact tool signatures
-mcp list contacts.search_contacts --schema # inspect one tool's input/output schema
+mcp list                                 # configured servers and tool counts
+mcp list contacts                         # compact tool signatures
+mcp list contacts.search_contacts --schema # compact input/output contract
 mcp call contacts.search_contacts query="Ada Lovelace"
 mcp call 'contacts.search_contacts(query: "Ada Lovelace", limit: 5)'
 mcp run <<'EOF'                          # multi-step JavaScript workflow
@@ -320,12 +320,12 @@ EOF
 
 `mcp list` and `mcp call` delegate listing, argument coercion, tool execution,
 and result formatting to mcporter against the filtered session config. The
-recipe wrapper only enforces the materialized server/tool policy, blocks
+recipe wrapper enforces the materialized server/tool policy, blocks
 configuration and ad-hoc transport escapes, keeps calls headless, rejects
 ambiguous duplicate or malformed call input, and removes non-actionable error
-stacks. Machine-readable output is forwarded unchanged. For an exact textual
-`mcp list <server.tool> --schema`, the wrapper appends the tool's materialized
-output schema because mcporter 0.12.3 renders it only in JSON mode.
+stacks. Calls preserve actual server results; metadata uses compact text. An exact
+`mcp list <server.tool> --schema` renders one token-efficient input/output
+contract. Raw JSON is reserved for actual tool results.
 
 Pi-recipes does not add MCP instructions to the system prompt. A recipe that
 wants its agent to use the session-local `mcp` command must say so explicitly in
