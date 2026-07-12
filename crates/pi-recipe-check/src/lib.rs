@@ -15,6 +15,7 @@ use serde_json::Value as JsonValue;
 
 #[cfg(feature = "fs")]
 pub mod fs;
+pub mod resources;
 
 #[cfg(feature = "fs")]
 pub use fs::check_recipe;
