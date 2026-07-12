@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.4.1...pi-recipe-check-v0.5.0) (2026-07-12)
+
+
+### Features
+
+* **recipe-check:** storage in the resources grammar + deployment-configuration spec ([#59](https://github.com/introspection-org/pi-recipes/issues/59)) ([a5623b9](https://github.com/introspection-org/pi-recipes/commit/a5623b99aea36537a309d99cc87949e5a0878333))
+
 ## [0.4.1](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.4.0...pi-recipe-check-v0.4.1) (2026-07-12)
 
 
