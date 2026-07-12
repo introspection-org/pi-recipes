@@ -8,7 +8,7 @@
   </a>
 </div>
 
-<h1 align="center"><a href="https://pi.recipes">Recipes</a></h1>
+<h1 align="center"><a href="https://pi.recipes">Pi Recipes</a></h1>
 
 <h4 align="center">Reproducible frontier-grade agents</h4>
 
