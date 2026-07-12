@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/introspection-org/pi-recipes/compare/v0.7.0...v0.7.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* **pi-recipe-check:** add pure resources validation module ([#56](https://github.com/introspection-org/pi-recipes/issues/56)) ([c3a78cd](https://github.com/introspection-org/pi-recipes/commit/c3a78cdfdd880d3aca672bb28b98937a3d532dc9))
+
 ## [0.7.0](https://github.com/introspection-org/pi-recipes/compare/v0.6.4...v0.7.0) (2026-07-12)
 
 
