@@ -231,9 +231,13 @@ describe("recipe MCP materialization", () => {
             id: 1,
             result: {
               protocolVersion: "2025-11-25",
+              capabilities: { tools: {} },
               serverInfo: { name: "nextplay", version: "0.1.0" },
             },
           });
+        }
+        if (body.method === "notifications/initialized") {
+          return new Response(null, { status: 202 });
         }
         if (body.params?.cursor === "page-2") {
           return jsonResponse({
@@ -440,7 +444,15 @@ describe("recipe MCP materialization", () => {
           auths.push((init?.headers as Record<string, string>).Authorization);
           if (body.method === "initialize") {
             return jsonResponse(
-              { jsonrpc: "2.0", id: 1, result: {} },
+              {
+                jsonrpc: "2.0",
+                id: 1,
+                result: {
+                  protocolVersion: "2025-11-25",
+                  capabilities: { tools: {} },
+                  serverInfo: { name: "slack", version: "1.0.0" },
+                },
+              },
               { "mcp-session-id": "mcp-session-1" }
             );
           }
@@ -484,6 +496,88 @@ describe("recipe MCP materialization", () => {
       expect(manifest.diagnostics?.[0]?.message).toContain("slack_list_threads");
       // Discovery calls interpolate `${VAR}` refs from the environment.
       expect(auths.every((auth) => auth === "Bearer slack-token")).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("enforces the Streamable HTTP initialization lifecycle", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-lifecycle-"));
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(recipeDir, { recursive: true });
+      const localConfig = writeLocalConfig(cwd, [
+        { id: "nextplay", transport: "streamable_http", url: "https://nextplay.test/mcp" },
+      ]);
+      const base = {
+        cwd,
+        recipeDir,
+        env: { PI_RECIPES_MCP_LOCAL_CONFIG: localConfig },
+        agentMcp: [{ serverId: "nextplay", tools: { include: ["search_profiles"] } }],
+        manifest: recipeManifest(recipeDir, [{ id: "nextplay", include: ["search_profiles"] }]),
+      };
+      const methods: string[] = [];
+      const valid = await materializeRecipeMcpManifest({
+        ...base,
+        fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+          methods.push(body.method ?? String(init?.method));
+          if (body.method === "initialize") {
+            expect(new Headers(init?.headers).has("mcp-protocol-version")).toBe(false);
+            return jsonResponse({
+              jsonrpc: "2.0",
+              id: 1,
+              result: {
+                protocolVersion: "2025-11-25",
+                capabilities: { tools: {} },
+                serverInfo: { name: "nextplay", version: "1.0.0" },
+              },
+            });
+          }
+          if (body.method === "notifications/initialized") {
+            return new Response(null, { status: 202 });
+          }
+          return jsonResponse({
+            jsonrpc: "2.0",
+            id: 2,
+            result: { tools: [{ name: "search_profiles", inputSchema: { type: "object" } }] },
+          });
+        }) as unknown as typeof fetch,
+      });
+      expect(valid.diagnostics).toEqual([]);
+      expect(methods).toEqual(["initialize", "notifications/initialized", "tools/list"]);
+
+      const requests: Array<{ method?: string; session?: string }> = [];
+      const rejected = await materializeRecipeMcpManifest({
+        ...base,
+        fetch: vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+          const body = init?.body ? JSON.parse(String(init.body)) as { method?: string } : {};
+          const headers = new Headers(init?.headers);
+          requests.push({ method: body.method ?? init?.method, session: headers.get("mcp-session-id") ?? undefined });
+          if (body.method === "initialize") {
+            return jsonResponse({
+              jsonrpc: "2.0",
+              id: 1,
+              result: {
+                protocolVersion: "2025-11-25",
+                capabilities: { tools: {} },
+                serverInfo: { name: "nextplay", version: "1.0.0" },
+              },
+            }, { "mcp-session-id": "session-1" });
+          }
+          if (init?.method === "DELETE") return new Response(null, { status: 405 });
+          return new Response("rejected", { status: 400 });
+        }) as unknown as typeof fetch,
+      });
+      expect(rejected.diagnostics?.[0]).toMatchObject({ stage: "initialize", status: 400 });
+      expect(requests.at(-1)).toEqual({ method: "DELETE", session: "session-1" });
+
+      const invalid = await materializeRecipeMcpManifest({
+        ...base,
+        fetch: vi.fn(async () => jsonResponse({ jsonrpc: "2.0", id: 1, result: {} })) as unknown as typeof fetch,
+      });
+      expect(invalid.diagnostics?.[0]).toMatchObject({ stage: "initialize" });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

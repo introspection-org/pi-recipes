@@ -153,6 +153,7 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set([
   "2025-03-26",
 ]);
 const MAX_TOOL_LIST_PAGES = 64;
+const MCP_DISCOVERY_REQUEST_TIMEOUT_MS = 30_000;
 const RECIPE_ENV_PREFIX = "PI_RECIPES_";
 const MCP_MANIFEST_ENV = `${RECIPE_ENV_PREFIX}MCP_MANIFEST`;
 // mcporter's own config env var — the sandbox `mcp` CLI is mcporter, and the
@@ -446,9 +447,11 @@ async function postJsonRpc<T>(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
-    "MCP-Protocol-Version": protocolVersion,
     ...localHeaders,
   };
+  if (payload.method !== "initialize") {
+    headers["MCP-Protocol-Version"] = protocolVersion;
+  }
   if (sessionId) {
     headers["Mcp-Session-Id"] = sessionId;
   }
@@ -459,6 +462,7 @@ async function postJsonRpc<T>(
       method: "POST",
       headers,
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(MCP_DISCOVERY_REQUEST_TIMEOUT_MS),
     });
   } catch (err) {
     return `MCP transport error: ${err instanceof Error ? err.message : String(err)}`;
@@ -467,6 +471,30 @@ async function postJsonRpc<T>(
   const body = await response.text().catch(() => "");
   const parsed = parseJsonRpcBody<T>(body, response.headers.get("content-type") ?? "");
   return { parsed, status: response.status, headers: response.headers, body };
+}
+
+async function deleteMcpSession(
+  io: Pick<CliIO, "env" | "fetch"> & { cwd?: string },
+  server: McpManifestServer,
+  sessionId: string,
+  protocolVersion: string
+): Promise<void> {
+  const localHeaders = localMcpHeadersForServer(server.id, { env: io.env, cwd: io.cwd });
+  if (localHeaders === null) return;
+  try {
+    await io.fetch(server.base_url, {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json, text/event-stream",
+        "MCP-Protocol-Version": protocolVersion,
+        "Mcp-Session-Id": sessionId,
+        ...localHeaders,
+      },
+      signal: AbortSignal.timeout(MCP_DISCOVERY_REQUEST_TIMEOUT_MS),
+    });
+  } catch {
+    // Session cleanup is best-effort and must not replace the discovery result.
+  }
 }
 
 function summarizeBody(body: string): string {
@@ -493,7 +521,8 @@ async function initializeSession(
 }> {
   const result = await postJsonRpc<{
     protocolVersion?: unknown;
-    serverInfo?: { name?: unknown };
+    capabilities?: unknown;
+    serverInfo?: { name?: unknown; version?: unknown };
   }>(
     io,
     server,
@@ -527,7 +556,19 @@ async function initializeSession(
   const rawProtocolVersion = result.parsed?.result?.protocolVersion;
   const protocolVersion =
     typeof rawProtocolVersion === "string" ? rawProtocolVersion : undefined;
-  if (protocolVersion !== undefined && !SUPPORTED_PROTOCOL_VERSIONS.has(protocolVersion)) {
+  if (!result.parsed || result.parsed.error || !result.parsed.result || !protocolVersion) {
+    if (sessionId) await deleteMcpSession(io, server, sessionId, PROTOCOL_VERSION);
+    return {
+      diagnostic: {
+        serverId: server.id,
+        url: server.base_url,
+        stage: "initialize",
+        message: rpcFailureMessage(result.body, result.parsed),
+      },
+    };
+  }
+  if (!SUPPORTED_PROTOCOL_VERSIONS.has(protocolVersion)) {
+    if (sessionId) await deleteMcpSession(io, server, sessionId, PROTOCOL_VERSION);
     return {
       diagnostic: {
         serverId: server.id,
@@ -542,19 +583,48 @@ async function initializeSession(
     typeof rawServerName === "string" && rawServerName.trim()
       ? rawServerName.trim()
       : undefined;
-  if (sessionId) {
-    await postJsonRpc(
-      io,
-      server,
-      { jsonrpc: "2.0", method: "notifications/initialized" },
-      sessionId,
-      protocolVersion ?? PROTOCOL_VERSION
-    ).catch(() => undefined);
+  const rawServerVersion = result.parsed.result.serverInfo?.version;
+  if (
+    !serverName ||
+    typeof rawServerVersion !== "string" ||
+    !rawServerVersion.trim() ||
+    !result.parsed.result.capabilities ||
+    typeof result.parsed.result.capabilities !== "object"
+  ) {
+    if (sessionId) await deleteMcpSession(io, server, sessionId, protocolVersion);
+    return {
+      diagnostic: {
+        serverId: server.id,
+        url: server.base_url,
+        stage: "initialize",
+        message: "MCP initialize response is missing valid capabilities or serverInfo.",
+      },
+    };
+  }
+  const initialized = await postJsonRpc(
+    io,
+    server,
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    sessionId,
+    protocolVersion
+  );
+  if (typeof initialized === "string" || initialized.status < 200 || initialized.status >= 300) {
+    if (sessionId) await deleteMcpSession(io, server, sessionId, protocolVersion);
+    return {
+      diagnostic: {
+        serverId: server.id,
+        url: server.base_url,
+        stage: "initialize",
+        ...(typeof initialized === "string"
+          ? { message: initialized }
+          : { status: initialized.status, message: rpcFailureMessage(initialized.body, initialized.parsed) }),
+      },
+    };
   }
   return {
     sessionId,
     serverName,
-    protocolVersion: protocolVersion ?? PROTOCOL_VERSION,
+    protocolVersion,
   };
 }
 
@@ -580,6 +650,7 @@ async function listEndpointTools(
   const tools: RemoteMcpTool[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
+  try {
   for (let page = 0; page < MAX_TOOL_LIST_PAGES; page += 1) {
     const result = await postJsonRpc<ToolsListResult>(
       opts,
@@ -668,6 +739,16 @@ async function listEndpointTools(
     };
   }
   return { tools, serverName };
+  } finally {
+    if (initialized.sessionId) {
+      await deleteMcpSession(
+        opts,
+        manifestServer,
+        initialized.sessionId,
+        initialized.protocolVersion ?? PROTOCOL_VERSION
+      );
+    }
+  }
 }
 
 async function listLocalOAuthTools(binding: McpEndpointBinding): Promise<{
