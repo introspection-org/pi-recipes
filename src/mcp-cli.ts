@@ -751,7 +751,7 @@ async function compactList(args: string[]): Promise<number> {
     }
     return 0;
   } catch (error) {
-    writeCompactListError(error);
+    if (!quiet) writeCompactListError(error);
     return 1;
   } finally {
     await runtime.close();

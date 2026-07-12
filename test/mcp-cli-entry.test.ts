@@ -169,6 +169,10 @@ describe("mcp CLI entry detection", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("JSON is reserved for tool results");
     expect(result.stderr).not.toContain(" at ");
+
+    const quiet = runCli(distCli, ["list", "offline", "--quiet", "--timeout", "100"]);
+    expect(quiet.status).not.toBe(0);
+    expect(quiet.output).toBe("");
   });
 
   it("rejects in-session authentication", () => {
