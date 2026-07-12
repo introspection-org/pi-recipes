@@ -101,6 +101,29 @@ function schemaObject(value: unknown): Schema | undefined {
   return record(value);
 }
 
+function callValue(value: unknown, name: string): string {
+  const schema = record(value) ?? {};
+  const union = Array.isArray(schema.anyOf)
+    ? schema.anyOf
+    : Array.isArray(schema.oneOf)
+      ? schema.oneOf
+      : undefined;
+  if (union?.length) return callValue(union[0], name);
+  if (schema.const !== undefined) return quoted(schema.const);
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return quoted(schema.enum[0]);
+  if (schema.type === "boolean") return "true";
+  if (schema.type === "number" || schema.type === "integer") {
+    return String(number(schema.minimum) ?? 1);
+  }
+  if (schema.type === "array") {
+    const count = Math.max(1, number(schema.minItems) ?? 1);
+    const item = callValue(schema.items, "value");
+    return `'[${Array.from({ length: count }, () => item).join(",")}]'`;
+  }
+  if (schema.type === "object" || record(schema.properties)) return "'{}'";
+  return `"<${name}>"`;
+}
+
 function callExample(server: string, tool: ContractTool): string {
   const schema = record(tool.inputSchema);
   const properties = record(schema?.properties) ?? {};
@@ -109,16 +132,7 @@ function callExample(server: string, tool: ContractTool): string {
     : [];
   const args = required.map((name) => {
     const descriptor = record(properties[name]) ?? {};
-    const type = compactSchemaType(descriptor);
-    const value =
-      type === "boolean"
-        ? "true"
-        : type === "number" || type.startsWith("integer")
-          ? "1"
-          : type.endsWith("[]")
-            ? "'[]'"
-            : `\"<${name}>\"`;
-    return `${name}=${value}`;
+    return `${name}=${callValue(descriptor, name)}`;
   });
   return `mcp call ${server}.${tool.name}${args.length > 0 ? ` ${args.join(" ")}` : ""}`;
 }

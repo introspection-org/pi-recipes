@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  aggregateListExitCode,
   callJsonArgumentError,
   createDelegatedErrorFilter,
   describeUnavailableRunTool,
@@ -29,6 +30,18 @@ import {
 } from "../src/index.js";
 
 const originalFetch = globalThis.fetch;
+
+describe("aggregate MCP list exit behavior", () => {
+  it("tolerates unavailable optional servers by default", () => {
+    expect(aggregateListExitCode(true, [])).toBe(0);
+  });
+
+  it("reports unavailable servers when explicitly requested", () => {
+    expect(aggregateListExitCode(true, ["--quiet"])).toBe(1);
+    expect(aggregateListExitCode(true, ["--exit-code"])).toBe(1);
+    expect(aggregateListExitCode(false, ["--exit-code"])).toBe(0);
+  });
+});
 
 function recipeManifest(
   recipeDir: string,

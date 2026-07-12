@@ -649,6 +649,15 @@ export function withListTimeout<T>(promise: Promise<T>, timeoutMs: number): Prom
   });
 }
 
+export function aggregateListExitCode(
+  hadFailure: boolean,
+  args: readonly string[]
+): number {
+  return hadFailure && (args.includes("--quiet") || args.includes("--exit-code"))
+    ? 1
+    : 0;
+}
+
 function writeCompactListError(error: unknown): void {
   const filter = createDelegatedErrorFilter((text) => stderr.write(text));
   const message = error instanceof Error ? error.stack ?? error.message : String(error);
@@ -697,7 +706,7 @@ async function compactList(args: string[]): Promise<number> {
     } finally {
       await runtime.close();
     }
-    return exitCode;
+    return aggregateListExitCode(exitCode !== 0, args);
   }
   const exact = exactToolTarget(target);
   const server = exact?.server ?? target;

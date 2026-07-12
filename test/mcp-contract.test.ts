@@ -100,4 +100,25 @@ describe("compact MCP contracts", () => {
     expect(signature).toContain("field7: string");
     expect(signature).toContain("… +3 optional");
   });
+
+  it("keeps constrained required call examples type-correct", () => {
+    const contract = renderToolContract("server", {
+      name: "constrained",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "integer", minimum: 0, maximum: 10 },
+          tags: {
+            type: "array",
+            minItems: 2,
+            items: { type: "string", minLength: 1 },
+          },
+        },
+        required: ["limit", "tags"],
+      },
+    });
+    expect(contract).toContain(
+      `mcp call server.constrained limit=0 tags='["<value>","<value>"]'`
+    );
+  });
 });
