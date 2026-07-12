@@ -49,11 +49,8 @@ describe("recipe-session mcporter policy", () => {
   });
 
   it.each([
-    ["--brief", "--schema"],
-    ["--signatures", "--json"],
     ["--schema", "--all-parameters"],
-    ["--schema", "--json"],
-    ["--json", "--status"],
+    ["--schema", "--status"],
   ])("rejects combined list output modes: %s %s", (left, right) => {
     expect(
       validateDelegatedMcpCommand(
@@ -61,7 +58,7 @@ describe("recipe-session mcporter policy", () => {
         policy()
       ).error
     ).toBe(
-      "mcp list accepts only one output mode: --brief, --schema, --all-parameters, --json, or --status."
+      "mcp list accepts only one output mode: --schema, --all-parameters, or --status."
     );
   });
 
@@ -81,71 +78,59 @@ describe("recipe-session mcporter policy", () => {
     expect(result.command?.args.at(-1)).toBe("--no-oauth");
   });
 
-  it("inserts no-OAuth mode before literal positional arguments", () => {
-    expect(
-      validateDelegatedMcpCommand(
-        ["call", "contacts.search_contacts", "--", "--literal-value"],
-        policy()
-      ).command?.args
-    ).toEqual([
-      "call",
-      "contacts.search_contacts",
-      "--no-oauth",
-      "--",
-      "--literal-value",
-    ]);
-  });
-
-  it("does not mistake a literal --no-oauth tool value for the CLI guard", () => {
-    expect(
-      validateDelegatedMcpCommand(
-        ["call", "contacts.search_contacts", "--", "--no-oauth"],
-        policy()
-      ).command?.args
-    ).toEqual([
-      "call",
-      "contacts.search_contacts",
-      "--no-oauth",
-      "--",
-      "--no-oauth",
-    ]);
-  });
-
-  it("preserves mcporter syntax, including future non-escape flags", () => {
+  it("rejects overlapping call syntaxes", () => {
     expect(
       validateDelegatedMcpCommand(
         ['call', 'contacts.search_contacts(query: "docs/readme.md")'],
         policy()
       ).error
-    ).toBeUndefined();
+    ).toContain("requires an exact session tool selector");
     expect(
       validateDelegatedMcpCommand(
         ["call", "contacts.search_contacts", "--future-mcporter-option", "value"],
         policy()
-      ).command?.args
-    ).toEqual([
-      "call",
-      "contacts.search_contacts",
-      "--future-mcporter-option",
-      "value",
-      "--no-oauth",
-    ]);
-  });
-
-  it("does not normalize schema-backed named flags before delegation", () => {
+      ).error
+    ).toContain("use key=value or --json");
     expect(
       validateDelegatedMcpCommand(
         ["call", "contacts.search_contacts", "--query", "Ada", "--page-size=25"],
         policy()
-      ).command?.args
-    ).toEqual([
-      "call",
-      "contacts.search_contacts",
-      "--query",
-      "Ada",
-      "--page-size=25",
-      "--no-oauth",
-    ]);
+      ).error
+    ).toContain("use key=value or --json");
+    expect(
+      validateDelegatedMcpCommand(
+        ["call", "contacts.search_contacts", "query:Ada"],
+        policy()
+      ).error
+    ).toContain("must use key=value syntax");
+    expect(
+      validateDelegatedMcpCommand(
+        ["call", "contacts.search_contacts", "--", "Ada"],
+        policy()
+      ).error
+    ).toContain("positional arguments are unavailable");
+  });
+
+  it("corrects a split server and tool selector", () => {
+    expect(
+      validateDelegatedMcpCommand(
+        ["call", "contacts", "search_contacts", '{"query":"Ada"}'],
+        policy()
+      ).error
+    ).toContain("Use mcp call contacts.search_contacts key=value or --json");
+  });
+
+  it.each([
+    ["list", "contacts", "--brief"],
+    ["list", "contacts", "--signatures"],
+    ["list", "contacts", "--no-oauth"],
+    ["call", "contacts.search_contacts", "--args", "{}"],
+    ["call", "contacts.search_contacts", "--no-oauth"],
+    ["call", "contacts.search_contacts", "--raw-strings"],
+  ])("rejects removed compatibility syntax: %j", (...args) => {
+    const error = validateDelegatedMcpCommand(args as string[], policy()).error;
+    if (args.includes("--args")) expect(error).toContain("use --json");
+    else expect(error).toContain("unavailable");
   });
 
   it.each([

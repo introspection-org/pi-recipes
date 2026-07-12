@@ -28,6 +28,8 @@
     "dist/mcp-cli-help.js",
     "dist/mcp-cli-policy.d.ts",
     "dist/mcp-cli-policy.js",
+    "dist/mcp-contract.d.ts",
+    "dist/mcp-contract.js",
     "dist/package-info.d.ts",
     "dist/package-info.js",
     "dist/pi-extension.d.ts",

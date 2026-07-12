@@ -111,6 +111,36 @@ describe("Pi recipes launch extension", () => {
     );
   });
 
+  it("does not reuse exported resolved values as later launch inputs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-inputs-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const env: NodeJS.ProcessEnv = {
+        PI_RECIPE_DIR: recipeDir,
+        PI_AGENT_NAME: "explorer",
+      };
+      const pi = createMockExtensionAPI();
+      const notify = vi.fn();
+      const ctx = extensionContext(root, notify);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension({ env })(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      expect(env.PI_AGENT_NAME).toBe("main");
+
+      pi.flagValues.delete("agent");
+      notify.mockClear();
+      await pi.commands.get("recipe")?.handler("", ctx);
+
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("Agent: explorer"), "info");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports a friendly message when the selected recipe is missing", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-missing-"));
     try {
@@ -485,6 +515,8 @@ describe("Pi recipes launch extension", () => {
       );
       expect(env.PI_RECIPES_MCP_MANIFEST).toBe(join(projectDir, ".pi", "mcp.json"));
       expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(projectDir, ".pi", "bin"));
+      expect(env.PI_RECIPE_DIR).toBe(recipeDir);
+      expect(env.PI_AGENT_NAME).toBe("main");
       expect(env.PATH?.split(delimiter)[0]).toBe(join(projectDir, ".pi", "bin"));
       expect(existsSync(join(projectDir, ".pi", "bin", "mcp"))).toBe(true);
       const materialized = JSON.parse(readFileSync(env.PI_RECIPES_MCP_MANIFEST!, "utf8"));
