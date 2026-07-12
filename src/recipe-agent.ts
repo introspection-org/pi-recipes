@@ -37,6 +37,23 @@ export interface RecipeAgentMcpServer {
 
 export type RecipeAgentMcp = Record<string, RecipeAgentMcpServer>;
 
+/**
+ * Per-connector selectors declared on an agent — the connector analogue of
+ * `RecipeAgentMcp`. `subject` is whose authority the token carries (app | user |
+ * person); `scopes` narrows to a subset of the connector's scopes; the optional
+ * `approvalPolicy` is a tighten-only override of the org connector default.
+ */
+export interface RecipeAgentConnectorSelectors {
+  subject?: string;
+  scopes?: string[];
+  approvalPolicy?: string;
+}
+
+export type RecipeAgentConnectors = Record<
+  string,
+  RecipeAgentConnectorSelectors
+>;
+
 export interface RecipeAgentDefinition {
   name: string;
   from?: string;
@@ -54,6 +71,12 @@ export interface RecipeAgentDefinition {
   tools: string[];
   /** MCP tool selection, separate from the exact Pi/extension tool allowlist. */
   mcp?: RecipeAgentMcp;
+  /**
+   * Connectors this agent may use (docs/design/connectors-aauth-b2b2c.md §18).
+   * The connector *definition* (endpoints/creds/Person Server/approval policy)
+   * lives org-side in the CP; the recipe only references + scopes connectors.
+   */
+  connectors?: RecipeAgentConnectors;
   skills: string[];
   /** True when `skills:` was declared (directly or inherited) rather than defaulted to []. */
   skillsDeclared?: boolean;
@@ -110,6 +133,7 @@ const AGENT_YAML_KEYS = new Set([
   "model",
   "tools",
   "mcp",
+  "connectors",
   "skills",
   "subagents",
   "extensions",
@@ -201,6 +225,53 @@ function mergeMcp(
   return merged;
 }
 
+function parseConnectors(
+  data: Record<string, unknown>
+): RecipeAgentConnectors | undefined {
+  if (!Object.hasOwn(data, "connectors")) return undefined;
+  const raw = asRecord(data.connectors);
+  const connectors: RecipeAgentConnectors = {};
+  for (const [connectorId, value] of Object.entries(raw)) {
+    const selectors = asRecord(value);
+    const approvalPolicy = selectors.approval_policy ?? selectors.approvalPolicy;
+    connectors[connectorId] = {
+      ...(typeof selectors.subject === "string"
+        ? { subject: selectors.subject }
+        : {}),
+      ...(Object.hasOwn(selectors, "scopes")
+        ? { scopes: stringArray(selectors.scopes) }
+        : {}),
+      ...(typeof approvalPolicy === "string" ? { approvalPolicy } : {}),
+    };
+  }
+  return connectors;
+}
+
+function mergeConnectors(
+  base: RecipeAgentConnectors | undefined,
+  child: RecipeAgentConnectors | undefined
+): RecipeAgentConnectors | undefined {
+  if (!base) return child;
+  if (!child) return base;
+  const merged: RecipeAgentConnectors = { ...base };
+  for (const [connectorId, childSel] of Object.entries(child)) {
+    const baseSel = base[connectorId];
+    merged[connectorId] = {
+      ...(baseSel?.subject !== undefined ? { subject: baseSel.subject } : {}),
+      ...(baseSel?.scopes !== undefined ? { scopes: baseSel.scopes } : {}),
+      ...(baseSel?.approvalPolicy !== undefined
+        ? { approvalPolicy: baseSel.approvalPolicy }
+        : {}),
+      ...(childSel.subject !== undefined ? { subject: childSel.subject } : {}),
+      ...(childSel.scopes !== undefined ? { scopes: childSel.scopes } : {}),
+      ...(childSel.approvalPolicy !== undefined
+        ? { approvalPolicy: childSel.approvalPolicy }
+        : {}),
+    };
+  }
+  return merged;
+}
+
 function readYaml(path: string): Record<string, unknown> {
   return asRecord(parse(readFileSync(path, "utf8")));
 }
@@ -279,6 +350,7 @@ function readRecipeAgentSources(
         modelConfig,
         tools: Object.hasOwn(data, "tools") ? stringArray(data.tools) : undefined,
         mcp: parseMcp(data),
+        connectors: parseConnectors(data),
         skills: Object.hasOwn(data, "skills") ? stringArray(data.skills) : undefined,
         subagents: Object.hasOwn(data, "subagents") ? stringArray(data.subagents) : undefined,
         extensions: parseExtensions(data),
@@ -352,6 +424,7 @@ export function loadRecipeAgentDefinitions(
       ...(modelConfig ? { modelConfig } : {}),
       tools: raw.tools ?? base?.tools ?? [],
       mcp: mergeMcp(base?.mcp, raw.mcp),
+      connectors: mergeConnectors(base?.connectors, raw.connectors),
       skills: raw.skills ?? base?.skills ?? [],
       subagents: raw.subagents ?? base?.subagents ?? [],
       skillsDeclared: raw.skills !== undefined || base?.skillsDeclared === true,
