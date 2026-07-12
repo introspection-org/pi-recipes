@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/introspection-org/pi-recipes/compare/v0.7.1...v0.8.0) (2026-07-12)
+
+
+### Features
+
+* **recipe-check:** storage in the resources grammar + deployment-configuration spec ([#59](https://github.com/introspection-org/pi-recipes/issues/59)) ([a5623b9](https://github.com/introspection-org/pi-recipes/commit/a5623b99aea36537a309d99cc87949e5a0878333))
+
 ## [0.7.1](https://github.com/introspection-org/pi-recipes/compare/v0.7.0...v0.7.1) (2026-07-12)
 
 
