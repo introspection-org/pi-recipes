@@ -1376,6 +1376,24 @@ export function duplicateCallArgumentKeys(args: string[]): string[] {
   return [...duplicates];
 }
 
+export function callJsonArgumentError(args: readonly string[]): string | null {
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json" || arg === "--args") {
+      const value = args[index + 1];
+      if (value === undefined || (value.startsWith("--") && value !== "-")) {
+        return `mcp call: ${arg} expects a JSON object or - for stdin. Example: mcp call server.tool --json '{"tags":["a","b"]}'`;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg === "--json=" || arg === "--args=") {
+      return `mcp call: ${arg.slice(0, -1)} expects a JSON object or - for stdin.`;
+    }
+  }
+  return null;
+}
+
 export function malformedCallExpression(args: string[]): string | null {
   const ref = args.find((arg) => !arg.startsWith("-"));
   if (!ref || !/[()]/.test(ref)) return null;
@@ -1463,6 +1481,11 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     const malformed = malformedCallExpression(args.slice(1));
     if (malformed) {
       stderr.write(`${malformed}\n`);
+      return 2;
+    }
+    const jsonArgumentError = callJsonArgumentError(args.slice(1));
+    if (jsonArgumentError) {
+      stderr.write(`${jsonArgumentError}\n`);
       return 2;
     }
   }

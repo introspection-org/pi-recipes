@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  callJsonArgumentError,
   createDelegatedErrorFilter,
   describeUnavailableRunTool,
   describeUnknownRunServer,
@@ -1006,6 +1007,19 @@ describe("recipe MCP materialization", () => {
 });
 
 describe("mcporter CLI end-to-end", () => {
+  it("explains missing structured call arguments before delegating", () => {
+    expect(callJsonArgumentError(["nextplay.search_profiles", "limit:=15", "--json"])).toContain(
+      "--json expects a JSON object or - for stdin"
+    );
+    expect(
+      callJsonArgumentError([
+        "nextplay.search_profiles",
+        "--json",
+        '{"limit":15}',
+      ])
+    ).toBeNull();
+  });
+
   function startStubMcpServer(expectedAuth: string): Promise<{
     server: Server;
     url: string;

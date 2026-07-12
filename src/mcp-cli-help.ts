@@ -15,7 +15,7 @@ export function mcpCliHelpText(): string {
     "",
     "Call one tool:",
     "  mcp call <server>.<tool> key=value ...",
-    "  Use --json for nested or structured arguments.",
+    "  For structured arguments, pass --json '{...}' or --json - for stdin.",
     "  Calls support --output text|markdown|json|raw, --save-images, --timeout, and @file.",
     "  Quote argument tokens containing shell operators, especially multi-value |.",
     "  Structured server results are JSON; text and markdown results remain text.",
