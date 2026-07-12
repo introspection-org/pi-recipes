@@ -836,7 +836,6 @@ describe("recipe MCP materialization", () => {
       const script = readFileSync(shimPath, "utf8");
       expect(script).toContain(mcpCliEntrypointPath());
       expect(script).toContain(`MCPORTER_CONFIG:=${defaultMcporterConfigPath(root)}`);
-      expect(script).toContain("PI_RECIPES_MCP_CLI=1");
       expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(binDir);
       expect(env.PATH?.split(":")).toContain(binDir);
     } finally {

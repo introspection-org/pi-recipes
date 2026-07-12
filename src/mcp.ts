@@ -257,8 +257,6 @@ export async function materializeSessionMcpCli(opts: {
     "#!/bin/sh",
     `PI_RECIPES_MCP_SESSION_ROOT=${shellQuote(opts.cwd)}`,
     "export PI_RECIPES_MCP_SESSION_ROOT",
-    "PI_RECIPES_MCP_CLI=1",
-    "export PI_RECIPES_MCP_CLI",
     `: "\${${MCPORTER_CONFIG_ENV}:=${doubleQuoteEscape(defaultMcporterConfigPath(opts.cwd))}}"`,
     `export ${MCPORTER_CONFIG_ENV}`,
     `exec ${shellQuote(process.execPath)} ${shellQuote(mcpCliEntrypointPath())} "$@"`,

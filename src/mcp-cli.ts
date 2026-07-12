@@ -19,6 +19,8 @@ import {
   validateDelegatedMcpCommand,
 } from "./mcp-cli-policy.js";
 
+process.env.PI_RECIPES_MCP_CLI = "1";
+
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RUN_TOOL_CALLS = 100;
@@ -1352,7 +1354,7 @@ function delegateToMcporter(args: string[]): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [mcporterCliEntrypointPath(), ...args], {
       stdio: ["inherit", "pipe", "pipe"],
-      env: { ...process.env, PI_RECIPES_MCP_CLI: "1" },
+      env: process.env,
     });
     const preserve = usesMachineReadableOutput(args);
     const stderrFilter = createDelegatedErrorFilter((text) => stderr.write(text));

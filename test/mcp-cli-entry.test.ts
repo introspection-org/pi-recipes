@@ -63,6 +63,19 @@ describe("mcp CLI entry detection", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("marks the CLI process as the MCP network boundary", () => {
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `import(${JSON.stringify(distCli)}).then(() => process.stdout.write(process.env.PI_RECIPES_MCP_CLI ?? ""))`,
+      ],
+      { encoding: "utf8", timeout: 30_000 }
+    );
+    expect(probe.status).toBe(0);
+    expect(probe.stdout).toBe("1");
+  });
+
   it("exits cleanly when a downstream pipeline closes stdout", () => {
     const probe = spawnSync(
       process.execPath,
