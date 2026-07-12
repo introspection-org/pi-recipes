@@ -40,4 +40,4 @@ locally and an error in `ci`/`publish`.
 
 ## License
 
-MIT
+Apache-2.0
