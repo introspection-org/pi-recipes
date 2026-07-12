@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/introspection-org/pi-recipes/compare/v0.6.4...v0.7.0) (2026-07-12)
+
+
+### Features
+
+* **pi-recipe-check:** extract pure validation core and prepare crates.io publishing ([#54](https://github.com/introspection-org/pi-recipes/issues/54)) ([d5147c0](https://github.com/introspection-org/pi-recipes/commit/d5147c05c59907de783e5cb7e86a78287fab546a))
+
 ## [0.6.4](https://github.com/introspection-org/pi-recipes/compare/v0.6.3...v0.6.4) (2026-07-12)
 
 
