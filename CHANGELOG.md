@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.4](https://github.com/introspection-org/pi-recipes/compare/v0.6.3...v0.6.4) (2026-07-12)
+
+
+### Bug Fixes
+
+* make MCP metadata and invocation token-efficient ([7b3136c](https://github.com/introspection-org/pi-recipes/commit/7b3136cc0415c0c6c9f43d4982e75c04f411978d))
+* mark MCP CLI network calls for trace baggage ([1486454](https://github.com/introspection-org/pi-recipes/commit/148645458706d6746fc25ce996dfcc892d717556))
+
 ## [0.6.3](https://github.com/introspection-org/pi-recipes/compare/v0.6.2...v0.6.3) (2026-07-11)
 
 
