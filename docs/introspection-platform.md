@@ -20,7 +20,7 @@ automatically at deploy/run time without being written in the recipe.
 | --- | --- | --- |
 | **Connectors** (`connectors:` on an agent) | **yes** — reference + scope connectors in `agent.yaml` | the connector token broker + per-action human approval |
 | **Runtime** (the `.introspection` manifest) | **yes** — `name` / `path` / `runtime.llm_mode` | the deployment + versioning, managed LLM access, telemetry |
-| **Resources** (`runtime.resources`) | **yes** — `requests` / `limits` / `storage` | the sandbox sized to your request |
+| **Resources** (`runtime.resources`) | **yes** — `requests` / `limits` (cpu, memory; `storage` under `requests`) | the sandbox sized to your request |
 
 Core Pi fields (`model`, `tools`, `skills`, `subagents`, `system_instructions`)
 and the MCP-standard `mcp` block are documented in
@@ -98,14 +98,12 @@ runtime_name: travel-agent
 path: .
 runtime:
   llm_mode: managed          # the platform provides + meters model access
-  resources:                 # optional sandbox compute overrides — see below
-    requests: { cpu: 500m, memory: 1.5Gi }
-    limits:   { cpu: 1500m, memory: 1.5Gi }
+  # resources: ...           # optional sandbox compute overrides — see Resources below
 ```
 
 `name` / `path` / `runtime.llm_mode` are recipe-authored; the platform supplies
 managed LLM access (`llm_mode: managed`), telemetry, and the deployment +
-versioning lifecycle.
+versioning lifecycle. `runtime.resources` is covered in the next section.
 
 ---
 
@@ -122,16 +120,18 @@ runtime:
     requests:              # guaranteed floor
       cpu: 500m            # millicores (500m) or decimal cores (0.5, 1, 2)
       memory: 1.5Gi        # Ki/Mi/Gi/Ti (binary) or k/M/G/T (decimal)
+      storage: 10Gi        # optional scratch-volume size (request-only)
     limits:                # burst ceiling
       cpu: 1500m
       memory: 1.5Gi
-    storage: 10Gi          # optional sandbox disk override
 ```
 
 Rules `recipe-check` enforces (shape, quantity grammar, internal consistency):
 
-- Only `requests`, `limits`, and `storage`; within a section only `cpu` and
-  `memory` quantities (unknown keys are flagged).
+- Only `requests` and `limits` sections (unknown keys are flagged).
+- `requests` accepts `cpu`, `memory`, and `storage`; `limits` accepts `cpu` and
+  `memory` only — `storage` is **request-only** (a scratch-volume size, like a
+  PVC), never a limit.
 - `requests.cpu` may not exceed `limits.cpu`, and likewise for `memory`.
 - CPU is millicores or decimal cores; memory and `storage` take binary
   (`Ki`/`Mi`/`Gi`/`Ti`) or decimal (`k`/`M`/`G`/`T`) suffixes.
