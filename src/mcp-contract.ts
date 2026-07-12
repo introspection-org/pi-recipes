@@ -164,7 +164,7 @@ export function renderToolSignature(
     return `${name}${optional}: ${compactSchemaType(descriptor)}`;
   });
   const hidden = entries.length - visible.length;
-  if (hidden > 0) parameters.push(`...${hidden}`);
+  if (hidden > 0) parameters.push(`… +${hidden} optional`);
   return `${server}.${tool.name}(${parameters.join(", ")})`;
 }
 

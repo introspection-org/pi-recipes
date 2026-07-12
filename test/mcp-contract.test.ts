@@ -75,7 +75,7 @@ describe("compact MCP contracts", () => {
         name: "search",
         inputSchema: { type: "object", properties },
       })
-    ).toContain("...3");
+    ).toContain("… +3 optional");
     expect(
       renderToolSignature(
         "nextplay",

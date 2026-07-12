@@ -1293,6 +1293,9 @@ describe("mcporter CLI end-to-end", () => {
       expect(wrappedList.stderr).toBe("");
       expect(wrappedList.stdout).toContain("stub.get_value(key: string)");
 
+      const serverList = await runMcpCli(["list"], configEnv, "");
+      expect(serverList).toEqual({ code: 0, stdout: "stub — 1 tool\n", stderr: "" });
+
       const metadataJson = await runMcpCli(["list", "stub", "--json"], configEnv, "");
       expect(metadataJson.code).toBe(2);
       expect(metadataJson.stdout).toBe("");

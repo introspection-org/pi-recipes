@@ -150,12 +150,12 @@ export function mcpCallHelpText(): string {
     "Delegates argument parsing and tool execution to mcporter for exact tools materialized in this recipe session.",
     "",
     "Arguments:",
-    "  key=value / key:value     Named arguments with mcporter's schema-aware coercion.",
+    "  key=value                 Named arguments with schema-aware coercion.",
     "  --key value               Named schema arguments supported by mcporter.",
     "  key=@path                 Read an exact UTF-8 string; use @@ for a literal @.",
     "  --args <json|->, --json <json|->  Supply a JSON object directly or from stdin.",
-    "  '<server>.<tool>(...)'    Function-call syntax for nested values.",
     "  --                         Treat remaining values as literal positional inputs.",
+    '  Array example: mcp call server.tool --json \'{"tags":["a","b"]}\'.',
     "  Quote argument tokens containing shell operators such as |, <, >, &, or ;. JSON stdin avoids nested shell quoting.",
     "",
     "Output/runtime flags:",
@@ -600,6 +600,10 @@ function manifestTool(
     ?.tools?.find((entry) => entry.name === tool);
 }
 
+function toolCount(count: number): string {
+  return `${count} tool${count === 1 ? "" : "s"}`;
+}
+
 async function compactList(args: string[]): Promise<number> {
   if (args.includes("--json")) {
     stderr.write("mcp list metadata is compact text; JSON is reserved for tool results.\n");
@@ -613,11 +617,27 @@ async function compactList(args: string[]): Promise<number> {
   const quiet = args.includes("--quiet");
   const manifest = await readManifest();
   if (!target) {
-    if (quiet) return 0;
-    for (const server of manifest.servers ?? []) {
-      stdout.write(`${server.id} — ${server.tools?.length ?? 0} tools\n`);
+    const runtime = await createRuntime();
+    let exitCode = 0;
+    try {
+      for (const server of manifest.servers ?? []) {
+        try {
+          const tools = await runtime.listTools(server.id, {
+            includeSchema: false,
+            autoAuthorize: false,
+            allowCachedAuth: true,
+            disableOAuth: true,
+          });
+          if (!quiet) stdout.write(`${server.id} — ${toolCount(tools.length)}\n`);
+        } catch {
+          exitCode = 1;
+          if (!quiet) stdout.write(`${server.id} — unavailable\n`);
+        }
+      }
+    } finally {
+      await runtime.close();
     }
-    return 0;
+    return exitCode;
   }
   const exact = exactToolTarget(target);
   const server = exact?.server ?? target;
@@ -635,7 +655,7 @@ async function compactList(args: string[]): Promise<number> {
     })) as ContractTool[];
     if (quiet) return 0;
     if (status) {
-      stdout.write(`${server} ok — ${tools.length} tools\n`);
+      stdout.write(`${server} ok — ${toolCount(tools.length)}\n`);
       return 0;
     }
     const selected = exact ? tools.filter((tool) => tool.name === exact.tool) : tools;
