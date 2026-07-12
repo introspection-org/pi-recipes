@@ -151,7 +151,9 @@ describe("compact MCP contracts", () => {
     const compact = renderToolContract("server", tool);
     const verbose = renderToolContract("server", tool, { verboseDescriptions: true });
     expect(compact).toContain("…");
+    expect(compact).toContain("Descriptions shortened; use --verbose for full text.");
     expect(compact.length).toBeLessThan(verbose.length);
+    expect(verbose).not.toContain("Descriptions shortened");
     expect(verbose).toContain(description.trim().replace(/\s+/g, " "));
   });
 });

@@ -74,6 +74,21 @@ function descriptionText(value: unknown, verbose: boolean): string {
   return `${normalized.slice(0, 159).trimEnd()}…`;
 }
 
+function hasLongDescription(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasLongDescription);
+  const object = record(value);
+  if (!object) return false;
+  if (
+    typeof object.description === "string" &&
+    object.description.trim().replace(/\s+/g, " ").length > 160
+  ) {
+    return true;
+  }
+  return Object.entries(object).some(
+    ([key, nested]) => key !== "description" && hasLongDescription(nested)
+  );
+}
+
 function schemaLines(
   value: unknown,
   indent: string,
@@ -225,6 +240,14 @@ export function renderToolContract(
   );
   if (description) {
     lines.push(description);
+  }
+  if (
+    !options.verboseDescriptions &&
+    (descriptionText(tool.description, true).length > 160 ||
+      hasLongDescription(tool.inputSchema) ||
+      hasLongDescription(tool.outputSchema))
+  ) {
+    lines.push("Descriptions shortened; use --verbose for full text.");
   }
   lines.push("", "input", ...schemaLines(tool.inputSchema, "  ", options));
   lines.push(
