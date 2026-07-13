@@ -1,12 +1,11 @@
-import type { McpManifest } from "./mcp.js";
+import {
+  mcpSessionAllowsTool,
+  type McpSessionConfig,
+  type McpSessionServer,
+} from "./mcp.js";
 
 export interface McpCliSessionPolicy {
-  servers: Map<
-    string,
-    {
-      tools: Set<string>;
-    }
-  >;
+  servers: Map<string, McpSessionServer>;
 }
 
 export interface ValidatedMcpCliCommand {
@@ -140,8 +139,9 @@ function validateExactTarget(
       ? `MCP server '${server}' is not available in this session.${suggestion ? ` Did you mean '${suggestion}'?` : ""} Available servers: ${available.join(", ")}.`
       : `MCP server '${server}' is not available in this session. No MCP servers are configured.`;
   }
-  if (tool !== undefined && !configured.tools.has(tool)) {
-    const suggestion = closestName(tool, configured.tools.keys());
+  if (tool !== undefined && !mcpSessionAllowsTool(configured, tool)) {
+    const known = configured.catalog?.map((entry) => entry.name) ?? [];
+    const suggestion = closestName(tool, known);
     return `Tool '${tool}' is not available on server '${server}' in this session.${suggestion ? ` Did you mean '${suggestion}'?` : ""} Run \`mcp list ${server}\` to inspect the callable tools.`;
   }
   return null;
@@ -216,7 +216,8 @@ function validateCall(
     if (
       rawSelector &&
       splitTool &&
-      policy.servers.get(rawSelector)?.tools.has(splitTool)
+      policy.servers.has(rawSelector) &&
+      mcpSessionAllowsTool(policy.servers.get(rawSelector)!, splitTool)
     ) {
       return {
         error:
@@ -252,16 +253,11 @@ function validateCall(
 }
 
 export function createMcpCliSessionPolicy(
-  manifest: McpManifest
+  session: McpSessionConfig
 ): McpCliSessionPolicy {
   return {
     servers: new Map(
-      (manifest.servers ?? []).map((server) => [
-        server.id,
-        {
-          tools: new Set((server.tools ?? []).map((tool) => tool.name)),
-        },
-      ])
+      session.servers.map((server) => [server.id, server])
     ),
   };
 }

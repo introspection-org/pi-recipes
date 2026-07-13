@@ -217,7 +217,7 @@ extensions. `exclude` subtracts matching extension names.
 
 ## MCP
 
-Recipes can expose MCP endpoint tools through a generated `mcp` CLI manifest.
+Recipes can expose MCP endpoint tools through a generated session-local `mcp` CLI.
 The recipe declares an upper-bound MCP server policy in `package.json#pi.mcp`,
 and each agent declares its own MCP selection in a separate `mcp` block.
 Ordinary `tools` remains an exact allowlist of Pi built-ins and extension tools.
@@ -286,19 +286,19 @@ an explicit list of non-MCP tools.
 `agent.mcp_include_missing`, `agent.mcp_empty`, and
 `agent.mcp_selector_invalid`. The TypeScript runtime uses a generic fail-closed
 guard so an invalid policy cannot launch silently without duplicating those
-diagnostics. Runtime discovery separately distinguishes an
-undeclared package server (`mcp.package_server_undeclared`), an unselected
-agent server (`mcp.agent_server_unselected`), explicit `include: []`
-(`mcp.agent_tools_disabled`), and a zero-tool policy intersection
-(`mcp.tools_filtered`).
+diagnostics. Runtime configuration also reports a zero-tool intersection for a
+package-pinned catalog as `mcp.tools_filtered`.
 
 When the selected agent declares MCP access, the extension writes a
 session-local shim at `.pi/bin/mcp` and prepends `.pi/bin` to `PATH` for
-commands run from that Pi session. When configured endpoints expose matching
-allowed tools, the extension also writes the filtered manifest to
-`.pi/mcp.json` and an
+commands run from that Pi session. It writes the static package, agent, and
+binding policy to `.pi/mcp-session.json` and an
 [mcporter](https://github.com/openclaw/mcporter) config to `.pi/mcporter.json`
-in the workspace. Agents can use:
+in the workspace. Launch does not contact MCP servers. `list` discovers only
+the requested server, while `search` discovers configured servers in parallel.
+`call` validates the static policy and connects directly without listing tools
+first. Discovered catalogs are cached by policy and endpoint fingerprint in
+`.pi/mcp-catalogs/` for the sandbox lifetime. Agents can use:
 
 Because MCP endpoint tools are invoked through the session-local CLI, agents
 normally need `bash` or another command-capable tool. Recipe validation emits a
@@ -318,8 +318,8 @@ JS
 ```
 
 `mcp list` and `mcp call` delegate listing, argument coercion, tool execution,
-and result formatting to mcporter against the filtered session config. The
-recipe wrapper enforces the materialized server/tool policy, blocks
+and result formatting to mcporter against the session config. The
+recipe wrapper enforces the static server/tool policy, blocks
 configuration and ad-hoc transport escapes, keeps calls headless, rejects
 ambiguous duplicate or malformed call input, and removes non-actionable error
 stacks. Calls preserve actual server results; metadata uses compact text. An exact
@@ -380,7 +380,7 @@ allows — never host-level mcporter or editor MCP configs. Header values in the
 generated config stay `${VAR}` environment references; secrets are resolved by
 mcporter at call time and are not written to disk.
 
-The session records the generated paths in `PI_RECIPES_MCP_MANIFEST`,
+The session records the generated paths in `PI_RECIPES_MCP_SESSION`,
 `MCPORTER_CONFIG`, and `PI_RECIPES_MCP_BIN_DIR`.
 
 For local endpoint bindings, use `.pi/mcp.local.json` in the workspace or recipe

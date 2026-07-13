@@ -43,7 +43,7 @@ The package also bundles MCP CLI implementation code for recipe sessions, but
 does not install `mcp` as a global binary. When a Pi session launches a recipe
 whose selected agent declares MCP access, the extension creates a session-local
 `.pi/bin/mcp` shim and prepends that directory to the Pi session's bash `PATH`.
-The generated paths are recorded in `PI_RECIPES_MCP_MANIFEST` and
+The generated paths are recorded in `PI_RECIPES_MCP_SESSION` and
 `PI_RECIPES_MCP_BIN_DIR`.
 
 When `recipes install` installs a recipe that declares `pi.mcp`, it also creates
@@ -307,10 +307,14 @@ validates MCP policy and selections without assuming a particular execution
 tool name.
 
 The extension writes `.pi/bin/mcp` and makes that shim available on `PATH` for
-bash commands run inside the launched Pi session. When configured endpoints
-expose matching allowed tools, it filters the manifest for the active agent and
-writes a workspace-local `.pi/mcp.json` plus an
+bash commands run inside the launched Pi session. It resolves package, agent,
+and endpoint policy without contacting remote servers, then writes a
+workspace-local `.pi/mcp-session.json` plus an
 [mcporter](https://github.com/openclaw/mcporter) config at `.pi/mcporter.json`.
+The CLI discovers catalogs on first `list` or `search` use and caches them per
+server in `.pi/mcp-catalogs/`; `mcp search` discovers uncached servers in
+parallel. `mcp call` validates static policy and connects directly without
+listing tools first.
 Agents use:
 
 ```bash
@@ -326,7 +330,7 @@ JS
 ```
 
 `mcp list` and `mcp call` delegate listing, argument coercion, tool execution,
-and result formatting to mcporter against the filtered session config. The
+and result formatting to mcporter against the session config. The
 recipe wrapper enforces the materialized server/tool policy, blocks
 configuration and ad-hoc transport escapes, keeps calls headless, rejects
 ambiguous duplicate or malformed call input, and removes non-actionable error

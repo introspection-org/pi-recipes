@@ -18,7 +18,10 @@ describe("mcp CLI entry detection", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-entry-"));
     writeFileSync(join(dir, "mcporter.json"), JSON.stringify({ imports: [], mcpServers: {} }));
-    writeFileSync(join(dir, "mcp.json"), JSON.stringify({ servers: [] }));
+    writeFileSync(
+      join(dir, "mcp-session.json"),
+      JSON.stringify({ version: 1, servers: [] })
+    );
   });
 
   afterEach(() => {
@@ -40,7 +43,7 @@ describe("mcp CLI entry detection", () => {
       env: {
         ...process.env,
         MCPORTER_CONFIG: join(dir, "mcporter.json"),
-        PI_RECIPES_MCP_MANIFEST: join(dir, "mcp.json"),
+        PI_RECIPES_MCP_SESSION: join(dir, "mcp-session.json"),
         ...opts.env,
       },
       encoding: "utf8",
@@ -97,7 +100,7 @@ describe("mcp CLI entry detection", () => {
         env: {
           ...process.env,
           MCPORTER_CONFIG: join(dir, "mcporter.json"),
-          PI_RECIPES_MCP_MANIFEST: join(dir, "mcp.json"),
+          PI_RECIPES_MCP_SESSION: join(dir, "mcp-session.json"),
         },
         encoding: "utf8",
         timeout: 30_000,
@@ -154,22 +157,16 @@ describe("mcp CLI entry detection", () => {
 
   it("keeps list metadata failures compact", () => {
     writeFileSync(
-      join(dir, "mcp.json"),
+      join(dir, "mcp-session.json"),
       JSON.stringify({
+        version: 1,
         servers: [
           {
             id: "offline",
             base_url: "http://127.0.0.1:9/mcp",
-            tools: [
-              {
-                name: "lookup",
-                input_schema: { type: "object", properties: {} },
-                output_schema: {
-                  type: "object",
-                  properties: { value: { type: "string" } },
-                },
-              },
-            ],
+            required: false,
+            package_tools: { include: ["lookup"] },
+            agent_tools: [{ include: ["lookup"] }],
           },
         ],
       })
@@ -288,13 +285,17 @@ describe("mcp CLI entry detection", () => {
 
   it("rejects duplicate call arguments across plain and named-flag syntax", () => {
     writeFileSync(
-      join(dir, "mcp.json"),
+      join(dir, "mcp-session.json"),
       JSON.stringify({
+        version: 1,
         servers: [
           {
             id: "contacts",
             base_url: "http://127.0.0.1:9/mcp",
-            tools: [
+            required: false,
+            package_tools: { include: ["search_contacts"] },
+            agent_tools: [{ include: ["search_contacts"] }],
+            catalog: [
               {
                 name: "search_contacts",
                 input_schema: {

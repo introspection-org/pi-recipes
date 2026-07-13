@@ -33,12 +33,12 @@ import {
   type ChildCompletionEnvelope,
 } from "./child-agent-completions.js";
 import {
-  clearRecipeMcpManifest,
+  clearMcpSession,
   configureMcpLocalConfigPath,
   executableRecipeToolNames,
-  formatMcpDiscoveryDiagnostics,
+  formatMcpConfigurationDiagnostics,
+  materializeMcpSession,
   materializeSessionMcpCli,
-  materializeRecipeMcpManifest,
   resolveAgentMcpSelections,
 } from "./mcp.js";
 import {
@@ -160,8 +160,6 @@ interface RecipeLaunchState {
   skillPaths: string[];
   promptPaths: string[];
   extensionPaths: string[];
-  mcpServerCount: number;
-  mcpToolCount: number;
   extensionsLoaded: boolean;
   configured: boolean;
 }
@@ -876,8 +874,6 @@ export function createPiRecipesExtension(
       skillPaths: packageResourcePaths(manifest, "skills"),
       promptPaths: packageResourcePaths(manifest, "prompts"),
       extensionPaths,
-      mcpServerCount: 0,
-      mcpToolCount: 0,
       extensionsLoaded: false,
       configured: false,
     };
@@ -979,9 +975,7 @@ export function createPiRecipesExtension(
   ): Promise<void> {
     const mcpSelections = scopedMcpSelections(launchState);
     if (mcpSelections.length === 0) {
-      launchState.mcpServerCount = 0;
-      launchState.mcpToolCount = 0;
-      await clearRecipeMcpManifest(env, launchState.cwd);
+      await clearMcpSession(env, launchState.cwd);
       return;
     }
 
@@ -990,34 +984,28 @@ export function createPiRecipesExtension(
       recipeDir: launchState.recipeDir,
       env,
     });
-    await materializeSessionMcpCli({
-      cwd: launchState.cwd,
-      env,
-    });
-
-    const manifest = await materializeRecipeMcpManifest({
-      cwd: launchState.cwd,
-      recipeDir: launchState.recipeDir,
-      manifest: launchState.manifest,
-      agentMcp: mcpSelections,
-      env,
-      fetch: globalThis.fetch,
-    });
-    launchState.mcpServerCount = manifest.servers?.length ?? 0;
-    launchState.mcpToolCount = (manifest.servers ?? []).reduce(
-      (count, server) => count + (server.tools?.length ?? 0),
-      0
-    );
-    if (launchState.mcpToolCount > 0) {
+    const [, session] = await Promise.all([
+      materializeSessionMcpCli({
+        cwd: launchState.cwd,
+        env,
+      }),
+      materializeMcpSession({
+        cwd: launchState.cwd,
+        manifest: launchState.manifest,
+        agentMcp: mcpSelections,
+        env,
+      }),
+    ]);
+    if (session.servers.length > 0) {
       ctx.ui.notify(
-        `Recipe MCP: ${launchState.mcpToolCount} tool(s) from ${launchState.mcpServerCount} server(s)`,
+        `Recipe MCP: ${session.servers.length} server(s) configured; tools load on first use`,
         "info"
       );
-      const detail = formatMcpDiscoveryDiagnostics(manifest.diagnostics ?? []);
+      const detail = formatMcpConfigurationDiagnostics(session.diagnostics ?? []);
       if (detail) {
         ctx.ui.notify(
           [
-            "Recipe MCP: some configured endpoints or tools were not available.",
+            "Recipe MCP: some configured servers or tools were filtered.",
             "",
             detail,
           ].join("\n"),
@@ -1025,10 +1013,10 @@ export function createPiRecipesExtension(
         );
       }
     } else {
-      const detail = formatMcpDiscoveryDiagnostics(manifest.diagnostics ?? []);
+      const detail = formatMcpConfigurationDiagnostics(session.diagnostics ?? []);
       ctx.ui.notify(
         [
-          "Recipe MCP: no tools discovered. Check .pi/mcp.local.json, endpoint auth, and whether the MCP server supports tools/list.",
+          "Recipe MCP: no servers are available to this agent. Check package policy and .pi/mcp.local.json.",
           ...(detail ? ["", detail] : []),
         ].join("\n"),
         "warning"

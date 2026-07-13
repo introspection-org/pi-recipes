@@ -7,11 +7,15 @@ import {
 function policy() {
   return createMcpCliSessionPolicy(
     {
+      version: 1,
       servers: [
         {
           id: "contacts",
+          name: "contacts",
           base_url: "https://mcp.example.com/mcp",
-          tools: [
+          package_tools: { include: ["search_contacts", "get_contact"] },
+          agent_tools: [{ include: ["search_contacts", "get_contact"] }],
+          catalog: [
             {
               name: "search_contacts",
               input_schema: {

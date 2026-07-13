@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { stdin as input, stderr, stdout } from "node:process";
 import { Worker } from "node:worker_threads";
 import { createCallResult, createRuntime } from "mcporter";
 import {
-  manifestOutputSchema,
+  catalogOutputSchema,
   renderToolContract,
   renderToolSignature,
   type ContractTool,
@@ -15,10 +18,13 @@ import { isDirectEntry } from "./direct-cli.js";
 import { mcpCliHelpText } from "./mcp-cli-help.js";
 import {
   defaultMcporterConfigPath,
-  defaultMcpManifestPath,
+  defaultMcpSessionPath,
+  filterMcpCatalog,
+  mcpSessionAllowsTool,
   mcporterCliEntrypointPath,
-  type McpManifest,
-  type McpManifestTool,
+  type McpSessionConfig,
+  type McpSessionServer,
+  type McpToolCatalogEntry,
 } from "./mcp.js";
 import {
   createMcpCliSessionPolicy,
@@ -31,7 +37,9 @@ const DEFAULT_LIST_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RUN_TOOL_CALLS = 100;
 const DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 16;
 const MAX_SEARCH_DESCRIPTION_CHARS = 600;
-const MCP_MANIFEST_ENV = "PI_RECIPES_MCP_MANIFEST";
+const CATALOG_LOCK_POLL_MS = 50;
+const CATALOG_LOCK_INCOMPLETE_GRACE_MS = 1_000;
+const MCP_SESSION_ENV = "PI_RECIPES_MCP_SESSION";
 
 export interface ToolSearchMatch {
   ref: string;
@@ -344,7 +352,7 @@ function words(value: string): string[] {
     .filter(Boolean);
 }
 
-function toolProperties(tool: McpManifestTool): Array<{ name: string; description: string }> {
+function toolProperties(tool: McpToolCatalogEntry): Array<{ name: string; description: string }> {
   const schema = asRecord(tool.input_schema);
   const properties = asRecord(schema.properties);
   return Object.entries(properties).map(([name, value]) => {
@@ -359,7 +367,7 @@ function toolProperties(tool: McpManifestTool): Array<{ name: string; descriptio
   });
 }
 
-function toolRequired(tool: McpManifestTool): string[] {
+function toolRequired(tool: McpToolCatalogEntry): string[] {
   const schema = asRecord(tool.input_schema);
   return Array.isArray(schema.required)
     ? schema.required.filter((item): item is string => typeof item === "string")
@@ -376,7 +384,7 @@ function scoreTool(opts: {
   regex?: RegExp;
   serverId: string;
   serverName: string;
-  tool: McpManifestTool;
+  tool: McpToolCatalogEntry;
 }): number {
   const ref = `${opts.serverId}.${opts.tool.name}`;
   const description = opts.tool.description ?? "";
@@ -431,14 +439,14 @@ function exampleValue(name: string): string {
   return '="<value>"';
 }
 
-function callExample(serverId: string, tool: McpManifestTool): string {
+function callExample(serverId: string, tool: McpToolCatalogEntry): string {
   const required = toolRequired(tool);
   const args = required.slice(0, 4).map((name) => `${name}${exampleValue(name)}`);
   return ["mcp call", `${serverId}.${tool.name}`, ...args].join(" ");
 }
 
 export function searchMcpTools(
-  manifest: McpManifest,
+  session: McpSessionConfig,
   query: string,
   opts: { limit?: number; regex?: boolean } = {}
 ): ToolSearchMatch[] {
@@ -447,8 +455,8 @@ export function searchMcpTools(
   const regex = opts.regex ? new RegExp(trimmed, "i") : undefined;
   const queryTerms = words(trimmed);
   const matches: ToolSearchMatch[] = [];
-  for (const server of manifest.servers ?? []) {
-    for (const tool of server.tools ?? []) {
+  for (const server of session.servers) {
+    for (const tool of server.catalog ?? []) {
       const score = scoreTool({
         query: trimmed,
         queryTerms,
@@ -480,17 +488,21 @@ export function searchMcpTools(
     .slice(0, opts.limit ?? 8);
 }
 
-async function readManifest(): Promise<McpManifest> {
-  const path = sessionManifestPath();
+async function readSession(): Promise<McpSessionConfig> {
+  const path = sessionPolicyPath();
   const data = await readFile(path, "utf8");
-  return JSON.parse(data) as McpManifest;
+  const parsed = JSON.parse(data) as McpSessionConfig;
+  if (parsed.version !== 1 || !Array.isArray(parsed.servers)) {
+    throw new Error(`Invalid MCP session policy at ${path}`);
+  }
+  return parsed;
 }
 
-function sessionManifestPath(): string {
-  const workspacePath = defaultMcpManifestPath(sessionRoot());
+function sessionPolicyPath(): string {
+  const workspacePath = defaultMcpSessionPath(sessionRoot());
   return existsSync(workspacePath)
     ? workspacePath
-    : process.env[MCP_MANIFEST_ENV] || workspacePath;
+    : process.env[MCP_SESSION_ENV] || workspacePath;
 }
 
 function sessionMcporterConfigPath(): string {
@@ -509,7 +521,195 @@ function pinSessionMcporterConfig(): void {
 }
 
 async function sessionCliPolicy() {
-  return createMcpCliSessionPolicy(await readManifest());
+  return createMcpCliSessionPolicy(await readSession());
+}
+
+function catalogFingerprint(server: McpSessionServer): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        id: server.id,
+        baseUrl: server.base_url,
+        packageTools: server.package_tools,
+        agentTools: server.agent_tools,
+      })
+    )
+    .digest("hex")
+    .slice(0, 20);
+}
+
+function catalogCachePath(server: McpSessionServer): string {
+  return join(
+    sessionRoot(),
+    ".pi",
+    "mcp-catalogs",
+    `${server.id}-${catalogFingerprint(server)}.json`
+  );
+}
+
+async function readCachedCatalog(
+  server: McpSessionServer
+): Promise<McpToolCatalogEntry[] | null> {
+  if (server.catalog) return server.catalog;
+  try {
+    const parsed = JSON.parse(
+      await readFile(catalogCachePath(server), "utf8")
+    ) as { tools?: McpToolCatalogEntry[] };
+    return Array.isArray(parsed.tools) ? parsed.tools : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedCatalog(
+  server: McpSessionServer,
+  tools: McpToolCatalogEntry[]
+): Promise<void> {
+  const directory = join(sessionRoot(), ".pi", "mcp-catalogs");
+  await mkdir(directory, { recursive: true });
+  const path = catalogCachePath(server);
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify({ tools })}\n`, { mode: 0o600 });
+  await rename(temporary, path);
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function catalogLockIsStale(
+  path: string,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    const owner = JSON.parse(await readFile(path, "utf8")) as {
+      pid?: unknown;
+      createdAt?: unknown;
+    };
+    if (
+      typeof owner.pid === "number" &&
+      Number.isInteger(owner.pid) &&
+      owner.pid > 0 &&
+      typeof owner.createdAt === "number" &&
+      Number.isFinite(owner.createdAt)
+    ) {
+      return (
+        !processExists(owner.pid) ||
+        Date.now() - owner.createdAt > timeoutMs + CATALOG_LOCK_INCOMPLETE_GRACE_MS
+      );
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+  }
+  try {
+    const metadata = await stat(path);
+    return Date.now() - metadata.mtimeMs > CATALOG_LOCK_INCOMPLETE_GRACE_MS;
+  } catch {
+    return false;
+  }
+}
+
+async function acquireCatalogLock(path: string): Promise<boolean> {
+  let handle;
+  try {
+    handle = await open(path, "wx", 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    await handle.writeFile(
+      `${JSON.stringify({ pid: process.pid, createdAt: Date.now() })}\n`
+    );
+  } catch (error) {
+    await handle.close();
+    await rm(path, { force: true });
+    throw error;
+  }
+  await handle.close();
+  return true;
+}
+
+function catalogEntry(tool: ContractTool): McpToolCatalogEntry {
+  const annotations = asRecord(tool).annotations;
+  return {
+    name: tool.name,
+    ...(tool.description ? { description: tool.description } : {}),
+    ...(tool.inputSchema && typeof tool.inputSchema === "object"
+      ? { input_schema: tool.inputSchema as Record<string, unknown> }
+      : {}),
+    ...(tool.outputSchema && typeof tool.outputSchema === "object"
+      ? { output_schema: tool.outputSchema as Record<string, unknown> }
+      : {}),
+    ...(annotations && typeof annotations === "object"
+      ? { annotations: annotations as Record<string, unknown> }
+      : {}),
+  };
+}
+
+async function discoverServerCatalog(
+  runtime: Awaited<ReturnType<typeof createRuntime>>,
+  server: McpSessionServer,
+  timeoutMs: number
+): Promise<McpToolCatalogEntry[]> {
+  const cached = await readCachedCatalog(server);
+  if (cached) return cached;
+  const lock = `${catalogCachePath(server)}.lock`;
+  await mkdir(dirname(lock), { recursive: true });
+  let ownsLock = false;
+  const deadline = Date.now() + timeoutMs;
+  while (!ownsLock && Date.now() < deadline) {
+    ownsLock = await acquireCatalogLock(lock);
+    if (ownsLock) break;
+    const populated = await readCachedCatalog(server);
+    if (populated) return populated;
+    if (await catalogLockIsStale(lock, timeoutMs)) {
+      await rm(lock, { force: true });
+      continue;
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs > 0) {
+      await delay(Math.min(CATALOG_LOCK_POLL_MS, remainingMs));
+    }
+  }
+  if (!ownsLock) {
+    const populated = await readCachedCatalog(server);
+    if (populated) return populated;
+    throw new Error(
+      `timed out after ${timeoutMs}ms waiting for MCP catalog discovery for '${server.id}'`
+    );
+  }
+  try {
+    // The previous owner may have populated the cache immediately before its
+    // process exited and this caller reclaimed the lock.
+    const populated = await readCachedCatalog(server);
+    if (populated) return populated;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error(
+        `timed out after ${timeoutMs}ms before MCP catalog discovery for '${server.id}' started`
+      );
+    }
+    const discovered = (await withListTimeout(
+      runtime.listTools(server.id, {
+        includeSchema: true,
+        autoAuthorize: false,
+        allowCachedAuth: true,
+        disableOAuth: true,
+      }),
+      remainingMs
+    )) as ContractTool[];
+    const tools = filterMcpCatalog(server, discovered.map(catalogEntry));
+    await writeCachedCatalog(server, tools);
+    return tools;
+  } finally {
+    if (ownsLock) await rm(lock, { recursive: true, force: true });
+  }
 }
 
 function parseSearchArgs(
@@ -554,14 +754,50 @@ async function searchCatalog(args: string[]): Promise<number> {
     return 2;
   }
   let matches: ToolSearchMatch[];
+  const runtime = await createRuntime();
   try {
-    matches = searchMcpTools(await readManifest(), query, { limit, regex });
+    const session = await readSession();
+    const results = await Promise.all(
+      session.servers.map(async (server) => {
+        try {
+          return {
+            catalog: await discoverServerCatalog(
+              runtime,
+              server,
+              DEFAULT_LIST_TIMEOUT_MS
+            ),
+          } as const;
+        } catch (error) {
+          return { error } as const;
+        }
+      })
+    );
+    const failed = results.filter((result) => "error" in result).length;
+    if (failed > 0) {
+      stderr.write(
+        `mcp search: ${failed} of ${results.length} server(s) unavailable; searched the remaining catalogs.\n`
+      );
+    }
+    matches = searchMcpTools(
+      {
+        ...session,
+        servers: session.servers.map((server, index) => ({
+          ...server,
+          catalog:
+            "catalog" in results[index]! ? results[index]!.catalog : [],
+        })),
+      },
+      query,
+      { limit, regex }
+    );
   } catch (err) {
     if (regex && err instanceof SyntaxError) {
       stderr.write(`Invalid --regex pattern: ${query}\n`);
       return 2;
     }
     throw err;
+  } finally {
+    await runtime.close();
   }
   if (matches.length === 0) {
     stdout.write(`No matching tools found for "${query}".\n`);
@@ -585,14 +821,14 @@ function exactToolTarget(value: string | undefined): { server: string; tool: str
   return { server: value.slice(0, dot), tool: value.slice(dot + 1) };
 }
 
-function manifestTool(
-  manifest: McpManifest,
+function catalogTool(
+  session: McpSessionConfig,
   server: string,
   tool: string
-): McpManifestTool | undefined {
-  return manifest.servers
+): McpToolCatalogEntry | undefined {
+  return session.servers
     ?.find((entry) => entry.id === server)
-    ?.tools?.find((entry) => entry.name === tool);
+    ?.catalog?.find((entry) => entry.name === tool);
 }
 
 function toolCount(count: number): string {
@@ -710,32 +946,35 @@ async function compactList(args: string[]): Promise<number> {
     stderr.write("mcp list --schema requires one exact tool: mcp list <server>.<tool> --schema\n");
     return 2;
   }
-  const manifest = await readManifest();
+  const session = await readSession();
   if (!target) {
     const runtime = await createRuntime();
-    let exitCode = 0;
     try {
-      for (const server of manifest.servers ?? []) {
-        try {
-          const tools = await withListTimeout(
-            runtime.listTools(server.id, {
-              includeSchema: false,
-              autoAuthorize: false,
-              allowCachedAuth: true,
-              disableOAuth: true,
-            }),
-            timeout
+      const results = await Promise.all(
+        session.servers.map(async (server) => {
+          try {
+            const tools = await discoverServerCatalog(runtime, server, timeout);
+            return { server, tools } as const;
+          } catch (error) {
+            return { server, error } as const;
+          }
+        })
+      );
+      let hadFailure = false;
+      for (const result of results) {
+        if ("error" in result) {
+          hadFailure = true;
+          if (!quiet) stdout.write(`${result.server.id} — unavailable\n`);
+        } else if (!quiet) {
+          stdout.write(
+            `${result.server.id} — ${toolCount(result.tools.length)}\n`
           );
-          if (!quiet) stdout.write(`${server.id} — ${toolCount(tools.length)}\n`);
-        } catch {
-          exitCode = 1;
-          if (!quiet) stdout.write(`${server.id} — unavailable\n`);
         }
       }
+      return aggregateListExitCode(hadFailure, args);
     } finally {
       await runtime.close();
     }
-    return aggregateListExitCode(exitCode !== 0, args);
   }
   const exact = exactToolTarget(target);
   const server = exact?.server ?? target;
@@ -745,15 +984,19 @@ async function compactList(args: string[]): Promise<number> {
   }
   const runtime = await createRuntime();
   try {
-    const tools = (await withListTimeout(
-      runtime.listTools(server, {
-        includeSchema: true,
-        autoAuthorize: false,
-        allowCachedAuth: true,
-        disableOAuth: true,
-      }),
-      timeout
-    )) as ContractTool[];
+    const sessionServer = session.servers.find((entry) => entry.id === server);
+    if (!sessionServer) {
+      stderr.write(`MCP server '${server}' is not available in this session.\n`);
+      return 1;
+    }
+    const catalog = await discoverServerCatalog(runtime, sessionServer, timeout);
+    const tools = catalog.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.input_schema,
+      outputSchema: tool.output_schema,
+      annotations: tool.annotations,
+    })) as ContractTool[];
     if (quiet) return 0;
     if (status) {
       stdout.write(`${server} ok — ${toolCount(tools.length)}\n`);
@@ -768,7 +1011,13 @@ async function compactList(args: string[]): Promise<number> {
       const tool = selected[0];
       if (!tool) return 1;
       const outputSchema =
-        tool.outputSchema ?? manifestOutputSchema(manifestTool(manifest, server, exact.tool));
+        tool.outputSchema ?? catalogOutputSchema(catalogTool(
+          { ...session, servers: session.servers.map((entry) =>
+            entry.id === server ? { ...entry, catalog } : entry
+          ) },
+          server,
+          exact.tool
+        ));
       stdout.write(
         renderToolContract(
           server,
@@ -896,22 +1145,6 @@ function improveRunToolError(
   return new Error(describeUnavailableRunTool(server, tool, knownTools), { cause: error });
 }
 
-async function manifestToolNames(): Promise<Map<string, string[]>> {
-  const names = new Map<string, string[]>();
-  try {
-    const manifest = await readManifest();
-    for (const server of manifest.servers ?? []) {
-      names.set(
-        server.id,
-        (server.tools ?? []).map((tool) => tool.name)
-      );
-    }
-  } catch {
-    // The manifest is a session artifact; suggestions degrade without it.
-  }
-  return names;
-}
-
 async function createTools(opts: {
   callTimeoutMs: number;
   maxCalls: number;
@@ -919,12 +1152,23 @@ async function createTools(opts: {
   deadlineMs: number;
 }) {
   const runtime = await createRuntime();
-  const knownTools = await manifestToolNames();
-  // The filtered session manifest is the authority. The mcporter config is a
+  const session = await readSession();
+  const knownTools = new Map<string, string[]>();
+  await Promise.all(
+    session.servers.map(async (server) => {
+      knownTools.set(
+        server.id,
+        (await readCachedCatalog(server))?.map((tool) => tool.name) ?? []
+      );
+    })
+  );
+  // The static session policy is the authority. The mcporter config is a
   // transport projection, not another capability source, so extra config
   // entries must never appear on the run proxy.
   const configuredServers = new Set(runtime.listServers());
-  const servers = [...knownTools.keys()].filter((server) => configuredServers.has(server));
+  const servers = session.servers.filter((server) =>
+    configuredServers.has(server.id)
+  );
   const calls: ToolCallRecord[] = [];
   let callCount = 0;
   const queue = new ToolCallQueue(opts.maxConcurrentCalls);
@@ -932,7 +1176,8 @@ async function createTools(opts: {
     string,
     Record<string, McpRunToolFunction>
   > = Object.create(null);
-  for (const server of servers) {
+  for (const serverPolicy of servers) {
+    const server = serverPolicy.id;
     toolsByServer[server] = new Proxy(Object.create(null), {
       get(_target, property) {
         if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) return undefined;
@@ -941,8 +1186,8 @@ async function createTools(opts: {
           format: McpRunResultFormat
         ): Promise<unknown> => {
           validateRunToolArgs(server, property, args);
-          const allowedToolNames = knownTools.get(server);
-          if (allowedToolNames && !allowedToolNames.includes(property)) {
+          const allowedToolNames = knownTools.get(server) ?? [];
+          if (!mcpSessionAllowsTool(serverPolicy, property)) {
             throw new McpRunToolError(
               server,
               property,
@@ -1070,7 +1315,12 @@ async function createTools(opts: {
     get(target, property) {
       if (typeof property !== "string" || PROXY_PROBE_PROPS.has(property)) return undefined;
       if (property in target) return target[property];
-      throw new Error(describeUnknownRunServer(property, servers));
+      throw new Error(
+        describeUnknownRunServer(
+          property,
+          servers.map((server) => server.id)
+        )
+      );
     },
   });
   return {
