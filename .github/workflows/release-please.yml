@@ -8,9 +8,14 @@ on:
 
 permissions: {}
 
+# Newest push wins: a run superseded by a newer main push is cancelled
+# rather than queued behind. Safe to cancel mid-flight — release-please is
+# idempotent, and the npm/crates publish steps skip already-published
+# versions, so a cancelled release is finished by re-running the workflow
+# (workflow_dispatch runs the build/publish jobs directly).
 concurrency:
   group: release-please-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   release-please:
