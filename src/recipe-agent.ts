@@ -311,7 +311,11 @@ function recipeAgentFiles(recipeDir: string): string[] {
 
 function readRecipeAgentSources(
   recipeDir: string,
-  opts: { onInvalidFile?: (path: string, error: Error) => void } = {}
+  opts: {
+    onInvalidFile?: (path: string, error: Error) => void;
+    onUnknownKeys?: (path: string, keys: string[]) => void;
+    strict?: boolean;
+  } = {}
 ): RecipeAgentSource[] {
   const sources: RecipeAgentSource[] = [];
   for (const path of recipeAgentFiles(recipeDir)) {
@@ -322,11 +326,18 @@ function readRecipeAgentSources(
 
     const unknownKeys = Object.keys(data).filter((key) => !AGENT_YAML_KEYS.has(key));
     if (unknownKeys.length > 0) {
-      opts.onInvalidFile?.(
-        path,
-        new Error(`Agent YAML at ${path} has unsupported key(s): ${unknownKeys.join(", ")}`)
-      );
-      continue;
+      // Default is lenient (strict: false): keep the agent, ignore the unknown
+      // keys, and surface a warning — so forward-compatible or platform-specific
+      // sections do not silently disable an agent. `strict: true` (opt-in)
+      // restores the hard failure that skips the agent.
+      if (opts.strict) {
+        opts.onInvalidFile?.(
+          path,
+          new Error(`Agent YAML at ${path} has unsupported key(s): ${unknownKeys.join(", ")}`)
+        );
+        continue;
+      }
+      opts.onUnknownKeys?.(path, unknownKeys);
     }
 
     let modelConfig: RecipeAgentModelConfig | undefined;
@@ -362,7 +373,8 @@ function readRecipeAgentSources(
 }
 
 export function loadRecipeAgentDefinitions(
-  recipeDir: string
+  recipeDir: string,
+  opts: { strict?: boolean } = {}
 ): Map<string, RecipeAgentDefinition> {
   const rawDefinitions = new Map<string, ParsedRecipeAgentDefinition>();
   const aliases = new Map<string, string>();
@@ -370,8 +382,15 @@ export function loadRecipeAgentDefinitions(
   const definitions = new Map<string, RecipeAgentDefinition>();
 
   const sources = readRecipeAgentSources(recipeDir, {
+    strict: opts.strict,
     onInvalidFile: (path, error) => {
       console.warn(`[pi-recipes] skipping ${path}: ${error.message}`);
+    },
+    onUnknownKeys: (path, keys) => {
+      console.warn(
+        `[pi-recipes] ${path}: ignoring unknown key(s): ${keys.join(", ")} ` +
+          `(agent still loaded; pass strict to reject)`
+      );
     },
   });
   for (const source of sources) {
