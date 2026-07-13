@@ -1,67 +1,33 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-const runtime = vi.hoisted(() => ({
-  close: vi.fn(async () => undefined),
-  getInstructions: vi.fn(async () => "Authenticate locally before calling tools."),
-  connect: vi.fn(async () => ({
-    client: {
-      listTools: vi.fn(async () => ({
-        tools: [
-          {
-            name: "get_value",
-            description: "Get a value",
-            inputSchema: { type: "object", properties: {} },
-            outputSchema: {
-              type: "object",
-              properties: { value: { type: "string" } },
-            },
-            annotations: { readOnlyHint: true },
-          },
-        ],
-      })),
-    },
-  })),
-}));
-const createRuntime = vi.hoisted(() => vi.fn(async () => runtime));
-
-vi.mock("mcporter", () => ({ createRuntime }));
+import { describe, expect, it } from "vitest";
 
 import {
   defaultMcporterConfigPath,
-  materializeRecipeMcpManifest,
-} from "../src/mcp.js";
-import type { RecipePackageManifest } from "../src/recipe-package.js";
+  materializeMcpSession,
+  type RecipePackageManifest,
+} from "../src/index.js";
 
-describe("local MCP OAuth materialization", () => {
-  afterEach(() => {
-    createRuntime.mockClear();
-    runtime.connect.mockClear();
-    runtime.getInstructions.mockClear();
-    runtime.close.mockClear();
-  });
-
-  it("uses cached-only mcporter OAuth discovery and preserves auth config", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-local-oauth-"));
+describe("MCP OAuth session configuration", () => {
+  it("projects OAuth references without contacting the server", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-oauth-"));
     try {
       const cwd = join(root, "workspace");
       const recipeDir = join(root, "recipe");
-      const localConfig = join(cwd, ".pi", "mcp.local.json");
       mkdirSync(join(cwd, ".pi"), { recursive: true });
       mkdirSync(recipeDir, { recursive: true });
       writeFileSync(
-        localConfig,
+        join(cwd, ".pi", "mcp.local.json"),
         JSON.stringify({
           servers: [
             {
-              id: "local-oauth",
+              id: "crm",
               transport: "streamable_http",
               url: "https://mcp.example.test/mcp",
               auth: "oauth",
-              oauthClientId: "local-client",
-              oauthClientSecretEnv: "LOCAL_OAUTH_SECRET",
+              oauthClientId: "client-id",
+              oauthClientSecretEnv: "CRM_CLIENT_SECRET",
             },
           ],
         })
@@ -75,57 +41,34 @@ describe("local MCP OAuth materialization", () => {
           manifests: [],
           servers: [
             {
-              id: "local-oauth",
+              id: "crm",
               required: true,
-              tools: { include: ["get_value"] },
+              tools: { include: ["*"] },
             },
           ],
         },
         evals: { suites: [] },
       };
-      const result = await materializeRecipeMcpManifest({
+
+      const session = await materializeMcpSession({
         cwd,
-        recipeDir,
         manifest,
-        agentMcp: [
-          {
-            serverId: "local-oauth",
-            tools: { include: ["get_value"] },
-          },
-        ],
-        env: { PI_RECIPES_MCP_LOCAL_CONFIG: localConfig },
+        agentMcp: [{ serverId: "crm", tools: { include: ["*"] } }],
+        env: {},
       });
 
-      expect(createRuntime).toHaveBeenCalledWith({
-        servers: [
-          expect.objectContaining({
-            name: "local-oauth",
-            auth: "oauth",
-            oauthClientId: "local-client",
-            oauthClientSecretEnv: "LOCAL_OAUTH_SECRET",
-          }),
-        ],
-      });
-      expect(runtime.connect).toHaveBeenCalledWith("local-oauth", {
-        disableOAuth: true,
-      });
-      expect(result.servers?.[0]?.tools?.map((tool) => tool.name)).toEqual([
-        "get_value",
-      ]);
-      expect(result.servers?.[0]?.tools?.[0]?.annotations).toEqual({
-        readOnlyHint: true,
-      });
-      expect(runtime.close).toHaveBeenCalledOnce();
-
+      expect(session.servers).toHaveLength(1);
+      expect(session.servers[0]?.catalog).toBeUndefined();
       const config = JSON.parse(
         readFileSync(defaultMcporterConfigPath(cwd), "utf8")
       ) as { mcpServers: Record<string, Record<string, unknown>> };
-      expect(config.mcpServers["local-oauth"]).toMatchObject({
+      expect(config.mcpServers.crm).toMatchObject({
+        baseUrl: "https://mcp.example.test/mcp",
         auth: "oauth",
-        oauthClientId: "local-client",
-        oauthClientSecretEnv: "LOCAL_OAUTH_SECRET",
-        allowedTools: ["get_value"],
+        oauthClientId: "client-id",
+        oauthClientSecretEnv: "CRM_CLIENT_SECRET",
       });
+      expect(JSON.stringify(config)).not.toContain("CRM_CLIENT_SECRET=");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

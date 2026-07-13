@@ -1,4 +1,4 @@
-import type { McpManifestTool } from "./mcp.js";
+import type { McpToolCatalogEntry } from "./mcp.js";
 
 type Schema = Record<string, unknown>;
 
@@ -369,6 +369,6 @@ export function renderToolSignature(
   return `${server}.${tool.name}(${parameters.join(", ")})`;
 }
 
-export function manifestOutputSchema(tool: McpManifestTool | undefined): unknown {
+export function catalogOutputSchema(tool: McpToolCatalogEntry | undefined): unknown {
   return tool?.output_schema;
 }
