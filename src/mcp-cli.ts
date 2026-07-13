@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -21,7 +20,6 @@ import {
   defaultMcpSessionPath,
   filterMcpCatalog,
   mcpSessionAllowsTool,
-  mcporterCliEntrypointPath,
   type McpSessionConfig,
   type McpSessionServer,
   type McpToolCatalogEntry,
@@ -1758,33 +1756,27 @@ export function malformedCallExpression(args: string[]): string | null {
   );
 }
 
-function usesMachineReadableOutput(args: readonly string[]): boolean {
-  if (args[0] !== "call") return false;
-  return args.some(
-    (arg, index) =>
-      arg === "--output=json" ||
-      (arg === "--output" && args[index + 1] === "json")
-  );
-}
+async function callWithMcporter(args: string[]): Promise<number> {
+  const previousDisableAutorun = process.env.MCPORTER_DISABLE_AUTORUN;
+  const previousExitCode = process.exitCode;
+  process.env.MCPORTER_DISABLE_AUTORUN = "1";
+  process.exitCode = undefined;
 
-function delegateToMcporter(args: string[]): Promise<number> {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [mcporterCliEntrypointPath(), ...args], {
-      stdio: ["inherit", "pipe", "pipe"],
-      env: process.env,
-    });
-    const preserve = usesMachineReadableOutput(args);
-    const stderrFilter = createDelegatedErrorFilter((text) => stderr.write(text));
-    child.stdout.on("data", (chunk) => stdout.write(chunk));
-    child.stderr.on("data", (chunk) => {
-      if (preserve) stderr.write(chunk);
-      else stderrFilter.push(String(chunk));
-    });
-    child.on("close", (code) => {
-      if (!preserve) stderrFilter.flush();
-      resolve(code ?? 1);
-    });
-  });
+  let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined;
+  try {
+    runtime = await createRuntime();
+    const { handleCall } = await import("mcporter/cli");
+    await handleCall(runtime, args);
+    return process.exitCode ?? 0;
+  } finally {
+    process.exitCode = previousExitCode;
+    if (previousDisableAutorun === undefined) {
+      delete process.env.MCPORTER_DISABLE_AUTORUN;
+    } else {
+      process.env.MCPORTER_DISABLE_AUTORUN = previousDisableAutorun;
+    }
+    await runtime?.close().catch(() => {});
+  }
 }
 
 export async function main(args = process.argv.slice(2)): Promise<number> {
@@ -1859,8 +1851,11 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   }
   const delegatedArgs = validated.command.args;
   if (delegatedArgs[0] === "list") return compactList(delegatedArgs);
-  const code = await delegateToMcporter(delegatedArgs);
-  return code;
+  if (delegatedArgs[0] === "call") {
+    return callWithMcporter(delegatedArgs.slice(1));
+  }
+  stderr.write(`mcp: command '${delegatedArgs[0]}' is unavailable in recipe sessions.\n`);
+  return 2;
 }
 
 if (isDirectEntry(import.meta.url)) {
