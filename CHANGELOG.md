@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/introspection-org/pi-recipes/compare/v0.8.0...v0.9.0) (2026-07-13)
+
+
+### Features
+
+* lazily discover MCP tools per session ([#63](https://github.com/introspection-org/pi-recipes/issues/63)) ([f8fedf0](https://github.com/introspection-org/pi-recipes/commit/f8fedf0a466ffa25ab22c96bc22b82a48a2e562d))
+
 ## [0.8.0](https://github.com/introspection-org/pi-recipes/compare/v0.7.1...v0.8.0) (2026-07-12)
 
 
