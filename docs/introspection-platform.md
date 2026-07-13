@@ -19,8 +19,7 @@ automatically at deploy/run time without being written in the recipe.
 | Extension | You declare it in the recipe | Platform provides |
 | --- | --- | --- |
 | **Connectors** (`connectors:` on an agent) | **yes** — reference + scope connectors in `agent.yaml` | the connector token broker + per-action human approval |
-| **Runtime** (the `.introspection` manifest) | **yes** — `name` / `path` / `runtime.llm_mode` | the deployment + versioning, managed LLM access, telemetry |
-| **Resources** (`runtime.resources`) | **yes** — `requests` / `limits` (cpu, memory; `storage` under `requests`) | the sandbox sized to your request |
+| **Runtime** (the `.introspection` manifest) | **yes** — `name` / `path` / `runtime.llm_mode` / optional `runtime.resources` | the deployment + versioning, managed LLM access, telemetry, the sized sandbox |
 
 Core Pi fields (`model`, `tools`, `skills`, `subagents`, `system_instructions`)
 and the MCP-standard `mcp` block are documented in
@@ -38,8 +37,10 @@ organization, never in the recipe. The recipe only **references** connectors by
 slug and **scopes** what the agent may do with them (the same split as an MCP
 server, which is registered in the org and merely referenced here).
 
-Each agent declares its connector access in a `connectors` block, keyed by the
-connector's slug:
+Each agent declares its connector access in a `connectors` block, **keyed by the
+connector's slug** — the stable identifier of a connector configured in your
+Introspection org (here `booking` and `gmail`). A key that doesn't match a
+configured connector grants no access.
 
 ```yaml
 # agents/agent.yaml
@@ -103,11 +104,9 @@ runtime:
 
 `name` / `path` / `runtime.llm_mode` are recipe-authored; the platform supplies
 managed LLM access (`llm_mode: managed`), telemetry, and the deployment +
-versioning lifecycle. `runtime.resources` is covered in the next section.
+versioning lifecycle. `runtime.resources` is an optional block, covered below.
 
----
-
-## Resources
+### Resources
 
 `runtime.resources` declares **Kubernetes-style compute overrides** for the
 sandbox the agent runs in. It is recipe-authored and validated by `recipe-check`
