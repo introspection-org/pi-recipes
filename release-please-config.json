@@ -2,9 +2,11 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "node",
   "include-component-in-tag": false,
+  "separate-pull-requests": true,
   "packages": {
     ".": {
       "release-type": "node",
+      "component": "pi-recipes",
       "bump-minor-pre-major": true
     },
     "crates/pi-recipe-check": {
