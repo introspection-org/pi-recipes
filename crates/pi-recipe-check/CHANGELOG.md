@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.5.0...pi-recipe-check-v0.5.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* trigger patch release ([#71](https://github.com/introspection-org/pi-recipes/issues/71)) ([1976e1b](https://github.com/introspection-org/pi-recipes/commit/1976e1bee43882366eba607c140b8c7878b42a77))
+
 ## [0.5.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.4.1...pi-recipe-check-v0.5.0) (2026-07-12)
 
 
