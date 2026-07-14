@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -11,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -28,6 +30,7 @@ import {
   materializeMcpSession,
   materializeSessionMcpCli,
   mcpSessionAllowsTool,
+  startMcpDaemon,
   type McpSessionConfig,
   type RecipePackageManifest,
 } from "../src/index.js";
@@ -103,6 +106,26 @@ function runMcpCli(
         stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       }
     );
+    let stdout = "";
+    let stderr = "";
+    child.stdout!.on("data", (chunk) => (stdout += chunk));
+    child.stderr!.on("data", (chunk) => (stderr += chunk));
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    if (stdin !== undefined) child.stdin!.end(stdin);
+  });
+}
+
+function runMcpShim(
+  shimPath: string,
+  args: string[],
+  env: Record<string, string>,
+  stdin?: string
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(shimPath, args, {
+      env: { ...process.env, ...env },
+      stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout!.on("data", (chunk) => (stdout += chunk));
@@ -371,6 +394,136 @@ describe("static MCP session materialization", () => {
 });
 
 describe("lazy MCP CLI discovery", () => {
+  it("reuses one daemon runtime across concurrent calls and later commands", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-daemon-"));
+    const stub = await startStubMcpServer();
+    const cwd = join(root, "workspace");
+    const recipeDir = join(root, "recipe");
+    mkdirSync(recipeDir, { recursive: true });
+    const local = writeLocalConfig(cwd, [
+      {
+        id: "stub",
+        transport: "streamable_http",
+        url: stub.url,
+        headers: { Authorization: "Bearer ${STUB_TOKEN}" },
+      },
+    ]);
+    const env: NodeJS.ProcessEnv = {
+      PI_RECIPES_MCP_LOCAL_CONFIG: local,
+      PI_RECIPES_MCP_RUN_TIMEOUT_MS: "1000",
+      STUB_TOKEN: "test-token",
+    };
+    try {
+      const shim = await materializeSessionMcpCli({ cwd, env });
+      await materializeMcpSession({
+        cwd,
+        env,
+        manifest: recipeManifest(recipeDir, [
+          { id: "stub", required: true, include: ["search_profiles"] },
+        ]),
+        agentMcp: [
+          { serverId: "stub", tools: { include: ["search_profiles"] } },
+        ],
+      });
+      const cliEnv = Object.fromEntries(
+        Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+      );
+      startMcpDaemon(env);
+      for (
+        let attempt = 0;
+        attempt < 100 && !existsSync(env.PI_RECIPES_MCP_DAEMON_SOCKET!);
+        attempt += 1
+      ) {
+        await delay(20);
+      }
+      expect(existsSync(env.PI_RECIPES_MCP_DAEMON_SOCKET!)).toBe(true);
+      expect(stub.stats.initialize).toBe(0);
+
+      const [left, right] = await Promise.all([
+        runMcpShim(
+          shim.shimPath,
+          ["call", "stub.search_profiles", "--json", '{"query":"engineer"}'],
+          cliEnv
+        ),
+        runMcpShim(
+          shim.shimPath,
+          ["call", "stub.search_profiles", "--json", '{"query":"architect"}'],
+          cliEnv
+        ),
+      ]);
+      expect(left).toMatchObject({ code: 0, stderr: "" });
+      expect(right).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(left.stdout)).toMatchObject({ arguments: { query: "engineer" } });
+      expect(JSON.parse(right.stdout)).toMatchObject({ arguments: { query: "architect" } });
+      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.call).toBe(2);
+
+      const later = await runMcpShim(
+        shim.shimPath,
+        ["call", "stub.search_profiles", "query=designer"],
+        cliEnv
+      );
+      expect(later).toMatchObject({ code: 0, stderr: "" });
+      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.call).toBe(3);
+
+      const search = await runMcpShim(
+        shim.shimPath,
+        ["search", "candidate"],
+        cliEnv
+      );
+      expect(search).toMatchObject({ code: 0, stderr: "" });
+      expect(search.stdout).toContain("stub.search_profiles");
+      const list = await runMcpShim(
+        shim.shimPath,
+        ["list", "stub"],
+        cliEnv
+      );
+      expect(list).toMatchObject({ code: 0, stderr: "" });
+      expect(list.stdout).toContain("stub.search_profiles(query: string)");
+      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.list).toBe(1);
+
+      const run = await runMcpShim(
+        shim.shimPath,
+        ["run"],
+        cliEnv,
+        [
+          "const result = await tools.stub.search_profiles({ query: 'principal' });",
+          "console.log(JSON.stringify(result));",
+        ].join("\n")
+      );
+      expect(run).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(run.stdout)).toMatchObject({ arguments: { query: "principal" } });
+      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.call).toBe(4);
+
+      const busy = await runMcpShim(
+        shim.shimPath,
+        ["run"],
+        cliEnv,
+        "while (true) {}"
+      );
+      expect(busy.code).not.toBe(0);
+
+      const afterBusyLoop = await runMcpShim(
+        shim.shimPath,
+        ["call", "stub.search_profiles", "query=survivor"],
+        cliEnv
+      );
+      expect(afterBusyLoop).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(afterBusyLoop.stdout)).toMatchObject({
+        arguments: { query: "survivor" },
+      });
+      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.call).toBe(5);
+    } finally {
+      await clearMcpSession(env, cwd);
+      stub.server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("discovers once on first use, caches per server, and enforces policy", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-lazy-"));
     const stub = await startStubMcpServer();

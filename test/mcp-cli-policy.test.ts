@@ -74,12 +74,19 @@ describe("recipe-session mcporter policy", () => {
         "query=@request.txt",
         "--output",
         "json",
-        "--save-images",
-        "artifacts",
       ],
       policy()
     );
     expect(result.command?.args.at(-1)).toBe("--no-oauth");
+  });
+
+  it("rejects image persistence in recipe sessions", () => {
+    expect(
+      validateDelegatedMcpCommand(
+        ["call", "contacts.search_contacts", "--save-images", "artifacts"],
+        policy()
+      ).error
+    ).toContain("unavailable");
   });
 
   it("rejects overlapping call syntaxes", () => {
