@@ -891,9 +891,15 @@ describe("Pi recipes launch extension", () => {
       writeFileSync(
         join(recipeDir, "extensions", "setup-git.ts"),
         [
+          "import { defineTool } from '@earendil-works/pi-coding-agent';",
+          "import { askUserQuestion } from '@introspection-ai/pi-recipes/interactions';",
+          "import { Type } from 'typebox';",
           "import dep from 'recipe-test-dep';",
           "export default (pi) => {",
           "  if (dep.value !== 'loaded') throw new Error('recipe dependency did not load');",
+          "  if (typeof defineTool !== 'function') throw new Error('pi-coding-agent did not load');",
+          "  if (typeof askUserQuestion !== 'function') throw new Error('pi-recipes interactions did not load');",
+          "  if (typeof Type.Object !== 'function') throw new Error('typebox did not load');",
           "  pi.registerTool({",
           "    name: 'setup_git',",
           "    label: 'Setup git',",
