@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/introspection-org/pi-recipes/compare/v0.9.1...v0.10.0) (2026-07-14)
+
+
+### Features
+
+* persist MCP runtime across commands ([#69](https://github.com/introspection-org/pi-recipes/issues/69)) ([18600f1](https://github.com/introspection-org/pi-recipes/commit/18600f1fc0705f5ad9614af4e1a1f8629ad3a319))
+
+
+### Bug Fixes
+
+* trigger patch release ([#71](https://github.com/introspection-org/pi-recipes/issues/71)) ([1976e1b](https://github.com/introspection-org/pi-recipes/commit/1976e1bee43882366eba607c140b8c7878b42a77))
+
 ## [0.9.1](https://github.com/introspection-org/pi-recipes/compare/v0.9.0...v0.9.1) (2026-07-14)
 
 
