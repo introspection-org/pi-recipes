@@ -181,7 +181,6 @@ function validateList(
 const CALL_FLAGS_WITH_VALUE = new Set([
   "--json",
   "--output",
-  "--save-images",
   "--timeout",
 ]);
 

@@ -5,8 +5,14 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/prom
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { stdin as input, stderr, stdout } from "node:process";
-import { Worker } from "node:worker_threads";
+import { isMainThread, Worker } from "node:worker_threads";
+import type { Readable, Writable } from "node:stream";
 import { createCallResult, createRuntime } from "mcporter";
+import {
+  currentMcpCommandContext,
+  runWithMcpCommandContext,
+  type McpRuntime,
+} from "./mcp-command-context.js";
 import {
   catalogOutputSchema,
   renderToolContract,
@@ -38,6 +44,23 @@ const MAX_SEARCH_DESCRIPTION_CHARS = 600;
 const CATALOG_LOCK_POLL_MS = 50;
 const CATALOG_LOCK_INCOMPLETE_GRACE_MS = 1_000;
 const MCP_SESSION_ENV = "PI_RECIPES_MCP_SESSION";
+
+async function acquireRuntime(): Promise<{
+  runtime: Awaited<ReturnType<typeof createRuntime>>;
+  owned: boolean;
+}> {
+  const shared = currentMcpCommandContext()?.runtime;
+  return shared
+    ? { runtime: shared, owned: false }
+    : { runtime: await createRuntime(), owned: true };
+}
+
+async function closeOwnedRuntime(
+  runtime: Awaited<ReturnType<typeof createRuntime>>,
+  owned: boolean
+): Promise<void> {
+  if (owned) await runtime.close();
+}
 
 export interface ToolSearchMatch {
   ref: string;
@@ -152,7 +175,7 @@ export function mcpCallHelpText(): string {
   return [
     "Usage: mcp call <server>.<tool> [arguments] [flags]",
     "",
-    "Delegates argument parsing and tool execution to mcporter for exact tools materialized in this recipe session.",
+    "Calls exact tools materialized in this recipe session.",
     "",
     "Arguments:",
     "  key=value                 Named arguments with schema-aware coercion.",
@@ -163,7 +186,6 @@ export function mcpCallHelpText(): string {
     "",
     "Output/runtime flags:",
     "  --output text|markdown|json|raw",
-    "  --save-images <dir>",
     "  --timeout <ms>",
     "  Machine-readable output is forwarded unchanged.",
     "  When parsing JSON, keep stderr separate and do not truncate stdout with head or sed.",
@@ -219,14 +241,15 @@ function isHelpArg(value: string | undefined): boolean {
 }
 
 function readStdin(): Promise<string> {
-  input.setEncoding("utf8");
+  const source = currentMcpCommandContext()?.stdin ?? input;
+  source.setEncoding("utf8");
   return new Promise((resolve, reject) => {
     let data = "";
-    input.on("data", (chunk) => {
+    source.on("data", (chunk) => {
       data += chunk;
     });
-    input.on("error", reject);
-    input.on("end", () => resolve(data));
+    source.on("error", reject);
+    source.on("end", () => resolve(data));
   });
 }
 
@@ -752,7 +775,7 @@ async function searchCatalog(args: string[]): Promise<number> {
     return 2;
   }
   let matches: ToolSearchMatch[];
-  const runtime = await createRuntime();
+  const { runtime, owned } = await acquireRuntime();
   try {
     const session = await readSession();
     const results = await Promise.all(
@@ -795,7 +818,7 @@ async function searchCatalog(args: string[]): Promise<number> {
     }
     throw err;
   } finally {
-    await runtime.close();
+    await closeOwnedRuntime(runtime, owned);
   }
   if (matches.length === 0) {
     stdout.write(`No matching tools found for "${query}".\n`);
@@ -946,7 +969,7 @@ async function compactList(args: string[]): Promise<number> {
   }
   const session = await readSession();
   if (!target) {
-    const runtime = await createRuntime();
+    const { runtime, owned } = await acquireRuntime();
     try {
       const results = await Promise.all(
         session.servers.map(async (server) => {
@@ -971,7 +994,7 @@ async function compactList(args: string[]): Promise<number> {
       }
       return aggregateListExitCode(hadFailure, args);
     } finally {
-      await runtime.close();
+      await closeOwnedRuntime(runtime, owned);
     }
   }
   const exact = exactToolTarget(target);
@@ -980,7 +1003,7 @@ async function compactList(args: string[]): Promise<number> {
     stderr.write("mcp list --schema requires one exact tool: mcp list <server>.<tool> --schema\n");
     return 2;
   }
-  const runtime = await createRuntime();
+  const { runtime, owned } = await acquireRuntime();
   try {
     const sessionServer = session.servers.find((entry) => entry.id === server);
     if (!sessionServer) {
@@ -1036,7 +1059,7 @@ async function compactList(args: string[]): Promise<number> {
     if (!quiet) writeCompactListError(error);
     return 1;
   } finally {
-    await runtime.close();
+    await closeOwnedRuntime(runtime, owned);
   }
 }
 
@@ -1149,7 +1172,7 @@ async function createTools(opts: {
   maxConcurrentCalls: number;
   deadlineMs: number;
 }) {
-  const runtime = await createRuntime();
+  const { runtime, owned } = await acquireRuntime();
   const session = await readSession();
   const knownTools = new Map<string, string[]>();
   await Promise.all(
@@ -1323,6 +1346,7 @@ async function createTools(opts: {
   });
   return {
     runtime,
+    owned,
     tools,
     calls,
     cancelQueued: (error: unknown) => queue.cancel(error),
@@ -1421,7 +1445,7 @@ export async function runMcpJavaScript(
     DEFAULT_MAX_CONCURRENT_TOOL_CALLS
   );
   const deadlineMs = Date.now() + timeoutMs;
-  const { runtime, tools, calls, cancelQueued } = await createTools({
+  const { runtime, owned, tools, calls, cancelQueued } = await createTools({
     callTimeoutMs,
     maxCalls,
     maxConcurrentCalls,
@@ -1525,7 +1549,7 @@ export async function runMcpJavaScript(
   } finally {
     if (timeout) clearTimeout(timeout);
     try {
-      await runtime.close();
+      await closeOwnedRuntime(runtime, owned);
     } catch (closeError) {
       // Transport cleanup must not replace the typed tool/script error that
       // tells the agent what actually failed. A close-only failure still
@@ -1607,7 +1631,10 @@ async function runCode(args: string[]): Promise<number> {
     stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     return 2;
   }
-  const stopWatchdog = startRunWatchdog(timeoutMs);
+  // Daemon-backed runs execute inside a disposable worker. The daemon owns
+  // that worker's hard deadline, so a synchronous loop cannot kill the shared
+  // MCP host process.
+  const stopWatchdog = isMainThread ? startRunWatchdog(timeoutMs) : () => {};
   try {
     await runMcpJavaScript(code, { vars, timeoutMs });
   } catch (error) {
@@ -1757,14 +1784,17 @@ export function malformedCallExpression(args: string[]): string | null {
 }
 
 async function callWithMcporter(args: string[]): Promise<number> {
+  const shared = currentMcpCommandContext()?.runtime;
+  if (shared) return callWithSharedRuntime(shared, args);
   const previousDisableAutorun = process.env.MCPORTER_DISABLE_AUTORUN;
   const previousExitCode = process.exitCode;
   process.env.MCPORTER_DISABLE_AUTORUN = "1";
   process.exitCode = undefined;
 
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined;
+  let owned = false;
   try {
-    runtime = await createRuntime();
+    ({ runtime, owned } = await acquireRuntime());
     const { handleCall } = await import("mcporter/cli");
     await handleCall(runtime, args);
     return process.exitCode ?? 0;
@@ -1775,7 +1805,119 @@ async function callWithMcporter(args: string[]): Promise<number> {
     } else {
       process.env.MCPORTER_DISABLE_AUTORUN = previousDisableAutorun;
     }
-    await runtime?.close().catch(() => {});
+    if (runtime && owned) await runtime.close().catch(() => {});
+  }
+}
+
+async function callWithSharedRuntime(
+  runtime: Awaited<ReturnType<typeof createRuntime>>,
+  args: string[]
+): Promise<number> {
+  const selector = args[0];
+  const separator = selector?.indexOf(".") ?? -1;
+  if (!selector || separator <= 0 || separator === selector.length - 1) {
+    stderr.write("mcp call requires <server>.<tool>.\n");
+    return 2;
+  }
+  const server = selector.slice(0, separator);
+  const tool = selector.slice(separator + 1);
+  const values: Record<string, unknown> = {};
+  let timeoutMs: number | undefined;
+  let output: "text" | "markdown" | "json" | "raw" | undefined;
+
+  for (let index = 1; index < args.length; index += 1) {
+    const token = args[index]!;
+    if (token === "--no-oauth") continue;
+    if (token === "--json" || token.startsWith("--json=")) {
+      const raw = token === "--json" ? args[++index] : token.slice("--json=".length);
+      const source = raw === "-" ? await readStdin() : raw;
+      if (!source) {
+        stderr.write("mcp call: --json expects an object or -.\n");
+        return 2;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(source);
+      } catch {
+        stderr.write("mcp call: --json contains invalid JSON.\n");
+        return 2;
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        stderr.write("mcp call: --json expects a JSON object.\n");
+        return 2;
+      }
+      Object.assign(values, parsed);
+      continue;
+    }
+    if (token === "--timeout" || token.startsWith("--timeout=")) {
+      const raw = token === "--timeout" ? args[++index] : token.slice("--timeout=".length);
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        stderr.write("mcp call: --timeout expects a positive number.\n");
+        return 2;
+      }
+      timeoutMs = parsed;
+      continue;
+    }
+    if (token === "--output" || token.startsWith("--output=")) {
+      const raw = token === "--output" ? args[++index] : token.slice("--output=".length);
+      if (!raw || !["text", "markdown", "json", "raw"].includes(raw)) {
+        stderr.write("mcp call: --output expects text, markdown, json, or raw.\n");
+        return 2;
+      }
+      output = raw as typeof output;
+      continue;
+    }
+    const equals = token.indexOf("=");
+    if (equals <= 0) {
+      stderr.write(`mcp call: invalid argument '${token}'.\n`);
+      return 2;
+    }
+    const key = token.slice(0, equals).replace(/-([a-zA-Z0-9])/g, (_match, char: string) => char.toUpperCase());
+    let raw = token.slice(equals + 1);
+    if (raw.startsWith("@@")) raw = raw.slice(1);
+    else if (raw.startsWith("@")) raw = await readFile(raw.slice(1), "utf8");
+    try {
+      values[key] = JSON.parse(raw);
+    } catch {
+      values[key] = raw;
+    }
+  }
+
+  try {
+    const call = runtime.callTool(server, tool, {
+      args: values,
+      timeoutMs,
+      disableOAuth: true,
+    });
+    const signal = currentMcpCommandContext()?.signal;
+    let cancelled: (() => void) | undefined;
+    const raw = signal
+      ? await Promise.race([
+          call,
+          new Promise<never>((_resolve, reject) => {
+            cancelled = () => reject(new Error("MCP command cancelled."));
+            if (signal.aborted) cancelled();
+            else signal.addEventListener("abort", cancelled, { once: true });
+          }),
+        ]).finally(() => {
+          if (cancelled) signal.removeEventListener("abort", cancelled);
+        })
+      : await call;
+    const result = createCallResult(raw);
+    let rendered: unknown;
+    if (output === "raw") rendered = raw;
+    else if (output === "json") rendered = result.json();
+    else if (output === "markdown") rendered = result.markdown();
+    else if (output === "text") rendered = result.text();
+    else rendered = result.json() ?? result.structuredContent() ?? result.text() ?? raw;
+    stdout.write(
+      `${typeof rendered === "string" ? rendered : JSON.stringify(rendered, null, 2)}\n`
+    );
+    return asRecord(raw).isError === true ? 1 : 0;
+  } catch (error) {
+    stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
   }
 }
 
@@ -1856,6 +1998,24 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   }
   stderr.write(`mcp: command '${delegatedArgs[0]}' is unavailable in recipe sessions.\n`);
   return 2;
+}
+
+export async function executeMcpCommand(opts: {
+  args: string[];
+  runtime: McpRuntime;
+  stdin: Readable;
+  stdout: Writable;
+  stderr: Writable;
+  signal: AbortSignal;
+}): Promise<number> {
+  const context = {
+    runtime: opts.runtime,
+    stdin: opts.stdin,
+    stdout: opts.stdout,
+    stderr: opts.stderr,
+    signal: opts.signal,
+  };
+  return runWithMcpCommandContext(context, () => main(opts.args));
 }
 
 if (isDirectEntry(import.meta.url)) {

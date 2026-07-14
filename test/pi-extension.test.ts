@@ -510,7 +510,7 @@ describe("Pi recipes launch extension", () => {
       expect(pi.activeTools.sort()).toEqual(["bash"]);
       expect(pi.tools.has("mcp")).toBe(false);
       expect(notify).toHaveBeenCalledWith(
-        "Recipe MCP: 1 server(s) configured; tools load on first use",
+        "Recipe MCP: 1 server(s) configured; runtime warming in background",
         "info"
       );
       expect(env.PI_RECIPES_MCP_SESSION).toBe(
@@ -618,7 +618,7 @@ describe("Pi recipes launch extension", () => {
         "get_value",
       ]);
       expect(notify).toHaveBeenCalledWith(
-        "Recipe MCP: 1 server(s) configured; tools load on first use",
+        "Recipe MCP: 1 server(s) configured; runtime warming in background",
         "info"
       );
     } finally {

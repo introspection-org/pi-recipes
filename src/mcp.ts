@@ -1,8 +1,18 @@
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import {
+  MCP_DAEMON_FINGERPRINT_ENV,
+  MCP_DAEMON_PARENT_PID_ENV,
+  MCP_DAEMON_SOCKET_ENV,
+  MCP_DAEMON_TOKEN_ENV,
+  MCP_SESSION_ROOT_ENV,
+} from "./mcp-daemon-protocol.js";
 import {
   resolvePiPackageMcpManifestPaths,
   type RecipePackageManifest,
@@ -159,8 +169,18 @@ export function mcporterCliEntrypointPath(): string {
   return fileURLToPath(import.meta.resolve("mcporter/cli"));
 }
 
+function compiledEntrypoint(name: string): string {
+  const adjacent = fileURLToPath(new URL(`./${name}`, import.meta.url));
+  if (existsSync(adjacent)) return adjacent;
+  return fileURLToPath(new URL(`../dist/${name}`, import.meta.url));
+}
+
 export function mcpCliEntrypointPath(): string {
-  return fileURLToPath(new URL("./mcp-cli.js", import.meta.url));
+  return compiledEntrypoint("mcp-cli.js");
+}
+
+export function mcpClientEntrypointPath(): string {
+  return compiledEntrypoint("mcp-client.js");
 }
 
 function shellQuote(value: string): string {
@@ -188,6 +208,7 @@ export async function materializeSessionMcpCli(opts: {
   env?: NodeJS.ProcessEnv;
 }): Promise<{ binDir: string; shimPath: string }> {
   const env = opts.env ?? process.env;
+  env[MCP_SESSION_ROOT_ENV] = opts.cwd;
   const binDir = defaultMcpBinDir(opts.cwd);
   const shimPath = join(binDir, "mcp");
   // The shim pins MCPORTER_CONFIG to the session-generated config (the
@@ -201,6 +222,9 @@ export async function materializeSessionMcpCli(opts: {
     "export PI_RECIPES_MCP_SESSION_ROOT",
     `: "\${${MCPORTER_CONFIG_ENV}:=${doubleQuoteEscape(defaultMcporterConfigPath(opts.cwd))}}"`,
     `export ${MCPORTER_CONFIG_ENV}`,
+    `if [ -n "\${${MCP_DAEMON_SOCKET_ENV}:-}" ]; then`,
+    `  exec ${shellQuote(process.execPath)} ${shellQuote(mcpClientEntrypointPath())} "$@"`,
+    "fi",
     `exec ${shellQuote(process.execPath)} ${shellQuote(mcpCliEntrypointPath())} "$@"`,
     "",
   ].join("\n");
@@ -555,6 +579,7 @@ export async function clearMcpSession(
   env: NodeJS.ProcessEnv,
   cwd: string
 ): Promise<void> {
+  await stopMcpDaemon(env);
   const configuredPath = sessionPath(env, cwd);
   delete env[MCP_SESSION_ENV];
   await rm(configuredPath, { force: true });
@@ -641,13 +666,83 @@ export async function materializeMcpSession(
   };
   const defaultPath = defaultMcpSessionPath(opts.cwd);
   const target = sessionPath(env, opts.cwd);
+  const serialized = `${JSON.stringify(session, null, 2)}\n`;
+  const fingerprint = createHash("sha256").update(serialized).digest("hex").slice(0, 20);
+  const previousFingerprint = env[MCP_DAEMON_FINGERPRINT_ENV];
+  const previousToken = env[MCP_DAEMON_TOKEN_ENV];
+  if (
+    previousFingerprint &&
+    previousFingerprint !== fingerprint
+  ) {
+    await stopMcpDaemon(env);
+  }
   const writtenPath = await writeWithFallback(
     target,
-    `${JSON.stringify(session, null, 2)}\n`,
+    serialized,
     defaultPath,
     fallbackMcpSessionPath()
   );
   env[MCP_SESSION_ENV] = writtenPath;
+  env[MCP_DAEMON_FINGERPRINT_ENV] = fingerprint;
+  env[MCP_DAEMON_PARENT_PID_ENV] = String(process.pid);
+  const socketKey = createHash("sha256")
+    .update(`${opts.cwd}\0${fingerprint}`)
+    .digest("hex")
+    .slice(0, 20);
+  env[MCP_DAEMON_SOCKET_ENV] =
+    process.platform === "win32"
+      ? `\\\\.\\pipe\\pi-recipes-mcp-${socketKey}`
+      : join(tmpdir(), `pi-recipes-mcp-${socketKey}.sock`);
+  // Re-materialization with identical policy must not strand a running daemon
+  // behind a newly rotated client token. Rotate only when the session changes.
+  env[MCP_DAEMON_TOKEN_ENV] =
+    previousFingerprint === fingerprint && previousToken
+      ? previousToken
+      : randomBytes(32).toString("hex");
   await writeMcporterConfig(env, opts.cwd, session, endpointBindingList);
   return { ...session, diagnostics };
+}
+
+export function startMcpDaemon(env: NodeJS.ProcessEnv): void {
+  if (
+    !env[MCP_DAEMON_SOCKET_ENV] ||
+    !env[MCP_DAEMON_TOKEN_ENV] ||
+    !env[MCP_DAEMON_FINGERPRINT_ENV]
+  ) {
+    return;
+  }
+  const child = spawn(process.execPath, [mcpClientEntrypointPath(), "--start-daemon"], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, ...env },
+    cwd: env[MCP_SESSION_ROOT_ENV] || process.cwd(),
+  });
+  child.unref();
+}
+
+export async function stopMcpDaemon(env: NodeJS.ProcessEnv): Promise<void> {
+  const socketPath = env[MCP_DAEMON_SOCKET_ENV];
+  const token = env[MCP_DAEMON_TOKEN_ENV];
+  if (socketPath && token) {
+    await new Promise<void>((resolve) => {
+      const socket = createConnection(socketPath);
+      const finish = () => {
+        socket.destroy();
+        resolve();
+      };
+      socket.setTimeout(500, finish);
+      socket.once("connect", () => {
+        socket.end(
+          `${JSON.stringify({ type: "stop", id: randomUUID(), token })}\n`
+        );
+      });
+      socket.once("end", finish);
+      socket.once("error", finish);
+    });
+  }
+  delete env[MCP_DAEMON_SOCKET_ENV];
+  delete env[MCP_DAEMON_TOKEN_ENV];
+  delete env[MCP_DAEMON_FINGERPRINT_ENV];
+  delete env[MCP_DAEMON_PARENT_PID_ENV];
+  delete env[MCP_SESSION_ROOT_ENV];
 }

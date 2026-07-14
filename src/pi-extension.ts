@@ -40,6 +40,8 @@ import {
   materializeMcpSession,
   materializeSessionMcpCli,
   resolveAgentMcpSelections,
+  startMcpDaemon,
+  stopMcpDaemon,
 } from "./mcp.js";
 import {
   loadRecipeAgentDefinitions,
@@ -997,8 +999,9 @@ export function createPiRecipesExtension(
       }),
     ]);
     if (session.servers.length > 0) {
+      startMcpDaemon(env);
       ctx.ui.notify(
-        `Recipe MCP: ${session.servers.length} server(s) configured; tools load on first use`,
+        `Recipe MCP: ${session.servers.length} server(s) configured; runtime warming in background`,
         "info"
       );
       const detail = formatMcpConfigurationDiagnostics(session.diagnostics ?? []);
@@ -1512,6 +1515,10 @@ export function createPiRecipesExtension(
         `Recipe: ${launchState.manifest.name}@${launchState.manifest.version} (${basename(launchState.recipeDir)})`,
         "info"
       );
+    });
+
+    pi.on("session_shutdown", async () => {
+      await stopMcpDaemon(env);
     });
 
     pi.on("resources_discover", (event) => {
