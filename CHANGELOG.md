@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/introspection-org/pi-recipes/compare/v0.9.2...v0.9.3) (2026-07-14)
+
+
+### Bug Fixes
+
+* resolve recipe extension package aliases ([#74](https://github.com/introspection-org/pi-recipes/issues/74)) ([c3c1caa](https://github.com/introspection-org/pi-recipes/commit/c3c1caa60997c1dd9f47f04a209aca4860db6703))
+
 ## [0.9.2](https://github.com/introspection-org/pi-recipes/compare/v0.9.1...v0.9.2) (2026-07-14)
 
 
