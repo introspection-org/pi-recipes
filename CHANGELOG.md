@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/introspection-org/pi-recipes/compare/v0.9.0...v0.9.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* avoid nested MCP CLI processes ([#65](https://github.com/introspection-org/pi-recipes/issues/65)) ([f2848e7](https://github.com/introspection-org/pi-recipes/commit/f2848e7ea1b29b8155a10cc5627bdcc8fc473705))
+* separate package release pull requests ([#66](https://github.com/introspection-org/pi-recipes/issues/66)) ([dbbd048](https://github.com/introspection-org/pi-recipes/commit/dbbd048d024fb71a168085de8e4c905434ec6da2))
+
 ## [0.9.0](https://github.com/introspection-org/pi-recipes/compare/v0.8.0...v0.9.0) (2026-07-13)
 
 
