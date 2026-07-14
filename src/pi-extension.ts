@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { basename, extname, join, relative } from "node:path";
-import { pathToFileURL } from "node:url";
+import { basename, dirname, extname, join, relative } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   defineTool,
   type AgentToolUpdateCallback,
@@ -638,27 +638,26 @@ function resolvePackage(specifier: string): string | undefined {
   }
 }
 
+function resolvePackageModuleRoot(packageName: string): string | undefined {
+  const resolved = resolvePackage(packageName);
+  if (!resolved) return undefined;
+  return dirname(resolved.startsWith("file:") ? fileURLToPath(resolved) : resolved);
+}
+
 function recipeExtensionAliases(): Record<string, string> {
   return Object.fromEntries(
     [
-      // Self-alias: recipe extensions importing the interactions module must
-      // resolve to THIS package instance so the interrupt-suppression scope
-      // and envelope constants are shared with the child-agent runner.
-      [
-        "@introspection-ai/pi-recipes/interactions",
-        resolvePackage("@introspection-ai/pi-recipes/interactions") ??
-          new URL("./interactions.js", import.meta.url).href,
-      ],
-      ["@earendil-works/pi-coding-agent", resolvePackage("@earendil-works/pi-coding-agent")],
-      ["@earendil-works/pi-agent-core", resolvePackage("@earendil-works/pi-agent-core")],
-      ["@earendil-works/pi-ai", resolvePackage("@earendil-works/pi-ai")],
-      ["@earendil-works/pi-ai/oauth", resolvePackage("@earendil-works/pi-ai/oauth")],
-      ["typebox", resolvePackage("typebox")],
-      ["typebox/compile", resolvePackage("typebox/compile")],
-      ["typebox/value", resolvePackage("typebox/value")],
-      ["@sinclair/typebox", resolvePackage("typebox")],
-      ["@sinclair/typebox/compile", resolvePackage("typebox/compile")],
-      ["@sinclair/typebox/value", resolvePackage("typebox/value")],
+      // Jiti aliases are package-prefix mappings. They must point at the
+      // directory containing a package's resolved modules, not an entry file,
+      // so Jiti can append exported subpaths without corrupting the path.
+      // The self-alias also keeps recipe interaction imports on this package
+      // instance, sharing interrupt state with the child-agent runner.
+      ["@introspection-ai/pi-recipes", resolvePackageModuleRoot("@introspection-ai/pi-recipes")],
+      ["@earendil-works/pi-coding-agent", resolvePackageModuleRoot("@earendil-works/pi-coding-agent")],
+      ["@earendil-works/pi-agent-core", resolvePackageModuleRoot("@earendil-works/pi-agent-core")],
+      ["@earendil-works/pi-ai", resolvePackageModuleRoot("@earendil-works/pi-ai")],
+      ["typebox", resolvePackageModuleRoot("typebox")],
+      ["@sinclair/typebox", resolvePackageModuleRoot("typebox")],
     ].filter((entry): entry is [string, string] => Boolean(entry[1]))
   );
 }
