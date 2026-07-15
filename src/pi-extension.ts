@@ -60,6 +60,7 @@ export interface PiRecipesExtensionOptions {
 interface RecipeChildAgentRunner {
   start(): Promise<void>;
   prompt(prompt: string): Promise<unknown>;
+  steer(message: string): Promise<void>;
   cancel(): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -609,7 +610,8 @@ export function createPiRecipesExtension(
       const run = childRuns.get(id);
       if (!run) throw new Error(`Unknown agent run: ${id}`);
       if (run.status === "running") {
-        throw new Error(`Agent run ${id} is already running`);
+        await run.runner.steer(message);
+        return controllerSummary(run);
       }
       run.status = "running";
       run.completedAt = undefined;

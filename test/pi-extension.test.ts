@@ -1092,6 +1092,7 @@ describe("Pi recipes launch extension", () => {
             opts.onAssistantMessage?.("streamed output", "delta");
             return "streamed output final";
           },
+          async steer() {},
           async cancel() {},
           async shutdown() {},
         };

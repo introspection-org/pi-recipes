@@ -40,6 +40,7 @@ export interface CreateRecipeChildAgentRunnerOptions {
 export interface RecipeChildAgentRunner {
   start(): Promise<void>;
   prompt(prompt: string): Promise<string>;
+  steer(message: string): Promise<void>;
   cancel(): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -321,6 +322,12 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     // an interrupt that would strand the child waiting for the root user.
     await autoResolveInteractions(() => this.session!.prompt(prompt));
     return promptResultText({ messages: [...this.session.messages] });
+  }
+
+  async steer(message: string): Promise<void> {
+    await this.start();
+    if (!this.session) throw new Error("Background agent did not start");
+    await this.session.steer(message);
   }
 
   async cancel(): Promise<void> {

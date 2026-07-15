@@ -123,6 +123,7 @@ export function createAgentTool(
   agents: ReadonlyMap<string, unknown>,
   opts: { acknowledgeCompletions?(ids: readonly string[]): void } = {}
 ): ToolDefinition {
+  const closedRunIds = new Set<string>();
   const acknowledge = (run: AgentRunSummary) => {
     if (terminal(run)) opts.acknowledgeCompletions?.([run.agent_run_id]);
   };
@@ -132,7 +133,9 @@ export function createAgentTool(
     description: [
       "Start or manage background child agents.",
       "Omit action to start one child with name and prompt; it returns a run id immediately.",
+      `Available agent roles: ${[...agents.keys()].join(", ")}. Pass a role as name; use label to distinguish concurrent runs.`,
       "Use status, wait, message, interrupt, or close with that id.",
+      "Message steers a running child at the next message boundary; on a settled child it resumes the same session.",
     ].join(" "),
     parameters: AgentToolParams,
     async execute(_callId, rawParams, signal, onUpdate) {
@@ -178,6 +181,9 @@ export function createAgentTool(
           };
         }
         if (!params.id) return errorResult(`${params.action} requires id`, controller);
+        if (closedRunIds.has(params.id)) {
+          return errorResult(`Agent run already closed: ${params.id}`, controller);
+        }
 
         if (params.action === "status") {
           const run = controller.get(params.id);
@@ -197,9 +203,16 @@ export function createAgentTool(
         }
         if (params.action === "interrupt") {
           const run = await controller.interrupt(params.id);
+          if (run.status !== "interrupted") {
+            return result(
+              run,
+              `No interrupt sent: ${runLine(run)} is already ${run.status}.`
+            );
+          }
           return result(run, `Interrupted ${runLine(run)}`);
         }
         const run = await controller.close(params.id);
+        closedRunIds.add(params.id);
         opts.acknowledgeCompletions?.([params.id]);
         return result(run, `Closed ${runLine(run)}`);
       } catch (error) {

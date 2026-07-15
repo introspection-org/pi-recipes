@@ -90,17 +90,20 @@ function hangingRunner() {
   const cancel = vi.fn(async () => {
     failRun(new Error("cancelled"));
   });
+  const steer = vi.fn(async () => {});
   const createChildAgentRunner = vi.fn(() => ({
     async start() {},
     async prompt() {
       return await done;
     },
+    steer,
     cancel,
     async shutdown() {},
   }));
   return {
     createChildAgentRunner,
     cancel,
+    steer,
     finish: (output = "child output") => finishRun(output),
   };
 }
@@ -128,6 +131,43 @@ function agentTool(pi: MockExtensionAPI) {
 }
 
 describe("background agent run lifecycle", () => {
+  it("steers a running agent without waiting for it to settle", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
+    try {
+      const runner = hangingRunner();
+      const { pi, ctx } = await startSession(runner.createChildAgentRunner, root);
+      const started = await agentTool(pi).execute(
+        "call-1",
+        { name: "explorer", prompt: "look around" },
+        undefined,
+        undefined,
+        ctx
+      );
+      const id = started?.details?.agent?.agent_run_id as string;
+
+      const messaged = await agentTool(pi).execute(
+        "call-2",
+        { action: "message", id, message: "focus on tests" },
+        undefined,
+        undefined,
+        ctx
+      );
+
+      expect(runner.steer).toHaveBeenCalledWith("focus on tests");
+      expect(messaged?.details?.agent?.status).toBe("running");
+      runner.finish("done");
+      await agentTool(pi).execute(
+        "call-3",
+        { action: "wait", id },
+        undefined,
+        undefined,
+        ctx
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a settled run's status on interrupt", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
     try {

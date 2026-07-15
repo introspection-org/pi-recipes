@@ -463,10 +463,14 @@ The `agent` tool accepts:
 
 Starts always run in the background and return a run id. Use `action: "wait"`
 with that id to join a run.
-Completed local agents retain their Pi sessions until closed, so follow-up
-messages preserve context. Child runs use the same recipe directory and current
-Pi workspace as the parent session, but child questions never interrupt the
-root: approvals auto-approve and questions auto-decline.
+`action: "message"` steers a running child after its current tool call and
+before its next model call. On a settled child, it starts a follow-up turn in
+the same retained Pi session, preserving context. `action: "interrupt"` only
+affects a running child and reports a clear no-op for a settled child. Closed
+runs are removed from the active inventory and further actions report that the
+run is already closed. Child runs use the same recipe directory and current Pi
+workspace as the parent session, but child questions never interrupt the root:
+approvals auto-approve and questions auto-decline.
 
 ## Recipe Extensions
 
