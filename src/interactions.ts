@@ -208,19 +208,35 @@ export interface AskUserResult {
   details: AskUserDetails;
 }
 
-const interruptResumeSuppression = new AsyncLocalStorage<boolean>();
+// Recipe extensions and their host may resolve separate physical copies of
+// pi-recipes (for example, one under the recipe and one under runtime-worker).
+// Keep the async context process-global so either copy can establish the child
+// boundary and every current copy observes it.
+const INTERACTION_AUTO_RESOLUTION_KEY = Symbol.for(
+  "@introspection-ai/pi-recipes/interaction-auto-resolution"
+);
+const interactionGlobals = globalThis as typeof globalThis & {
+  [key: symbol]: AsyncLocalStorage<boolean> | undefined;
+};
+const interactionAutoResolution =
+  interactionGlobals[INTERACTION_AUTO_RESOLUTION_KEY] ??
+  new AsyncLocalStorage<boolean>();
+interactionGlobals[INTERACTION_AUTO_RESOLUTION_KEY] = interactionAutoResolution;
 
 /**
- * Run `fn` with the interrupt branch of `askUser()` suppressed.
+ * Run `fn` with interaction requests resolved without prompting the user.
  *
- * Used by the in-process child agent runner: an interrupt-capable host only
- * observes the root session's tool results, so an interrupt emitted from a
- * child session would never pause anything and the child would stall on
- * "Awaiting user response." forever. Inside this scope `askUser()` skips
- * straight to the plain-chat fallback.
+ * Child sessions cannot own the root session's user interaction lifecycle.
+ * Approval requests are approved and questions are declined so the child can
+ * make progress without surfacing a UI dialog or an interrupt.
  */
+export function autoResolveInteractions<T>(fn: () => Promise<T>): Promise<T> {
+  return interactionAutoResolution.run(true, fn);
+}
+
+/** @deprecated Use `autoResolveInteractions()` for the explicit behavior. */
 export function suppressInterruptResume<T>(fn: () => Promise<T>): Promise<T> {
-  return interruptResumeSuppression.run(true, fn);
+  return autoResolveInteractions(fn);
 }
 
 /** Ask the user, resolving the best available interaction channel. */
@@ -229,6 +245,15 @@ export async function askUser(
   opts: AskUserOptions
 ): Promise<AskUserResult> {
   const env = opts.env ?? process.env;
+
+  if (interactionAutoResolution.getStore() === true) {
+    return finishedResult(
+      request,
+      isApprovalReason(request.reason)
+        ? { type: "approved" }
+        : { type: "declined" }
+    );
+  }
 
   if (flagEnabled(env.PI_ASK_USER_AUTO_APPROVE)) {
     return finishedResult(
@@ -256,10 +281,7 @@ export async function askUser(
     return finishedResult(request, outcome);
   }
 
-  if (
-    flagEnabled(env.PI_INTERRUPT_RESUME) &&
-    interruptResumeSuppression.getStore() !== true
-  ) {
+  if (flagEnabled(env.PI_INTERRUPT_RESUME)) {
     return awaitingUserResult(request, opts.toolCallId);
   }
 

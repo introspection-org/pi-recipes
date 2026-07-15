@@ -1,19 +1,15 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { basename, dirname, extname, join, relative } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  defineTool,
-  type AgentToolUpdateCallback,
   type AuthStorage,
   type ExtensionAPI,
   type ExtensionContext,
   type ExtensionFactory,
   type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
-import { Type, type Static } from "typebox";
 import {
   createRecipeChildAgentRunner,
   promptResultText,
@@ -22,9 +18,7 @@ import {
 import {
   ChildAgentRunStore,
   type ChildRunSnapshot,
-  type ChildRunStatus,
   type ChildToolActivity,
-  type ChildToolStatus,
 } from "./child-agent-store.js";
 import {
   ChildCompletionQueue,
@@ -35,7 +29,6 @@ import {
 import {
   clearMcpSession,
   configureMcpLocalConfigPath,
-  executableRecipeToolNames,
   formatMcpConfigurationDiagnostics,
   materializeMcpSession,
   materializeSessionMcpCli,
@@ -46,22 +39,18 @@ import {
   clearMcpCatalogPreload,
   preloadMcpCatalogs,
 } from "./mcp-catalog.js";
-import {
-  loadRecipeAgentDefinitions,
-  loadRecipeSystemPrompt,
-  resolveRecipeAgentDefinition,
-  validateRecipeAgentDefinitions,
-  type RecipeAgentDefinition,
-  type RecipeSystemInstructions,
-} from "./recipe-agent.js";
+import { type RecipeAgentDefinition } from "./recipe-agent.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
-  packageResourcePaths,
-  readPiPackageManifest,
-  validatePiPackageManifest,
-  type PiPackageManifest,
-} from "./recipe-package.js";
+  resolveRecipe,
+  type ResolvedRecipe,
+} from "./recipe/resolve.js";
 import { resolveRecipeDirectory } from "./recipe-store.js";
+import {
+  createAgentTool,
+  type AgentRunController,
+  type AgentRunSummary,
+} from "./agent-tool.js";
 
 export interface PiRecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
@@ -70,7 +59,8 @@ export interface PiRecipesExtensionOptions {
 
 interface RecipeChildAgentRunner {
   start(): Promise<void>;
-  prompt(task: string): Promise<unknown>;
+  prompt(prompt: string): Promise<unknown>;
+  steer(message: string): Promise<void>;
   cancel(): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -86,85 +76,26 @@ type CreateRecipeChildAgentRunner = (opts: {
   onToolEvent?: (event: RecipeChildToolEvent) => void;
 }) => RecipeChildAgentRunner;
 
-const RunRecipeAgentParams = Type.Object({
-  action: Type.Optional(
-    Type.Union([
-      Type.Literal("start"),
-      Type.Literal("status"),
-      Type.Literal("wait"),
-      Type.Literal("interrupt"),
-      Type.Literal("close"),
-    ])
-  ),
-  id: Type.Optional(Type.String()),
-  ids: Type.Optional(
-    Type.Array(Type.String(), {
-      description:
-        'action "wait" only. Run ids to join on; blocks until ALL are terminal. Omit ids (and id) to block until the first running run settles.',
-    })
-  ),
-  timeout_ms: Type.Optional(
-    Type.Number({
-      description:
-        'action "wait" only. Max time to block (default 60000, max 600000). On timeout the runs keep going and current statuses are returned.',
-    })
-  ),
-  name: Type.Optional(Type.String()),
-  task: Type.Optional(Type.String()),
-  label: Type.Optional(Type.String()),
-  wait: Type.Optional(Type.Boolean()),
-});
-
-type RunRecipeAgentParams = Static<typeof RunRecipeAgentParams>;
-
-/** Why a multi-run wait resolved. Timeout and abort detach; runs continue. */
-type WaitEndReason = "settled" | "timeout" | "aborted";
-
-const WAIT_DEFAULT_TIMEOUT_MS = 60_000;
-const WAIT_MIN_TIMEOUT_MS = 1_000;
-const WAIT_MAX_TIMEOUT_MS = 600_000;
+interface AgentCallParams {
+  action?: string;
+  id?: string;
+  name?: string;
+  label?: string;
+}
 
 /** Mid-turn completion delivery retries on this cadence until the session idles. */
 const COMPLETION_DELIVERY_RETRY_MS = 100;
 
-interface RecipeAgentToolDetails {
-  action: string;
-  id?: string;
-  agent?: string;
-  label?: string;
-  task?: string;
-  status?: ChildRunStatus;
-  startedAt?: string;
-  completedAt?: string;
-  output?: string;
-  error?: string;
-  tool_calls?: ChildToolActivity[];
-  agent_runs?: Array<
-    Pick<
-      RecipeAgentToolDetails,
-      "id" | "agent" | "label" | "task" | "status" | "startedAt" | "completedAt" | "output" | "error" | "tool_calls"
-    >
-  >;
-  available_agents?: string[];
-}
-
-type RecipeAgentToolUpdate = AgentToolUpdateCallback<RecipeAgentToolDetails>;
-
 interface ChildRun extends ChildRunSnapshot {
   runner: RecipeChildAgentRunner;
   promise: Promise<ChildRun>;
+  notifyUpdate(): void;
 }
 
 interface RecipeLaunchState {
   key: string;
   cwd: string;
-  recipeDir: string;
-  manifest: PiPackageManifest;
-  agentName: string;
-  agent: RecipeAgentDefinition;
-  skillPaths: string[];
-  promptPaths: string[];
-  extensionPaths: string[];
+  resolved: ResolvedRecipe;
   extensionsLoaded: boolean;
   configured: boolean;
 }
@@ -225,24 +156,8 @@ function modelParts(spec: string): { provider: string; model: string } {
   };
 }
 
-function applySystemInstructions(
-  base: string,
-  instructions: RecipeSystemInstructions | undefined
-): string {
-  if (!instructions) return base;
-  if (instructions.mode === "replace") return instructions.content;
-  return [base, instructions.content].filter(Boolean).join("\n\n");
-}
-
 function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
-  const definitions = loadRecipeAgentDefinitions(state.recipeDir);
-  const names = state.agent.subagentsDeclared
-    ? state.agent.subagents
-    : [...new Set([...definitions.values()].map((agent) => agent.name))]
-        .filter((name) => name !== state.agentName);
-  return names
-    .map((name) => definitions.get(name))
-    .filter((agent): agent is RecipeAgentDefinition => Boolean(agent));
+  return [...state.resolved.subagents.values()];
 }
 
 function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
@@ -250,7 +165,7 @@ function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
 }
 
 function scopedMcpSelections(state: RecipeLaunchState) {
-  return [state.agent, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
+  return [state.resolved.agent, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
 }
 
 function textResult<TDetails>(text: string, details: TDetails) {
@@ -298,31 +213,8 @@ function truncateLine(text: string, max = 120): string {
   return singleLine.length > max ? `${singleLine.slice(0, max - 3)}...` : singleLine;
 }
 
-function toolArgText(args: unknown, keys: string[]): string | undefined {
-  const record = asRecord(args);
-  for (const key of keys) {
-    const value = record?.[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return undefined;
-}
-
-function describeChildToolCall(call: ChildToolActivity): string {
-  const target =
-    toolArgText(call.args, ["path", "file_path"]) ??
-    toolArgText(call.args, ["command"]) ??
-    toolArgText(call.args, ["pattern", "query"]);
-  return target ? `${call.name} ${truncateLine(target, 80)}` : call.name;
-}
-
-function childToolStatusText(status: ChildToolStatus): string {
-  if (status === "running") return "running";
-  if (status === "failed") return "failed";
-  return "done";
-}
-
-function formatRecipeAgentCall(
-  args: RunRecipeAgentParams,
+function formatAgentCall(
+  args: AgentCallParams,
   theme: { fg?: (name: any, text: string) => string; bold?: (text: string) => string } | undefined
 ): string {
   const action = args.action ?? "start";
@@ -331,47 +223,10 @@ function formatRecipeAgentCall(
   return `${themeFg(theme, "toolTitle", themeBold(theme, `agent ${action}`))} ${themeFg(theme, "accent", agent)}${label}`;
 }
 
-function formatRecipeAgentResult(
-  details: RecipeAgentToolDetails | undefined,
-  text: string,
-  options: { expanded: boolean; isPartial: boolean },
-  theme: { fg?: (name: any, text: string) => string } | undefined
-): string {
-  if (!details?.id) return text;
+// Keep the legacy wire value so resumed transcripts retain their renderer.
+const AGENT_COMPLETIONS_TYPE = "recipe-agent-completions";
 
-  const lines: string[] = [
-    themeFg(theme, details.error ? "warning" : "muted", `Status: ${details.status ?? (options.isPartial ? "running" : "completed")}`),
-  ];
-
-  if (details.tool_calls?.length) {
-    lines.push("", themeFg(theme, "muted", "Tool calls:"));
-    for (const call of details.tool_calls) {
-      const label = describeChildToolCall(call);
-      const status = childToolStatusText(call.status);
-      lines.push(`  - ${themeFg(theme, call.status === "failed" ? "warning" : "toolOutput", label)} ${themeFg(theme, "muted", `[${status}]`)}`);
-      if (options.expanded && call.output) {
-        lines.push(`    ${themeFg(theme, "toolOutput", truncateLine(call.output))}`);
-      }
-      if (call.error) {
-        lines.push(`    ${themeFg(theme, "warning", truncateLine(call.error))}`);
-      }
-    }
-  }
-
-  if (details.error) {
-    lines.push("", themeFg(theme, "warning", `Error: ${details.error}`));
-  } else if (details.output?.trim()) {
-    lines.push("", themeFg(theme, "muted", "Output:"), themeFg(theme, "toolOutput", details.output.trim()));
-  } else if (!options.isPartial && text.trim()) {
-    lines.push("", themeFg(theme, "toolOutput", text.trim()));
-  }
-
-  return lines.join("\n");
-}
-
-const RECIPE_AGENT_COMPLETIONS_TYPE = "recipe-agent-completions";
-
-interface RecipeAgentCompletionsDetails {
+interface AgentCompletionsDetails {
   completions: ChildCompletionEnvelope[];
 }
 
@@ -420,33 +275,12 @@ function formatCompletionMessage(
   return blocks.join("\n");
 }
 
-function describeRun(run: ChildRunSnapshot): string {
-  const suffix = run.error ? `: ${run.error}` : run.output ? `: ${run.output}` : "";
-  return `${run.id} ${run.agent}: ${run.status}${suffix}`;
-}
-
-function runDetails(run: ChildRunSnapshot, action = "status"): RecipeAgentToolDetails {
-  return {
-    action,
-    id: run.id,
-    agent: run.agent,
-    label: run.label,
-    task: run.task,
-    status: run.status,
-    startedAt: run.startedAt,
-    completedAt: run.completedAt,
-    output: run.output,
-    error: run.error,
-    tool_calls: run.toolCalls,
-  };
-}
-
 function snapshotOf(run: ChildRunSnapshot): ChildRunSnapshot {
   return {
     id: run.id,
     agent: run.agent,
     label: run.label,
-    task: run.task,
+    prompt: run.prompt,
     status: run.status,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
@@ -456,20 +290,43 @@ function snapshotOf(run: ChildRunSnapshot): ChildRunSnapshot {
   };
 }
 
-function runBlock(run: ChildRunSnapshot): string {
-  const lines = [
-    `Recipe agent: ${run.agent}`,
-    `Run: ${run.id}`,
-    run.label ? `Label: ${run.label}` : undefined,
-    `Status: ${run.status}`,
-    "",
-    "Prompt:",
-    run.task,
-    "",
-    "Output:",
-    run.error ? `Error: ${run.error}` : run.output?.trim() || "(waiting for output...)",
-  ].filter((line): line is string => line !== undefined);
-  return lines.join("\n");
+function controllerSummary(
+  run: ChildRunSnapshot,
+  status: AgentRunSummary["status"] = run.status
+): AgentRunSummary {
+  const startedAt = Date.parse(run.startedAt);
+  const completedAt = run.completedAt ? Date.parse(run.completedAt) : undefined;
+  const currentTool = [...run.toolCalls]
+    .reverse()
+    .find((call) => call.status === "running")?.name;
+  return {
+    agent_run_id: run.id,
+    invocation_name: run.agent,
+    agent_name: run.agent,
+    label: run.label ?? run.agent,
+    prompt: run.prompt,
+    status,
+    started_at: Number.isFinite(startedAt) ? startedAt : Date.now(),
+    ...(completedAt !== undefined && Number.isFinite(completedAt)
+      ? { completed_at: completedAt }
+      : {}),
+    last_activity_at:
+      completedAt !== undefined && Number.isFinite(completedAt)
+        ? completedAt
+        : Number.isFinite(startedAt)
+          ? startedAt
+          : Date.now(),
+    ...(currentTool ? { current_tool: currentTool } : {}),
+    nested_tools: run.toolCalls.map((call) => ({
+      toolName: call.name,
+      verb: call.name,
+      detail: call.output ?? call.error ?? "",
+      ...(asRecord(call.args) ? { toolInput: asRecord(call.args)! } : {}),
+    })),
+    output_preview: run.output,
+    output: run.output,
+    error: run.error,
+  };
 }
 
 function nameList(names: string[]): string {
@@ -485,96 +342,29 @@ function activeRecipeTools(
   activeTools: string[]
 ): string[] {
   const active = new Set(activeTools);
-  const recipeTools = new Set(executableRecipeToolNames(state.agent.tools));
-  if (visibleSubagents(state).length > 0) recipeTools.add("agent");
+  const recipeTools = new Set(state.resolved.tools);
   return [...recipeTools]
     .filter((tool) => active.has(tool))
     .sort();
-}
-
-function normalizeSelector(value: string): string {
-  return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\.[^/.]+$/, "");
-}
-
-function extensionSelectorSet(recipeDir: string, extensionPath: string): Set<string> {
-  const relativePath = relative(recipeDir, extensionPath).replace(/\\/g, "/");
-  const withoutExtension = normalizeSelector(relativePath);
-  const base = basename(extensionPath, extname(extensionPath));
-  const parts = withoutExtension.split("/");
-  const parent = parts.length > 1 ? parts[parts.length - 2] : undefined;
-  return new Set(
-    [
-      relativePath,
-      withoutExtension,
-      base,
-      parent && base === "index" ? parent : undefined,
-    ].filter((value): value is string => Boolean(value))
-  );
-}
-
-function extensionSelectorMatches(
-  recipeDir: string,
-  extensionPath: string,
-  selector: string
-): boolean {
-  const normalized = normalizeSelector(selector.trim());
-  if (!normalized) return false;
-  if (normalized === "*") return true;
-  return extensionSelectorSet(recipeDir, extensionPath).has(normalized);
-}
-
-function filterExtensionPaths(
-  recipeDir: string,
-  extensionPaths: string[],
-  agent: RecipeAgentDefinition
-): string[] {
-  const include = agent.extensions?.include;
-  const exclude = agent.extensions?.exclude ?? [];
-  return extensionPaths.filter((extensionPath) => {
-    const included =
-      include === undefined
-        ? true
-        : include.some((selector) =>
-            extensionSelectorMatches(recipeDir, extensionPath, selector)
-          );
-    if (!included) return false;
-    return !exclude.some((selector) =>
-      extensionSelectorMatches(recipeDir, extensionPath, selector)
-    );
-  });
 }
 
 function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string {
   const subagents = visibleSubagents(state).map((agent) => agent.name);
   return [
     "Active Recipe",
-    `Name: ${state.manifest.name}@${state.manifest.version}`,
-    state.manifest.description ? `Description: ${state.manifest.description}` : undefined,
-    `Agent: ${state.agentName}`,
-    `Model: ${state.agent.model?.name ?? "(session default)"}`,
-    `Thinking level: ${state.agent.model?.thinkingLevel ?? "(session default)"}`,
+    `Name: ${state.resolved.manifest.name}@${state.resolved.manifest.version}`,
+    state.resolved.manifest.description ? `Description: ${state.resolved.manifest.description}` : undefined,
+    `Agent: ${state.resolved.agentName}`,
+    `Model: ${state.resolved.agent.model?.name ?? "(session default)"}`,
+    `Thinking level: ${state.resolved.agent.model?.thinkingLevel ?? "(session default)"}`,
     `Subagents: ${nameList(subagents)}`,
     "",
     "Active recipe tools:",
     ...bulletList(activeRecipeTools(state, activeTools)),
     "",
-    `Directory: ${state.recipeDir}`,
+    `Directory: ${state.resolved.recipeDir}`,
     `Workspace: ${state.cwd}`,
   ].filter((line): line is string => line !== undefined).join("\n");
-}
-
-function emitRunUpdate(run: ChildRun, onUpdate: RecipeAgentToolUpdate | undefined): void {
-  try {
-    onUpdate?.({
-      content: [{ type: "text", text: runBlock(run) }],
-      details: runDetails(run, "update"),
-    });
-  } catch {
-    // A detached run outlives the parent turn that started it; pi rejects
-    // tool updates once that turn has settled ("Agent listener invoked
-    // outside active run"). Late updates are cosmetic — swallow them so the
-    // background child keeps executing and completion delivery still fires.
-  }
 }
 
 function applyChildToolEvent(run: ChildRun, event: RecipeChildToolEvent): void {
@@ -719,6 +509,8 @@ export function createPiRecipesExtension(
   const completions = new ChildCompletionQueue();
   // Latest extension context, for the idle check gating completion delivery.
   let sessionCtx: Pick<ExtensionContext, "isIdle"> | null = null;
+  let localAgentContext: ExtensionContext | null = null;
+  const visibleAgentDefinitions = new Map<string, RecipeAgentDefinition>();
 
   function storeFor(cwd: string): ChildAgentRunStore {
     if (runStore?.cwd !== cwd) {
@@ -736,7 +528,7 @@ export function createPiRecipesExtension(
   }
 
   function nextChildRunId(): string {
-    return `recipe-agent-${++childRunIndex}`;
+    return `agent-run-${++childRunIndex}`;
   }
 
   /**
@@ -750,7 +542,7 @@ export function createPiRecipesExtension(
     const persisted = await store.readPersistedSnapshots();
     let restored = 0;
     for (const snapshot of persisted) {
-      const indexMatch = /^recipe-agent-(\d+)$/.exec(snapshot.id);
+      const indexMatch = /^(?:agent-run|recipe-agent)-(\d+)$/.exec(snapshot.id);
       if (indexMatch) {
         childRunIndex = Math.max(childRunIndex, Number(indexMatch[1]));
       }
@@ -773,10 +565,107 @@ export function createPiRecipesExtension(
     return childRuns.get(id) ?? archivedRuns.get(id);
   }
 
+  const localRunController: AgentRunController = {
+    list() {
+      return [
+        ...childRuns.values(),
+        ...[...archivedRuns.values()].filter(
+          (snapshot) => !childRuns.has(snapshot.id)
+        ),
+      ].map((run) => controllerSummary(run));
+    },
+    get(id) {
+      const run = findRunSnapshot(id);
+      return run ? controllerSummary(run) : null;
+    },
+    async start(input) {
+      if (!state || !localAgentContext) {
+        throw new Error("No recipe session is active");
+      }
+      const run = await runChildAgent(
+        state,
+        input.name,
+        input.prompt,
+        input.label,
+        localAgentContext,
+        input.onUpdate
+      );
+      return controllerSummary(run);
+    },
+    async wait(id, signal) {
+      const run = findRunSnapshot(id);
+      if (!run) throw new Error(`Unknown agent run: ${id}`);
+      if (run.status !== "running" || !childRuns.has(id)) {
+        return controllerSummary(run);
+      }
+      await waitForRun(childRuns.get(id)!, signal);
+      return controllerSummary(findRunSnapshot(id)!);
+    },
+    async message(id, message) {
+      if (archivedRuns.has(id) && !childRuns.has(id)) {
+        throw new Error(
+          `Agent run ${id} belongs to a previous Pi session and cannot be controlled`
+        );
+      }
+      const run = childRuns.get(id);
+      if (!run) throw new Error(`Unknown agent run: ${id}`);
+      if (run.status === "running") {
+        await run.runner.steer(message);
+        return controllerSummary(run);
+      }
+      run.status = "running";
+      run.completedAt = undefined;
+      run.error = undefined;
+      run.output = undefined;
+      run.promise = executeChildPrompt(run, message, state?.cwd ?? process.cwd());
+      void persistRun(state?.cwd ?? process.cwd(), run);
+      return controllerSummary(run);
+    },
+    async interrupt(id) {
+      if (archivedRuns.has(id) && !childRuns.has(id)) {
+        throw new Error(
+          `Agent run ${id} belongs to a previous Pi session and cannot be controlled`
+        );
+      }
+      const run = childRuns.get(id);
+      if (!run) throw new Error(`Unknown agent run: ${id}`);
+      if (run.status === "running") {
+        run.status = "interrupted";
+        run.completedAt = run.completedAt ?? new Date().toISOString();
+        await run.runner.cancel();
+        if (state) void persistRun(state.cwd, run);
+      }
+      return controllerSummary(run);
+    },
+    async close(id) {
+      if (archivedRuns.has(id) && !childRuns.has(id)) {
+        throw new Error(
+          `Agent run ${id} belongs to a previous Pi session and cannot be controlled`
+        );
+      }
+      const run = childRuns.get(id);
+      if (!run) throw new Error(`Unknown agent run: ${id}`);
+      if (run.status === "running") {
+        run.status = "interrupted";
+        await run.runner.cancel();
+        await run.promise;
+      }
+      await run.runner.shutdown();
+      childRuns.delete(id);
+      return controllerSummary(run, "closed");
+    },
+  };
+
+  async function closeAllChildRuns(): Promise<void> {
+    await Promise.all(
+      [...childRuns.keys()].map((id) => localRunController.close(id))
+    );
+  }
+
   function archivedControlError(id: string) {
     return {
       ...textResult(
-        `Recipe agent run ${id} belongs to a previous Pi session and cannot be controlled; only status and wait are available.`,
+        `Agent run ${id} belongs to a previous Pi session and cannot be controlled; only status and wait are available.`,
         { id }
       ),
       isError: true,
@@ -809,58 +698,17 @@ export function createPiRecipesExtension(
     const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
     if (state?.key === key) return state;
 
-    let manifest: PiPackageManifest;
+    let resolved: ResolvedRecipe;
     try {
-      manifest = readPiPackageManifest(recipeDir);
+      resolved = resolveRecipe({
+        recipeDir,
+        agentName: requestedAgentName,
+      });
     } catch (err) {
       throw new RecipeLaunchError(
         recipeLoadErrorMessage(flag, err instanceof Error ? err.message : String(err))
       );
     }
-    const validation = validatePiPackageManifest(manifest);
-    const errors = validation.findings.filter((finding) => finding.severity === "error");
-    if (errors.length > 0) {
-      throw new RecipeLaunchError(
-        recipeLoadErrorMessage(flag, errors.map((finding) => finding.message).join("\n"))
-      );
-    }
-
-    const agentFindings = validateRecipeAgentDefinitions(recipeDir);
-    const agentErrors = agentFindings.filter(
-      (finding) => finding.severity !== "warning"
-    );
-    if (agentErrors.length > 0) {
-      throw new RecipeLaunchError(
-        [
-          `Recipe "${manifest.name}" has invalid agents.`,
-          ...agentErrors.map((finding) => `- ${finding.message}`),
-          "Add the missing fields to each agent, even if empty.",
-        ].join("\n")
-      );
-    }
-
-    const resolved = resolveRecipeAgentDefinition({
-      recipeDir,
-      agentName: requestedAgentName,
-    });
-    if (!resolved.agent) {
-      const availableAgents = [...loadRecipeAgentDefinitions(recipeDir).keys()].sort();
-      throw new RecipeLaunchError(
-        [
-          `Recipe "${manifest.name}" loaded, but agent "${resolved.agentName}" was not found.`,
-          availableAgents.length > 0
-            ? `Available agents: ${availableAgents.join(", ")}`
-            : "No recipe agents were found.",
-          "Launch with `pi --recipe <recipe> --agent <agent>` or update the recipe agents.",
-        ].join("\n")
-      );
-    }
-
-    const extensionPaths = filterExtensionPaths(
-      recipeDir,
-      packageResourcePaths(manifest, "extensions"),
-      resolved.agent
-    );
 
     // Keep the recipe selected by CLI flags visible to shell commands and
     // recipe-authored instructions. In production `env` is process.env, so
@@ -871,13 +719,7 @@ export function createPiRecipesExtension(
     state = {
       key,
       cwd,
-      recipeDir,
-      manifest,
-      agentName: resolved.agentName,
-      agent: resolved.agent,
-      skillPaths: packageResourcePaths(manifest, "skills"),
-      promptPaths: packageResourcePaths(manifest, "prompts"),
-      extensionPaths,
+      resolved,
       extensionsLoaded: false,
       configured: false,
     };
@@ -909,9 +751,9 @@ export function createPiRecipesExtension(
   ): Promise<void> {
     if (launchState.extensionsLoaded) return;
     let loadedCount = 0;
-    for (const extensionPath of launchState.extensionPaths) {
+    for (const extensionPath of launchState.resolved.extensionPaths) {
       try {
-        const factory = await loadRecipeExtensionFactory(launchState.recipeDir, extensionPath);
+        const factory = await loadRecipeExtensionFactory(launchState.resolved.recipeDir, extensionPath);
         await factory(pi);
         loadedCount += 1;
       } catch (err) {
@@ -923,9 +765,9 @@ export function createPiRecipesExtension(
       }
     }
     launchState.extensionsLoaded = true;
-    if (launchState.extensionPaths.length > 0) {
+    if (launchState.resolved.extensionPaths.length > 0) {
       ctx.ui.notify(
-        `Recipe extensions: ${loadedCount}/${launchState.extensionPaths.length} loaded`,
+        `Recipe extensions: ${loadedCount}/${launchState.resolved.extensionPaths.length} loaded`,
         "info"
       );
     }
@@ -939,36 +781,33 @@ export function createPiRecipesExtension(
     if (launchState.configured) return;
 
     const labelParts = [
-      `${launchState.manifest.name}@${launchState.manifest.version}`,
-      `agent:${launchState.agentName}`,
+      `${launchState.resolved.manifest.name}@${launchState.resolved.manifest.version}`,
+      `agent:${launchState.resolved.agentName}`,
     ].filter(Boolean);
     pi.setSessionName(labelParts.join(" "));
 
-    const modelSpec = launchState.agent.model?.name;
-    if (modelSpec) {
-      const { provider, model } = modelParts(modelSpec);
-      const lookupProvider = provider === "gemini" ? "google" : provider;
-      const resolvedModel = ctx.modelRegistry.find(lookupProvider, model);
-      if (!resolvedModel) {
-        throw new Error(`Recipe model is not available: ${modelSpec}`);
-      }
-      applyRecipeAgentModelConfigToModel(
-        resolvedModel,
-        launchState.agent.modelConfig
+    const { provider, model } = modelParts(launchState.resolved.modelSpec);
+    const lookupProvider = provider === "gemini" ? "google" : provider;
+    const resolvedModel = ctx.modelRegistry.find(lookupProvider, model);
+    if (!resolvedModel) {
+      throw new Error(
+        `Recipe model is not available: ${launchState.resolved.modelSpec}`
       );
-      const ok = await pi.setModel(resolvedModel);
-      if (!ok) {
-        throw new Error(`Recipe model has no configured API key: ${modelSpec}`);
-      }
+    }
+    applyRecipeAgentModelConfigToModel(
+      resolvedModel,
+      launchState.resolved.modelConfig
+    );
+    const ok = await pi.setModel(resolvedModel);
+    if (!ok) {
+      throw new Error(
+        `Recipe model has no configured API key: ${launchState.resolved.modelSpec}`
+      );
     }
 
-    const thinkingLevel = launchState.agent.model?.thinkingLevel;
-    if (thinkingLevel) {
-      pi.setThinkingLevel(thinkingLevel as ThinkingLevel);
-    }
+    pi.setThinkingLevel(launchState.resolved.thinkingLevel);
 
-    const activeTools = new Set(executableRecipeToolNames(launchState.agent.tools));
-    if (visibleSubagents(launchState).length > 0) activeTools.add("agent");
+    const activeTools = new Set(launchState.resolved.tools);
     pi.setActiveTools([...activeTools]);
     launchState.configured = true;
   }
@@ -985,7 +824,7 @@ export function createPiRecipesExtension(
 
     configureMcpLocalConfigPath({
       cwd: launchState.cwd,
-      recipeDir: launchState.recipeDir,
+      recipeDir: launchState.resolved.recipeDir,
       env,
     });
     const [, session] = await Promise.all([
@@ -995,7 +834,7 @@ export function createPiRecipesExtension(
       }),
       materializeMcpSession({
         cwd: launchState.cwd,
-        manifest: launchState.manifest,
+        manifest: launchState.resolved.manifest,
         agentMcp: mcpSelections,
         env,
       }),
@@ -1036,15 +875,24 @@ export function createPiRecipesExtension(
   async function runChildAgent(
     launchState: RecipeLaunchState,
     agentName: string,
-    task: string,
+    prompt: string,
     label: string | undefined,
     ctx: ExtensionContext,
-    onUpdate?: RecipeAgentToolUpdate
+    onUpdate?: (summary: AgentRunSummary) => void | Promise<void>
   ): Promise<ChildRun> {
     const id = nextChildRunId();
     let run: ChildRun | undefined;
+    const notifyUpdate = () => {
+      if (!run || !onUpdate) return;
+      try {
+        void Promise.resolve(onUpdate(controllerSummary(run))).catch(() => {});
+      } catch {
+        // Detached runs can outlive the parent tool call. Late UI updates are
+        // cosmetic and must not stop the child or completion delivery.
+      }
+    };
     const runner = createChildAgentRunner({
-      recipeDir: launchState.recipeDir,
+      recipeDir: launchState.resolved.recipeDir,
       workspaceDir: launchState.cwd,
       env,
       agentName,
@@ -1057,31 +905,42 @@ export function createPiRecipesExtension(
         } else if (!run.output?.trim()) {
           run.output = text;
         }
-        emitRunUpdate(run, onUpdate);
+        notifyUpdate();
       },
       onToolEvent(event) {
         if (!run) return;
         applyChildToolEvent(run, event);
-        emitRunUpdate(run, onUpdate);
+        notifyUpdate();
       },
     });
     run = {
       id,
       agent: agentName,
       label,
-      task,
+      prompt,
       status: "running",
       startedAt: new Date().toISOString(),
       toolCalls: [],
       runner,
       promise: Promise.resolve(undefined as never),
+      notifyUpdate,
     };
-    emitRunUpdate(run, onUpdate);
+    notifyUpdate();
     void persistRun(launchState.cwd, run);
-    run.promise = (async () => {
+    run.promise = executeChildPrompt(run, prompt, launchState.cwd);
+    childRuns.set(id, run);
+    return run;
+  }
+
+  function executeChildPrompt(
+    run: ChildRun,
+    prompt: string,
+    cwd: string
+  ): Promise<ChildRun> {
+    return (async () => {
       try {
-        await runner.start();
-        const result = await runner.prompt(task);
+        await run.runner.start();
+        const result = await run.runner.prompt(prompt);
         const finalOutput = promptResultText(result);
         if (finalOutput && finalOutput.length >= (run.output?.length ?? 0)) {
           run.output = finalOutput;
@@ -1094,263 +953,30 @@ export function createPiRecipesExtension(
         run.error = err instanceof Error ? err.message : String(err);
       } finally {
         run.completedAt = new Date().toISOString();
-        await persistRun(launchState.cwd, run);
-        emitRunUpdate(run, onUpdate);
-        // Queue a wake-up notice for the parent model. Synchronous readers
-        // (blocking start, wait, terminal status) acknowledge it back out.
+        await persistRun(cwd, run);
+        run.notifyUpdate();
+        // Queue a wake-up notice for the parent model. Wait and terminal
+        // status reads acknowledge it back out.
         const envelope = envelopeFromRun(run);
         if (envelope) completions.enqueue(envelope);
-        await runner.shutdown();
       }
       return run;
     })();
-    childRuns.set(id, run);
-    return run;
   }
 
-  /**
-   * Block until the run settles or `signal` aborts. An abort DETACHES from
-   * the run — the child keeps executing in the background and the caller gets
-   * the live (non-terminal) state — it never interrupts the child. Stopping
-   * the parent must not stop delegated work; killing a child is only ever the
-   * explicit `interrupt`/`close` actions.
-   */
-  async function waitForRun(
-    run: ChildRun,
-    signal: AbortSignal | undefined
-  ): Promise<ChildRun> {
-    if (!signal) return await run.promise;
-    if (signal.aborted) return run;
-    let resolveAbort: (() => void) | null = null;
-    const abortPromise = new Promise<void>((resolve) => {
-      resolveAbort = resolve;
+  async function waitForRun(run: ChildRun, signal?: AbortSignal): Promise<void> {
+    if (!signal) {
+      await run.promise;
+      return;
+    }
+    if (signal.aborted) return;
+    let onAbort: () => void = () => {};
+    const aborted = new Promise<void>((resolve) => {
+      onAbort = resolve;
+      signal.addEventListener("abort", onAbort, { once: true });
     });
-    const onAbort = () => resolveAbort?.();
-    signal.addEventListener("abort", onAbort, { once: true });
-    try {
-      await Promise.race([run.promise, abortPromise]);
-      return run;
-    } finally {
-      signal.removeEventListener("abort", onAbort);
-    }
-  }
-
-  /**
-   * Join primitive over existing runs. `mode: "all"` resolves when every
-   * listed run is terminal; `mode: "first"` resolves as soon as any listed
-   * run is terminal (immediately if one already is). Resolves early on
-   * timeout or signal abort — both DETACH, returning current snapshots with
-   * the reason; they never interrupt the children.
-   */
-  async function waitForRuns(
-    ids: readonly string[],
-    opts: { mode: "all" | "first"; timeoutMs: number; signal?: AbortSignal }
-  ): Promise<{ runs: ChildRunSnapshot[]; reason: WaitEndReason }> {
-    const snapshots = () =>
-      ids
-        .map((id) => findRunSnapshot(id))
-        .filter((run): run is ChildRunSnapshot => run !== undefined)
-        .map(snapshotOf);
-
-    const inFlight = ids
-      .map((id) => childRuns.get(id))
-      .filter((run): run is ChildRun => !!run && run.status === "running");
-    const alreadySettled =
-      inFlight.length === 0 ||
-      (opts.mode === "first" && inFlight.length < ids.length);
-    if (alreadySettled) return { runs: snapshots(), reason: "settled" };
-    if (opts.signal?.aborted) return { runs: snapshots(), reason: "aborted" };
-
-    const runPromises = inFlight.map((run) => run.promise);
-    let timer: NodeJS.Timeout | null = null;
-    let onAbort: (() => void) | null = null;
-    const settled = (
-      opts.mode === "all" ? Promise.all(runPromises) : Promise.race(runPromises)
-    ).then(() => "settled" as const);
-    const timedOut = new Promise<"timeout">((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), opts.timeoutMs);
-      timer.unref?.();
-    });
-    const aborted = new Promise<"aborted">((resolve) => {
-      onAbort = () => resolve("aborted");
-      opts.signal?.addEventListener("abort", onAbort, { once: true });
-    });
-    try {
-      const reason = await Promise.race([settled, timedOut, aborted]);
-      return { runs: snapshots(), reason };
-    } finally {
-      if (timer) clearTimeout(timer);
-      if (onAbort) opts.signal?.removeEventListener("abort", onAbort);
-    }
-  }
-
-  async function handleAgentTool(
-    params: RunRecipeAgentParams,
-    signal: AbortSignal | undefined,
-    onUpdate: RecipeAgentToolUpdate | undefined,
-    ctx: ExtensionContext
-  ) {
-    if (!state) {
-      return {
-        ...textResult("No recipe is active. Launch Pi with --recipe <dir> to use recipe agents.", {
-          error: "recipe_not_active",
-        }),
-        isError: true,
-      };
-    }
-
-    const action = params.action ?? "start";
-    if (action === "status") {
-      const runs = params.id
-        ? [findRunSnapshot(params.id)].filter(
-            (run): run is ChildRunSnapshot => Boolean(run)
-          )
-        : [
-            ...childRuns.values(),
-            ...[...archivedRuns.values()].filter(
-              (snapshot) => !childRuns.has(snapshot.id)
-            ),
-          ];
-      if (params.id && runs.length === 0) {
-        return { ...textResult(`Unknown recipe agent run: ${params.id}`, { id: params.id }), isError: true };
-      }
-      // Terminal outputs shown here are delivered — drop queued notices.
-      completions.acknowledge(
-        runs.filter((run) => run.status !== "running").map((run) => run.id)
-      );
-      return textResult(
-        runs.length > 0 ? runs.map(describeRun).join("\n") : "No recipe agent runs have been started yet.",
-        { action, agent_runs: runs.map((run) => runDetails(run)) }
-      );
-    }
-
-    if (action === "wait") {
-      const explicitIds = params.ids?.length
-        ? params.ids
-        : params.id
-          ? [params.id]
-          : null;
-      if (explicitIds) {
-        const unknown = explicitIds.filter((id) => !findRunSnapshot(id));
-        if (unknown.length > 0) {
-          return {
-            ...textResult(`Unknown recipe agent run(s): ${unknown.join(", ")}`, {
-              action,
-            }),
-            isError: true,
-          };
-        }
-      }
-      const targets =
-        explicitIds ??
-        [...childRuns.values()]
-          .filter((run) => run.status === "running")
-          .map((run) => run.id);
-      if (targets.length === 0) {
-        return textResult("No running recipe agent runs to wait for.", {
-          action,
-          agent_runs: [...childRuns.values()].map((run) => runDetails(run)),
-        });
-      }
-      const timeoutMs = Math.min(
-        WAIT_MAX_TIMEOUT_MS,
-        Math.max(WAIT_MIN_TIMEOUT_MS, params.timeout_ms ?? WAIT_DEFAULT_TIMEOUT_MS)
-      );
-      const { runs, reason } = await waitForRuns(targets, {
-        mode: explicitIds ? "all" : "first",
-        timeoutMs,
-        signal,
-      });
-      // Terminal outputs shown here are delivered — drop queued notices.
-      completions.acknowledge(
-        runs.filter((run) => run.status !== "running").map((run) => run.id)
-      );
-      const header =
-        reason === "settled"
-          ? explicitIds
-            ? "All waited recipe agent runs settled."
-            : "A recipe agent run settled."
-          : reason === "timeout"
-            ? `Wait timed out after ${Math.round(timeoutMs / 1000)}s; runs continue in the background.`
-            : "Wait cancelled — runs continue in the background.";
-      return textResult(
-        [header, runs.map(runBlock).join("\n\n")].filter(Boolean).join("\n\n"),
-        { action, agent_runs: runs.map((run) => runDetails(run)) }
-      );
-    }
-
-    if (action === "interrupt") {
-      if (params.id && archivedRuns.has(params.id) && !childRuns.has(params.id)) {
-        return archivedControlError(params.id);
-      }
-      const run = params.id ? childRuns.get(params.id) : undefined;
-      if (!run) return { ...textResult(params.id ? `Unknown recipe agent run: ${params.id}` : "Interrupt requires a recipe agent run id.", {}), isError: true };
-      // Interrupt targets in-flight work only; a settled run keeps its status.
-      if (run.status !== "running") {
-        return textResult(runBlock(run), runDetails(run, action));
-      }
-      run.status = "interrupted";
-      await run.runner.cancel();
-      void persistRun(state.cwd, run);
-      emitRunUpdate(run, onUpdate);
-      return textResult(runBlock(run), runDetails(run, action));
-    }
-
-    if (action === "close") {
-      if (params.id && archivedRuns.has(params.id) && !childRuns.has(params.id)) {
-        return archivedControlError(params.id);
-      }
-      const run = params.id ? childRuns.get(params.id) : undefined;
-      if (!run) return { ...textResult(params.id ? `Unknown recipe agent run: ${params.id}` : "Close requires a recipe agent run id.", {}), isError: true };
-      // Close stops in-flight work; detached background runs don't outlive it.
-      if (run.status === "running") {
-        run.status = "interrupted";
-        await run.runner.cancel();
-        void persistRun(state.cwd, run);
-      }
-      childRuns.delete(run.id);
-      return textResult(`Closed recipe agent run ${run.id} (${run.agent}).`, { id: run.id });
-    }
-
-    if (!params.name || !params.task) {
-      return {
-        ...textResult("Starting a recipe agent requires both name and task.", {
-          available_agents: visibleSubagents(state).map((agent) => agent.name),
-        }),
-        isError: true,
-      };
-    }
-
-    const visible = visibleSubagents(state);
-    const agent = visible.find((item) => item.name === params.name);
-    if (!agent) {
-      return {
-        ...textResult(
-          `Unknown or unavailable recipe agent: ${params.name}. Available agents: ${visible.map((item) => item.name).join(", ")}`,
-          { action, agent: params.name, available_agents: visible.map((item) => item.name) }
-        ),
-        isError: true,
-      };
-    }
-
-    const run = await runChildAgent(state, agent.name, params.task, params.label, ctx, onUpdate);
-    if (params.wait !== false) {
-      await waitForRun(run, signal);
-      // An aborted wait detaches: the child keeps running in the background.
-      if (run.status === "running") {
-        return textResult(
-          `Wait cancelled — recipe agent run ${run.id} (${run.agent}) is still running in the background. Use the agent tool with action "status" to check on it.`,
-          runDetails(run, action)
-        );
-      }
-      // The model saw this result synchronously — drop any queued notice.
-      completions.acknowledge([run.id]);
-      return textResult(runBlock(run), runDetails(run, action));
-    }
-    return textResult(
-      runBlock(run),
-      runDetails(run, action)
-    );
+    await Promise.race([run.promise, aborted]);
+    signal.removeEventListener("abort", onAbort);
   }
 
   return (pi) => {
@@ -1359,7 +985,7 @@ export function createPiRecipesExtension(
     // genuinely idle: a message queued while the parent turn is streaming
     // (or tearing down at the agent_end boundary) would be stranded in pi's
     // queues, and holding until idle also gives synchronous readers
-    // (blocking start, wait, terminal status) time to acknowledge results
+    // (wait or terminal status) time to acknowledge results
     // the model already saw. While mid-turn, retry on a short timer armed by
     // the agent_end poke.
     let deliveryRetryTimer: NodeJS.Timeout | null = null;
@@ -1382,10 +1008,10 @@ export function createPiRecipesExtension(
         if (batch.length === 0) return;
         pi.sendMessage(
           {
-            customType: RECIPE_AGENT_COMPLETIONS_TYPE,
+            customType: AGENT_COMPLETIONS_TYPE,
             content: renderCompletionNotice(batch),
             display: true,
-            details: { completions: batch } satisfies RecipeAgentCompletionsDetails,
+            details: { completions: batch } satisfies AgentCompletionsDetails,
           },
           // followUp keeps a wake race-safe: if a user turn started between
           // the idle check and here, the notice queues behind it.
@@ -1402,10 +1028,10 @@ export function createPiRecipesExtension(
       completions.poke();
     });
 
-    pi.registerMessageRenderer<RecipeAgentCompletionsDetails>(
-      RECIPE_AGENT_COMPLETIONS_TYPE,
+    pi.registerMessageRenderer<AgentCompletionsDetails>(
+      AGENT_COMPLETIONS_TYPE,
       (message, options, theme) => {
-        const batch = (message.details as RecipeAgentCompletionsDetails | undefined)
+        const batch = (message.details as AgentCompletionsDetails | undefined)
           ?.completions;
         if (!batch?.length) return undefined;
         return new Text(formatCompletionMessage(batch, options, theme), 0, 0);
@@ -1417,7 +1043,7 @@ export function createPiRecipesExtension(
       type: "string",
     });
     pi.registerFlag("agent", {
-      description: "Recipe agent to use",
+      description: "Agent to use",
       type: "string",
     });
 
@@ -1433,13 +1059,13 @@ export function createPiRecipesExtension(
             }
             return;
           }
+          await closeAllChildRuns();
           state = null;
-          childRuns.clear();
           archivedRuns.clear();
           completions.clear();
           await ctx.waitForIdle();
           await ctx.reload();
-          ctx.ui.notify(`Recipe reload requested: ${launchState.manifest.name}@${launchState.manifest.version}`, "info");
+          ctx.ui.notify(`Recipe reload requested: ${launchState.resolved.manifest.name}@${launchState.resolved.manifest.version}`, "info");
           return;
         }
         if (action) {
@@ -1457,42 +1083,31 @@ export function createPiRecipesExtension(
       },
     });
 
-    pi.registerTool(
-      defineTool({
-        name: "agent",
-        label: "Recipe agent",
-        description: [
-          "Start or manage another agent from the active recipe.",
-          "Start calls stream the prompted task and subagent assistant output in one tool block.",
-          "By default start waits for completion; pass wait=false only when a background run is desired.",
-          "When a background run finishes you are notified automatically with its result — do not poll status in a loop while waiting.",
-          'Use action "wait" to join on existing runs: with ids it blocks until ALL listed runs settle, without ids until the FIRST running run settles.',
-          "Cancelling a wait detaches from the runs — they keep executing in the background; only interrupt/close stop a run.",
-          "This tool is active only when the selected recipe agent has available subagents.",
-        ].join("\n"),
-        parameters: RunRecipeAgentParams,
-        renderCall(params: RunRecipeAgentParams, theme, context) {
-          const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-          text.setText(formatRecipeAgentCall(params, theme));
-          return text;
-        },
-        renderResult(result, options, theme, context) {
-          const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-          const details = result.details as RecipeAgentToolDetails | undefined;
-          const fallbackText = contentText(result.content);
-          text.setText(formatRecipeAgentResult(details, fallbackText, options, theme));
-          return text;
-        },
-        async execute(_runId, params: RunRecipeAgentParams, signal, onUpdate, ctx) {
-          return await handleAgentTool(params, signal, onUpdate, ctx);
-        },
-      })
+    const agentTool = createAgentTool(
+      localRunController,
+      visibleAgentDefinitions,
+      {
+        acknowledgeCompletions: (ids) => completions.acknowledge(ids),
+      }
     );
+    agentTool.label = "Agent";
+    agentTool.renderCall = (params, theme, context) => {
+      const text =
+        (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      text.setText(formatAgentCall(params as AgentCallParams, theme));
+      return text;
+    };
+    pi.registerTool(agentTool);
 
     pi.on("session_start", async (_event, ctx) => {
       sessionCtx = ctx;
+      localAgentContext = ctx;
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return;
+      visibleAgentDefinitions.clear();
+      for (const [name, definition] of launchState.resolved.subagents) {
+        visibleAgentDefinitions.set(name, definition);
+      }
       await loadRecipeExtensions(pi, ctx, launchState);
       try {
         await configureMcp(launchState, ctx);
@@ -1510,7 +1125,7 @@ export function createPiRecipesExtension(
         const restored = await rehydrateChildRuns(launchState.cwd);
         if (restored > 0) {
           ctx.ui.notify(
-            `Recipe agents: rehydrated ${restored} previous run(s) (read-only)`,
+            `Agents: rehydrated ${restored} previous run(s) (read-only)`,
             "info"
           );
         }
@@ -1518,12 +1133,13 @@ export function createPiRecipesExtension(
         // rehydration is best-effort
       }
       ctx.ui.notify(
-        `Recipe: ${launchState.manifest.name}@${launchState.manifest.version} (${basename(launchState.recipeDir)})`,
+        `Recipe: ${launchState.resolved.manifest.name}@${launchState.resolved.manifest.version} (${basename(launchState.resolved.recipeDir)})`,
         "info"
       );
     });
 
     pi.on("session_shutdown", async () => {
+      await closeAllChildRuns();
       clearMcpCatalogPreload(env);
       await stopMcpDaemon(env);
     });
@@ -1532,17 +1148,19 @@ export function createPiRecipesExtension(
       const launchState = safeLoadState(pi, event.cwd);
       if (!launchState) return {};
       return {
-        skillPaths: launchState.skillPaths,
-        promptPaths: launchState.promptPaths,
+        skillPaths: launchState.resolved.skillPaths,
+        promptPaths: launchState.resolved.promptPaths,
       };
     });
 
     pi.on("before_agent_start", (event, ctx) => {
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return {};
-      const base = loadRecipeSystemPrompt(launchState.recipeDir) ?? event.systemPrompt;
-      const recipePrompt = applySystemInstructions(base, launchState.agent.systemInstructions);
-      return { systemPrompt: recipePrompt };
+      return {
+        systemPrompt: launchState.resolved.systemPromptOverride(
+          event.systemPrompt
+        ),
+      };
     });
   };
 }

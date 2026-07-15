@@ -49,6 +49,8 @@ and prompts.
 
 - `@introspection-ai/pi-recipes`: extension factory and recipe-loading helpers.
 - `@introspection-ai/pi-recipes/pi-extension`: Pi extension entrypoint.
+- `@introspection-ai/pi-recipes/recipe`: recipe parsing and resolved session inputs.
+- `@introspection-ai/pi-recipes/pi`: the shared `agent` tool and controller types.
 - `@introspection-ai/pi-recipes/recipe-store`: recipe install and resolution helpers.
 - [`pi-recipe-check`](https://crates.io/crates/pi-recipe-check) (Rust crate,
   [`crates/pi-recipe-check`](crates/pi-recipe-check)): the pure recipe
@@ -80,6 +82,24 @@ Launch it with Pi:
 pi --recipe my-recipe
 pi --recipe my-recipe --agent agent
 ```
+
+Hosts that embed Pi can resolve the same recipe semantics without adopting a
+second runtime abstraction:
+
+```ts
+import { resolveRecipe } from "@introspection-ai/pi-recipes/recipe";
+import { createAgentTool } from "@introspection-ai/pi-recipes/pi";
+
+const recipe = resolveRecipe({ recipeDir, agentName });
+const runs = createHostRunController(recipe.subagents);
+
+pi.registerTool(createAgentTool(runs, recipe.subagents));
+```
+
+The host remains responsible for model credentials, session persistence,
+telemetry, and lifecycle. The resolver owns recipe interpretation; the shared
+tool delegates run execution to the host controller. Pass the resolved model,
+tools, prompts, skills, and extensions to Pi's normal session constructors.
 
 `recipes create` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
 and recipe README. Edit those files as the recipe grows. Named variants are

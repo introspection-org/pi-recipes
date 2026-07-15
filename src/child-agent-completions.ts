@@ -11,8 +11,8 @@
  *
  * Successes batch briefly so N parallel children produce one notice;
  * failures flush immediately. Runs whose terminal output the model already
- * saw synchronously (a blocking start, `action:"wait"`, or a terminal
- * `status` read) are acknowledged out of the queue so nothing is delivered
+ * saw synchronously (`action:"wait"` or a terminal `status` read) are
+ * acknowledged out of the queue so nothing is delivered
  * twice.
  */
 
@@ -122,7 +122,7 @@ export class ChildCompletionQueue {
 
   /**
    * Drop queued envelopes whose terminal output the model just saw
-   * synchronously (a blocking start, wait, or terminal status read).
+   * synchronously (wait or terminal status read).
    */
   acknowledge(ids: readonly string[]): void {
     if (ids.length === 0 || this.pending.length === 0) return;

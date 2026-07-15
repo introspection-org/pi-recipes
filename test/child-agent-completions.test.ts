@@ -175,7 +175,7 @@ describe("envelopeFromRun", () => {
     return {
       id: "recipe-agent-1",
       agent: "explorer",
-      task: "look around",
+      prompt: "look around",
       status: "completed",
       startedAt: "2026-07-07T00:00:00.000Z",
       completedAt: "2026-07-07T00:00:05.000Z",

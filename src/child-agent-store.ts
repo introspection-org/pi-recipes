@@ -1,5 +1,5 @@
 /**
- * Filesystem persistence for recipe child agent runs.
+ * Filesystem persistence for background agent runs.
  *
  * Each run owns `<workspace>/.pi/agents/<runId>/status.json` — a rolling
  * snapshot of the run state. Snapshots let a later Pi process in the same
@@ -31,7 +31,7 @@ export interface ChildRunSnapshot {
   id: string;
   agent: string;
   label?: string;
-  task: string;
+  prompt: string;
   status: ChildRunStatus;
   startedAt: string;
   completedAt?: string;
@@ -47,18 +47,31 @@ const RUN_STATUSES: readonly string[] = [
   "interrupted",
 ];
 
-function isChildRunSnapshot(value: unknown): value is ChildRunSnapshot {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.agent === "string" &&
-    typeof record.task === "string" &&
-    typeof record.status === "string" &&
-    RUN_STATUSES.includes(record.status) &&
-    typeof record.startedAt === "string" &&
-    Array.isArray(record.toolCalls)
-  );
+function normalizeChildRunSnapshot(value: unknown): ChildRunSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const original = value as Record<string, unknown>;
+  const prompt =
+    typeof original.prompt === "string"
+      ? original.prompt
+      : typeof original.task === "string"
+        ? original.task
+        : undefined;
+  const record: Record<string, unknown> = { ...original, prompt };
+  delete record.task;
+  if (
+    !(
+      typeof record.id === "string" &&
+      typeof record.agent === "string" &&
+      typeof record.prompt === "string" &&
+      typeof record.status === "string" &&
+      RUN_STATUSES.includes(record.status) &&
+      typeof record.startedAt === "string" &&
+      Array.isArray(record.toolCalls)
+    )
+  ) {
+    return null;
+  }
+  return record as unknown as ChildRunSnapshot;
 }
 
 export class ChildAgentRunStore {
@@ -113,8 +126,8 @@ export class ChildAgentRunStore {
           join(this.root, runId, "status.json"),
           "utf8"
         );
-        const parsed: unknown = JSON.parse(raw);
-        if (isChildRunSnapshot(parsed) && parsed.id === runId) {
+        const parsed = normalizeChildRunSnapshot(JSON.parse(raw));
+        if (parsed?.id === runId) {
           snapshots.push(parsed);
         }
       } catch {

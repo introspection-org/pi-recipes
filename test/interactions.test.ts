@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   ExtensionContext,
   ExtensionUIDialogOptions,
@@ -11,7 +11,7 @@ import {
   askUser,
   askUserApproval,
   askUserQuestion,
-  suppressInterruptResume,
+  autoResolveInteractions,
   type AskUserOutcome,
 } from "../src/interactions.js";
 
@@ -549,22 +549,56 @@ describe("askUser", () => {
     });
   });
 
-  it("suppresses the interrupt branch inside a child agent run", async () => {
-    const { ctx } = fakeCtx({ hasUI: false });
+  it("auto-resolves interactions inside a child agent run", async () => {
+    const { ctx, calls } = fakeCtx({ hasUI: true });
     const env = { PI_INTERRUPT_RESUME: "1" };
 
-    const suppressed = await suppressInterruptResume(() =>
+    const questionResult = await autoResolveInteractions(() =>
       askUser(question, { toolCallId: "tool-1", ctx, signal: undefined, env })
     );
-    expect(suppressed.outcome).toEqual({ type: "unavailable" });
+    expect(questionResult.outcome).toEqual({ type: "declined" });
 
+    const approvalResult = await autoResolveInteractions(() =>
+      askUserApproval(
+        {
+          kind: "plan_search",
+          message: "Approve the plan?",
+          title: "Search plan",
+        },
+        { toolCallId: "tool-2", ctx, signal: undefined, env }
+      )
+    );
+    expect(approvalResult.outcome).toEqual({ type: "approved" });
+    expect(calls).toEqual([]);
+
+    const { ctx: headlessCtx } = fakeCtx({ hasUI: false });
     const outside = await askUser(question, {
       toolCallId: "tool-1",
-      ctx,
+      ctx: headlessCtx,
       signal: undefined,
       env,
     });
     expect(outside.outcome).toEqual({ type: "awaiting_user" });
+  });
+
+  it("shares child auto-resolution across separately loaded package copies", async () => {
+    vi.resetModules();
+    const isolated = await import("../src/interactions.js");
+    const { ctx } = fakeCtx({ hasUI: false });
+
+    const result = await autoResolveInteractions(() =>
+      isolated.askUserApproval(
+        { title: "Child plan" },
+        {
+          toolCallId: "tool-isolated",
+          ctx,
+          signal: undefined,
+          env: { PI_INTERRUPT_RESUME: "1" },
+        }
+      )
+    );
+
+    expect(result.outcome).toEqual({ type: "approved" });
   });
 
   it("reports unavailability when no interaction channel exists", async () => {

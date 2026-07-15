@@ -10,7 +10,7 @@ import {
   type AgentSession,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
-import { suppressInterruptResume } from "./interactions.js";
+import { autoResolveInteractions } from "./interactions.js";
 import {
   loadRecipeSystemPrompt,
   REQUIRED_RECIPE_AGENT_FIELDS,
@@ -39,7 +39,8 @@ export interface CreateRecipeChildAgentRunnerOptions {
 
 export interface RecipeChildAgentRunner {
   start(): Promise<void>;
-  prompt(task: string): Promise<string>;
+  prompt(prompt: string): Promise<string>;
+  steer(message: string): Promise<void>;
   cancel(): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -106,7 +107,7 @@ function authStorageForChildAgent(
   const apiKey = getEnvApiKey(model.provider) ?? env[`${model.provider.toUpperCase()}_API_KEY`];
   if (!apiKey) {
     throw new Error(
-      `${model.provider.toUpperCase()}_API_KEY is required when the recipe child agent is not running inside Pi`
+      `${model.provider.toUpperCase()}_API_KEY is required when the background agent is not running inside Pi`
     );
   }
 
@@ -252,7 +253,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       agentName: this.opts.agentName,
     });
     if (!agent) {
-      throw new Error(`Recipe agent not found: ${agentName}`);
+      throw new Error(`Agent not found: ${agentName}`);
     }
 
     const validationFindings = validateResolvedRecipeAgentDefinition({
@@ -272,7 +273,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
 
     const modelSpec = agent.model?.name;
     if (!modelSpec) {
-      throw new Error(`Recipe agent "${agentName}" must declare model.name`);
+      throw new Error(`Agent "${agentName}" must declare model.name`);
     }
     const model = applyRecipeAgentModelConfigToModel(
       modelFromSpec(modelSpec, this.opts.modelRegistry),
@@ -313,15 +314,20 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     });
   }
 
-  async prompt(task: string): Promise<string> {
+  async prompt(prompt: string): Promise<string> {
     await this.start();
-    if (!this.session) throw new Error("Recipe child agent did not start");
-    // Interrupt-capable hosts only watch the root session's tool results, so
-    // an `askUser()` interrupt emitted inside this child run would pause
-    // nothing and strand the child on "Awaiting user response.". Suppress the
-    // interrupt branch for the whole run; askUser degrades to plain chat.
-    await suppressInterruptResume(() => this.session!.prompt(task));
+    if (!this.session) throw new Error("Background agent did not start");
+    // Child sessions do not own the root session's interaction lifecycle.
+    // Resolve their approval tools internally so they cannot open UI or emit
+    // an interrupt that would strand the child waiting for the root user.
+    await autoResolveInteractions(() => this.session!.prompt(prompt));
     return promptResultText({ messages: [...this.session.messages] });
+  }
+
+  async steer(message: string): Promise<void> {
+    await this.start();
+    if (!this.session) throw new Error("Background agent did not start");
+    await this.session.steer(message);
   }
 
   async cancel(): Promise<void> {

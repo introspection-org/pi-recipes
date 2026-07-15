@@ -140,12 +140,13 @@ describe("recipe child agent completion delivery", () => {
 
       const started = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "look around", wait: false },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
       );
-      const id = started?.details?.id as string;
+      expect(started?.details?.agent?.status).toBe("running");
+      const id = started?.details?.agent?.agent_run_id as string;
       pool.runs[0]?.finish("background result");
       await waitForPersistedStatus(projectDir, id, "completed");
 
@@ -178,7 +179,7 @@ describe("recipe child agent completion delivery", () => {
 
       await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "look around", wait: false },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
@@ -195,34 +196,6 @@ describe("recipe child agent completion delivery", () => {
     }
   });
 
-  it("does not re-deliver a result returned by a blocking start", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-completions-"));
-    try {
-      const pool = runnerPool();
-      const { pi, ctx } = await startSession(pool.createChildAgentRunner, root);
-
-      const started = agentTool(pi).execute(
-        "call-1",
-        { name: "explorer", task: "look around" },
-        undefined,
-        undefined,
-        ctx
-      );
-      await vi.waitFor(() => {
-        expect(pool.runs).toHaveLength(1);
-      });
-      pool.runs[0]?.finish("inline result");
-      const result = await started;
-      expect(result?.details?.status).toBe("completed");
-
-      await pi.emitExtensionEvent({ type: "agent_end", messages: [] } as any, ctx);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(completionMessages(pi)).toHaveLength(0);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("does not re-deliver results read via terminal status or wait", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-completions-"));
     try {
@@ -231,20 +204,20 @@ describe("recipe child agent completion delivery", () => {
 
       const first = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "slice one", wait: false },
+        { name: "explorer", prompt: "slice one" },
         undefined,
         undefined,
         ctx
       );
       const second = await agentTool(pi).execute(
         "call-2",
-        { name: "explorer", task: "slice two", wait: false },
+        { name: "explorer", prompt: "slice two" },
         undefined,
         undefined,
         ctx
       );
-      const firstId = first?.details?.id as string;
-      const secondId = second?.details?.id as string;
+      const firstId = first?.details?.agent?.agent_run_id as string;
+      const secondId = second?.details?.agent?.agent_run_id as string;
       pool.runs[0]?.finish("one done");
       pool.runs[1]?.finish("two done");
       await waitForPersistedStatus(projectDir, firstId, "completed");
@@ -284,7 +257,7 @@ describe("recipe child agent completion delivery", () => {
 
       await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "look around", wait: false },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
@@ -317,14 +290,14 @@ describe("recipe child agent completion delivery", () => {
 
       const started = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "look around", wait: false },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
       );
       await agentTool(pi).execute(
         "call-2",
-        { action: "interrupt", id: started?.details?.id },
+        { action: "interrupt", id: started?.details?.agent?.agent_run_id },
         undefined,
         undefined,
         ctx

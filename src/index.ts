@@ -1,4 +1,5 @@
 export * from "./interactions.js";
+export * from "./agent-tool.js";
 export * from "./mcp-catalog.js";
 export * from "./mcp.js";
 export * from "./pi-extension.js";
@@ -9,5 +10,6 @@ export * from "./recipe-evals.js";
 export * from "./recipe-model.js";
 export * from "./recipe-package.js";
 export * from "./recipe-publish.js";
+export * from "./recipe/resolve.js";
 export * from "./recipe-store.js";
 export * from "./recipe-telemetry.js";

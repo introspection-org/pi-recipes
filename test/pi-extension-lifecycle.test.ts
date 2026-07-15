@@ -1,5 +1,5 @@
 /**
- * Lifecycle semantics of recipe child agent runs: wait-abort detaches instead
+ * Lifecycle semantics of background agent runs: wait-abort detaches instead
  * of interrupting, interrupt only targets in-flight work, close stops running
  * children, and persisted runs rehydrate read-only after a process restart.
  */
@@ -90,17 +90,20 @@ function hangingRunner() {
   const cancel = vi.fn(async () => {
     failRun(new Error("cancelled"));
   });
+  const steer = vi.fn(async () => {});
   const createChildAgentRunner = vi.fn(() => ({
     async start() {},
     async prompt() {
       return await done;
     },
+    steer,
     cancel,
     async shutdown() {},
   }));
   return {
     createChildAgentRunner,
     cancel,
+    steer,
     finish: (output = "child output") => finishRun(output),
   };
 }
@@ -127,73 +130,39 @@ function agentTool(pi: MockExtensionAPI) {
   return tool;
 }
 
-describe("recipe child agent run lifecycle", () => {
-  it("detaches on wait abort without interrupting the child", async () => {
+describe("background agent run lifecycle", () => {
+  it("steers a running agent without waiting for it to settle", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
     try {
       const runner = hangingRunner();
       const { pi, ctx } = await startSession(runner.createChildAgentRunner, root);
-
-      const controller = new AbortController();
-      const started = agentTool(pi).execute(
+      const started = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "look around" },
-        controller.signal,
+        { name: "explorer", prompt: "look around" },
+        undefined,
         undefined,
         ctx
       );
-      await vi.waitFor(() => {
-        expect(runner.createChildAgentRunner).toHaveBeenCalled();
-      });
-      controller.abort();
+      const id = started?.details?.agent?.agent_run_id as string;
 
-      const result = await started;
-      expect((result as any)?.isError).toBeUndefined();
-      expect(result?.details).toEqual(
-        expect.objectContaining({ status: "running" })
-      );
-      expect(String(result?.content[0]?.type === "text" ? result.content[0].text : "")).toContain(
-        "still running in the background"
-      );
-      expect(runner.cancel).not.toHaveBeenCalled();
-
-      // The child keeps running and can still settle normally afterwards.
-      runner.finish("late output");
-      const waited = await agentTool(pi).execute(
+      const messaged = await agentTool(pi).execute(
         "call-2",
-        { action: "wait", id: result?.details?.id },
+        { action: "message", id, message: "focus on tests" },
         undefined,
         undefined,
         ctx
       );
-      expect(waited?.details?.agent_runs?.[0]).toEqual(
-        expect.objectContaining({ status: "completed", output: "late output" })
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
 
-  it("returns immediately from a start wait when the signal is already aborted", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
-    try {
-      const runner = hangingRunner();
-      const { pi, ctx } = await startSession(runner.createChildAgentRunner, root);
-
-      const controller = new AbortController();
-      controller.abort();
-      const result = await agentTool(pi).execute(
-        "call-1",
-        { name: "explorer", task: "look around" },
-        controller.signal,
+      expect(runner.steer).toHaveBeenCalledWith("focus on tests");
+      expect(messaged?.details?.agent?.status).toBe("running");
+      runner.finish("done");
+      await agentTool(pi).execute(
+        "call-3",
+        { action: "wait", id },
+        undefined,
         undefined,
         ctx
       );
-      expect(result?.details).toEqual(
-        expect.objectContaining({ status: "running" })
-      );
-      expect(runner.cancel).not.toHaveBeenCalled();
-      runner.finish();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -208,22 +177,30 @@ describe("recipe child agent run lifecycle", () => {
       runner.finish("done");
       const result = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "look around" },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
       );
-      const id = result?.details?.id as string;
-      expect(result?.details?.status).toBe("completed");
+      const id = result?.details?.agent?.agent_run_id as string;
+      const waited = await agentTool(pi).execute(
+        "call-2",
+        { action: "wait", id },
+        undefined,
+        undefined,
+        ctx
+      );
+      expect(id).toBe("agent-run-1");
+      expect(waited?.details?.agent?.status).toBe("completed");
 
       const interrupted = await agentTool(pi).execute(
-        "call-2",
+        "call-3",
         { action: "interrupt", id },
         undefined,
         undefined,
         ctx
       );
-      expect(interrupted?.details?.status).toBe("completed");
+      expect(interrupted?.details?.agent?.status).toBe("completed");
       expect(runner.cancel).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -238,12 +215,12 @@ describe("recipe child agent run lifecycle", () => {
 
       const result = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "look around", wait: false },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
       );
-      const id = result?.details?.id as string;
+      const id = result?.details?.agent?.agent_run_id as string;
       const closed = await agentTool(pi).execute(
         "call-2",
         { action: "close", id },
@@ -253,7 +230,7 @@ describe("recipe child agent run lifecycle", () => {
       );
       expect(runner.cancel).toHaveBeenCalled();
       expect(String(closed?.content[0]?.type === "text" ? closed.content[0].text : "")).toContain(
-        `Closed recipe agent run ${id}`
+        `Closed explorer (${id})`
       );
       const status = await agentTool(pi).execute(
         "call-3",
@@ -268,113 +245,68 @@ describe("recipe child agent run lifecycle", () => {
     }
   });
 
-  it("joins on all listed runs and detaches on timeout", async () => {
+  it("keeps completed local agents available for follow-up messages", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
     try {
-      const runners: HangingRunner[] = [];
-      const createChildAgentRunner = vi.fn(() => {
-        const runner = hangingRunner();
-        runners.push(runner);
-        return runner.createChildAgentRunner();
-      });
-      const { pi, ctx } = await startSession(createChildAgentRunner as any, root);
+      const prompt = vi
+        .fn()
+        .mockResolvedValueOnce("first answer")
+        .mockResolvedValueOnce("second answer");
+      const shutdown = vi.fn(async () => {});
+      const createChildAgentRunner = vi.fn(() => ({
+        async start() {},
+        prompt,
+        async cancel() {},
+        shutdown,
+      }));
+      const { pi, ctx } = await startSession(createChildAgentRunner, root);
 
-      const first = await agentTool(pi).execute(
+      const started = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "one", wait: false },
+        { name: "explorer", prompt: "first" },
         undefined,
         undefined,
         ctx
       );
-      const second = await agentTool(pi).execute(
+      const id = started?.details?.agent?.agent_run_id as string;
+      await agentTool(pi).execute(
         "call-2",
-        { name: "explorer", task: "two", wait: false },
+        { action: "wait", id },
         undefined,
         undefined,
         ctx
       );
-      const ids = [first?.details?.id, second?.details?.id] as string[];
 
-      // Timeout detaches: both runs still running afterwards.
-      const timedOut = await agentTool(pi).execute(
+      await agentTool(pi).execute(
         "call-3",
-        { action: "wait", ids, timeout_ms: 1 },
+        { action: "message", id, message: "second" },
         undefined,
         undefined,
         ctx
       );
-      expect(String(timedOut?.content[0]?.type === "text" ? timedOut.content[0].text : "")).toContain(
-        "Wait timed out"
-      );
-      expect(
-        timedOut?.details?.agent_runs?.map((run: any) => run.status)
-      ).toEqual(["running", "running"]);
-      for (const runner of runners) expect(runner.cancel).not.toHaveBeenCalled();
-
-      // With ids, wait blocks until ALL listed runs settle.
-      const waiting = agentTool(pi).execute(
+      const followedUp = await agentTool(pi).execute(
         "call-4",
-        { action: "wait", ids },
+        { action: "wait", id },
         undefined,
         undefined,
         ctx
       );
-      runners[0]?.finish("one done");
-      runners[1]?.finish("two done");
-      const settled = await waiting;
-      expect(String(settled?.content[0]?.type === "text" ? settled.content[0].text : "")).toContain(
-        "All waited recipe agent runs settled."
-      );
-      expect(
-        settled?.details?.agent_runs?.map((run: any) => run.status)
-      ).toEqual(["completed", "completed"]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
 
-  it("waits for the first settling run when no ids are given", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
-    try {
-      const runners: HangingRunner[] = [];
-      const createChildAgentRunner = vi.fn(() => {
-        const runner = hangingRunner();
-        runners.push(runner);
-        return runner.createChildAgentRunner();
-      });
-      const { pi, ctx } = await startSession(createChildAgentRunner as any, root);
+      expect(followedUp?.details?.agent).toEqual(
+        expect.objectContaining({ status: "completed", output: "second answer" })
+      );
+      expect(prompt).toHaveBeenNthCalledWith(1, "first");
+      expect(prompt).toHaveBeenNthCalledWith(2, "second");
+      expect(shutdown).not.toHaveBeenCalled();
 
       await agentTool(pi).execute(
-        "call-1",
-        { name: "explorer", task: "one", wait: false },
+        "call-5",
+        { action: "close", id },
         undefined,
         undefined,
         ctx
       );
-      await agentTool(pi).execute(
-        "call-2",
-        { name: "explorer", task: "two", wait: false },
-        undefined,
-        undefined,
-        ctx
-      );
-
-      const waiting = agentTool(pi).execute(
-        "call-3",
-        { action: "wait" },
-        undefined,
-        undefined,
-        ctx
-      );
-      runners[1]?.finish("second done");
-      const result = await waiting;
-      expect(String(result?.content[0]?.type === "text" ? result.content[0].text : "")).toContain(
-        "A recipe agent run settled."
-      );
-      const statuses = result?.details?.agent_runs?.map((run: any) => run.status);
-      expect(statuses).toContain("completed");
-      expect(statuses).toContain("running");
-      runners[0]?.finish();
+      expect(shutdown).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -392,19 +324,30 @@ describe("recipe child agent run lifecycle", () => {
       runner.finish("persisted output");
       const result = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", task: "look around" },
+        {
+          name: "explorer",
+          prompt: "look around",
+        },
         undefined,
         undefined,
         ctx
       );
-      const id = result?.details?.id as string;
+      const id = result?.details?.agent?.agent_run_id as string;
+      await agentTool(pi).execute(
+        "call-2",
+        { action: "wait", id },
+        undefined,
+        undefined,
+        ctx
+      );
       const statusPath = join(projectDir, ".pi", "agents", id, "status.json");
-      expect(existsSync(statusPath)).toBe(true);
+      await vi.waitFor(() => expect(existsSync(statusPath)).toBe(true));
       const snapshot = JSON.parse(readFileSync(statusPath, "utf8"));
       expect(snapshot).toEqual(
         expect.objectContaining({
           id,
           agent: "explorer",
+          prompt: "look around",
           status: "completed",
           output: "persisted output",
         })
@@ -442,13 +385,20 @@ describe("recipe child agent run lifecycle", () => {
         undefined,
         ctx
       );
-      expect(status?.details?.agent_runs?.[0]).toEqual(
+      expect(status?.details?.agent).toEqual(
         expect.objectContaining({
-          id: "recipe-agent-3",
+          agent_run_id: "recipe-agent-3",
+          prompt: "old task",
           status: "interrupted",
           error: "Pi session restarted while the run was in flight",
         })
       );
+
+      const migratedSnapshot = JSON.parse(
+        readFileSync(join(runDir, "status.json"), "utf8")
+      );
+      expect(migratedSnapshot.prompt).toBe("old task");
+      expect(migratedSnapshot).not.toHaveProperty("task");
 
       // Waiting on a rehydrated run returns immediately with its snapshot.
       const waited = await agentTool(pi).execute(
@@ -458,8 +408,11 @@ describe("recipe child agent run lifecycle", () => {
         undefined,
         ctx
       );
-      expect(waited?.details?.agent_runs?.[0]).toEqual(
-        expect.objectContaining({ id: "recipe-agent-3", status: "interrupted" })
+      expect(waited?.details?.agent).toEqual(
+        expect.objectContaining({
+          agent_run_id: "recipe-agent-3",
+          status: "interrupted",
+        })
       );
 
       // Control actions on rehydrated runs fail with a clear error.
@@ -479,12 +432,12 @@ describe("recipe child agent run lifecycle", () => {
       runner.finish();
       const started = await agentTool(pi).execute(
         "call-4",
-        { name: "explorer", task: "new task" },
+        { name: "explorer", prompt: "new task" },
         undefined,
         undefined,
         ctx
       );
-      expect(started?.details?.id).toBe("recipe-agent-4");
+      expect(started?.details?.agent?.agent_run_id).toBe("agent-run-4");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
