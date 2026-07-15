@@ -36,14 +36,11 @@ import {
   startMcpDaemon,
   stopMcpDaemon,
 } from "./mcp.js";
-import {
-  type RecipeAgentDefinition,
-} from "./recipe-agent.js";
+import { type RecipeAgentDefinition } from "./recipe-agent.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
-import type { PiPackageManifest } from "./recipe-package.js";
 import {
-  resolveRecipeSession,
-  type ResolvedRecipeSession,
+  resolveRecipe,
+  type ResolvedRecipe,
 } from "./recipe/resolve.js";
 import { resolveRecipeDirectory } from "./recipe-store.js";
 import {
@@ -94,14 +91,7 @@ interface ChildRun extends ChildRunSnapshot {
 interface RecipeLaunchState {
   key: string;
   cwd: string;
-  recipeDir: string;
-  manifest: PiPackageManifest;
-  agentName: string;
-  agent: RecipeAgentDefinition;
-  resolved: ResolvedRecipeSession;
-  skillPaths: string[];
-  promptPaths: string[];
-  extensionPaths: string[];
+  resolved: ResolvedRecipe;
   extensionsLoaded: boolean;
   configured: boolean;
 }
@@ -171,7 +161,7 @@ function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
 }
 
 function scopedMcpSelections(state: RecipeLaunchState) {
-  return [state.agent, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
+  return [state.resolved.agent, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
 }
 
 function textResult<TDetails>(text: string, details: TDetails) {
@@ -358,17 +348,17 @@ function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string 
   const subagents = visibleSubagents(state).map((agent) => agent.name);
   return [
     "Active Recipe",
-    `Name: ${state.manifest.name}@${state.manifest.version}`,
-    state.manifest.description ? `Description: ${state.manifest.description}` : undefined,
-    `Agent: ${state.agentName}`,
-    `Model: ${state.agent.model?.name ?? "(session default)"}`,
-    `Thinking level: ${state.agent.model?.thinkingLevel ?? "(session default)"}`,
+    `Name: ${state.resolved.manifest.name}@${state.resolved.manifest.version}`,
+    state.resolved.manifest.description ? `Description: ${state.resolved.manifest.description}` : undefined,
+    `Agent: ${state.resolved.agentName}`,
+    `Model: ${state.resolved.agent.model?.name ?? "(session default)"}`,
+    `Thinking level: ${state.resolved.agent.model?.thinkingLevel ?? "(session default)"}`,
     `Subagents: ${nameList(subagents)}`,
     "",
     "Active recipe tools:",
     ...bulletList(activeRecipeTools(state, activeTools)),
     "",
-    `Directory: ${state.recipeDir}`,
+    `Directory: ${state.resolved.recipeDir}`,
     `Workspace: ${state.cwd}`,
   ].filter((line): line is string => line !== undefined).join("\n");
 }
@@ -703,9 +693,9 @@ export function createPiRecipesExtension(
     const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
     if (state?.key === key) return state;
 
-    let resolved: ResolvedRecipeSession;
+    let resolved: ResolvedRecipe;
     try {
-      resolved = resolveRecipeSession({
+      resolved = resolveRecipe({
         recipeDir,
         agentName: requestedAgentName,
       });
@@ -724,14 +714,7 @@ export function createPiRecipesExtension(
     state = {
       key,
       cwd,
-      recipeDir,
-      manifest: resolved.manifest,
-      agentName: resolved.agentName,
-      agent: resolved.agent,
       resolved,
-      skillPaths: resolved.skillPaths,
-      promptPaths: resolved.promptPaths,
-      extensionPaths: resolved.extensionPaths,
       extensionsLoaded: false,
       configured: false,
     };
@@ -763,9 +746,9 @@ export function createPiRecipesExtension(
   ): Promise<void> {
     if (launchState.extensionsLoaded) return;
     let loadedCount = 0;
-    for (const extensionPath of launchState.extensionPaths) {
+    for (const extensionPath of launchState.resolved.extensionPaths) {
       try {
-        const factory = await loadRecipeExtensionFactory(launchState.recipeDir, extensionPath);
+        const factory = await loadRecipeExtensionFactory(launchState.resolved.recipeDir, extensionPath);
         await factory(pi);
         loadedCount += 1;
       } catch (err) {
@@ -777,9 +760,9 @@ export function createPiRecipesExtension(
       }
     }
     launchState.extensionsLoaded = true;
-    if (launchState.extensionPaths.length > 0) {
+    if (launchState.resolved.extensionPaths.length > 0) {
       ctx.ui.notify(
-        `Recipe extensions: ${loadedCount}/${launchState.extensionPaths.length} loaded`,
+        `Recipe extensions: ${loadedCount}/${launchState.resolved.extensionPaths.length} loaded`,
         "info"
       );
     }
@@ -793,8 +776,8 @@ export function createPiRecipesExtension(
     if (launchState.configured) return;
 
     const labelParts = [
-      `${launchState.manifest.name}@${launchState.manifest.version}`,
-      `agent:${launchState.agentName}`,
+      `${launchState.resolved.manifest.name}@${launchState.resolved.manifest.version}`,
+      `agent:${launchState.resolved.agentName}`,
     ].filter(Boolean);
     pi.setSessionName(labelParts.join(" "));
 
@@ -836,7 +819,7 @@ export function createPiRecipesExtension(
 
     configureMcpLocalConfigPath({
       cwd: launchState.cwd,
-      recipeDir: launchState.recipeDir,
+      recipeDir: launchState.resolved.recipeDir,
       env,
     });
     const [, session] = await Promise.all([
@@ -846,7 +829,7 @@ export function createPiRecipesExtension(
       }),
       materializeMcpSession({
         cwd: launchState.cwd,
-        manifest: launchState.manifest,
+        manifest: launchState.resolved.manifest,
         agentMcp: mcpSelections,
         env,
       }),
@@ -900,7 +883,7 @@ export function createPiRecipesExtension(
       }
     };
     const runner = createChildAgentRunner({
-      recipeDir: launchState.recipeDir,
+      recipeDir: launchState.resolved.recipeDir,
       workspaceDir: launchState.cwd,
       env,
       agentName,
@@ -1073,7 +1056,7 @@ export function createPiRecipesExtension(
           completions.clear();
           await ctx.waitForIdle();
           await ctx.reload();
-          ctx.ui.notify(`Recipe reload requested: ${launchState.manifest.name}@${launchState.manifest.version}`, "info");
+          ctx.ui.notify(`Recipe reload requested: ${launchState.resolved.manifest.name}@${launchState.resolved.manifest.version}`, "info");
           return;
         }
         if (action) {
@@ -1141,7 +1124,7 @@ export function createPiRecipesExtension(
         // rehydration is best-effort
       }
       ctx.ui.notify(
-        `Recipe: ${launchState.manifest.name}@${launchState.manifest.version} (${basename(launchState.recipeDir)})`,
+        `Recipe: ${launchState.resolved.manifest.name}@${launchState.resolved.manifest.version} (${basename(launchState.resolved.recipeDir)})`,
         "info"
       );
     });
@@ -1155,8 +1138,8 @@ export function createPiRecipesExtension(
       const launchState = safeLoadState(pi, event.cwd);
       if (!launchState) return {};
       return {
-        skillPaths: launchState.skillPaths,
-        promptPaths: launchState.promptPaths,
+        skillPaths: launchState.resolved.skillPaths,
+        promptPaths: launchState.resolved.promptPaths,
       };
     });
 

@@ -87,10 +87,10 @@ Hosts that embed Pi can resolve the same recipe semantics without adopting a
 second runtime abstraction:
 
 ```ts
-import { resolveRecipeSession } from "@introspection-ai/pi-recipes/recipe";
+import { resolveRecipe } from "@introspection-ai/pi-recipes/recipe";
 import { createAgentTool } from "@introspection-ai/pi-recipes/pi";
 
-const recipe = resolveRecipeSession({ recipeDir, agentName });
+const recipe = resolveRecipe({ recipeDir, agentName });
 const runs = createHostRunController(recipe.subagents);
 
 pi.registerTool(createAgentTool(runs, recipe.subagents));

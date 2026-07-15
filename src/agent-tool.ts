@@ -1,6 +1,5 @@
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type { RecipeAgentDefinition } from "./recipe-agent.js";
 
 export type AgentRunStatus =
   | "running"
@@ -121,16 +120,12 @@ function errorResult(text: string, controller: AgentRunController) {
 
 export function createAgentTool(
   controller: AgentRunController,
-  agents: ReadonlyMap<string, RecipeAgentDefinition>,
+  agents: ReadonlyMap<string, unknown>,
   opts: { acknowledgeCompletions?(ids: readonly string[]): void } = {}
 ): ToolDefinition {
   const acknowledge = (run: AgentRunSummary) => {
     if (terminal(run)) opts.acknowledgeCompletions?.([run.agent_run_id]);
   };
-  const available = [...agents.values()]
-    .map((agent) => `${agent.name} (${agent.description ?? "no description"})`)
-    .join(", ");
-
   return defineTool({
     name: "agent",
     label: "Agent",
@@ -138,7 +133,6 @@ export function createAgentTool(
       "Start or manage background child agents.",
       "Omit action to start one child with name and prompt; it returns a run id immediately.",
       "Use status, wait, message, interrupt, or close with that id.",
-      `Available agents: ${available || "none"}.`,
     ].join(" "),
     parameters: AgentToolParams,
     async execute(_callId, rawParams, signal, onUpdate) {

@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  RecipeSessionResolutionError,
-  resolveRecipeSession,
+  RecipeResolutionError,
+  resolveRecipe,
 } from "../src/recipe/resolve.js";
 
 const roots: string[] = [];
@@ -73,10 +73,10 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("resolveRecipeSession", () => {
+describe("resolveRecipe", () => {
   it("returns inputs that map directly to a Pi session", () => {
     const recipeDir = makeRecipe();
-    const resolved = resolveRecipeSession({ recipeDir });
+    const resolved = resolveRecipe({ recipeDir });
 
     expect(resolved.agentName).toBe("researcher");
     expect(resolved.modelSpec).toBe("openai/gpt-5");
@@ -94,7 +94,7 @@ describe("resolveRecipeSession", () => {
 
   it("selects aliases and returns the canonical agent name", () => {
     const recipeDir = makeRecipe();
-    const resolved = resolveRecipeSession({ recipeDir, agentName: "agent" });
+    const resolved = resolveRecipe({ recipeDir, agentName: "agent" });
     expect(resolved.agentName).toBe("researcher");
   });
 
@@ -110,7 +110,7 @@ describe("resolveRecipeSession", () => {
       ].join("\n")
     );
 
-    const resolved = resolveRecipeSession({ recipeDir });
+    const resolved = resolveRecipe({ recipeDir });
 
     expect([...resolved.subagents.keys()]).toEqual(["base"]);
     expect(resolved.tools).toEqual(["read", "mcp__search", "agent"]);
@@ -119,7 +119,7 @@ describe("resolveRecipeSession", () => {
   it("fails before returning a partial session configuration", () => {
     const recipeDir = makeRecipe();
     expect(() =>
-      resolveRecipeSession({ recipeDir, agentName: "missing" })
-    ).toThrow(RecipeSessionResolutionError);
+      resolveRecipe({ recipeDir, agentName: "missing" })
+    ).toThrow(RecipeResolutionError);
   });
 });

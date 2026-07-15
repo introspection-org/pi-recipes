@@ -2414,19 +2414,14 @@ describe("recipe store", () => {
 });
 
 describe("package boundary", () => {
-  it("publishes all runtime modules imported by public entrypoints", () => {
+  it("publishes compiled output and required runtime assets", () => {
     const pkg = JSON.parse(
       readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")
     ) as { bin?: Record<string, string>; files?: string[] };
 
     expect(pkg.files).toEqual(
       expect.arrayContaining([
-        "dist/recipe-publish.d.ts",
-        "dist/recipe-publish.js",
-        "dist/recipe-mcp-config.d.ts",
-        "dist/recipe-mcp-config.js",
-        "dist/recipe-check.d.ts",
-        "dist/recipe-check.js",
+        "dist",
         "vendor/recipe-check",
         "harbor/pi_recipe_agent.py",
       ])

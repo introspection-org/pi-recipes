@@ -16,7 +16,7 @@ import {
   type PiPackageManifest,
 } from "../recipe-package.js";
 
-export interface ResolvedRecipeSession {
+export interface ResolvedRecipe {
   recipeDir: string;
   manifest: PiPackageManifest;
   agentName: string;
@@ -33,15 +33,15 @@ export interface ResolvedRecipeSession {
   systemPromptOverride(base: string | undefined): string | undefined;
 }
 
-export interface ResolveRecipeSessionOptions {
+export interface ResolveRecipeOptions {
   recipeDir: string;
   agentName?: string;
 }
 
-export class RecipeSessionResolutionError extends Error {
+export class RecipeResolutionError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "RecipeSessionResolutionError";
+    this.name = "RecipeResolutionError";
   }
 }
 
@@ -62,7 +62,7 @@ function selectAgent(
   if (selectedName) {
     const agent = definitions.get(selectedName);
     if (agent) return { agentName: agent.name, agent };
-    throw new RecipeSessionResolutionError(
+    throw new RecipeResolutionError(
       `Recipe agent "${selectedName}" was not found`
     );
   }
@@ -79,9 +79,9 @@ function selectAgent(
     return { agentName: agent.name, agent };
   }
   if (uniqueAgents.size === 0) {
-    throw new RecipeSessionResolutionError("Recipe has no agents");
+    throw new RecipeResolutionError("Recipe has no agents");
   }
-  throw new RecipeSessionResolutionError(
+  throw new RecipeResolutionError(
     "Recipe has multiple agents and no default entrypoint; add agents/agent.yaml or select an agent"
   );
 }
@@ -162,16 +162,16 @@ function selectExtensionPaths(
 }
 
 /** Resolve recipe-owned inputs for Pi's ordinary session constructors. */
-export function resolveRecipeSession(
-  opts: ResolveRecipeSessionOptions
-): ResolvedRecipeSession {
+export function resolveRecipe(
+  opts: ResolveRecipeOptions
+): ResolvedRecipe {
   const recipeDir = resolve(opts.recipeDir);
   const manifest = readPiPackageManifest(recipeDir);
   const packageErrors = validatePiPackageManifest(manifest).findings.filter(
     (finding) => finding.severity === "error"
   );
   if (packageErrors.length > 0) {
-    throw new RecipeSessionResolutionError(
+    throw new RecipeResolutionError(
       packageErrors.map((finding) => finding.message).join("\n")
     );
   }
@@ -180,7 +180,7 @@ export function resolveRecipeSession(
     (finding) => finding.severity !== "warning"
   );
   if (agentErrors.length > 0) {
-    throw new RecipeSessionResolutionError(
+    throw new RecipeResolutionError(
       [
         `Recipe "${manifest.name}" has invalid agents.`,
         ...agentErrors.map((finding) => `- ${finding.message}`),
@@ -194,7 +194,7 @@ export function resolveRecipeSession(
   const subagents = selectSubagents(agents, agentName, agent);
   const modelSpec = agent.model?.name;
   if (!modelSpec) {
-    throw new RecipeSessionResolutionError(
+    throw new RecipeResolutionError(
       `Recipe agent "${agentName}" must declare model.name`
     );
   }
@@ -231,8 +231,3 @@ export function resolveRecipeSession(
     },
   };
 }
-
-export * from "../recipe-agent.js";
-export * from "../recipe-check.js";
-export * from "../recipe-model.js";
-export * from "../recipe-package.js";
