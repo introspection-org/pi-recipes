@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 describe("MCP catalog preload", () => {
-  it("retries failed asynchronous discovery and reuses the successful result", async () => {
+  it("delegates retry ownership to the daemon and reuses the successful result", async () => {
     const directory = mkdtempSync(join(tmpdir(), "pi-recipes-catalog-"));
     directories.push(directory);
     const socketPath = join(directory, "mcp.sock");
@@ -52,11 +52,6 @@ describe("MCP catalog preload", () => {
           return;
         }
         catalogAttempts += 1;
-        if (catalogAttempts === 1) {
-          socket.end();
-          return;
-        }
-        const failed = catalogAttempts < 3;
         socket.end(
           `${JSON.stringify({
             id: request.id,
@@ -64,10 +59,7 @@ describe("MCP catalog preload", () => {
               {
                 id: "crm",
                 name: "CRM",
-                tools: failed
-                  ? []
-                  : [{ name: "search_contacts", input_schema: { type: "object" } }],
-                ...(failed ? { error: "authentication not ready" } : {}),
+                tools: [{ name: "search_contacts", input_schema: { type: "object" } }],
               },
             ],
           })}\n`
@@ -87,13 +79,13 @@ describe("MCP catalog preload", () => {
     };
 
     const catalogs = await preloadMcpCatalogs({ env, timeoutMs: 100 });
-    expect(catalogAttempts).toBe(3);
+    expect(catalogAttempts).toBe(1);
     expect(catalogs[0]?.tools.map((tool) => tool.name)).toEqual([
       "search_contacts",
     ]);
 
     await preloadMcpCatalogs({ env, timeoutMs: 100 });
-    expect(catalogAttempts).toBe(3);
+    expect(catalogAttempts).toBe(1);
     clearMcpCatalogPreload(env);
   });
 });

@@ -2,6 +2,7 @@
 import { rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { Readable, Writable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
@@ -16,6 +17,7 @@ import {
   MCP_DAEMON_PARENT_PID_ENV,
   MCP_DAEMON_SOCKET_ENV,
   MCP_DAEMON_TOKEN_ENV,
+  type McpCatalogServer,
   type McpDaemonEnvelope,
   type McpDaemonRequest,
 } from "./mcp-daemon-protocol.js";
@@ -32,9 +34,14 @@ const fingerprint = configuredFingerprint;
 
 const restoreIo = installMcpCommandIoRouting();
 let runtimePromise: Promise<McpRuntime> | undefined;
+let catalogPreloadPromise: Promise<McpCatalogServer[]> | undefined;
+let catalogPreloadResult: McpCatalogServer[] | undefined;
+let wakeCatalogRetry: (() => void) | undefined;
+let catalogDemanded = false;
 let stopping = false;
 const active = new Map<string, AbortController>();
 const SHUTDOWN_GRACE_MS = 1_000;
+const CATALOG_PRELOAD_BACKOFF_MS = [100, 250, 500, 1_000, 2_000] as const;
 
 function runtime(): Promise<McpRuntime> {
   runtimePromise ??= createRuntime({ configPath: process.env.MCPORTER_CONFIG }).catch(
@@ -44,6 +51,78 @@ function runtime(): Promise<McpRuntime> {
     }
   );
   return runtimePromise;
+}
+
+function catalogHealthy(catalogs: McpCatalogServer[]): boolean {
+  return catalogs.every((server) => !server.error);
+}
+
+async function catalogRetryDelay(timeoutMs: number): Promise<void> {
+  await Promise.race([
+    delay(timeoutMs),
+    new Promise<void>((resolve) => {
+      wakeCatalogRetry = resolve;
+    }),
+  ]);
+  wakeCatalogRetry = undefined;
+}
+
+function preloadCatalogs(
+  timeoutMs: number
+): Promise<McpCatalogServer[]> {
+  if (catalogPreloadResult && catalogHealthy(catalogPreloadResult)) {
+    return Promise.resolve(catalogPreloadResult);
+  }
+  if (catalogPreloadPromise) return catalogPreloadPromise;
+
+  catalogDemanded = false;
+  const preload = (async () => {
+    let latest: McpCatalogServer[] = [];
+    let latestError: unknown;
+    for (
+      let attempt = 0;
+      attempt <= CATALOG_PRELOAD_BACKOFF_MS.length;
+      attempt += 1
+    ) {
+      try {
+        latest = await discoverMcpCatalogs(await runtime(), timeoutMs);
+        latestError = undefined;
+        if (catalogHealthy(latest)) {
+          catalogPreloadResult = latest;
+          return latest;
+        }
+      } catch (error) {
+        latestError = error;
+      }
+      // Once a real command is waiting, make one immediate retry and then
+      // return control to that command's normal discovery/error path. The
+      // background retry policy must not turn into user-visible backoff.
+      if (catalogDemanded && attempt > 0) break;
+      const backoffMs = CATALOG_PRELOAD_BACKOFF_MS[attempt];
+      if (backoffMs === undefined) break;
+      await catalogRetryDelay(backoffMs);
+    }
+    if (latestError && latest.length === 0) throw latestError;
+    return latest;
+  })();
+  catalogPreloadPromise = preload;
+  void preload.then(
+    () => {
+      if (catalogPreloadPromise === preload) catalogPreloadPromise = undefined;
+    },
+    () => {
+      if (catalogPreloadPromise === preload) catalogPreloadPromise = undefined;
+    }
+  );
+  return preload;
+}
+
+async function joinCatalogPreload(): Promise<void> {
+  const preload = catalogPreloadPromise;
+  if (!preload) return;
+  catalogDemanded = true;
+  wakeCatalogRetry?.();
+  await preload.catch(() => {});
 }
 
 function send(socket: Socket, envelope: McpDaemonEnvelope): void {
@@ -144,6 +223,11 @@ async function execute(request: Extract<McpDaemonRequest, { type: "execute" }>, 
   active.set(request.id, controller);
   socket.once("close", () => controller.abort());
   try {
+    await joinCatalogPreload();
+    if (controller.signal.aborted) {
+      send(socket, { id: request.id, exitCode: 130 });
+      return;
+    }
     const exitCode =
       request.args[0] === "run"
         ? await executeRun(request, socket, controller)
@@ -219,10 +303,7 @@ function handle(request: McpDaemonRequest, socket: Socket): void {
     return;
   }
   if (request.type === "catalog") {
-    void runtime()
-      .then((sharedRuntime) =>
-        discoverMcpCatalogs(sharedRuntime, request.timeoutMs)
-      )
+    void preloadCatalogs(request.timeoutMs)
       .then(
         (catalogs) => send(socket, { id: request.id, catalogs }),
         (error) =>

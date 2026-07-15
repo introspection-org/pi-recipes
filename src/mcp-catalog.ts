@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 
 import {
   ensureMcpDaemon,
@@ -9,7 +8,6 @@ import {
 import type { McpCatalogServer } from "./mcp-daemon-protocol.js";
 
 const DEFAULT_CATALOG_ATTEMPT_TIMEOUT_MS = 5_000;
-const CATALOG_PRELOAD_BACKOFF_MS = [100, 250, 500, 1_000, 2_000] as const;
 const catalogPreloads = new Map<string, Promise<McpCatalogServer[]>>();
 
 function preloadKey(env: NodeJS.ProcessEnv): string {
@@ -48,40 +46,21 @@ export function preloadMcpCatalogs(options: {
     );
     if (daemonError) throw new Error(`MCP daemon: ${daemonError}`);
     if (!catalogs) throw new Error("MCP daemon returned no catalog result.");
+    const failures = catalogs.filter((server) => server.error);
+    if (failures.length > 0) {
+      throw new Error(
+        `MCP catalog preload failed for ${failures
+          .map((server) => `${server.id}: ${server.error}`)
+          .join("; ")}`
+      );
+    }
     return catalogs;
   };
-  const preload = (async () => {
-    let latest: McpCatalogServer[] = [];
-    let latestError: unknown;
-    for (let attempt = 0; attempt <= CATALOG_PRELOAD_BACKOFF_MS.length; attempt += 1) {
-      try {
-        latest = await requestCatalogs();
-        latestError = undefined;
-        if (latest.every((server) => !server.error)) return latest;
-      } catch (error) {
-        latestError = error;
-      }
-      const backoffMs = CATALOG_PRELOAD_BACKOFF_MS[attempt];
-      if (backoffMs === undefined) break;
-      await delay(backoffMs);
-    }
-    if (latestError && latest.length === 0) throw latestError;
-    return latest;
-  })();
+  const preload = requestCatalogs();
   catalogPreloads.set(key, preload);
-  void preload.then(
-    (catalogs) => {
-      if (
-        catalogs.some((server) => server.error) &&
-        catalogPreloads.get(key) === preload
-      ) {
-        catalogPreloads.delete(key);
-      }
-    },
-    () => {
-      if (catalogPreloads.get(key) === preload) catalogPreloads.delete(key);
-    }
-  );
+  void preload.catch(() => {
+    if (catalogPreloads.get(key) === preload) catalogPreloads.delete(key);
+  });
   return preload;
 }
 
