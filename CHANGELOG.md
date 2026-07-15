@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/introspection-org/pi-recipes/compare/v0.9.7...v0.10.0) (2026-07-15)
+
+
+### Features
+
+* share resolved recipes and the background agent tool ([#80](https://github.com/introspection-org/pi-recipes/issues/80)) ([65edc26](https://github.com/introspection-org/pi-recipes/commit/65edc262a3557b42c461e17317c9ee94cd8eb7e9))
+
 ## [0.9.7](https://github.com/introspection-org/pi-recipes/compare/v0.9.6...v0.9.7) (2026-07-15)
 
 
