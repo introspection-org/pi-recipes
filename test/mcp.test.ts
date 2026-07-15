@@ -839,3 +839,268 @@ describe("MCP CLI helpers", () => {
     );
   });
 });
+
+// Stub MCP server that holds each tools/call open for `delayMs` and records the
+// peak number of simultaneously in-flight calls. This lets a test prove the
+// daemon path actually overlaps concurrent calls at the MCP server, rather than
+// serializing them behind one shared connection.
+function startConcurrencyStubMcpServer(delayMs: number): Promise<{
+  server: Server;
+  url: string;
+  stats: { initialize: number; call: number; maxInFlight: number };
+}> {
+  const sessions = new Set<string>();
+  const stats = { initialize: 0, call: 0, maxInFlight: 0 };
+  let inFlight = 0;
+  const server = createServer((req, res) => {
+    if (req.method === "GET") return void res.writeHead(405).end();
+    if (req.method === "DELETE") return void res.writeHead(200).end();
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      if (req.headers.authorization !== "Bearer test-token") {
+        return void res.writeHead(401).end();
+      }
+      const message = JSON.parse(body) as {
+        id?: number;
+        method?: string;
+        params?: { name?: string; arguments?: Record<string, unknown> };
+      };
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (message.method === "initialize") {
+        stats.initialize += 1;
+        const sessionId = `session-${stats.initialize}`;
+        sessions.add(sessionId);
+        headers["mcp-session-id"] = sessionId;
+        return void res.writeHead(200, headers).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: "2025-03-26",
+              capabilities: { tools: {} },
+              serverInfo: { name: "stub", version: "1.0.0" },
+            },
+          })
+        );
+      }
+      const sessionId = req.headers["mcp-session-id"];
+      if (typeof sessionId !== "string" || !sessions.has(sessionId)) {
+        return void res.writeHead(400, headers).end();
+      }
+      if (message.method === "notifications/initialized") {
+        return void res.writeHead(202, headers).end();
+      }
+      if (message.method === "tools/list") {
+        return void res.writeHead(200, headers).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              tools: [
+                {
+                  name: "slow_search",
+                  description: "Sleep, then echo the query",
+                  inputSchema: {
+                    type: "object",
+                    properties: { query: { type: "string" } },
+                    required: ["query"],
+                  },
+                },
+                {
+                  name: "slow_fail",
+                  description: "Sleep, then return an error result",
+                  inputSchema: { type: "object", properties: { query: { type: "string" } } },
+                },
+              ],
+            },
+          })
+        );
+      }
+      if (message.method === "tools/call") {
+        stats.call += 1;
+        inFlight += 1;
+        stats.maxInFlight = Math.max(stats.maxInFlight, inFlight);
+        setTimeout(() => {
+          inFlight -= 1;
+          const isError = message.params?.name === "slow_fail";
+          res.writeHead(200, headers).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: {
+                structuredContent: { tool: message.params?.name, arguments: message.params?.arguments },
+                content: [{ type: "text", text: isError ? "boom" : "ok" }],
+                isError,
+              },
+            })
+          );
+        }, delayMs);
+        return;
+      }
+      res.writeHead(200, headers).end(
+        JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} })
+      );
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      resolve({ server, url: `http://127.0.0.1:${port}/mcp`, stats });
+    });
+  });
+}
+
+describe("MCP daemon concurrent dispatch", () => {
+  it("runs concurrently-emitted mcp calls in parallel with correct isolation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-conc-"));
+    const delayMs = 300;
+    const stub = await startConcurrencyStubMcpServer(delayMs);
+    const cwd = join(root, "workspace");
+    const recipeDir = join(root, "recipe");
+    mkdirSync(recipeDir, { recursive: true });
+    const local = writeLocalConfig(cwd, [
+      {
+        id: "stub",
+        transport: "streamable_http",
+        url: stub.url,
+        headers: { Authorization: "Bearer ${STUB_TOKEN}" },
+      },
+    ]);
+    const env: NodeJS.ProcessEnv = {
+      PI_RECIPES_MCP_LOCAL_CONFIG: local,
+      PI_RECIPES_MCP_RUN_TIMEOUT_MS: "5000",
+      STUB_TOKEN: "test-token",
+    };
+    try {
+      const shim = await materializeSessionMcpCli({ cwd, env });
+      await materializeMcpSession({
+        cwd,
+        env,
+        manifest: recipeManifest(recipeDir, [
+          { id: "stub", required: true, include: ["slow_search", "slow_fail"] },
+        ]),
+        agentMcp: [
+          { serverId: "stub", tools: { include: ["slow_search", "slow_fail"] } },
+        ],
+      });
+      const cliEnv = Object.fromEntries(
+        Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+      );
+      if (nativeMcpClientPath()) cliEnv.PI_RECIPES_MCP_NATIVE_REQUIRED = "1";
+      startMcpDaemon(env);
+      for (
+        let attempt = 0;
+        attempt < 100 && !existsSync(env.PI_RECIPES_MCP_DAEMON_SOCKET!);
+        attempt += 1
+      ) {
+        await delay(20);
+      }
+      expect(existsSync(env.PI_RECIPES_MCP_DAEMON_SOCKET!)).toBe(true);
+
+      // Warm the shared connection so the batch measures dispatch, not the
+      // one-time connection setup (mcporter serializes cold setup by design).
+      await runMcpShim(shim.shimPath, ["call", "stub.slow_search", "query=warm"], cliEnv);
+      expect(stub.stats.initialize).toBe(1);
+      stub.stats.maxInFlight = 0;
+
+      // Six independent calls emitted at once — the parallel-shell-call pattern.
+      const started = Date.now();
+      const results = await Promise.all(
+        Array.from({ length: 6 }, (_unused, index) =>
+          runMcpShim(
+            shim.shimPath,
+            ["call", "stub.slow_search", `query=q${index}`],
+            cliEnv
+          )
+        )
+      );
+      const wallMs = Date.now() - started;
+
+      // Every call succeeds and carries its own result (ordering/isolation).
+      for (let index = 0; index < results.length; index += 1) {
+        expect(results[index]).toMatchObject({ code: 0, stderr: "" });
+        expect(JSON.parse(results[index]!.stdout)).toMatchObject({
+          arguments: { query: `q${index}` },
+        });
+      }
+      // One shared connection, not six.
+      expect(stub.stats.initialize).toBe(1);
+      // The server saw all six calls in flight at once.
+      expect(stub.stats.maxInFlight).toBe(6);
+      // Wall-clock is dominated by a single call's latency, not 6x serialized.
+      expect(wallMs).toBeLessThan(delayMs * 3);
+    } finally {
+      await clearMcpSession(env, cwd);
+      stub.server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("isolates a failing call from concurrent successful calls", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-conc-fail-"));
+    const delayMs = 250;
+    const stub = await startConcurrencyStubMcpServer(delayMs);
+    const cwd = join(root, "workspace");
+    const recipeDir = join(root, "recipe");
+    mkdirSync(recipeDir, { recursive: true });
+    const local = writeLocalConfig(cwd, [
+      {
+        id: "stub",
+        transport: "streamable_http",
+        url: stub.url,
+        headers: { Authorization: "Bearer ${STUB_TOKEN}" },
+      },
+    ]);
+    const env: NodeJS.ProcessEnv = {
+      PI_RECIPES_MCP_LOCAL_CONFIG: local,
+      STUB_TOKEN: "test-token",
+    };
+    try {
+      const shim = await materializeSessionMcpCli({ cwd, env });
+      await materializeMcpSession({
+        cwd,
+        env,
+        manifest: recipeManifest(recipeDir, [
+          { id: "stub", required: true, include: ["slow_search", "slow_fail"] },
+        ]),
+        agentMcp: [
+          { serverId: "stub", tools: { include: ["slow_search", "slow_fail"] } },
+        ],
+      });
+      const cliEnv = Object.fromEntries(
+        Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+      );
+      if (nativeMcpClientPath()) cliEnv.PI_RECIPES_MCP_NATIVE_REQUIRED = "1";
+      startMcpDaemon(env);
+      for (
+        let attempt = 0;
+        attempt < 100 && !existsSync(env.PI_RECIPES_MCP_DAEMON_SOCKET!);
+        attempt += 1
+      ) {
+        await delay(20);
+      }
+      expect(existsSync(env.PI_RECIPES_MCP_DAEMON_SOCKET!)).toBe(true);
+
+      const [ok1, failed, ok2] = await Promise.all([
+        runMcpShim(shim.shimPath, ["call", "stub.slow_search", "query=a"], cliEnv),
+        runMcpShim(shim.shimPath, ["call", "stub.slow_fail", "query=b"], cliEnv),
+        runMcpShim(shim.shimPath, ["call", "stub.slow_search", "query=c"], cliEnv),
+      ]);
+      // Successful calls are unaffected by the concurrent failure.
+      expect(ok1).toMatchObject({ code: 0, stderr: "" });
+      expect(ok2).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(ok1!.stdout)).toMatchObject({ arguments: { query: "a" } });
+      expect(JSON.parse(ok2!.stdout)).toMatchObject({ arguments: { query: "c" } });
+      // The tool-level error surfaces as a non-zero exit on that call only.
+      expect(failed!.code).toBe(1);
+      // All three were in flight together.
+      expect(stub.stats.maxInFlight).toBe(3);
+    } finally {
+      await clearMcpSession(env, cwd);
+      stub.server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
