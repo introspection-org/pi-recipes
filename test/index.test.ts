@@ -10,6 +10,7 @@ import { createRecipeChildAgentRunner } from "../src/child-agent.js";
 import {
   addRecipe,
   buildRecipeEvalInvocations,
+  checkRecipeFiles,
   createRecipePublishGuide,
   createRecipeScaffold,
   customizeRecipe,
@@ -1156,6 +1157,59 @@ describe("recipe package manifest", () => {
     await expect(
       recipesCliMain(["check", ".", "--profile", "staging"])
     ).rejects.toThrow(/--profile requires local, ci, or publish/);
+  });
+
+  it("checks an in-memory recipe snapshot through stdin", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-check-snapshot-"));
+    const previousBin = process.env.PI_RECIPE_CHECK_BIN;
+    try {
+      const checker = join(root, "recipe-check-bin.mjs");
+      writeFileSync(
+        checker,
+        [
+          "#!/usr/bin/env node",
+          "let input = '';",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (chunk) => { input += chunk; });",
+          "process.stdin.on('end', () => {",
+          "  process.stdout.write(JSON.stringify({",
+          "    valid: false, profile: 'ci', recipe_dir: '.',",
+          "    diagnostics: [{ severity: 'error', code: 'test', path: 'package.json', message: JSON.stringify({ args: process.argv.slice(2), input }) }],",
+          "    resources: {},",
+          "  }));",
+          "});",
+          "",
+        ].join("\n")
+      );
+      chmodSync(checker, 0o755);
+      process.env.PI_RECIPE_CHECK_BIN = checker;
+
+      const snapshot = {
+        files: [{ path: "package.json", content: "{}" }],
+        directories: ["empty"],
+      };
+      const report = await checkRecipeFiles(snapshot, { profile: "ci" });
+
+      expect(report).toMatchObject({
+        valid: false,
+        profile: "ci",
+        diagnostics: [
+          {
+            message: JSON.stringify({
+              args: ["--snapshot", "-", "--profile", "ci", "--json"],
+              input: JSON.stringify(snapshot),
+            }),
+          },
+        ],
+      });
+    } finally {
+      if (previousBin === undefined) {
+        delete process.env.PI_RECIPE_CHECK_BIN;
+      } else {
+        process.env.PI_RECIPE_CHECK_BIN = previousBin;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("does not treat imported CLI modules as direct invocations", () => {

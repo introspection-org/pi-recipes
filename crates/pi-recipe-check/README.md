@@ -32,6 +32,20 @@ one level, never recursively), and the `cli` feature builds the `recipe-check`
 binary that ships inside the `@introspection-ai/pi-recipes` npm package.
 Build with `--no-default-features` to get only the pure core.
 
+The binary can also validate a serialized snapshot without materializing a
+recipe directory. `--snapshot` selects snapshot input, `-` reads it from
+stdin, and the existing `--json` option independently selects JSON output:
+
+```sh
+printf '%s' '{"files":[{"path":"package.json","content":"{}"}]}' \
+  | recipe-check --snapshot - --profile ci --json
+```
+
+JSON snapshots use the `RecipeFiles` shape above: recipe-relative file paths,
+optional file contents (`null` means the file exists but was not read), and
+any empty directories required for validation. Ancestor directories of files
+are inferred. A snapshot file path can be supplied in place of `-`.
+
 A standalone `resources` module validates Kubernetes-style compute
 overrides (`requests`/`limits` with `cpu`/`memory` quantities such as `500m`
 or `1.5Gi`) so hosts that carry a resources block — e.g. an Introspection

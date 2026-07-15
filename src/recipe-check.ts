@@ -25,6 +25,16 @@ export interface RecipeCheckDiagnostic {
   help?: string;
 }
 
+export interface RecipeCheckFile {
+  path: string;
+  content?: string | null;
+}
+
+export interface RecipeCheckFiles {
+  files: RecipeCheckFile[];
+  directories?: string[];
+}
+
 export interface RecipeCheckReport {
   valid: boolean;
   profile: RecipeCheckProfile;
@@ -144,22 +154,60 @@ export async function readRecipeCheckReport(
     opts.profile ?? "local",
     "--json",
   ];
+  return await readReport(base, args, env);
+}
 
-  return await new Promise<RecipeCheckReport>((resolveRun, rejectRun) => {
+export async function checkRecipeFiles(
+  input: RecipeCheckFiles,
+  opts: Omit<RecipeCheckOptions, "json"> = {}
+): Promise<RecipeCheckReport> {
+  const env = recipeCheckEnv(opts.env);
+  const base = recipeCheckCommand(env);
+  const args = [
+    ...base.args,
+    "--snapshot",
+    "-",
+    "--profile",
+    opts.profile ?? "local",
+    "--json",
+  ];
+
+  return await readReport(base, args, env, JSON.stringify(input));
+}
+
+async function readReport(
+  base: RecipeCheckCommand,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  stdin?: string
+): Promise<RecipeCheckReport> {
+  return await new Promise((resolveRun, rejectRun) => {
     const child = spawn(base.command, args, {
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.stdout!.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr!.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("error", rejectRun);
-    child.on("close", (_code, signal) => {
+    child.stdin?.on("error", rejectRun);
+    child.on("close", (code, signal) => {
       const output = Buffer.concat(stdout).toString("utf8");
       const errorOutput = Buffer.concat(stderr).toString("utf8").trim();
       if (signal) {
         rejectRun(new Error(`recipe-check terminated by signal ${signal}`));
+        return;
+      }
+      if (code !== 0 && code !== 1) {
+        rejectRun(
+          new Error(
+            [
+              `recipe-check failed with exit code ${code ?? "unknown"}.`,
+              errorOutput,
+            ].filter(Boolean).join("\n")
+          )
+        );
         return;
       }
       try {
@@ -176,5 +224,6 @@ export async function readRecipeCheckReport(
         );
       }
     });
+    child.stdin?.end(stdin);
   });
 }
