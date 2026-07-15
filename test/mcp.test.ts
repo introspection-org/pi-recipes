@@ -158,7 +158,7 @@ function interruptNativeMcp(
   });
 }
 
-function startStubMcpServer(): Promise<{
+function startStubMcpServer(options: { failListAttempts?: number } = {}): Promise<{
   server: Server;
   url: string;
   stats: { initialize: number; list: number; call: number };
@@ -218,6 +218,10 @@ function startStubMcpServer(): Promise<{
       }
       if (message.method === "tools/list") {
         stats.list += 1;
+        if (stats.list <= (options.failListAttempts ?? 0)) {
+          res.writeHead(503, headers).end("temporarily unavailable");
+          return;
+        }
         setTimeout(() => {
           res.writeHead(200, headers).end(
             JSON.stringify({
@@ -441,7 +445,7 @@ describe("static MCP session materialization", () => {
 describe("lazy MCP CLI discovery", () => {
   it("reuses one daemon runtime across concurrent calls and later commands", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-daemon-"));
-    const stub = await startStubMcpServer();
+    const stub = await startStubMcpServer({ failListAttempts: 2 });
     const cwd = join(root, "workspace");
     const recipeDir = join(root, "recipe");
     mkdirSync(recipeDir, { recursive: true });
@@ -484,9 +488,20 @@ describe("lazy MCP CLI discovery", () => {
         await delay(20);
       }
       expect(existsSync(env.PI_RECIPES_MCP_DAEMON_SOCKET!)).toBe(true);
+      for (let attempt = 0; attempt < 100 && stub.stats.list === 0; attempt += 1) {
+        await delay(10);
+      }
+      expect(stub.stats.list).toBeGreaterThanOrEqual(1);
+      const racedList = await runMcpShim(
+        shim.shimPath,
+        ["list", "stub.search_profiles", "--schema"],
+        cliEnv
+      );
       await preload;
-      expect(stub.stats.initialize).toBe(1);
-      expect(stub.stats.list).toBe(1);
+      expect(racedList).toMatchObject({ code: 0, stderr: "" });
+      expect(racedList.stdout).toContain("stub.search_profiles");
+      expect(stub.stats.initialize).toBe(3);
+      expect(stub.stats.list).toBe(3);
 
       const [left, right] = await Promise.all([
         runMcpShim(
@@ -504,7 +519,7 @@ describe("lazy MCP CLI discovery", () => {
       expect(right).toMatchObject({ code: 0, stderr: "" });
       expect(JSON.parse(left.stdout)).toMatchObject({ arguments: { query: "engineer" } });
       expect(JSON.parse(right.stdout)).toMatchObject({ arguments: { query: "architect" } });
-      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.initialize).toBe(3);
       expect(stub.stats.call).toBe(2);
 
       const later = await runMcpShim(
@@ -513,7 +528,7 @@ describe("lazy MCP CLI discovery", () => {
         cliEnv
       );
       expect(later).toMatchObject({ code: 0, stderr: "" });
-      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.initialize).toBe(3);
       expect(stub.stats.call).toBe(3);
 
       const oversized = await runMcpShim(
@@ -540,8 +555,8 @@ describe("lazy MCP CLI discovery", () => {
       );
       expect(list).toMatchObject({ code: 0, stderr: "" });
       expect(list.stdout).toContain("stub.search_profiles(query: string)");
-      expect(stub.stats.initialize).toBe(1);
-      expect(stub.stats.list).toBe(1);
+      expect(stub.stats.initialize).toBe(3);
+      expect(stub.stats.list).toBe(3);
 
       const run = await runMcpShim(
         shim.shimPath,
@@ -554,7 +569,7 @@ describe("lazy MCP CLI discovery", () => {
       );
       expect(run).toMatchObject({ code: 0, stderr: "" });
       expect(JSON.parse(run.stdout)).toMatchObject({ arguments: { query: "principal" } });
-      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.initialize).toBe(3);
       expect(stub.stats.call).toBe(5);
 
       const nativeClient = nativeMcpClientPath();
@@ -585,7 +600,7 @@ describe("lazy MCP CLI discovery", () => {
       expect(JSON.parse(afterBusyLoop.stdout)).toMatchObject({
         arguments: { query: "survivor" },
       });
-      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.initialize).toBe(3);
       expect(stub.stats.call).toBe(6);
     } finally {
       await clearMcpSession(env, cwd);
