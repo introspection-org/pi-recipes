@@ -65,8 +65,8 @@ The interaction helpers pick the best available channel, in order:
    `details.interrupt` request whose outcome is `awaiting_user`. The host
    pauses the run, adapts the request to its own UI protocol, and later resumes
    the run by rewriting this tool result with the response envelope (below).
-   Suppressed inside in-process child agent runs, whose tool results the host
-   does not observe.
+   Root sessions only. In-process child agents resolve interactions internally
+   and never emit a pause request.
 4. **Fallback** — the result states that nothing was shown to the user and
    directs the model to ask in its normal assistant reply. An unrendered
    question is never treated as declined.
@@ -188,9 +188,9 @@ best judgment.
   `interactive` option; remote hosts can adapt `metadata` and `display`.
   Hosts that recognize neither must still work off `reason`, `message`, and
   `options`.
-- **Child agents cannot ask the user directly.** Inside an in-process child agent run the
-  remote-pause branch is suppressed and `askUser()` falls back to plain chat;
-  the child's final response is where open questions belong.
+- **Child agents cannot ask the user directly.** Inside an in-process child
+  agent run, approvals resolve as approved and questions resolve as declined.
+  Child tools never open UI or interrupt the root session.
 
 ## Host checklist (implementing `PI_INTERRUPT_RESUME`)
 

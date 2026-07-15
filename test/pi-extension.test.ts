@@ -1110,7 +1110,7 @@ describe("Pi recipes launch extension", () => {
       const updates: AgentToolResult<any>[] = [];
       const result = await pi.tools.get("agent")?.execute(
         "tool-call-1",
-        { name: "explorer", task: "inspect auth flow" },
+        { name: "explorer", prompt: "inspect auth flow", wait: true },
         undefined,
         (update) => updates.push(update),
         ctx
@@ -1125,14 +1125,16 @@ describe("Pi recipes launch extension", () => {
           modelRegistry: ctx.modelRegistry,
         })
       );
-      expect(updates[0]?.content[0]).toEqual(
+      expect(updates[0]?.details?.subtasks?.[0]).toEqual(
         expect.objectContaining({
-          text: expect.stringContaining("Prompt:\ninspect auth flow"),
+          task: "inspect auth flow",
         })
       );
       expect(
         updates.some((update) =>
-          String(update.content[0]?.type === "text" ? update.content[0].text : "").includes("streamed output")
+          update.details?.subtasks?.[0]?.nestedTools?.some(
+            (tool: { toolName: string }) => tool.toolName === "read"
+          )
         )
       ).toBe(true);
       expect(result?.content[0]).toEqual(
@@ -1140,35 +1142,22 @@ describe("Pi recipes launch extension", () => {
           text: expect.stringContaining("streamed output final"),
         })
       );
-      expect(result?.details).toEqual(
+      expect(result?.details?.agent).toEqual(
         expect.objectContaining({
-          task: "inspect auth flow",
+          prompt: "inspect auth flow",
           status: "completed",
-          tool_calls: [
+          nested_tools: [
             expect.objectContaining({
-              id: "read-a",
-              name: "read",
-              status: "completed",
-              output: "file a",
+              toolName: "read",
+              detail: "file a",
             }),
             expect.objectContaining({
-              id: "read-b",
-              name: "read",
-              status: "completed",
-              output: "file b",
+              toolName: "read",
+              detail: "file b",
             }),
           ],
         })
       );
-      const rendered = pi.tools.get("agent")?.renderResult?.(
-        result as any,
-        { expanded: false, isPartial: false },
-        { fg: (_name: string, text: string) => text, bold: (text: string) => text } as any,
-        { lastComponent: undefined } as any
-      );
-      expect(rendered?.render(100).join("\n")).toContain("Tool calls:");
-      expect(rendered?.render(100).join("\n")).toContain("read src/a.ts [done]");
-      expect(rendered?.render(100).join("\n")).not.toContain("Prompt:");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

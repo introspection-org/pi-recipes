@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  createRecipeAgentsExtension,
-  RECIPE_AGENT_UPDATE_EVENT,
-  type RecipeAgentRunController,
-} from "../src/recipe-agents-extension.js";
+  AGENT_UPDATE_EVENT,
+  createAgentsExtension,
+  type AgentRunController,
+} from "../src/pi/index.js";
 import type { ResolvedRecipeSession } from "../src/recipe-session.js";
 import type { RecipeAgentDefinition } from "../src/recipe-agent.js";
 
@@ -51,7 +51,7 @@ function recipe(): ResolvedRecipeSession {
   };
 }
 
-function controller(): RecipeAgentRunController {
+function controller(): AgentRunController {
   return {
     list: () => [],
     get: () => null,
@@ -66,13 +66,13 @@ function controller(): RecipeAgentRunController {
   };
 }
 
-describe("createRecipeAgentsExtension", () => {
+describe("createAgentsExtension", () => {
   it("registers the shared agent tool and delegates managed lifecycle", async () => {
     const runs = controller();
     const registerTool = vi.fn();
     const events = { emit: vi.fn() };
     let shutdown: (() => Promise<void>) | undefined;
-    const extension = createRecipeAgentsExtension({
+    const extension = createAgentsExtension({
       recipe: recipe(),
       createRunController({ emit }) {
         emit({
@@ -80,7 +80,7 @@ describe("createRecipeAgentsExtension", () => {
           invocation_name: "explorer:1",
           agent_name: "explorer",
           label: "Explore",
-          task: "Inspect",
+          prompt: "Inspect",
           status: "running",
           started_at: 1,
           last_activity_at: 1,
@@ -103,7 +103,7 @@ describe("createRecipeAgentsExtension", () => {
     } as never);
 
     expect(events.emit).toHaveBeenCalledWith(
-      RECIPE_AGENT_UPDATE_EVENT,
+      AGENT_UPDATE_EVENT,
       expect.objectContaining({ agent_run_id: "run-1" })
     );
     expect(registerTool).toHaveBeenCalledWith(
