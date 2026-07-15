@@ -128,81 +128,6 @@ function agentTool(pi: MockExtensionAPI) {
 }
 
 describe("background agent run lifecycle", () => {
-  it("detaches on wait abort without interrupting the child", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
-    try {
-      const runner = hangingRunner();
-      const { pi, ctx } = await startSession(runner.createChildAgentRunner, root);
-
-      const controller = new AbortController();
-      const started = agentTool(pi).execute(
-        "call-1",
-        { name: "explorer", prompt: "look around", wait: true },
-        controller.signal,
-        undefined,
-        ctx
-      );
-      await vi.waitFor(() => {
-        expect(runner.createChildAgentRunner).toHaveBeenCalled();
-      });
-      controller.abort();
-
-      const result = await started;
-      expect((result as any)?.isError).toBeUndefined();
-      expect(result?.details?.agent).toEqual(
-        expect.objectContaining({ status: "running" })
-      );
-      expect(String(result?.content[0]?.type === "text" ? result.content[0].text : "")).toContain(
-        "still running in the background"
-      );
-      expect(runner.cancel).not.toHaveBeenCalled();
-
-      // The child keeps running and can still settle normally afterwards.
-      runner.finish("late output");
-      const waited = await agentTool(pi).execute(
-        "call-2",
-        { action: "wait", id: result?.details?.agent?.agent_run_id },
-        undefined,
-        undefined,
-        ctx
-      );
-      expect(waited?.details?.agents?.[0]).toEqual(
-        expect.objectContaining({ status: "completed", output: "late output" })
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("returns immediately from a start wait when the signal is already aborted", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
-    try {
-      const runner = hangingRunner();
-      const { pi, ctx } = await startSession(runner.createChildAgentRunner, root);
-
-      const controller = new AbortController();
-      controller.abort();
-      const result = await agentTool(pi).execute(
-        "call-1",
-        {
-          name: "explorer",
-          prompt: "look around",
-          wait: true,
-        },
-        controller.signal,
-        undefined,
-        ctx
-      );
-      expect(result?.details?.agent).toEqual(
-        expect.objectContaining({ status: "running" })
-      );
-      expect(runner.cancel).not.toHaveBeenCalled();
-      runner.finish();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("keeps a settled run's status on interrupt", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
     try {
@@ -212,17 +137,24 @@ describe("background agent run lifecycle", () => {
       runner.finish("done");
       const result = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "look around", wait: true },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
       );
       const id = result?.details?.agent?.agent_run_id as string;
+      const waited = await agentTool(pi).execute(
+        "call-2",
+        { action: "wait", id },
+        undefined,
+        undefined,
+        ctx
+      );
       expect(id).toBe("agent-run-1");
-      expect(result?.details?.agent?.status).toBe("completed");
+      expect(waited?.details?.agents?.[0]?.status).toBe("completed");
 
       const interrupted = await agentTool(pi).execute(
-        "call-2",
+        "call-3",
         { action: "interrupt", id },
         undefined,
         undefined,
@@ -243,7 +175,7 @@ describe("background agent run lifecycle", () => {
 
       const result = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "look around", wait: false },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
@@ -286,14 +218,14 @@ describe("background agent run lifecycle", () => {
 
       const first = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "one", wait: false },
+        { name: "explorer", prompt: "one" },
         undefined,
         undefined,
         ctx
       );
       const second = await agentTool(pi).execute(
         "call-2",
-        { name: "explorer", prompt: "two", wait: false },
+        { name: "explorer", prompt: "two" },
         undefined,
         undefined,
         ctx
@@ -351,14 +283,14 @@ describe("background agent run lifecycle", () => {
 
       await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "one", wait: false },
+        { name: "explorer", prompt: "one" },
         undefined,
         undefined,
         ctx
       );
       await agentTool(pi).execute(
         "call-2",
-        { name: "explorer", prompt: "two", wait: false },
+        { name: "explorer", prompt: "two" },
         undefined,
         undefined,
         ctx
@@ -403,22 +335,29 @@ describe("background agent run lifecycle", () => {
 
       const started = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "first", wait: true },
+        { name: "explorer", prompt: "first" },
         undefined,
         undefined,
         ctx
       );
       const id = started?.details?.agent?.agent_run_id as string;
-
       await agentTool(pi).execute(
         "call-2",
+        { action: "wait", id },
+        undefined,
+        undefined,
+        ctx
+      );
+
+      await agentTool(pi).execute(
+        "call-3",
         { action: "message", id, message: "second" },
         undefined,
         undefined,
         ctx
       );
       const followedUp = await agentTool(pi).execute(
-        "call-3",
+        "call-4",
         { action: "wait", id },
         undefined,
         undefined,
@@ -433,7 +372,7 @@ describe("background agent run lifecycle", () => {
       expect(shutdown).not.toHaveBeenCalled();
 
       await agentTool(pi).execute(
-        "call-4",
+        "call-5",
         { action: "close", id },
         undefined,
         undefined,
@@ -461,13 +400,19 @@ describe("background agent run lifecycle", () => {
           name: "explorer",
           prompt: "look around",
           output_path: "results/explorer.md",
-          wait: true,
         },
         undefined,
         undefined,
         ctx
       );
       const id = result?.details?.agent?.agent_run_id as string;
+      await agentTool(pi).execute(
+        "call-2",
+        { action: "wait", id },
+        undefined,
+        undefined,
+        ctx
+      );
       const statusPath = join(projectDir, ".pi", "agents", id, "status.json");
       expect(existsSync(statusPath)).toBe(true);
       const snapshot = JSON.parse(readFileSync(statusPath, "utf8"));

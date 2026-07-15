@@ -49,8 +49,8 @@ and prompts.
 
 - `@introspection-ai/pi-recipes`: extension factory and recipe-loading helpers.
 - `@introspection-ai/pi-recipes/pi-extension`: Pi extension entrypoint.
-- `@introspection-ai/pi-recipes/recipe-session`: resolved recipe inputs for
-  hosts that create Pi sessions directly.
+- `@introspection-ai/pi-recipes/recipe`: recipe parsing and resolved session inputs.
+- `@introspection-ai/pi-recipes/pi`: the shared `agent` tool and controller types.
 - `@introspection-ai/pi-recipes/recipe-store`: recipe install and resolution helpers.
 - [`pi-recipe-check`](https://crates.io/crates/pi-recipe-check) (Rust crate,
   [`crates/pi-recipe-check`](crates/pi-recipe-check)): the pure recipe
@@ -88,14 +88,13 @@ second runtime abstraction:
 
 ```ts
 import { resolveRecipeSession } from "@introspection-ai/pi-recipes/recipe";
-import { createAgentsExtension } from "@introspection-ai/pi-recipes/pi";
+import { createAgentTool } from "@introspection-ai/pi-recipes/pi";
 
 const recipe = resolveRecipeSession({ recipeDir, agentName });
-const agents = createAgentsExtension({
-  recipe,
-  createRunController: ({ agents, emit }) =>
-    createHostAgentRunController({ agents, emit }),
-});
+const runs = createHostAgentRunController(recipe.subagents);
+const agents = (pi) => {
+  pi.registerTool(createAgentTool(runs, recipe.subagents));
+};
 
 const services = await createAgentSessionServices({
   cwd,
@@ -120,15 +119,14 @@ const { session } = await createAgentSessionFromServices({
 
 The host remains responsible for model credentials, session persistence,
 telemetry, and lifecycle. The resolver owns recipe interpretation; the shared
-extension owns the `agent` tool contract and delegates run execution to the
-host controller.
+tool delegates run execution to the host controller.
 
 The package keeps those responsibilities separate:
 
 - `@introspection-ai/pi-recipes/recipe` parses and resolves declarative recipes.
 - `@introspection-ai/pi-recipes/pi` exposes ordinary Pi SDK integrations.
-- `@introspection-ai/pi-recipes/local` contains the CLI extension, local child
-  sessions, filesystem persistence, and completion delivery.
+- The existing `pi-extension` entrypoint owns local child sessions,
+  filesystem persistence, and completion delivery.
 
 `recipes create` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
 and recipe README. Edit those files as the recipe grows. Named variants are

@@ -18,7 +18,7 @@ import {
   readPiPackageManifest,
   validatePiPackageManifest,
   type RecipePackageManifest,
-} from "./recipe/package.js";
+} from "./recipe-package.js";
 import { sendInstallTelemetry, type FetchImpl } from "./recipe-telemetry.js";
 
 const execFileAsync = promisify(execFile);

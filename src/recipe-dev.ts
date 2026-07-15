@@ -9,7 +9,7 @@ import {
   loadRecipeAgentDefinitions,
   resolveRecipeAgentDefinition,
   validateRecipeAgentDefinitions,
-} from "./recipe/agent.js";
+} from "./recipe-agent.js";
 import {
   packageResourcePaths,
   readPiPackageManifest,
@@ -18,7 +18,7 @@ import {
   type RecipePackageResources,
   type RecipeValidationFinding,
   type RecipeValidationReport,
-} from "./recipe/package.js";
+} from "./recipe-package.js";
 
 export interface RecipeScaffoldFile {
   path: string;

@@ -7,21 +7,20 @@ import {
   validateRecipeAgentDefinitions,
   type RecipeAgentDefinition,
   type RecipeSystemInstructions,
-} from "./agent.js";
-import type { RecipeAgentModelConfig } from "./model.js";
+} from "../recipe-agent.js";
+import type { RecipeAgentModelConfig } from "../recipe-model.js";
 import {
   packageResourcePaths,
   readPiPackageManifest,
   validatePiPackageManifest,
   type PiPackageManifest,
-} from "./package.js";
+} from "../recipe-package.js";
 
 export interface ResolvedRecipeSession {
   recipeDir: string;
   manifest: PiPackageManifest;
   agentName: string;
   agent: RecipeAgentDefinition;
-  agents: ReadonlyMap<string, RecipeAgentDefinition>;
   subagents: ReadonlyMap<string, RecipeAgentDefinition>;
   modelSpec: string;
   modelConfig?: RecipeAgentModelConfig;
@@ -206,7 +205,6 @@ export function resolveRecipeSession(
     manifest,
     agentName,
     agent,
-    agents,
     subagents,
     modelSpec,
     ...(agent.modelConfig ? { modelConfig: agent.modelConfig } : {}),

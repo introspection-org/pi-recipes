@@ -1,15 +1,9 @@
 import {
   defineTool,
-  type ExtensionFactory,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type { RecipeAgentDefinition } from "../../recipe/agent.js";
-import type { ResolvedRecipeSession } from "../../recipe/resolve.js";
-
-export const AGENT_UPDATE_EVENT = "introspection:agent-update";
-/** @deprecated Use `AGENT_UPDATE_EVENT`. */
-export const RECIPE_AGENT_UPDATE_EVENT = AGENT_UPDATE_EVENT;
+import type { RecipeAgentDefinition } from "../../recipe-agent.js";
 
 export type AgentRunStatus =
   | "running"
@@ -37,10 +31,6 @@ export interface AgentRunSummary {
   last_activity_at: number;
   current_tool?: string;
   output_path?: string;
-  artifact_dir?: string;
-  status_path?: string;
-  events_path?: string;
-  output_artifact_path?: string;
   nested_tools?: AgentNestedToolSummary[];
   output_preview?: string;
   output?: string;
@@ -57,7 +47,6 @@ export interface AgentRunController {
     output_path?: string;
     onUpdate?: (summary: AgentRunSummary) => void | Promise<void>;
   }): Promise<AgentRunSummary>;
-  wait(id: string, signal?: AbortSignal): Promise<AgentRunSummary>;
   waitFor(
     ids: readonly string[],
     opts: {
@@ -73,22 +62,6 @@ export interface AgentRunController {
   interrupt(id: string): Promise<AgentRunSummary>;
   close(id: string): Promise<AgentRunSummary>;
   closeAll(): Promise<void>;
-  rehydrate?(): Promise<number>;
-}
-
-export interface CreateAgentRunControllerContext {
-  agents: ReadonlyMap<string, RecipeAgentDefinition>;
-  emit(summary: AgentRunSummary): void;
-}
-
-export interface CreateAgentsExtensionOptions {
-  recipe: ResolvedRecipeSession;
-  createRunController(
-    context: CreateAgentRunControllerContext
-  ): AgentRunController | Promise<AgentRunController>;
-  acknowledgeCompletions?(ids: readonly string[]): void;
-  onRehydrated?(count: number): void;
-  onError?(operation: "rehydrate" | "shutdown", error: unknown): void;
 }
 
 const AgentAction = Type.Union(
@@ -120,7 +93,6 @@ const AgentToolParams = Type.Object({
   ),
   label: Type.Optional(Type.String()),
   output_path: Type.Optional(Type.String()),
-  wait: Type.Optional(Type.Boolean()),
   id: Type.Optional(Type.String()),
   ids: Type.Optional(
     Type.Array(Type.String(), {
@@ -204,12 +176,6 @@ async function executeControlAction(
   acknowledge: (ids: readonly string[]) => void,
   signal?: AbortSignal
 ) {
-  if (params.wait !== undefined) {
-    return errorResult(
-      'The wait flag is only valid when starting a new agent; use action "wait" to join existing runs.',
-      controller
-    );
-  }
   try {
     if (params.action === "status") {
       const runs = params.id
@@ -340,9 +306,9 @@ export function createAgentTool(
     description: [
       "Start or manage retained child agents for bounded exploration or verification.",
       "Omit action to start exactly one child with name and prompt.",
-      "Starts run in the background by default; set wait=true only when the parent must block for that new result.",
+      "Starts always run in the background and return a run id immediately.",
       'Use action "wait" with ids to join all listed runs, or without ids to wait for the first running child.',
-      "Other control actions return immediately and must not include the wait flag.",
+      "Other control actions return immediately.",
       "Use a clear label because status and the UI use it as the handle.",
       `Available agents: ${available || "none"}.`,
     ].join(" "),
@@ -385,100 +351,10 @@ export function createAgentTool(
         content: [{ type: "text" as const, text: "" }],
         details: { subtasks: [subtask(started)] },
       });
-      const shouldWait = params.wait ?? false;
-      if (!shouldWait) {
-        return {
-          content: [{ type: "text" as const, text: `Started ${runLine(started)}` }],
-          details: { agent: started, subtasks: [subtask(started)] },
-        };
-      }
-      let completed: AgentRunSummary;
-      try {
-        completed = await controller.wait(started.agent_run_id, signal);
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Agent wait failed: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          details: { agent: started, subtasks: [subtask(started)] },
-          isError: true,
-        };
-      }
-      if (!isTerminal(completed)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Wait cancelled — ${runLine(completed)} is still running in the background. Use action "status" to check on it.`,
-            },
-          ],
-          details: { agent: completed, subtasks: [subtask(completed)] },
-        };
-      }
-      acknowledge([completed.agent_run_id]);
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: `[${completed.invocation_name}] ${runOutput(completed)}`,
-          },
-        ],
-        details: { agent: completed, subtasks: [subtask(completed)] },
+        content: [{ type: "text" as const, text: `Started ${runLine(started)}` }],
+        details: { agent: started, subtasks: [subtask(started)] },
       };
     },
   });
 }
-
-/** Register retained background agents as an ordinary Pi extension. */
-export function createAgentsExtension(
-  opts: CreateAgentsExtensionOptions
-): ExtensionFactory {
-  return async (pi) => {
-    const agents = opts.recipe.subagents;
-    if (agents.size === 0) return;
-    const controller = await opts.createRunController({
-      agents,
-      emit(summary) {
-        pi.events.emit(AGENT_UPDATE_EVENT, summary);
-      },
-    });
-    try {
-      const restored = (await controller.rehydrate?.()) ?? 0;
-      if (restored > 0) opts.onRehydrated?.(restored);
-    } catch (error) {
-      opts.onError?.("rehydrate", error);
-    }
-    pi.registerTool(
-      createAgentTool(controller, agents, {
-        acknowledgeCompletions: opts.acknowledgeCompletions,
-      })
-    );
-    pi.on("session_shutdown", async () => {
-      try {
-        await controller.closeAll();
-      } catch (error) {
-        opts.onError?.("shutdown", error);
-      }
-    });
-  };
-}
-
-/** @deprecated Use `AgentRunStatus`. */
-export type RecipeAgentRunStatus = AgentRunStatus;
-/** @deprecated Use `AgentNestedToolSummary`. */
-export type RecipeAgentNestedToolSummary = AgentNestedToolSummary;
-/** @deprecated Use `AgentRunSummary`. */
-export type RecipeAgentRunSummary = AgentRunSummary;
-/** @deprecated Use `AgentRunController`. */
-export type RecipeAgentRunController = AgentRunController;
-/** @deprecated Use `CreateAgentRunControllerContext`. */
-export type CreateRecipeAgentRunControllerContext = CreateAgentRunControllerContext;
-/** @deprecated Use `CreateAgentsExtensionOptions`. */
-export type CreateRecipeAgentsExtensionOptions = CreateAgentsExtensionOptions;
-/** @deprecated Use `createAgentTool`. */
-export const createRecipeAgentTool = createAgentTool;
-/** @deprecated Use `createAgentsExtension`. */
-export const createRecipeAgentsExtension = createAgentsExtension;

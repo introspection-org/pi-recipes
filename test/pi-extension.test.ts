@@ -1110,9 +1110,16 @@ describe("Pi recipes launch extension", () => {
       const updates: AgentToolResult<any>[] = [];
       const result = await pi.tools.get("agent")?.execute(
         "tool-call-1",
-        { name: "explorer", prompt: "inspect auth flow", wait: true },
+        { name: "explorer", prompt: "inspect auth flow" },
         undefined,
         (update) => updates.push(update),
+        ctx
+      );
+      const completed = await pi.tools.get("agent")?.execute(
+        "tool-call-2",
+        { action: "wait", id: result?.details?.agent?.agent_run_id },
+        undefined,
+        undefined,
         ctx
       );
 
@@ -1137,12 +1144,12 @@ describe("Pi recipes launch extension", () => {
           )
         )
       ).toBe(true);
-      expect(result?.content[0]).toEqual(
+      expect(completed?.content[0]).toEqual(
         expect.objectContaining({
           text: expect.stringContaining("streamed output final"),
         })
       );
-      expect(result?.details?.agent).toEqual(
+      expect(completed?.details?.agents?.[0]).toEqual(
         expect.objectContaining({
           prompt: "inspect auth flow",
           status: "completed",

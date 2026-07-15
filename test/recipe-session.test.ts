@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   RecipeSessionResolutionError,
   resolveRecipeSession,
-} from "../src/recipe-session.js";
+} from "../src/recipe/resolve.js";
 
 const roots: string[] = [];
 

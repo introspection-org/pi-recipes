@@ -3,11 +3,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { validateRecipeDirectory } from "./recipe-dev.js";
-import { readRecipeCheckReport } from "./recipe/check.js";
+import { readRecipeCheckReport } from "./recipe-check.js";
 import {
   readPiPackageManifest,
   type RecipePackageResources,
-} from "./recipe/package.js";
+} from "./recipe-package.js";
 import {
   addRecipe,
   customizeRecipe,

@@ -50,26 +50,8 @@
     "dist/pi/agents/extension.js",
     "dist/recipe/index.d.ts",
     "dist/recipe/index.js",
-    "dist/recipe/agent.d.ts",
-    "dist/recipe/agent.js",
-    "dist/recipe/check.d.ts",
-    "dist/recipe/check.js",
-    "dist/recipe/model.d.ts",
-    "dist/recipe/model.js",
-    "dist/recipe/package.d.ts",
-    "dist/recipe/package.js",
     "dist/recipe/resolve.d.ts",
     "dist/recipe/resolve.js",
-    "dist/local/index.d.ts",
-    "dist/local/index.js",
-    "dist/local/extension.d.ts",
-    "dist/local/extension.js",
-    "dist/local/child-runs/runner.d.ts",
-    "dist/local/child-runs/runner.js",
-    "dist/local/child-runs/store.d.ts",
-    "dist/local/child-runs/store.js",
-    "dist/local/child-runs/completions.d.ts",
-    "dist/local/child-runs/completions.js",
     "dist/recipe-dev.d.ts",
     "dist/recipe-dev.js",
     "dist/recipe-evals.d.ts",
@@ -80,16 +62,12 @@
     "dist/recipe-model.js",
     "dist/recipe-agent.d.ts",
     "dist/recipe-agent.js",
-    "dist/recipe-agents-extension.d.ts",
-    "dist/recipe-agents-extension.js",
     "dist/recipe-check.d.ts",
     "dist/recipe-check.js",
     "dist/recipe-package.d.ts",
     "dist/recipe-package.js",
     "dist/recipe-publish.d.ts",
     "dist/recipe-publish.js",
-    "dist/recipe-session.d.ts",
-    "dist/recipe-session.js",
     "dist/recipe-store.d.ts",
     "dist/recipe-store.js",
     "dist/recipe-telemetry.d.ts",
@@ -137,21 +115,9 @@
       "types": "./dist/recipe/index.d.ts",
       "import": "./dist/recipe/index.js"
     },
-    "./local": {
-      "types": "./dist/local/index.d.ts",
-      "import": "./dist/local/index.js"
-    },
     "./recipe-store": {
       "types": "./dist/recipe-store.d.ts",
       "import": "./dist/recipe-store.js"
-    },
-    "./recipe-session": {
-      "types": "./dist/recipe-session.d.ts",
-      "import": "./dist/recipe-session.js"
-    },
-    "./recipe-agents-extension": {
-      "types": "./dist/recipe-agents-extension.d.ts",
-      "import": "./dist/recipe-agents-extension.js"
     }
   },
   "pi": {

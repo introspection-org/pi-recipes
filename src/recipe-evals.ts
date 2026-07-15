@@ -9,7 +9,7 @@ import {
   type RecipeEvalSuite,
   type RecipePackageManifest,
   validateRecipeEvalsConfig,
-} from "./recipe/package.js";
+} from "./recipe-package.js";
 
 const execFileAsync = promisify(execFile);
 const PI_HARBOR_AGENT = "pi_recipe_agent:PiRecipeAgent";

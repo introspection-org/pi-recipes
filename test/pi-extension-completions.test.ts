@@ -179,7 +179,7 @@ describe("recipe child agent completion delivery", () => {
 
       await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "look around", wait: false },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
@@ -196,34 +196,6 @@ describe("recipe child agent completion delivery", () => {
     }
   });
 
-  it("does not re-deliver a result returned by an explicitly blocking start", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-completions-"));
-    try {
-      const pool = runnerPool();
-      const { pi, ctx } = await startSession(pool.createChildAgentRunner, root);
-
-      const started = agentTool(pi).execute(
-        "call-1",
-        { name: "explorer", prompt: "look around", wait: true },
-        undefined,
-        undefined,
-        ctx
-      );
-      await vi.waitFor(() => {
-        expect(pool.runs).toHaveLength(1);
-      });
-      pool.runs[0]?.finish("inline result");
-      const result = await started;
-      expect(result?.details?.agent?.status).toBe("completed");
-
-      await pi.emitExtensionEvent({ type: "agent_end", messages: [] } as any, ctx);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(completionMessages(pi)).toHaveLength(0);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("does not re-deliver results read via terminal status or wait", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-completions-"));
     try {
@@ -232,14 +204,14 @@ describe("recipe child agent completion delivery", () => {
 
       const first = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "slice one", wait: false },
+        { name: "explorer", prompt: "slice one" },
         undefined,
         undefined,
         ctx
       );
       const second = await agentTool(pi).execute(
         "call-2",
-        { name: "explorer", prompt: "slice two", wait: false },
+        { name: "explorer", prompt: "slice two" },
         undefined,
         undefined,
         ctx
@@ -285,7 +257,7 @@ describe("recipe child agent completion delivery", () => {
 
       await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "look around", wait: false },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
@@ -318,7 +290,7 @@ describe("recipe child agent completion delivery", () => {
 
       const started = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "look around", wait: false },
+        { name: "explorer", prompt: "look around" },
         undefined,
         undefined,
         ctx
