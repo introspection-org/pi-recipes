@@ -44,12 +44,8 @@
     "dist/package-info.js",
     "dist/pi-extension.d.ts",
     "dist/pi-extension.js",
-    "dist/pi/index.d.ts",
-    "dist/pi/index.js",
-    "dist/pi/agents/extension.d.ts",
-    "dist/pi/agents/extension.js",
-    "dist/recipe/index.d.ts",
-    "dist/recipe/index.js",
+    "dist/agent-tool.d.ts",
+    "dist/agent-tool.js",
     "dist/recipe/resolve.d.ts",
     "dist/recipe/resolve.js",
     "dist/recipe-dev.d.ts",
@@ -108,12 +104,12 @@
       "import": "./dist/pi-extension.js"
     },
     "./pi": {
-      "types": "./dist/pi/index.d.ts",
-      "import": "./dist/pi/index.js"
+      "types": "./dist/agent-tool.d.ts",
+      "import": "./dist/agent-tool.js"
     },
     "./recipe": {
-      "types": "./dist/recipe/index.d.ts",
-      "import": "./dist/recipe/index.js"
+      "types": "./dist/recipe/resolve.d.ts",
+      "import": "./dist/recipe/resolve.js"
     },
     "./recipe-store": {
       "types": "./dist/recipe-store.d.ts",

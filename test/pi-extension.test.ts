@@ -1149,7 +1149,7 @@ describe("Pi recipes launch extension", () => {
           text: expect.stringContaining("streamed output final"),
         })
       );
-      expect(completed?.details?.agents?.[0]).toEqual(
+      expect(completed?.details?.agent).toEqual(
         expect.objectContaining({
           prompt: "inspect auth flow",
           status: "completed",

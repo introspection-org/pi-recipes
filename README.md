@@ -91,42 +91,15 @@ import { resolveRecipeSession } from "@introspection-ai/pi-recipes/recipe";
 import { createAgentTool } from "@introspection-ai/pi-recipes/pi";
 
 const recipe = resolveRecipeSession({ recipeDir, agentName });
-const runs = createHostAgentRunController(recipe.subagents);
-const agents = (pi) => {
-  pi.registerTool(createAgentTool(runs, recipe.subagents));
-};
+const runs = createHostRunController(recipe.subagents);
 
-const services = await createAgentSessionServices({
-  cwd,
-  agentDir: recipe.recipeDir,
-  authStorage,
-  settingsManager,
-  resourceLoaderOptions: {
-    additionalSkillPaths: recipe.skillPaths,
-    systemPromptOverride: recipe.systemPromptOverride,
-    extensionFactories: [agents],
-  },
-});
-
-const { session } = await createAgentSessionFromServices({
-  services,
-  sessionManager,
-  model: resolveHostModel(recipe.modelSpec, recipe.modelConfig),
-  thinkingLevel: recipe.thinkingLevel,
-  tools: recipe.tools,
-});
+pi.registerTool(createAgentTool(runs, recipe.subagents));
 ```
 
 The host remains responsible for model credentials, session persistence,
 telemetry, and lifecycle. The resolver owns recipe interpretation; the shared
-tool delegates run execution to the host controller.
-
-The package keeps those responsibilities separate:
-
-- `@introspection-ai/pi-recipes/recipe` parses and resolves declarative recipes.
-- `@introspection-ai/pi-recipes/pi` exposes ordinary Pi SDK integrations.
-- The existing `pi-extension` entrypoint owns local child sessions,
-  filesystem persistence, and completion delivery.
+tool delegates run execution to the host controller. Pass the resolved model,
+tools, prompts, skills, and extensions to Pi's normal session constructors.
 
 `recipes create` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
 and recipe README. Edit those files as the recipe grows. Named variants are

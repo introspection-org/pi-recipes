@@ -1,7 +1,6 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   type AuthStorage,
@@ -51,7 +50,7 @@ import {
   createAgentTool,
   type AgentRunController,
   type AgentRunSummary,
-} from "./pi/agents/extension.js";
+} from "./agent-tool.js";
 
 export interface PiRecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
@@ -82,9 +81,6 @@ interface AgentCallParams {
   name?: string;
   label?: string;
 }
-
-/** Why a multi-run wait resolved. Timeout and abort detach; runs continue. */
-type WaitEndReason = "settled" | "timeout" | "aborted";
 
 /** Mid-turn completion delivery retries on this cadence until the session idles. */
 const COMPLETION_DELIVERY_RETRY_MS = 100;
@@ -291,7 +287,6 @@ function snapshotOf(run: ChildRunSnapshot): ChildRunSnapshot {
     agent: run.agent,
     label: run.label,
     prompt: run.prompt,
-    output_path: run.output_path,
     status: run.status,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
@@ -299,28 +294,6 @@ function snapshotOf(run: ChildRunSnapshot): ChildRunSnapshot {
     error: run.error,
     toolCalls: run.toolCalls.map((call) => ({ ...call })),
   };
-}
-
-function resolveAgentOutputPath(
-  workspaceRoot: string,
-  outputPath: string | undefined
-): string | undefined {
-  if (!outputPath?.trim()) return undefined;
-  const trimmed = outputPath.trim();
-  const workspace = resolve(workspaceRoot);
-  const target = resolve(workspace, trimmed);
-  const tempRoot = resolve("/tmp");
-  const allowed =
-    target === workspace ||
-    target.startsWith(`${workspace}${sep}`) ||
-    (isAbsolute(trimmed) &&
-      (target === tempRoot || target.startsWith(`${tempRoot}${sep}`)));
-  if (!allowed) {
-    throw new Error(
-      `output_path must be under ${workspace} or ${tempRoot}: ${outputPath}`
-    );
-  }
-  return target;
 }
 
 function controllerSummary(
@@ -338,7 +311,6 @@ function controllerSummary(
     agent_name: run.agent,
     label: run.label ?? run.agent,
     prompt: run.prompt,
-    output_path: run.output_path,
     status,
     started_at: Number.isFinite(startedAt) ? startedAt : Date.now(),
     ...(completedAt !== undefined && Number.isFinite(completedAt)
@@ -621,22 +593,19 @@ export function createPiRecipesExtension(
         input.name,
         input.prompt,
         input.label,
-        input.output_path,
         localAgentContext,
         input.onUpdate
       );
       return controllerSummary(run);
     },
-    async waitFor(ids, opts) {
-      const unknown = ids.filter((id) => !findRunSnapshot(id));
-      if (unknown.length > 0) {
-        throw new Error(`Unknown agent run(s): ${unknown.join(", ")}`);
+    async wait(id, signal) {
+      const run = findRunSnapshot(id);
+      if (!run) throw new Error(`Unknown agent run: ${id}`);
+      if (run.status !== "running" || !childRuns.has(id)) {
+        return controllerSummary(run);
       }
-      const result = await waitForRuns(ids, opts);
-      return {
-        runs: result.runs.map((run) => controllerSummary(run)),
-        reason: result.reason,
-      };
+      await waitForRun(childRuns.get(id)!, signal);
+      return controllerSummary(findRunSnapshot(id)!);
     },
     async message(id, message) {
       if (archivedRuns.has(id) && !childRuns.has(id)) {
@@ -653,12 +622,7 @@ export function createPiRecipesExtension(
       run.completedAt = undefined;
       run.error = undefined;
       run.output = undefined;
-      run.promise = executeChildPrompt(
-        run,
-        message,
-        state?.cwd ?? process.cwd(),
-        resolveAgentOutputPath(state?.cwd ?? process.cwd(), run.output_path)
-      );
+      run.promise = executeChildPrompt(run, message, state?.cwd ?? process.cwd());
       void persistRun(state?.cwd ?? process.cwd(), run);
       return controllerSummary(run);
     },
@@ -695,14 +659,13 @@ export function createPiRecipesExtension(
       childRuns.delete(id);
       return controllerSummary(run, "closed");
     },
-    async closeAll() {
-      await Promise.all(
-        [...childRuns.keys()].map(async (id) => {
-          await localRunController.close(id);
-        })
-      );
-    },
   };
+
+  async function closeAllChildRuns(): Promise<void> {
+    await Promise.all(
+      [...childRuns.keys()].map((id) => localRunController.close(id))
+    );
+  }
 
   function archivedControlError(id: string) {
     return {
@@ -922,14 +885,9 @@ export function createPiRecipesExtension(
     agentName: string,
     prompt: string,
     label: string | undefined,
-    outputPath: string | undefined,
     ctx: ExtensionContext,
     onUpdate?: (summary: AgentRunSummary) => void | Promise<void>
   ): Promise<ChildRun> {
-    const resolvedOutputPath = resolveAgentOutputPath(
-      launchState.cwd,
-      outputPath
-    );
     const id = nextChildRunId();
     let run: ChildRun | undefined;
     const notifyUpdate = () => {
@@ -968,7 +926,6 @@ export function createPiRecipesExtension(
       agent: agentName,
       label,
       prompt,
-      output_path: outputPath,
       status: "running",
       startedAt: new Date().toISOString(),
       toolCalls: [],
@@ -978,12 +935,7 @@ export function createPiRecipesExtension(
     };
     notifyUpdate();
     void persistRun(launchState.cwd, run);
-    run.promise = executeChildPrompt(
-      run,
-      prompt,
-      launchState.cwd,
-      resolvedOutputPath
-    );
+    run.promise = executeChildPrompt(run, prompt, launchState.cwd);
     childRuns.set(id, run);
     return run;
   }
@@ -991,8 +943,7 @@ export function createPiRecipesExtension(
   function executeChildPrompt(
     run: ChildRun,
     prompt: string,
-    cwd: string,
-    resolvedOutputPath: string | undefined
+    cwd: string
   ): Promise<ChildRun> {
     return (async () => {
       try {
@@ -1003,10 +954,6 @@ export function createPiRecipesExtension(
           run.output = finalOutput;
         } else if (!run.output?.trim()) {
           run.output = "(no final response)";
-        }
-        if (resolvedOutputPath) {
-          await mkdir(dirname(resolvedOutputPath), { recursive: true });
-          await writeFile(resolvedOutputPath, run.output ?? "", "utf8");
         }
         if (run.status === "running") run.status = "completed";
       } catch (err) {
@@ -1025,53 +972,19 @@ export function createPiRecipesExtension(
     })();
   }
 
-  /**
-   * Join primitive over existing runs. `mode: "all"` resolves when every
-   * listed run is terminal; `mode: "first"` resolves as soon as any listed
-   * run is terminal (immediately if one already is). Resolves early on
-   * timeout or signal abort — both DETACH, returning current snapshots with
-   * the reason; they never interrupt the children.
-   */
-  async function waitForRuns(
-    ids: readonly string[],
-    opts: { mode: "all" | "first"; timeoutMs: number; signal?: AbortSignal }
-  ): Promise<{ runs: ChildRunSnapshot[]; reason: WaitEndReason }> {
-    const snapshots = () =>
-      ids
-        .map((id) => findRunSnapshot(id))
-        .filter((run): run is ChildRunSnapshot => run !== undefined)
-        .map(snapshotOf);
-
-    const inFlight = ids
-      .map((id) => childRuns.get(id))
-      .filter((run): run is ChildRun => !!run && run.status === "running");
-    const alreadySettled =
-      inFlight.length === 0 ||
-      (opts.mode === "first" && inFlight.length < ids.length);
-    if (alreadySettled) return { runs: snapshots(), reason: "settled" };
-    if (opts.signal?.aborted) return { runs: snapshots(), reason: "aborted" };
-
-    const runPromises = inFlight.map((run) => run.promise);
-    let timer: NodeJS.Timeout | null = null;
-    let onAbort: (() => void) | null = null;
-    const settled = (
-      opts.mode === "all" ? Promise.all(runPromises) : Promise.race(runPromises)
-    ).then(() => "settled" as const);
-    const timedOut = new Promise<"timeout">((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), opts.timeoutMs);
-      timer.unref?.();
-    });
-    const aborted = new Promise<"aborted">((resolve) => {
-      onAbort = () => resolve("aborted");
-      opts.signal?.addEventListener("abort", onAbort, { once: true });
-    });
-    try {
-      const reason = await Promise.race([settled, timedOut, aborted]);
-      return { runs: snapshots(), reason };
-    } finally {
-      if (timer) clearTimeout(timer);
-      if (onAbort) opts.signal?.removeEventListener("abort", onAbort);
+  async function waitForRun(run: ChildRun, signal?: AbortSignal): Promise<void> {
+    if (!signal) {
+      await run.promise;
+      return;
     }
+    if (signal.aborted) return;
+    let onAbort: () => void = () => {};
+    const aborted = new Promise<void>((resolve) => {
+      onAbort = resolve;
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    await Promise.race([run.promise, aborted]);
+    signal.removeEventListener("abort", onAbort);
   }
 
   return (pi) => {
@@ -1154,7 +1067,7 @@ export function createPiRecipesExtension(
             }
             return;
           }
-          await localRunController.closeAll();
+          await closeAllChildRuns();
           state = null;
           archivedRuns.clear();
           completions.clear();
@@ -1234,7 +1147,7 @@ export function createPiRecipesExtension(
     });
 
     pi.on("session_shutdown", async () => {
-      await localRunController.closeAll();
+      await closeAllChildRuns();
       await stopMcpDaemon(env);
     });
 

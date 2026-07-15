@@ -151,7 +151,7 @@ describe("background agent run lifecycle", () => {
         ctx
       );
       expect(id).toBe("agent-run-1");
-      expect(waited?.details?.agents?.[0]?.status).toBe("completed");
+      expect(waited?.details?.agent?.status).toBe("completed");
 
       const interrupted = await agentTool(pi).execute(
         "call-3",
@@ -199,119 +199,7 @@ describe("background agent run lifecycle", () => {
         undefined,
         ctx
       );
-      expect(status?.content[0]).toEqual({ type: "text", text: "No agent runs." });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("joins on all listed runs and detaches on timeout", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
-    try {
-      const runners: HangingRunner[] = [];
-      const createChildAgentRunner = vi.fn(() => {
-        const runner = hangingRunner();
-        runners.push(runner);
-        return runner.createChildAgentRunner();
-      });
-      const { pi, ctx } = await startSession(createChildAgentRunner as any, root);
-
-      const first = await agentTool(pi).execute(
-        "call-1",
-        { name: "explorer", prompt: "one" },
-        undefined,
-        undefined,
-        ctx
-      );
-      const second = await agentTool(pi).execute(
-        "call-2",
-        { name: "explorer", prompt: "two" },
-        undefined,
-        undefined,
-        ctx
-      );
-      const ids = [first?.details?.agent?.agent_run_id, second?.details?.agent?.agent_run_id] as string[];
-
-      // Timeout detaches: both runs still running afterwards.
-      const timedOut = await agentTool(pi).execute(
-        "call-3",
-        { action: "wait", ids, timeout_ms: 1 },
-        undefined,
-        undefined,
-        ctx
-      );
-      expect(String(timedOut?.content[0]?.type === "text" ? timedOut.content[0].text : "")).toContain(
-        "Wait timed out"
-      );
-      expect(
-        timedOut?.details?.agents?.map((run: any) => run.status)
-      ).toEqual(["running", "running"]);
-      for (const runner of runners) expect(runner.cancel).not.toHaveBeenCalled();
-
-      // With ids, wait blocks until ALL listed runs settle.
-      const waiting = agentTool(pi).execute(
-        "call-4",
-        { action: "wait", ids },
-        undefined,
-        undefined,
-        ctx
-      );
-      runners[0]?.finish("one done");
-      runners[1]?.finish("two done");
-      const settled = await waiting;
-      expect(String(settled?.content[0]?.type === "text" ? settled.content[0].text : "")).toContain(
-        "All waited agent runs settled."
-      );
-      expect(
-        settled?.details?.agents?.map((run: any) => run.status)
-      ).toEqual(["completed", "completed"]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("waits for the first settling run when no ids are given", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
-    try {
-      const runners: HangingRunner[] = [];
-      const createChildAgentRunner = vi.fn(() => {
-        const runner = hangingRunner();
-        runners.push(runner);
-        return runner.createChildAgentRunner();
-      });
-      const { pi, ctx } = await startSession(createChildAgentRunner as any, root);
-
-      await agentTool(pi).execute(
-        "call-1",
-        { name: "explorer", prompt: "one" },
-        undefined,
-        undefined,
-        ctx
-      );
-      await agentTool(pi).execute(
-        "call-2",
-        { name: "explorer", prompt: "two" },
-        undefined,
-        undefined,
-        ctx
-      );
-
-      const waiting = agentTool(pi).execute(
-        "call-3",
-        { action: "wait" },
-        undefined,
-        undefined,
-        ctx
-      );
-      runners[1]?.finish("second done");
-      const result = await waiting;
-      expect(String(result?.content[0]?.type === "text" ? result.content[0].text : "")).toContain(
-        "An agent run settled."
-      );
-      const statuses = result?.details?.agents?.map((run: any) => run.status);
-      expect(statuses).toContain("completed");
-      expect(statuses).toContain("running");
-      runners[0]?.finish();
+      expect((status as any)?.isError).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -364,7 +252,7 @@ describe("background agent run lifecycle", () => {
         ctx
       );
 
-      expect(followedUp?.details?.agents?.[0]).toEqual(
+      expect(followedUp?.details?.agent).toEqual(
         expect.objectContaining({ status: "completed", output: "second answer" })
       );
       expect(prompt).toHaveBeenNthCalledWith(1, "first");
@@ -399,7 +287,6 @@ describe("background agent run lifecycle", () => {
         {
           name: "explorer",
           prompt: "look around",
-          output_path: "results/explorer.md",
         },
         undefined,
         undefined,
@@ -414,49 +301,17 @@ describe("background agent run lifecycle", () => {
         ctx
       );
       const statusPath = join(projectDir, ".pi", "agents", id, "status.json");
-      expect(existsSync(statusPath)).toBe(true);
+      await vi.waitFor(() => expect(existsSync(statusPath)).toBe(true));
       const snapshot = JSON.parse(readFileSync(statusPath, "utf8"));
       expect(snapshot).toEqual(
         expect.objectContaining({
           id,
           agent: "explorer",
           prompt: "look around",
-          output_path: "results/explorer.md",
           status: "completed",
           output: "persisted output",
         })
       );
-      expect(
-        readFileSync(join(projectDir, "results", "explorer.md"), "utf8")
-      ).toBe("persisted output");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects output paths outside the workspace", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
-    try {
-      const runner = hangingRunner();
-      const { pi, ctx } = await startSession(
-        runner.createChildAgentRunner,
-        root
-      );
-
-      const result = await agentTool(pi).execute(
-        "call-1",
-        {
-          name: "explorer",
-          prompt: "look around",
-          output_path: "../outside.md",
-        },
-        undefined,
-        undefined,
-        ctx
-      );
-
-      expect((result as any)?.isError).toBe(true);
-      expect(runner.createChildAgentRunner).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -490,7 +345,7 @@ describe("background agent run lifecycle", () => {
         undefined,
         ctx
       );
-      expect(status?.details?.agents?.[0]).toEqual(
+      expect(status?.details?.agent).toEqual(
         expect.objectContaining({
           agent_run_id: "recipe-agent-3",
           prompt: "old task",
@@ -513,7 +368,7 @@ describe("background agent run lifecycle", () => {
         undefined,
         ctx
       );
-      expect(waited?.details?.agents?.[0]).toEqual(
+      expect(waited?.details?.agent).toEqual(
         expect.objectContaining({
           agent_run_id: "recipe-agent-3",
           status: "interrupted",
