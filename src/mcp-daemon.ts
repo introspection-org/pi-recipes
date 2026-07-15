@@ -10,7 +10,7 @@ import {
   installMcpCommandIoRouting,
   type McpRuntime,
 } from "./mcp-command-context.js";
-import { executeMcpCommand } from "./mcp-cli.js";
+import { discoverMcpCatalogs, executeMcpCommand } from "./mcp-cli.js";
 import {
   MCP_DAEMON_FINGERPRINT_ENV,
   MCP_DAEMON_PARENT_PID_ENV,
@@ -216,6 +216,22 @@ function handle(request: McpDaemonRequest, socket: Socket): void {
   if (stopping || request.fingerprint !== fingerprint) {
     send(socket, { id: request.id, error: "daemon_unavailable" });
     socket.end();
+    return;
+  }
+  if (request.type === "catalog") {
+    void runtime()
+      .then((sharedRuntime) =>
+        discoverMcpCatalogs(sharedRuntime, request.timeoutMs)
+      )
+      .then(
+        (catalogs) => send(socket, { id: request.id, catalogs }),
+        (error) =>
+          send(socket, {
+            id: request.id,
+            error: error instanceof Error ? error.message : String(error),
+          })
+      )
+      .finally(() => socket.end());
     return;
   }
   void execute(request, socket);

@@ -34,6 +34,7 @@ import {
   createMcpCliSessionPolicy,
   validateDelegatedMcpCommand,
 } from "./mcp-cli-policy.js";
+import type { McpCatalogServer } from "./mcp-daemon-protocol.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
@@ -731,6 +732,31 @@ async function discoverServerCatalog(
   } finally {
     if (ownsLock) await rm(lock, { recursive: true, force: true });
   }
+}
+
+export async function discoverMcpCatalogs(
+  runtime: McpRuntime,
+  timeoutMs: number
+): Promise<McpCatalogServer[]> {
+  const session = await readSession();
+  return await Promise.all(
+    session.servers.map(async (server) => {
+      try {
+        return {
+          id: server.id,
+          name: server.name,
+          tools: await discoverServerCatalog(runtime, server, timeoutMs),
+        };
+      } catch (error) {
+        return {
+          id: server.id,
+          name: server.name,
+          tools: [],
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    })
+  );
 }
 
 function parseSearchArgs(

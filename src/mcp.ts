@@ -1,5 +1,4 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
@@ -729,23 +728,6 @@ export async function materializeMcpSession(
       : randomBytes(32).toString("hex");
   await writeMcporterConfig(env, opts.cwd, session, endpointBindingList);
   return { ...session, diagnostics };
-}
-
-export function startMcpDaemon(env: NodeJS.ProcessEnv): void {
-  if (
-    !env[MCP_DAEMON_SOCKET_ENV] ||
-    !env[MCP_DAEMON_TOKEN_ENV] ||
-    !env[MCP_DAEMON_FINGERPRINT_ENV]
-  ) {
-    return;
-  }
-  const child = spawn(process.execPath, [mcpClientEntrypointPath(), "--start-daemon"], {
-    detached: true,
-    stdio: "ignore",
-    env: { ...process.env, ...env },
-    cwd: env[MCP_SESSION_ROOT_ENV] || process.cwd(),
-  });
-  child.unref();
 }
 
 export async function stopMcpDaemon(env: NodeJS.ProcessEnv): Promise<void> {

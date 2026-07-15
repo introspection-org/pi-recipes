@@ -40,9 +40,12 @@ import {
   materializeMcpSession,
   materializeSessionMcpCli,
   resolveAgentMcpSelections,
-  startMcpDaemon,
   stopMcpDaemon,
 } from "./mcp.js";
+import {
+  clearMcpCatalogPreload,
+  preloadMcpCatalogs,
+} from "./mcp-catalog.js";
 import {
   loadRecipeAgentDefinitions,
   loadRecipeSystemPrompt,
@@ -998,7 +1001,11 @@ export function createPiRecipesExtension(
       }),
     ]);
     if (session.servers.length > 0) {
-      startMcpDaemon(env);
+      void preloadMcpCatalogs({ env }).catch((error) => {
+        console.warn(
+          `Recipe MCP catalog preload failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      });
       ctx.ui.notify(
         `Recipe MCP: ${session.servers.length} server(s) configured; runtime warming in background`,
         "info"
@@ -1517,6 +1524,7 @@ export function createPiRecipesExtension(
     });
 
     pi.on("session_shutdown", async () => {
+      clearMcpCatalogPreload(env);
       await stopMcpDaemon(env);
     });
 
