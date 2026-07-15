@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/introspection-org/pi-recipes/compare/v0.10.0...v0.10.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* coordinate MCP catalog preload in daemon ([#88](https://github.com/introspection-org/pi-recipes/issues/88)) ([258a72a](https://github.com/introspection-org/pi-recipes/commit/258a72af28ed6fa5ee5da08768effc281589f0c8))
+
 ## [0.10.0](https://github.com/introspection-org/pi-recipes/compare/v0.9.7...v0.10.0) (2026-07-15)
 
 
