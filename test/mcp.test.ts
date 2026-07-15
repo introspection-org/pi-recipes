@@ -22,6 +22,7 @@ import {
   describeUnknownRunServer,
   searchMcpTools,
 } from "../src/mcp-cli.js";
+import { preloadMcpCatalogs } from "../src/mcp-catalog.js";
 import {
   buildMcporterConfig,
   clearMcpSession,
@@ -32,7 +33,6 @@ import {
   materializeSessionMcpCli,
   mcpSessionAllowsTool,
   nativeMcpClientPath,
-  startMcpDaemon,
   type McpSessionConfig,
   type RecipePackageManifest,
 } from "../src/index.js";
@@ -475,7 +475,7 @@ describe("lazy MCP CLI discovery", () => {
         Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
       );
       if (nativeMcpClientPath()) cliEnv.PI_RECIPES_MCP_NATIVE_REQUIRED = "1";
-      startMcpDaemon(env);
+      const preload = preloadMcpCatalogs({ env });
       for (
         let attempt = 0;
         attempt < 100 && !existsSync(env.PI_RECIPES_MCP_DAEMON_SOCKET!);
@@ -484,7 +484,9 @@ describe("lazy MCP CLI discovery", () => {
         await delay(20);
       }
       expect(existsSync(env.PI_RECIPES_MCP_DAEMON_SOCKET!)).toBe(true);
-      expect(stub.stats.initialize).toBe(0);
+      await preload;
+      expect(stub.stats.initialize).toBe(1);
+      expect(stub.stats.list).toBe(1);
 
       const [left, right] = await Promise.all([
         runMcpShim(

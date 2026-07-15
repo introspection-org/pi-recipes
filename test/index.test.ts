@@ -18,6 +18,7 @@ import {
   loadRecipeAgentDefinitions,
   packageResourcePaths,
   parseRecipeSource,
+  preloadMcpCatalogs,
   publishRecipe,
   readPiPackageManifest,
   recipePreferredIdentifier,
@@ -41,6 +42,10 @@ const execFileAsync = promisify(execFile);
 const PI_RECIPES_VERSION = JSON.parse(
   readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")
 ).version as string;
+
+it("exports MCP catalog preloading from the package entrypoint", () => {
+  expect(preloadMcpCatalogs).toBeTypeOf("function");
+});
 
 function fullAgentYaml(name = "agent"): string {
   return [
