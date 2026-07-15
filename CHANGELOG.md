@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.4](https://github.com/introspection-org/pi-recipes/compare/v0.9.3...v0.9.4) (2026-07-15)
+
+
+### Bug Fixes
+
+* reduce MCP client process overhead ([#76](https://github.com/introspection-org/pi-recipes/issues/76)) ([0633059](https://github.com/introspection-org/pi-recipes/commit/063305921d8e307dc49012a40b2b834c4eb45ad7))
+
 ## [0.9.3](https://github.com/introspection-org/pi-recipes/compare/v0.9.2...v0.9.3) (2026-07-14)
 
 
