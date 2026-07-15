@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.6](https://github.com/introspection-org/pi-recipes/compare/v0.9.5...v0.9.6) (2026-07-15)
+
+
+### Bug Fixes
+
+* warm MCP catalogs asynchronously ([#81](https://github.com/introspection-org/pi-recipes/issues/81)) ([b21a500](https://github.com/introspection-org/pi-recipes/commit/b21a50067e448f514ab39f95b83e6b1be6ac6881))
+
 ## [0.9.5](https://github.com/introspection-org/pi-recipes/compare/v0.9.4...v0.9.5) (2026-07-15)
 
 
