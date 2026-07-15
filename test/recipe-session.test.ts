@@ -98,6 +98,24 @@ describe("resolveRecipeSession", () => {
     expect(resolved.agentName).toBe("researcher");
   });
 
+  it("returns visible subagents and their effective agent tool", () => {
+    const recipeDir = makeRecipe();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: researcher",
+        "from: base",
+        "description: Researcher",
+        "subagents: [base]",
+      ].join("\n")
+    );
+
+    const resolved = resolveRecipeSession({ recipeDir });
+
+    expect([...resolved.subagents.keys()]).toEqual(["base"]);
+    expect(resolved.tools).toEqual(["read", "mcp__search", "agent"]);
+  });
+
   it("fails before returning a partial session configuration", () => {
     const recipeDir = makeRecipe();
     expect(() =>

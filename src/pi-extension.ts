@@ -216,14 +216,7 @@ function modelParts(spec: string): { provider: string; model: string } {
 }
 
 function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
-  const definitions = state.resolved.agents;
-  const names = state.agent.subagentsDeclared
-    ? state.agent.subagents
-    : [...new Set([...definitions.values()].map((agent) => agent.name))]
-        .filter((name) => name !== state.agentName);
-  return names
-    .map((name) => definitions.get(name))
-    .filter((agent): agent is RecipeAgentDefinition => Boolean(agent));
+  return [...state.resolved.subagents.values()];
 }
 
 function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
@@ -467,7 +460,6 @@ function activeRecipeTools(
 ): string[] {
   const active = new Set(activeTools);
   const recipeTools = new Set(state.resolved.tools);
-  if (visibleSubagents(state).length > 0) recipeTools.add("agent");
   return [...recipeTools]
     .filter((tool) => active.has(tool))
     .sort();
@@ -855,7 +847,6 @@ export function createPiRecipesExtension(
     pi.setThinkingLevel(launchState.resolved.thinkingLevel);
 
     const activeTools = new Set(launchState.resolved.tools);
-    if (visibleSubagents(launchState).length > 0) activeTools.add("agent");
     pi.setActiveTools([...activeTools]);
     launchState.configured = true;
   }

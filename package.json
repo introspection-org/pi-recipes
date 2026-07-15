@@ -54,6 +54,8 @@
     "dist/recipe-model.js",
     "dist/recipe-agent.d.ts",
     "dist/recipe-agent.js",
+    "dist/recipe-agents-extension.d.ts",
+    "dist/recipe-agents-extension.js",
     "dist/recipe-check.d.ts",
     "dist/recipe-check.js",
     "dist/recipe-package.d.ts",
@@ -108,6 +110,10 @@
     "./recipe-session": {
       "types": "./dist/recipe-session.d.ts",
       "import": "./dist/recipe-session.js"
+    },
+    "./recipe-agents-extension": {
+      "types": "./dist/recipe-agents-extension.d.ts",
+      "import": "./dist/recipe-agents-extension.js"
     }
   },
   "pi": {

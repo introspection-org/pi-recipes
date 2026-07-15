@@ -22,6 +22,7 @@ export interface ResolvedRecipeSession {
   agentName: string;
   agent: RecipeAgentDefinition;
   agents: ReadonlyMap<string, RecipeAgentDefinition>;
+  subagents: ReadonlyMap<string, RecipeAgentDefinition>;
   modelSpec: string;
   modelConfig?: RecipeAgentModelConfig;
   thinkingLevel: ThinkingLevel;
@@ -83,6 +84,26 @@ function selectAgent(
   }
   throw new RecipeSessionResolutionError(
     "Recipe has multiple agents and no default entrypoint; add agents/agent.yaml or select an agent"
+  );
+}
+
+function selectSubagents(
+  definitions: ReadonlyMap<string, RecipeAgentDefinition>,
+  agentName: string,
+  agent: RecipeAgentDefinition
+): Map<string, RecipeAgentDefinition> {
+  const unique = new Map<string, RecipeAgentDefinition>();
+  for (const definition of definitions.values()) {
+    unique.set(definition.name, definition);
+  }
+  const names = agent.subagentsDeclared
+    ? agent.subagents
+    : [...unique.keys()].filter((name) => name !== agentName);
+  return new Map(
+    names.flatMap((name) => {
+      const definition = definitions.get(name);
+      return definition ? [[definition.name, definition] as const] : [];
+    })
   );
 }
 
@@ -171,6 +192,7 @@ export function resolveRecipeSession(
 
   const agents = loadRecipeAgentDefinitions(recipeDir);
   const { agentName, agent } = selectAgent(agents, opts.agentName);
+  const subagents = selectSubagents(agents, agentName, agent);
   const modelSpec = agent.model?.name;
   if (!modelSpec) {
     throw new RecipeSessionResolutionError(
@@ -185,10 +207,16 @@ export function resolveRecipeSession(
     agentName,
     agent,
     agents,
+    subagents,
     modelSpec,
     ...(agent.modelConfig ? { modelConfig: agent.modelConfig } : {}),
     thinkingLevel: (agent.model?.thinkingLevel ?? "low") as ThinkingLevel,
-    tools: executableRecipeToolNames(agent.tools),
+    tools: [
+      ...new Set([
+        ...executableRecipeToolNames(agent.tools),
+        ...(subagents.size > 0 ? ["agent"] : []),
+      ]),
+    ],
     mcp: agent.mcp,
     skillPaths: packageResourcePaths(manifest, "skills"),
     promptPaths: packageResourcePaths(manifest, "prompts"),

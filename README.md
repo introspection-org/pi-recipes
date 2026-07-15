@@ -88,8 +88,14 @@ second runtime abstraction:
 
 ```ts
 import { resolveRecipeSession } from "@introspection-ai/pi-recipes/recipe-session";
+import { createRecipeAgentsExtension } from "@introspection-ai/pi-recipes/recipe-agents-extension";
 
 const recipe = resolveRecipeSession({ recipeDir, agentName });
+const recipeAgents = createRecipeAgentsExtension({
+  recipe,
+  createRunController: ({ agents, emit }) =>
+    createHostAgentRunController({ agents, emit }),
+});
 
 const services = await createAgentSessionServices({
   cwd,
@@ -99,6 +105,7 @@ const services = await createAgentSessionServices({
   resourceLoaderOptions: {
     additionalSkillPaths: recipe.skillPaths,
     systemPromptOverride: recipe.systemPromptOverride,
+    extensionFactories: [recipeAgents],
   },
 });
 
@@ -112,7 +119,9 @@ const { session } = await createAgentSessionFromServices({
 ```
 
 The host remains responsible for model credentials, session persistence,
-telemetry, and lifecycle. The resolver only owns recipe interpretation.
+telemetry, and lifecycle. The resolver owns recipe interpretation; the shared
+extension owns the `agent` tool contract and delegates run execution to the
+host controller.
 
 `recipes create` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
 and recipe README. Edit those files as the recipe grows. Named variants are
