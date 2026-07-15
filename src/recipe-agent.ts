@@ -84,8 +84,6 @@ export const REQUIRED_RECIPE_AGENT_FIELDS: RequiredResolvedRecipeAgentField[] = 
   "model.name",
   "model.thinkingLevel",
   "tools",
-  "skills",
-  "subagents",
   "systemInstructions",
 ];
 

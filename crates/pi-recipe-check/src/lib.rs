@@ -154,12 +154,10 @@ enum AgentField {
 }
 
 impl AgentField {
-    const REQUIRED: [Self; 6] = [
+    const REQUIRED: [Self; 4] = [
         Self::ModelName,
         Self::ModelThinkingLevel,
         Self::Tools,
-        Self::Skills,
-        Self::Subagents,
         Self::SystemInstructions,
     ];
 

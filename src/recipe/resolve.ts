@@ -9,6 +9,7 @@ import {
   type RecipeSystemInstructions,
 } from "../recipe-agent.js";
 import type { RecipeAgentModelConfig } from "../recipe-model.js";
+import { resolveAgentSkillPaths } from "../recipe-skills.js";
 import {
   packageResourcePaths,
   readPiPackageManifest,
@@ -88,18 +89,10 @@ function selectAgent(
 
 function selectSubagents(
   definitions: ReadonlyMap<string, RecipeAgentDefinition>,
-  agentName: string,
   agent: RecipeAgentDefinition
 ): Map<string, RecipeAgentDefinition> {
-  const unique = new Map<string, RecipeAgentDefinition>();
-  for (const definition of definitions.values()) {
-    unique.set(definition.name, definition);
-  }
-  const names = agent.subagentsDeclared
-    ? agent.subagents
-    : [...unique.keys()].filter((name) => name !== agentName);
   return new Map(
-    names.flatMap((name) => {
+    agent.subagents.flatMap((name) => {
       const definition = definitions.get(name);
       return definition ? [[definition.name, definition] as const] : [];
     })
@@ -184,14 +177,14 @@ export function resolveRecipe(
       [
         `Recipe "${manifest.name}" has invalid agents.`,
         ...agentErrors.map((finding) => `- ${finding.message}`),
-        "Add the missing fields to each agent, even if empty.",
+        "Add the missing required fields to each agent.",
       ].join("\n")
     );
   }
 
   const agents = loadRecipeAgentDefinitions(recipeDir);
   const { agentName, agent } = selectAgent(agents, opts.agentName);
-  const subagents = selectSubagents(agents, agentName, agent);
+  const subagents = selectSubagents(agents, agent);
   const modelSpec = agent.model?.name;
   if (!modelSpec) {
     throw new RecipeResolutionError(
@@ -216,7 +209,11 @@ export function resolveRecipe(
       ]),
     ],
     mcp: agent.mcp,
-    skillPaths: packageResourcePaths(manifest, "skills"),
+    skillPaths: resolveAgentSkillPaths(
+      recipeDir,
+      packageResourcePaths(manifest, "skills"),
+      agent.skills
+    ),
     promptPaths: packageResourcePaths(manifest, "prompts"),
     extensionPaths: selectExtensionPaths(
       recipeDir,

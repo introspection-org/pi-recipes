@@ -19,6 +19,11 @@ import {
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
 import {
+  packageResourcePaths,
+  readPiPackageManifest,
+} from "./recipe-package.js";
+import { resolveAgentSkillPaths } from "./recipe-skills.js";
+import {
   applyRecipeAgentModelConfigToModel,
   applyRecipeAgentModelConfigToSession,
 } from "./recipe-model.js";
@@ -290,6 +295,12 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
         this.opts.recipeDir
       ),
       resourceLoaderOptions: {
+        noSkills: true,
+        additionalSkillPaths: resolveAgentSkillPaths(
+          this.opts.recipeDir,
+          packageResourcePaths(readPiPackageManifest(this.opts.recipeDir), "skills"),
+          agent.skills
+        ),
         systemPromptOverride: (base) =>
           applySystemInstructions(
             loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
@@ -298,7 +309,12 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       },
     });
 
-    const executableTools = executableRecipeToolNames(agent.tools);
+    // Delegated recipe agents are intentionally one level deep. An agent
+    // selected as the root session gets the dynamic `agent` tool from the
+    // extension, while the same definition running as a child never does.
+    const executableTools = executableRecipeToolNames(agent.tools).filter(
+      (tool) => tool !== "agent"
+    );
     const created = await createAgentSessionFromServices({
       services,
       sessionManager: SessionManager.inMemory(this.opts.workspaceDir),

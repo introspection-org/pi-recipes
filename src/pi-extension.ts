@@ -709,7 +709,6 @@ export function createPiRecipesExtension(
         recipeLoadErrorMessage(flag, err instanceof Error ? err.message : String(err))
       );
     }
-
     // Keep the recipe selected by CLI flags visible to shell commands and
     // recipe-authored instructions. In production `env` is process.env, so
     // built-in shell tools and child agents inherit these resolved values.

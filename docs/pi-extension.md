@@ -168,6 +168,10 @@ Objects such as `model`, `extensions`, and `mcp` merge by key. Arrays such as
 Within `mcp`, servers merge by id, and each child's `include` or `exclude`
 replaces that server's corresponding list while inheriting the other list.
 
+Omitted `skills` and `subagents` default to none. A derived agent that omits
+either field inherits it through `from:`; use an explicit `[]` only to clear a
+non-empty inherited list.
+
 `system_instructions.mode` can be:
 
 - `append`: append to the current prompt
@@ -433,15 +437,19 @@ used if present:
 - `skills`
 - `prompts`
 
-Skills become Pi `/skill:name` commands. Prompt templates are surfaced through
-Pi's normal resource system.
+The package resource paths define the skills available in the recipe. Each
+agent's `skills` list selects which of those skills Pi discovers and includes
+in that agent's prompt. An omitted list selects none. Unselected skill files
+remain in the shared recipe directory, so this selection is a context filter,
+not a filesystem security boundary. Prompt templates are surfaced through Pi's
+normal resource system.
 
 ## Subagents
 
 Recipe subagents are other agents from the same recipe, exposed through the
 `agent` tool.
 
-If the selected agent declares `subagents`, only those agents are visible:
+Only agents named in the selected agent's `subagents` list are visible:
 
 ```yaml
 name: agent
@@ -450,7 +458,13 @@ subagents:
   - reviewer
 ```
 
-If it omits `subagents`, every other recipe agent is visible.
+If it omits `subagents`, no other recipe agents are visible and the `agent`
+tool is not enabled.
+
+Delegation is limited to one level. An agent selected directly with `--agent`
+receives the `agent` tool when it declares subagents. The same definition,
+when running as a delegated child, does not receive the `agent` tool and cannot
+start its own subagents.
 
 The `agent` tool accepts:
 
