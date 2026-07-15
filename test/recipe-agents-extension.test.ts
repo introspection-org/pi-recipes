@@ -144,7 +144,8 @@ describe("agent completion acknowledgement", () => {
       "call-1",
       { action: "close", id: "run-1" },
       undefined,
-      undefined
+      undefined,
+      undefined as never
     );
 
     expect(acknowledgeCompletions).toHaveBeenCalledWith(["run-1"]);
@@ -173,7 +174,8 @@ describe("agent completion acknowledgement", () => {
       "call-1",
       { action: "close" },
       undefined,
-      undefined
+      undefined,
+      undefined as never
     );
 
     expect(acknowledgeCompletions).toHaveBeenCalledWith(["run-1"]);
