@@ -47,7 +47,9 @@ function runtime(): Promise<McpRuntime> {
 }
 
 function send(socket: Socket, envelope: McpDaemonEnvelope): void {
-  if (!socket.destroyed) socket.write(`${JSON.stringify(envelope)}\n`);
+  if (!socket.destroyed && !socket.writableEnded) {
+    socket.write(`${JSON.stringify(envelope)}\n`, () => {});
+  }
 }
 
 function stream(id: string, name: "stdout" | "stderr", socket: Socket): Writable {
@@ -220,6 +222,10 @@ function handle(request: McpDaemonRequest, socket: Socket): void {
 }
 
 const server = createServer((socket) => {
+  // Client cancellation may close the command socket before its final
+  // envelope is written. That is a connection-level outcome, not a daemon
+  // failure.
+  socket.on("error", () => {});
   socket.setEncoding("utf8");
   let buffer = "";
   socket.on("data", (chunk) => {

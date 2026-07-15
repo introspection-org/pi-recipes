@@ -30,6 +30,7 @@ import {
   materializeMcpSession,
   materializeSessionMcpCli,
   mcpSessionAllowsTool,
+  nativeMcpClientPath,
   startMcpDaemon,
   type McpSessionConfig,
   type RecipePackageManifest,
@@ -132,6 +133,27 @@ function runMcpShim(
     child.stderr!.on("data", (chunk) => (stderr += chunk));
     child.on("close", (code) => resolve({ code, stdout, stderr }));
     if (stdin !== undefined) child.stdin!.end(stdin);
+  });
+}
+
+function interruptNativeMcp(
+  clientPath: string,
+  args: string[],
+  env: Record<string, string>,
+  stdin: string
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(clientPath, args, {
+      env: { ...process.env, ...env },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout!.on("data", (chunk) => (stdout += chunk));
+    child.stderr!.on("data", (chunk) => (stderr += chunk));
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    child.stdin!.end(stdin);
+    setTimeout(() => child.kill("SIGTERM"), 100);
   });
 }
 
@@ -387,6 +409,10 @@ describe("static MCP session materialization", () => {
       const script = readFileSync(result.shimPath, "utf8");
       expect(script).toContain("PI_RECIPES_MCP_SESSION_ROOT=");
       expect(script).toContain("MCPORTER_CONFIG:=");
+      if (nativeMcpClientPath()) {
+        expect(script).toContain(nativeMcpClientPath());
+        expect(script).toContain("native_status");
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -411,6 +437,7 @@ describe("lazy MCP CLI discovery", () => {
     const env: NodeJS.ProcessEnv = {
       PI_RECIPES_MCP_LOCAL_CONFIG: local,
       PI_RECIPES_MCP_RUN_TIMEOUT_MS: "1000",
+      PI_RECIPES_MCP_MAX_OUTPUT_BYTES: "1024",
       STUB_TOKEN: "test-token",
     };
     try {
@@ -428,6 +455,7 @@ describe("lazy MCP CLI discovery", () => {
       const cliEnv = Object.fromEntries(
         Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
       );
+      if (nativeMcpClientPath()) cliEnv.PI_RECIPES_MCP_NATIVE_REQUIRED = "1";
       startMcpDaemon(env);
       for (
         let attempt = 0;
@@ -467,6 +495,16 @@ describe("lazy MCP CLI discovery", () => {
       expect(stub.stats.initialize).toBe(1);
       expect(stub.stats.call).toBe(3);
 
+      const oversized = await runMcpShim(
+        shim.shimPath,
+        ["call", "stub.search_profiles", `query=${"x".repeat(2_000)}`],
+        cliEnv
+      );
+      expect(oversized.code).toBe(1);
+      expect(oversized.stdout).toBe("");
+      expect(oversized.stderr).toContain("exceeding PI_RECIPES_MCP_MAX_OUTPUT_BYTES=1024");
+      expect(stub.stats.call).toBe(4);
+
       const search = await runMcpShim(
         shim.shimPath,
         ["search", "candidate"],
@@ -496,7 +534,18 @@ describe("lazy MCP CLI discovery", () => {
       expect(run).toMatchObject({ code: 0, stderr: "" });
       expect(JSON.parse(run.stdout)).toMatchObject({ arguments: { query: "principal" } });
       expect(stub.stats.initialize).toBe(1);
-      expect(stub.stats.call).toBe(4);
+      expect(stub.stats.call).toBe(5);
+
+      const nativeClient = nativeMcpClientPath();
+      if (nativeClient) {
+        const interrupted = await interruptNativeMcp(
+          nativeClient,
+          ["run"],
+          cliEnv,
+          "while (true) {}"
+        );
+        expect(interrupted.code).toBe(130);
+      }
 
       const busy = await runMcpShim(
         shim.shimPath,
@@ -516,7 +565,7 @@ describe("lazy MCP CLI discovery", () => {
         arguments: { query: "survivor" },
       });
       expect(stub.stats.initialize).toBe(1);
-      expect(stub.stats.call).toBe(5);
+      expect(stub.stats.call).toBe(6);
     } finally {
       await clearMcpSession(env, cwd);
       stub.server.close();

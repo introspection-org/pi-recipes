@@ -7,6 +7,7 @@ __pycache__/
 tmp/
 target/
 vendor/recipe-check/
+vendor/mcp-client/
 harbor/jobs/
 .DS_Store
 *.log

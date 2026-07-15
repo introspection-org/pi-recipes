@@ -183,6 +183,17 @@ export function mcpClientEntrypointPath(): string {
   return compiledEntrypoint("mcp-client.js");
 }
 
+export function nativeMcpClientPath(
+  platform = process.platform,
+  arch = process.arch
+): string | undefined {
+  const executable = platform === "win32" ? "mcp-client.exe" : "mcp-client";
+  const candidate = fileURLToPath(
+    new URL(`../vendor/mcp-client/${platform}-${arch}/${executable}`, import.meta.url)
+  );
+  return existsSync(candidate) ? candidate : undefined;
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
@@ -211,6 +222,7 @@ export async function materializeSessionMcpCli(opts: {
   env[MCP_SESSION_ROOT_ENV] = opts.cwd;
   const binDir = defaultMcpBinDir(opts.cwd);
   const shimPath = join(binDir, "mcp");
+  const nativeClient = nativeMcpClientPath();
   // The shim pins MCPORTER_CONFIG to the session-generated config (the
   // session env normally sets it; the default covers shells that lost the
   // env). mcporter must never fall through to its own config resolution —
@@ -223,6 +235,14 @@ export async function materializeSessionMcpCli(opts: {
     `: "\${${MCPORTER_CONFIG_ENV}:=${doubleQuoteEscape(defaultMcporterConfigPath(opts.cwd))}}"`,
     `export ${MCPORTER_CONFIG_ENV}`,
     `if [ -n "\${${MCP_DAEMON_SOCKET_ENV}:-}" ]; then`,
+    ...(nativeClient
+      ? [
+          `  ${shellQuote(nativeClient)} "$@"`,
+          "  native_status=$?",
+          "  if [ \"$native_status\" -ne 75 ]; then exit \"$native_status\"; fi",
+          '  if [ "${PI_RECIPES_MCP_NATIVE_REQUIRED:-}" = "1" ]; then exit 75; fi',
+        ]
+      : []),
     `  exec ${shellQuote(process.execPath)} ${shellQuote(mcpClientEntrypointPath())} "$@"`,
     "fi",
     `exec ${shellQuote(process.execPath)} ${shellQuote(mcpCliEntrypointPath())} "$@"`,

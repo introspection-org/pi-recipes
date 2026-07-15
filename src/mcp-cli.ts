@@ -1911,9 +1911,25 @@ async function callWithSharedRuntime(
     else if (output === "markdown") rendered = result.markdown();
     else if (output === "text") rendered = result.text();
     else rendered = result.json() ?? result.structuredContent() ?? result.text() ?? raw;
-    stdout.write(
-      `${typeof rendered === "string" ? rendered : JSON.stringify(rendered, null, 2)}\n`
-    );
+    const serialized =
+      typeof rendered === "string" ? rendered : JSON.stringify(rendered, null, 2);
+    const configuredLimit = process.env.PI_RECIPES_MCP_MAX_OUTPUT_BYTES;
+    if (configuredLimit !== undefined) {
+      const limit = Number(configuredLimit);
+      if (!Number.isSafeInteger(limit) || limit <= 0) {
+        stderr.write("PI_RECIPES_MCP_MAX_OUTPUT_BYTES must be a positive integer.\n");
+        return 2;
+      }
+      const size = Buffer.byteLength(serialized, "utf8");
+      if (size > limit) {
+        stderr.write(
+          `MCP result is ${size} bytes, exceeding PI_RECIPES_MCP_MAX_OUTPUT_BYTES=${limit}. ` +
+            "Use tool pagination or a narrower field projection.\n"
+        );
+        return 1;
+      }
+    }
+    stdout.write(`${serialized}\n`);
     return asRecord(raw).isError === true ? 1 : 0;
   } catch (error) {
     stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

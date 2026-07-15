@@ -1,0 +1,16 @@
+[package]
+name = "pi-mcp-client"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight Unix-socket client for the pi-recipes MCP daemon"
+license = "Apache-2.0"
+repository = "https://github.com/introspection-org/pi-recipes"
+publish = false
+
+[dependencies]
+serde_json = "1.0"
+signal-hook = "0.3"
+
+[[bin]]
+name = "mcp-client"
+path = "src/main.rs"

@@ -31,7 +31,7 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  build-recipe-check:
+  build-native-tools:
     needs: release-please
     if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
     strategy:
@@ -55,23 +55,27 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - run: cargo build --release -p pi-recipe-check
+      - run: cargo build --release -p pi-recipe-check -p pi-mcp-client
 
-      - run: node scripts/package-recipe-check.mjs
+      - run: node scripts/package-recipe-check.mjs && node scripts/package-mcp-client.mjs
         env:
           RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
           RECIPE_CHECK_ARCH: ${{ matrix.arch }}
+          MCP_CLIENT_PLATFORM: ${{ matrix.platform }}
+          MCP_CLIENT_ARCH: ${{ matrix.arch }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: recipe-check-${{ matrix.platform }}-${{ matrix.arch }}
-          path: vendor/recipe-check/${{ matrix.platform }}-${{ matrix.arch }}
+          name: native-tools-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            vendor/recipe-check/${{ matrix.platform }}-${{ matrix.arch }}
+            vendor/mcp-client/${{ matrix.platform }}-${{ matrix.arch }}
           if-no-files-found: error
 
   publish:
     needs:
       - release-please
-      - build-recipe-check
+      - build-native-tools
     if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     environment: publish
@@ -102,22 +106,23 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: recipe-check-*
-          path: recipe-check-artifacts
+          pattern: native-tools-*
+          path: native-tool-artifacts
 
-      - name: Prepare packaged recipe-check binaries
+      - name: Prepare packaged native binaries
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf vendor/recipe-check
-          mkdir -p vendor/recipe-check
-          for artifact in recipe-check-artifacts/recipe-check-*; do
-            platform_id="${artifact##*/recipe-check-}"
-            mkdir -p "vendor/recipe-check/${platform_id}"
+          rm -rf vendor/recipe-check vendor/mcp-client
+          mkdir -p vendor/recipe-check vendor/mcp-client
+          for artifact in native-tool-artifacts/native-tools-*; do
+            platform_id="${artifact##*/native-tools-}"
+            mkdir -p "vendor/recipe-check/${platform_id}" "vendor/mcp-client/${platform_id}"
             find "$artifact" -type f -name 'recipe-check*' -exec cp {} "vendor/recipe-check/${platform_id}/" \;
+            find "$artifact" -type f -name 'mcp-client*' -exec cp {} "vendor/mcp-client/${platform_id}/" \;
           done
-          find vendor/recipe-check -type f ! -name '*.exe' -exec chmod 755 {} \;
-          find vendor/recipe-check -maxdepth 3 -type f -print
+          find vendor/recipe-check vendor/mcp-client -type f ! -name '*.exe' -exec chmod 755 {} \;
+          find vendor/recipe-check vendor/mcp-client -maxdepth 3 -type f -print
 
       - run: pnpm pack:check
 
