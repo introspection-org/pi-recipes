@@ -1,3 +1,5 @@
+import type { McpToolCatalogEntry } from "./mcp.js";
+
 export const MCP_DAEMON_SOCKET_ENV = "PI_RECIPES_MCP_DAEMON_SOCKET";
 export const MCP_DAEMON_TOKEN_ENV = "PI_RECIPES_MCP_DAEMON_TOKEN";
 export const MCP_DAEMON_FINGERPRINT_ENV = "PI_RECIPES_MCP_DAEMON_FINGERPRINT";
@@ -33,14 +35,31 @@ export interface McpDaemonPingRequest {
   fingerprint: string;
 }
 
+export interface McpDaemonCatalogRequest {
+  type: "catalog";
+  id: string;
+  token: string;
+  fingerprint: string;
+  timeoutMs: number;
+}
+
+export interface McpCatalogServer {
+  id: string;
+  name: string;
+  tools: McpToolCatalogEntry[];
+  error?: string;
+}
+
 export type McpDaemonRequest =
   | McpDaemonExecuteRequest
   | McpDaemonCancelRequest
   | McpDaemonStopRequest
-  | McpDaemonPingRequest;
+  | McpDaemonPingRequest
+  | McpDaemonCatalogRequest;
 
 export type McpDaemonEnvelope =
   | { id: string; stream: "stdout" | "stderr"; data: string }
   | { id: string; ready: true; fingerprint: string }
+  | { id: string; catalogs: McpCatalogServer[] }
   | { id: string; exitCode: number }
   | { id: string; error: string };

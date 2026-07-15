@@ -1,0 +1,136 @@
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { open, readFile, rm } from "node:fs/promises";
+import { createConnection, type Socket } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+
+import {
+  MCP_DAEMON_FINGERPRINT_ENV,
+  MCP_DAEMON_SOCKET_ENV,
+  MCP_DAEMON_TOKEN_ENV,
+  MCP_SESSION_ROOT_ENV,
+  type McpDaemonEnvelope,
+  type McpDaemonRequest,
+} from "./mcp-daemon-protocol.js";
+
+const START_TIMEOUT_MS = 20_000;
+
+function daemonPath(): string {
+  const adjacent = fileURLToPath(new URL("./mcp-daemon.js", import.meta.url));
+  if (existsSync(adjacent)) return adjacent;
+  return fileURLToPath(new URL("../dist/mcp-daemon.js", import.meta.url));
+}
+
+export function mcpDaemonEnvironment(env: NodeJS.ProcessEnv = process.env): {
+  socketPath: string;
+  token: string;
+  fingerprint: string;
+} {
+  const socketPath = env[MCP_DAEMON_SOCKET_ENV];
+  const token = env[MCP_DAEMON_TOKEN_ENV];
+  const fingerprint = env[MCP_DAEMON_FINGERPRINT_ENV];
+  if (!socketPath || !token || !fingerprint) {
+    throw new Error("MCP daemon environment is incomplete.");
+  }
+  return { socketPath, token, fingerprint };
+}
+
+export function exchangeMcpDaemon(
+  request: McpDaemonRequest,
+  onEnvelope: (envelope: McpDaemonEnvelope, socket: Socket) => void,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  const { socketPath } = mcpDaemonEnvironment(env);
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(socketPath);
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.once("connect", () => socket.write(`${JSON.stringify(request)}\n`));
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (line) onEnvelope(JSON.parse(line) as McpDaemonEnvelope, socket);
+        newline = buffer.indexOf("\n");
+      }
+    });
+    socket.once("end", resolve);
+    socket.once("error", reject);
+  });
+}
+
+async function ping(env: NodeJS.ProcessEnv): Promise<boolean> {
+  const { token, fingerprint } = mcpDaemonEnvironment(env);
+  let ready = false;
+  await exchangeMcpDaemon(
+    { type: "ping", id: randomUUID(), token, fingerprint },
+    (envelope) => {
+      if ("ready" in envelope && envelope.fingerprint === fingerprint) ready = true;
+    },
+    env
+  ).catch(() => {});
+  return ready;
+}
+
+export async function ensureMcpDaemon(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  if (await ping(env)) return;
+  const { socketPath } = mcpDaemonEnvironment(env);
+  const lockPath = `${socketPath}.lock`;
+  let lock: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    lock = await open(lockPath, "wx", 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const owner = Number(await readFile(lockPath, "utf8").catch(() => ""));
+    if (Number.isSafeInteger(owner) && owner > 0) {
+      try {
+        process.kill(owner, 0);
+      } catch (ownerError) {
+        if ((ownerError as NodeJS.ErrnoException).code === "ESRCH") {
+          await rm(lockPath, { force: true });
+          return ensureMcpDaemon(env);
+        }
+      }
+    }
+  }
+
+  if (lock) {
+    try {
+      await lock.writeFile(String(process.pid));
+      if (process.platform !== "win32") await rm(socketPath, { force: true });
+      const child = spawn(process.execPath, [daemonPath()], {
+        detached: true,
+        stdio: "ignore",
+        env: { ...process.env, ...env },
+        cwd: env[MCP_SESSION_ROOT_ENV] || process.cwd(),
+      });
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
+      child.unref();
+    } catch (error) {
+      await rm(lockPath, { force: true });
+      throw error;
+    } finally {
+      await lock.close();
+    }
+  }
+
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (await ping(env)) {
+      if (lock) await rm(lockPath, { force: true });
+      return;
+    }
+    await delay(50);
+  }
+  if (lock) await rm(lockPath, { force: true });
+  throw new Error("MCP daemon did not become ready before the startup deadline.");
+}
