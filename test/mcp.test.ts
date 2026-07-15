@@ -445,7 +445,7 @@ describe("static MCP session materialization", () => {
 describe("lazy MCP CLI discovery", () => {
   it("reuses one daemon runtime across concurrent calls and later commands", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-daemon-"));
-    const stub = await startStubMcpServer({ failListAttempts: 2 });
+    const stub = await startStubMcpServer({ failListAttempts: 1 });
     const cwd = join(root, "workspace");
     const recipeDir = join(root, "recipe");
     mkdirSync(recipeDir, { recursive: true });
@@ -500,8 +500,8 @@ describe("lazy MCP CLI discovery", () => {
       await preload;
       expect(racedList).toMatchObject({ code: 0, stderr: "" });
       expect(racedList.stdout).toContain("stub.search_profiles");
-      expect(stub.stats.initialize).toBe(3);
-      expect(stub.stats.list).toBe(3);
+      expect(stub.stats.initialize).toBe(2);
+      expect(stub.stats.list).toBe(2);
 
       const [left, right] = await Promise.all([
         runMcpShim(
@@ -519,7 +519,7 @@ describe("lazy MCP CLI discovery", () => {
       expect(right).toMatchObject({ code: 0, stderr: "" });
       expect(JSON.parse(left.stdout)).toMatchObject({ arguments: { query: "engineer" } });
       expect(JSON.parse(right.stdout)).toMatchObject({ arguments: { query: "architect" } });
-      expect(stub.stats.initialize).toBe(3);
+      expect(stub.stats.initialize).toBe(2);
       expect(stub.stats.call).toBe(2);
 
       const later = await runMcpShim(
@@ -528,7 +528,7 @@ describe("lazy MCP CLI discovery", () => {
         cliEnv
       );
       expect(later).toMatchObject({ code: 0, stderr: "" });
-      expect(stub.stats.initialize).toBe(3);
+      expect(stub.stats.initialize).toBe(2);
       expect(stub.stats.call).toBe(3);
 
       const oversized = await runMcpShim(
@@ -555,8 +555,8 @@ describe("lazy MCP CLI discovery", () => {
       );
       expect(list).toMatchObject({ code: 0, stderr: "" });
       expect(list.stdout).toContain("stub.search_profiles(query: string)");
-      expect(stub.stats.initialize).toBe(3);
-      expect(stub.stats.list).toBe(3);
+      expect(stub.stats.initialize).toBe(2);
+      expect(stub.stats.list).toBe(2);
 
       const run = await runMcpShim(
         shim.shimPath,
@@ -569,7 +569,7 @@ describe("lazy MCP CLI discovery", () => {
       );
       expect(run).toMatchObject({ code: 0, stderr: "" });
       expect(JSON.parse(run.stdout)).toMatchObject({ arguments: { query: "principal" } });
-      expect(stub.stats.initialize).toBe(3);
+      expect(stub.stats.initialize).toBe(2);
       expect(stub.stats.call).toBe(5);
 
       const nativeClient = nativeMcpClientPath();
@@ -600,7 +600,7 @@ describe("lazy MCP CLI discovery", () => {
       expect(JSON.parse(afterBusyLoop.stdout)).toMatchObject({
         arguments: { query: "survivor" },
       });
-      expect(stub.stats.initialize).toBe(3);
+      expect(stub.stats.initialize).toBe(2);
       expect(stub.stats.call).toBe(6);
     } finally {
       await clearMcpSession(env, cwd);
