@@ -48,6 +48,8 @@
     "dist/recipe-dev.js",
     "dist/recipe-evals.d.ts",
     "dist/recipe-evals.js",
+    "dist/recipe-harness.d.ts",
+    "dist/recipe-harness.js",
     "dist/recipe-mcp-config.d.ts",
     "dist/recipe-mcp-config.js",
     "dist/recipe-model.d.ts",
@@ -56,6 +58,8 @@
     "dist/recipe-agent.js",
     "dist/recipe-check.d.ts",
     "dist/recipe-check.js",
+    "dist/recipe-compile.d.ts",
+    "dist/recipe-compile.js",
     "dist/recipe-package.d.ts",
     "dist/recipe-package.js",
     "dist/recipe-publish.d.ts",
@@ -102,6 +106,14 @@
     "./recipe-store": {
       "types": "./dist/recipe-store.d.ts",
       "import": "./dist/recipe-store.js"
+    },
+    "./recipe-compile": {
+      "types": "./dist/recipe-compile.d.ts",
+      "import": "./dist/recipe-compile.js"
+    },
+    "./recipe-harness": {
+      "types": "./dist/recipe-harness.d.ts",
+      "import": "./dist/recipe-harness.js"
     }
   },
   "pi": {
