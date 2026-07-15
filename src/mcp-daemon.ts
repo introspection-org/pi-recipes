@@ -224,6 +224,10 @@ async function execute(request: Extract<McpDaemonRequest, { type: "execute" }>, 
   socket.once("close", () => controller.abort());
   try {
     await joinCatalogPreload();
+    if (controller.signal.aborted) {
+      send(socket, { id: request.id, exitCode: 130 });
+      return;
+    }
     const exitCode =
       request.args[0] === "run"
         ? await executeRun(request, socket, controller)

@@ -141,7 +141,8 @@ function interruptNativeMcp(
   clientPath: string,
   args: string[],
   env: Record<string, string>,
-  stdin: string
+  stdin: string,
+  afterMs = 100
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(clientPath, args, {
@@ -154,7 +155,7 @@ function interruptNativeMcp(
     child.stderr!.on("data", (chunk) => (stderr += chunk));
     child.on("close", (code) => resolve({ code, stdout, stderr }));
     child.stdin!.end(stdin);
-    setTimeout(() => child.kill("SIGTERM"), 100);
+    setTimeout(() => child.kill("SIGTERM"), afterMs);
   });
 }
 
@@ -492,6 +493,20 @@ describe("lazy MCP CLI discovery", () => {
         await delay(10);
       }
       expect(stub.stats.list).toBeGreaterThanOrEqual(1);
+      const nativeClient = nativeMcpClientPath();
+      if (nativeClient) {
+        const interruptedDuringPreload = await interruptNativeMcp(
+          nativeClient,
+          ["run"],
+          cliEnv,
+          [
+            "const result = await tools.stub.search_profiles({ query: 'must-not-run' });",
+            "console.log(JSON.stringify(result));",
+          ].join("\n"),
+          50
+        );
+        expect(interruptedDuringPreload.code).toBe(130);
+      }
       const racedList = await runMcpShim(
         shim.shimPath,
         ["list", "stub.search_profiles", "--schema"],
@@ -502,6 +517,7 @@ describe("lazy MCP CLI discovery", () => {
       expect(racedList.stdout).toContain("stub.search_profiles");
       expect(stub.stats.initialize).toBe(2);
       expect(stub.stats.list).toBe(2);
+      expect(stub.stats.call).toBe(0);
 
       const [left, right] = await Promise.all([
         runMcpShim(
@@ -572,7 +588,6 @@ describe("lazy MCP CLI discovery", () => {
       expect(stub.stats.initialize).toBe(2);
       expect(stub.stats.call).toBe(5);
 
-      const nativeClient = nativeMcpClientPath();
       if (nativeClient) {
         const interrupted = await interruptNativeMcp(
           nativeClient,
