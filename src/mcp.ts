@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
@@ -188,8 +188,16 @@ export function nativeMcpClientPath(
   arch = process.arch
 ): string | undefined {
   const executable = platform === "win32" ? "mcp-client.exe" : "mcp-client";
-  const candidate = fileURLToPath(
-    new URL(`../vendor/mcp-client/${platform}-${arch}/${executable}`, import.meta.url)
+  const packageEntrypoint = fileURLToPath(
+    import.meta.resolve("@introspection-ai/pi-recipes")
+  );
+  const candidate = resolve(
+    dirname(packageEntrypoint),
+    "..",
+    "vendor",
+    "mcp-client",
+    `${platform}-${arch}`,
+    executable
   );
   return existsSync(candidate) ? candidate : undefined;
 }

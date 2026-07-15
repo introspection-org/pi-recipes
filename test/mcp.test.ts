@@ -11,8 +11,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -416,6 +417,24 @@ describe("static MCP session materialization", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("resolves the native client from the installed package", () => {
+    const packageEntrypoint = fileURLToPath(
+      import.meta.resolve("@introspection-ai/pi-recipes")
+    );
+    const executable = process.platform === "win32" ? "mcp-client.exe" : "mcp-client";
+
+    expect(nativeMcpClientPath()).toBe(
+      join(
+        dirname(packageEntrypoint),
+        "..",
+        "vendor",
+        "mcp-client",
+        `${process.platform}-${process.arch}`,
+        executable
+      )
+    );
   });
 });
 
