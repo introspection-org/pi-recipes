@@ -43,7 +43,6 @@ and prompts.
 - [Recipe Flow](docs/recipe-flow.md): quick user-facing guide to installing, customizing, creating, and publishing recipes.
 - [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
-- [Recipe Runtime Kernel](docs/recipe-runtime.md): compiled artifacts, the shared recipe harness, and the managed-host adapter boundary.
 - [Recipe Evals](docs/recipe-evals.md): declaring and running Harbor offline eval suites with exact pins.
 
 ## Package Exports

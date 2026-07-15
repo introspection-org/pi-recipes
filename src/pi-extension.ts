@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   defineTool,
@@ -19,11 +19,6 @@ import {
   promptResultText,
   type RecipeChildToolEvent,
 } from "./child-agent.js";
-import {
-  compileRecipe,
-  compiledRecipeAgent,
-  type CompiledRecipeArtifact,
-} from "./recipe-compile.js";
 import {
   ChildAgentRunStore,
   type ChildRunSnapshot,
@@ -49,12 +44,16 @@ import {
   stopMcpDaemon,
 } from "./mcp.js";
 import {
+  loadRecipeAgentDefinitions,
+  loadRecipeSystemPrompt,
+  resolveRecipeAgentDefinition,
   validateRecipeAgentDefinitions,
   type RecipeAgentDefinition,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
+  packageResourcePaths,
   readPiPackageManifest,
   validatePiPackageManifest,
   type PiPackageManifest,
@@ -77,7 +76,6 @@ type CreateRecipeChildAgentRunner = (opts: {
   recipeDir: string;
   workspaceDir: string;
   agentName: string;
-  compiledRecipe?: CompiledRecipeArtifact;
   env?: NodeJS.ProcessEnv;
   authStorage?: AuthStorage;
   modelRegistry?: ModelRegistry;
@@ -161,7 +159,6 @@ interface RecipeLaunchState {
   manifest: PiPackageManifest;
   agentName: string;
   agent: RecipeAgentDefinition;
-  artifact: CompiledRecipeArtifact;
   skillPaths: string[];
   promptPaths: string[];
   extensionPaths: string[];
@@ -235,16 +232,13 @@ function applySystemInstructions(
 }
 
 function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
+  const definitions = loadRecipeAgentDefinitions(state.recipeDir);
   const names = state.agent.subagentsDeclared
     ? state.agent.subagents
-    : state.artifact.agents.map((agent) => agent.name)
+    : [...new Set([...definitions.values()].map((agent) => agent.name))]
         .filter((name) => name !== state.agentName);
   return names
-    .map((name) =>
-      state.artifact.agents.find(
-        (agent) => agent.name === name || agent.aliases.includes(name)
-      )?.definition
-    )
+    .map((name) => definitions.get(name))
     .filter((agent): agent is RecipeAgentDefinition => Boolean(agent));
 }
 
@@ -493,6 +487,58 @@ function activeRecipeTools(
   return [...recipeTools]
     .filter((tool) => active.has(tool))
     .sort();
+}
+
+function normalizeSelector(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\.[^/.]+$/, "");
+}
+
+function extensionSelectorSet(recipeDir: string, extensionPath: string): Set<string> {
+  const relativePath = relative(recipeDir, extensionPath).replace(/\\/g, "/");
+  const withoutExtension = normalizeSelector(relativePath);
+  const base = basename(extensionPath, extname(extensionPath));
+  const parts = withoutExtension.split("/");
+  const parent = parts.length > 1 ? parts[parts.length - 2] : undefined;
+  return new Set(
+    [
+      relativePath,
+      withoutExtension,
+      base,
+      parent && base === "index" ? parent : undefined,
+    ].filter((value): value is string => Boolean(value))
+  );
+}
+
+function extensionSelectorMatches(
+  recipeDir: string,
+  extensionPath: string,
+  selector: string
+): boolean {
+  const normalized = normalizeSelector(selector.trim());
+  if (!normalized) return false;
+  if (normalized === "*") return true;
+  return extensionSelectorSet(recipeDir, extensionPath).has(normalized);
+}
+
+function filterExtensionPaths(
+  recipeDir: string,
+  extensionPaths: string[],
+  agent: RecipeAgentDefinition
+): string[] {
+  const include = agent.extensions?.include;
+  const exclude = agent.extensions?.exclude ?? [];
+  return extensionPaths.filter((extensionPath) => {
+    const included =
+      include === undefined
+        ? true
+        : include.some((selector) =>
+            extensionSelectorMatches(recipeDir, extensionPath, selector)
+          );
+    if (!included) return false;
+    return !exclude.some((selector) =>
+      extensionSelectorMatches(recipeDir, extensionPath, selector)
+    );
+  });
 }
 
 function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string {
@@ -790,26 +836,15 @@ export function createPiRecipesExtension(
       );
     }
 
-    let artifact: CompiledRecipeArtifact;
-    try {
-      artifact = compileRecipe({ recipeDir });
-    } catch (err) {
-      throw new RecipeLaunchError(
-        recipeLoadErrorMessage(
-          flag,
-          err instanceof Error ? err.message : String(err)
-        )
-      );
-    }
-    let resolved;
-    try {
-      resolved = compiledRecipeAgent(artifact, requestedAgentName);
-    } catch {
-      const requested = requestedAgentName ?? artifact.entrypoint ?? "agent";
-      const availableAgents = artifact.agents.map((agent) => agent.name).sort();
+    const resolved = resolveRecipeAgentDefinition({
+      recipeDir,
+      agentName: requestedAgentName,
+    });
+    if (!resolved.agent) {
+      const availableAgents = [...loadRecipeAgentDefinitions(recipeDir).keys()].sort();
       throw new RecipeLaunchError(
         [
-          `Recipe "${manifest.name}" loaded, but agent "${requested}" was not found.`,
+          `Recipe "${manifest.name}" loaded, but agent "${resolved.agentName}" was not found.`,
           availableAgents.length > 0
             ? `Available agents: ${availableAgents.join(", ")}`
             : "No recipe agents were found.",
@@ -818,26 +853,27 @@ export function createPiRecipesExtension(
       );
     }
 
-    const extensionPaths = resolved.extensionPaths.map((path) =>
-      resolve(recipeDir, path)
+    const extensionPaths = filterExtensionPaths(
+      recipeDir,
+      packageResourcePaths(manifest, "extensions"),
+      resolved.agent
     );
 
     // Keep the recipe selected by CLI flags visible to shell commands and
     // recipe-authored instructions. In production `env` is process.env, so
     // built-in shell tools and child agents inherit these resolved values.
     env.PI_RECIPE_DIR = recipeDir;
-    env.PI_AGENT_NAME = resolved.name;
+    env.PI_AGENT_NAME = resolved.agentName;
 
     state = {
       key,
       cwd,
       recipeDir,
       manifest,
-      agentName: resolved.name,
-      agent: resolved.definition,
-      artifact,
-      skillPaths: artifact.resources.skills.map((path) => resolve(recipeDir, path)),
-      promptPaths: artifact.resources.prompts.map((path) => resolve(recipeDir, path)),
+      agentName: resolved.agentName,
+      agent: resolved.agent,
+      skillPaths: packageResourcePaths(manifest, "skills"),
+      promptPaths: packageResourcePaths(manifest, "prompts"),
       extensionPaths,
       extensionsLoaded: false,
       configured: false,
@@ -1005,7 +1041,6 @@ export function createPiRecipesExtension(
       workspaceDir: launchState.cwd,
       env,
       agentName,
-      compiledRecipe: launchState.artifact,
       authStorage: ctx.modelRegistry.authStorage,
       modelRegistry: ctx.modelRegistry,
       onAssistantMessage(text, stream) {
@@ -1497,7 +1532,7 @@ export function createPiRecipesExtension(
     pi.on("before_agent_start", (event, ctx) => {
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return {};
-      const base = launchState.artifact.systemPrompt ?? event.systemPrompt;
+      const base = loadRecipeSystemPrompt(launchState.recipeDir) ?? event.systemPrompt;
       const recipePrompt = applySystemInstructions(base, launchState.agent.systemInstructions);
       return { systemPrompt: recipePrompt };
     });

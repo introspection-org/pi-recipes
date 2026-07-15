@@ -10,57 +10,31 @@ import {
   type AgentSession,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
-import { resolve } from "node:path";
 import { suppressInterruptResume } from "./interactions.js";
 import {
-  type RecipeAgentDefinition,
+  loadRecipeSystemPrompt,
+  REQUIRED_RECIPE_AGENT_FIELDS,
+  resolveRecipeAgentDefinition,
+  validateResolvedRecipeAgentDefinition,
   type RecipeSystemInstructions,
 } from "./recipe-agent.js";
-import {
-  compileRecipe,
-  compiledRecipeAgent,
-  type CompiledRecipeArtifact,
-} from "./recipe-compile.js";
 import {
   applyRecipeAgentModelConfigToModel,
   applyRecipeAgentModelConfigToSession,
 } from "./recipe-model.js";
+import {
+  executableRecipeToolNames,
+} from "./mcp.js";
+
 export interface CreateRecipeChildAgentRunnerOptions {
   recipeDir: string;
   workspaceDir: string;
   agentName: string;
-  compiledRecipe?: CompiledRecipeArtifact;
-  hostAdapter?: RecipeHostAdapter;
   env?: NodeJS.ProcessEnv;
   authStorage?: AuthStorage;
   modelRegistry?: ModelRegistry;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
-}
-
-export interface RecipeAgentSessionPlan {
-  artifact: CompiledRecipeArtifact;
-  agentName: string;
-  agent: RecipeAgentDefinition;
-  recipeDir: string;
-  workspaceDir: string;
-  resources: {
-    agents: string[];
-    extensions: string[];
-    skills: string[];
-    prompts: string[];
-    mcpManifests: string[];
-  };
-  modelSpec: string;
-  thinkingLevel: ThinkingLevel;
-  executableTools: string[];
-  recipeSystemPrompt?: string;
-  systemInstructions?: RecipeSystemInstructions;
-}
-
-/** Host-owned session materialization behind portable recipe semantics. */
-export interface RecipeHostAdapter {
-  createSession(plan: RecipeAgentSessionPlan): Promise<AgentSession>;
 }
 
 export interface RecipeChildAgentRunner {
@@ -148,103 +122,6 @@ function applySystemInstructions(
   if (!instructions) return base;
   if (instructions.mode === "replace") return instructions.content;
   return [base, instructions.content].filter(Boolean).join("\n\n");
-}
-
-function materializedResources(
-  recipeDir: string,
-  artifact: CompiledRecipeArtifact,
-  extensionPaths: string[]
-): RecipeAgentSessionPlan["resources"] {
-  return {
-    agents: artifact.resources.agents.map((path) => resolve(recipeDir, path)),
-    extensions: extensionPaths.map((path) => resolve(recipeDir, path)),
-    skills: artifact.resources.skills.map((path) => resolve(recipeDir, path)),
-    prompts: artifact.resources.prompts.map((path) => resolve(recipeDir, path)),
-    mcpManifests: artifact.resources.mcpManifests.map((path) => resolve(recipeDir, path)),
-  };
-}
-
-export function createRecipeAgentSessionPlan(opts: {
-  recipeDir: string;
-  workspaceDir: string;
-  artifact: CompiledRecipeArtifact;
-  agentName?: string;
-}): RecipeAgentSessionPlan {
-  const compiledAgent = compiledRecipeAgent(opts.artifact, opts.agentName);
-  const modelSpec = compiledAgent.definition.model?.name;
-  if (!modelSpec) {
-    throw new Error(`Recipe agent "${compiledAgent.name}" must declare model.name`);
-  }
-  return {
-    artifact: opts.artifact,
-    agentName: compiledAgent.name,
-    agent: compiledAgent.definition,
-    recipeDir: resolve(opts.recipeDir),
-    workspaceDir: resolve(opts.workspaceDir),
-    resources: materializedResources(
-      opts.recipeDir,
-      opts.artifact,
-      compiledAgent.extensionPaths
-    ),
-    modelSpec,
-    thinkingLevel: (compiledAgent.definition.model?.thinkingLevel ?? "low") as ThinkingLevel,
-    executableTools: [...compiledAgent.executableTools],
-    ...(opts.artifact.systemPrompt
-      ? { recipeSystemPrompt: opts.artifact.systemPrompt }
-      : {}),
-    ...(compiledAgent.definition.systemInstructions
-      ? { systemInstructions: compiledAgent.definition.systemInstructions }
-      : {}),
-  };
-}
-
-export function createDefaultRecipeHostAdapter(
-  opts: Pick<
-    CreateRecipeChildAgentRunnerOptions,
-    "env" | "authStorage" | "modelRegistry"
-  >
-): RecipeHostAdapter {
-  return {
-    async createSession(plan) {
-      const model = applyRecipeAgentModelConfigToModel(
-        modelFromSpec(plan.modelSpec, opts.modelRegistry),
-        plan.agent.modelConfig
-      );
-      const authStorage = authStorageForChildAgent(model, {
-        recipeDir: plan.recipeDir,
-        workspaceDir: plan.workspaceDir,
-        agentName: plan.agentName,
-        ...opts,
-      });
-      const services = await createAgentSessionServices({
-        cwd: plan.workspaceDir,
-        agentDir: plan.recipeDir,
-        authStorage,
-        modelRegistry: opts.modelRegistry,
-        settingsManager: SettingsManager.create(plan.workspaceDir, plan.recipeDir),
-        resourceLoaderOptions: {
-          systemPromptOverride: (base) =>
-            applySystemInstructions(
-              plan.recipeSystemPrompt ?? base,
-              plan.systemInstructions
-            ),
-        },
-      });
-      const created = await createAgentSessionFromServices({
-        services,
-        sessionManager: SessionManager.inMemory(plan.workspaceDir),
-        model,
-        thinkingLevel: plan.thinkingLevel,
-        tools: plan.executableTools,
-      });
-      applyRecipeAgentModelConfigToSession(
-        created.session,
-        plan.agent.modelConfig
-      );
-      await created.session.bindExtensions({});
-      return created.session;
-    },
-  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -369,17 +246,68 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
 
   async start(): Promise<void> {
     if (this.session) return;
-    const artifact =
-      this.opts.compiledRecipe ?? compileRecipe({ recipeDir: this.opts.recipeDir });
-    const plan = createRecipeAgentSessionPlan({
+
+    const { agentName, agent } = resolveRecipeAgentDefinition({
       recipeDir: this.opts.recipeDir,
-      workspaceDir: this.opts.workspaceDir,
-      artifact,
       agentName: this.opts.agentName,
     });
-    const host =
-      this.opts.hostAdapter ?? createDefaultRecipeHostAdapter(this.opts);
-    this.session = await host.createSession(plan);
+    if (!agent) {
+      throw new Error(`Recipe agent not found: ${agentName}`);
+    }
+
+    const validationFindings = validateResolvedRecipeAgentDefinition({
+      recipeDir: this.opts.recipeDir,
+      agentName,
+      requireExplicitName: true,
+      requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+    });
+    const validationErrors = validationFindings.filter(
+      (finding) => finding.severity !== "warning"
+    );
+    if (validationErrors.length > 0) {
+      throw new Error(
+        validationErrors.map((finding) => finding.message).join("\n")
+      );
+    }
+
+    const modelSpec = agent.model?.name;
+    if (!modelSpec) {
+      throw new Error(`Recipe agent "${agentName}" must declare model.name`);
+    }
+    const model = applyRecipeAgentModelConfigToModel(
+      modelFromSpec(modelSpec, this.opts.modelRegistry),
+      agent.modelConfig
+    );
+    const authStorage = authStorageForChildAgent(model, this.opts);
+    const services = await createAgentSessionServices({
+      cwd: this.opts.workspaceDir,
+      agentDir: this.opts.recipeDir,
+      authStorage,
+      modelRegistry: this.opts.modelRegistry,
+      settingsManager: SettingsManager.create(
+        this.opts.workspaceDir,
+        this.opts.recipeDir
+      ),
+      resourceLoaderOptions: {
+        systemPromptOverride: (base) =>
+          applySystemInstructions(
+            loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
+            agent.systemInstructions
+          ),
+      },
+    });
+
+    const executableTools = executableRecipeToolNames(agent.tools);
+    const created = await createAgentSessionFromServices({
+      services,
+      sessionManager: SessionManager.inMemory(this.opts.workspaceDir),
+      model,
+      thinkingLevel: (agent.model?.thinkingLevel ?? "low") as ThinkingLevel,
+      tools: executableTools,
+    });
+    this.session = created.session;
+    applyRecipeAgentModelConfigToSession(this.session, agent.modelConfig);
+    await this.session.bindExtensions({});
     this.unsubscribe = this.session.subscribe((event) => {
       this.handleSessionEvent(event);
     });
