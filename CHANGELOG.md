@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.5](https://github.com/introspection-org/pi-recipes/compare/v0.9.4...v0.9.5) (2026-07-15)
+
+
+### Bug Fixes
+
+* resolve bundled MCP native client ([#78](https://github.com/introspection-org/pi-recipes/issues/78)) ([0212964](https://github.com/introspection-org/pi-recipes/commit/0212964c7d9ee9d7fcc9595bad0dda9b3d70a428))
+
 ## [0.9.4](https://github.com/introspection-org/pi-recipes/compare/v0.9.3...v0.9.4) (2026-07-15)
 
 
