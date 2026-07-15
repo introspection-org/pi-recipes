@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.7](https://github.com/introspection-org/pi-recipes/compare/v0.9.6...v0.9.7) (2026-07-15)
+
+
+### Bug Fixes
+
+* export MCP catalog preloading ([#83](https://github.com/introspection-org/pi-recipes/issues/83)) ([cbfe168](https://github.com/introspection-org/pi-recipes/commit/cbfe1681e4637005e27e54e2e293c4fda66a5121))
+
 ## [0.9.6](https://github.com/introspection-org/pi-recipes/compare/v0.9.5...v0.9.6) (2026-07-15)
 
 
