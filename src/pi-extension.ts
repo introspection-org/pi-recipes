@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { basename, dirname, extname, join, relative } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   defineTool,
@@ -11,7 +11,6 @@ import {
   type ExtensionFactory,
   type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import {
@@ -35,7 +34,6 @@ import {
 import {
   clearMcpSession,
   configureMcpLocalConfigPath,
-  executableRecipeToolNames,
   formatMcpConfigurationDiagnostics,
   materializeMcpSession,
   materializeSessionMcpCli,
@@ -44,20 +42,14 @@ import {
   stopMcpDaemon,
 } from "./mcp.js";
 import {
-  loadRecipeAgentDefinitions,
-  loadRecipeSystemPrompt,
-  resolveRecipeAgentDefinition,
-  validateRecipeAgentDefinitions,
   type RecipeAgentDefinition,
-  type RecipeSystemInstructions,
 } from "./recipe-agent.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
+import type { PiPackageManifest } from "./recipe-package.js";
 import {
-  packageResourcePaths,
-  readPiPackageManifest,
-  validatePiPackageManifest,
-  type PiPackageManifest,
-} from "./recipe-package.js";
+  resolveRecipeSession,
+  type ResolvedRecipeSession,
+} from "./recipe-session.js";
 import { resolveRecipeDirectory } from "./recipe-store.js";
 
 export interface PiRecipesExtensionOptions {
@@ -159,6 +151,7 @@ interface RecipeLaunchState {
   manifest: PiPackageManifest;
   agentName: string;
   agent: RecipeAgentDefinition;
+  resolved: ResolvedRecipeSession;
   skillPaths: string[];
   promptPaths: string[];
   extensionPaths: string[];
@@ -222,17 +215,8 @@ function modelParts(spec: string): { provider: string; model: string } {
   };
 }
 
-function applySystemInstructions(
-  base: string,
-  instructions: RecipeSystemInstructions | undefined
-): string {
-  if (!instructions) return base;
-  if (instructions.mode === "replace") return instructions.content;
-  return [base, instructions.content].filter(Boolean).join("\n\n");
-}
-
 function visibleSubagents(state: RecipeLaunchState): RecipeAgentDefinition[] {
-  const definitions = loadRecipeAgentDefinitions(state.recipeDir);
+  const definitions = state.resolved.agents;
   const names = state.agent.subagentsDeclared
     ? state.agent.subagents
     : [...new Set([...definitions.values()].map((agent) => agent.name))]
@@ -482,63 +466,11 @@ function activeRecipeTools(
   activeTools: string[]
 ): string[] {
   const active = new Set(activeTools);
-  const recipeTools = new Set(executableRecipeToolNames(state.agent.tools));
+  const recipeTools = new Set(state.resolved.tools);
   if (visibleSubagents(state).length > 0) recipeTools.add("agent");
   return [...recipeTools]
     .filter((tool) => active.has(tool))
     .sort();
-}
-
-function normalizeSelector(value: string): string {
-  return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\.[^/.]+$/, "");
-}
-
-function extensionSelectorSet(recipeDir: string, extensionPath: string): Set<string> {
-  const relativePath = relative(recipeDir, extensionPath).replace(/\\/g, "/");
-  const withoutExtension = normalizeSelector(relativePath);
-  const base = basename(extensionPath, extname(extensionPath));
-  const parts = withoutExtension.split("/");
-  const parent = parts.length > 1 ? parts[parts.length - 2] : undefined;
-  return new Set(
-    [
-      relativePath,
-      withoutExtension,
-      base,
-      parent && base === "index" ? parent : undefined,
-    ].filter((value): value is string => Boolean(value))
-  );
-}
-
-function extensionSelectorMatches(
-  recipeDir: string,
-  extensionPath: string,
-  selector: string
-): boolean {
-  const normalized = normalizeSelector(selector.trim());
-  if (!normalized) return false;
-  if (normalized === "*") return true;
-  return extensionSelectorSet(recipeDir, extensionPath).has(normalized);
-}
-
-function filterExtensionPaths(
-  recipeDir: string,
-  extensionPaths: string[],
-  agent: RecipeAgentDefinition
-): string[] {
-  const include = agent.extensions?.include;
-  const exclude = agent.extensions?.exclude ?? [];
-  return extensionPaths.filter((extensionPath) => {
-    const included =
-      include === undefined
-        ? true
-        : include.some((selector) =>
-            extensionSelectorMatches(recipeDir, extensionPath, selector)
-          );
-    if (!included) return false;
-    return !exclude.some((selector) =>
-      extensionSelectorMatches(recipeDir, extensionPath, selector)
-    );
-  });
 }
 
 function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string {
@@ -806,58 +738,17 @@ export function createPiRecipesExtension(
     const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
     if (state?.key === key) return state;
 
-    let manifest: PiPackageManifest;
+    let resolved: ResolvedRecipeSession;
     try {
-      manifest = readPiPackageManifest(recipeDir);
+      resolved = resolveRecipeSession({
+        recipeDir,
+        agentName: requestedAgentName,
+      });
     } catch (err) {
       throw new RecipeLaunchError(
         recipeLoadErrorMessage(flag, err instanceof Error ? err.message : String(err))
       );
     }
-    const validation = validatePiPackageManifest(manifest);
-    const errors = validation.findings.filter((finding) => finding.severity === "error");
-    if (errors.length > 0) {
-      throw new RecipeLaunchError(
-        recipeLoadErrorMessage(flag, errors.map((finding) => finding.message).join("\n"))
-      );
-    }
-
-    const agentFindings = validateRecipeAgentDefinitions(recipeDir);
-    const agentErrors = agentFindings.filter(
-      (finding) => finding.severity !== "warning"
-    );
-    if (agentErrors.length > 0) {
-      throw new RecipeLaunchError(
-        [
-          `Recipe "${manifest.name}" has invalid agents.`,
-          ...agentErrors.map((finding) => `- ${finding.message}`),
-          "Add the missing fields to each agent, even if empty.",
-        ].join("\n")
-      );
-    }
-
-    const resolved = resolveRecipeAgentDefinition({
-      recipeDir,
-      agentName: requestedAgentName,
-    });
-    if (!resolved.agent) {
-      const availableAgents = [...loadRecipeAgentDefinitions(recipeDir).keys()].sort();
-      throw new RecipeLaunchError(
-        [
-          `Recipe "${manifest.name}" loaded, but agent "${resolved.agentName}" was not found.`,
-          availableAgents.length > 0
-            ? `Available agents: ${availableAgents.join(", ")}`
-            : "No recipe agents were found.",
-          "Launch with `pi --recipe <recipe> --agent <agent>` or update the recipe agents.",
-        ].join("\n")
-      );
-    }
-
-    const extensionPaths = filterExtensionPaths(
-      recipeDir,
-      packageResourcePaths(manifest, "extensions"),
-      resolved.agent
-    );
 
     // Keep the recipe selected by CLI flags visible to shell commands and
     // recipe-authored instructions. In production `env` is process.env, so
@@ -869,12 +760,13 @@ export function createPiRecipesExtension(
       key,
       cwd,
       recipeDir,
-      manifest,
+      manifest: resolved.manifest,
       agentName: resolved.agentName,
       agent: resolved.agent,
-      skillPaths: packageResourcePaths(manifest, "skills"),
-      promptPaths: packageResourcePaths(manifest, "prompts"),
-      extensionPaths,
+      resolved,
+      skillPaths: resolved.skillPaths,
+      promptPaths: resolved.promptPaths,
+      extensionPaths: resolved.extensionPaths,
       extensionsLoaded: false,
       configured: false,
     };
@@ -941,30 +833,28 @@ export function createPiRecipesExtension(
     ].filter(Boolean);
     pi.setSessionName(labelParts.join(" "));
 
-    const modelSpec = launchState.agent.model?.name;
-    if (modelSpec) {
-      const { provider, model } = modelParts(modelSpec);
-      const lookupProvider = provider === "gemini" ? "google" : provider;
-      const resolvedModel = ctx.modelRegistry.find(lookupProvider, model);
-      if (!resolvedModel) {
-        throw new Error(`Recipe model is not available: ${modelSpec}`);
-      }
-      applyRecipeAgentModelConfigToModel(
-        resolvedModel,
-        launchState.agent.modelConfig
+    const { provider, model } = modelParts(launchState.resolved.modelSpec);
+    const lookupProvider = provider === "gemini" ? "google" : provider;
+    const resolvedModel = ctx.modelRegistry.find(lookupProvider, model);
+    if (!resolvedModel) {
+      throw new Error(
+        `Recipe model is not available: ${launchState.resolved.modelSpec}`
       );
-      const ok = await pi.setModel(resolvedModel);
-      if (!ok) {
-        throw new Error(`Recipe model has no configured API key: ${modelSpec}`);
-      }
+    }
+    applyRecipeAgentModelConfigToModel(
+      resolvedModel,
+      launchState.resolved.modelConfig
+    );
+    const ok = await pi.setModel(resolvedModel);
+    if (!ok) {
+      throw new Error(
+        `Recipe model has no configured API key: ${launchState.resolved.modelSpec}`
+      );
     }
 
-    const thinkingLevel = launchState.agent.model?.thinkingLevel;
-    if (thinkingLevel) {
-      pi.setThinkingLevel(thinkingLevel as ThinkingLevel);
-    }
+    pi.setThinkingLevel(launchState.resolved.thinkingLevel);
 
-    const activeTools = new Set(executableRecipeToolNames(launchState.agent.tools));
+    const activeTools = new Set(launchState.resolved.tools);
     if (visibleSubagents(launchState).length > 0) activeTools.add("agent");
     pi.setActiveTools([...activeTools]);
     launchState.configured = true;
@@ -1532,9 +1422,11 @@ export function createPiRecipesExtension(
     pi.on("before_agent_start", (event, ctx) => {
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return {};
-      const base = loadRecipeSystemPrompt(launchState.recipeDir) ?? event.systemPrompt;
-      const recipePrompt = applySystemInstructions(base, launchState.agent.systemInstructions);
-      return { systemPrompt: recipePrompt };
+      return {
+        systemPrompt: launchState.resolved.systemPromptOverride(
+          event.systemPrompt
+        ),
+      };
     });
   };
 }

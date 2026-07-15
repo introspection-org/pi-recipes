@@ -60,6 +60,8 @@
     "dist/recipe-package.js",
     "dist/recipe-publish.d.ts",
     "dist/recipe-publish.js",
+    "dist/recipe-session.d.ts",
+    "dist/recipe-session.js",
     "dist/recipe-store.d.ts",
     "dist/recipe-store.js",
     "dist/recipe-telemetry.d.ts",
@@ -102,6 +104,10 @@
     "./recipe-store": {
       "types": "./dist/recipe-store.d.ts",
       "import": "./dist/recipe-store.js"
+    },
+    "./recipe-session": {
+      "types": "./dist/recipe-session.d.ts",
+      "import": "./dist/recipe-session.js"
     }
   },
   "pi": {

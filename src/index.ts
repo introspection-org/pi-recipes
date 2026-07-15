@@ -8,5 +8,6 @@ export * from "./recipe-evals.js";
 export * from "./recipe-model.js";
 export * from "./recipe-package.js";
 export * from "./recipe-publish.js";
+export * from "./recipe-session.js";
 export * from "./recipe-store.js";
 export * from "./recipe-telemetry.js";
