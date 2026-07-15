@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_UPDATE_EVENT,
+  createAgentTool,
   createAgentsExtension,
+  createRecipeAgentTool,
   type AgentRunController,
 } from "../src/pi/index.js";
 import type { ResolvedRecipeSession } from "../src/recipe-session.js";
@@ -53,8 +55,8 @@ function recipe(): ResolvedRecipeSession {
 
 function controller(): AgentRunController {
   return {
-    list: () => [],
-    get: () => null,
+    list: vi.fn(() => []),
+    get: vi.fn(() => null),
     start: vi.fn(),
     wait: vi.fn(),
     waitFor: vi.fn(),
@@ -67,6 +69,11 @@ function controller(): AgentRunController {
 }
 
 describe("createAgentsExtension", () => {
+  it("exports the shared agent tool from the public Pi entrypoint", () => {
+    expect(createAgentTool).toBeTypeOf("function");
+    expect(createRecipeAgentTool).toBe(createAgentTool);
+  });
+
   it("registers the shared agent tool and delegates managed lifecycle", async () => {
     const runs = controller();
     const registerTool = vi.fn();
@@ -112,5 +119,63 @@ describe("createAgentsExtension", () => {
     expect(runs.rehydrate).toHaveBeenCalledOnce();
     await shutdown?.();
     expect(runs.closeAll).toHaveBeenCalledOnce();
+  });
+});
+
+describe("agent completion acknowledgement", () => {
+  it("acknowledges notifications for closed runs", async () => {
+    const runs = controller();
+    vi.mocked(runs.close).mockResolvedValue({
+      agent_run_id: "run-1",
+      invocation_name: "explorer:1",
+      agent_name: "explorer",
+      label: "Explore",
+      prompt: "Inspect",
+      status: "closed",
+      started_at: 1,
+      last_activity_at: 1,
+    });
+    const acknowledgeCompletions = vi.fn();
+    const tool = createAgentTool(runs, recipe().subagents, {
+      acknowledgeCompletions,
+    });
+
+    await tool.execute(
+      "call-1",
+      { action: "close", id: "run-1" },
+      undefined,
+      undefined
+    );
+
+    expect(acknowledgeCompletions).toHaveBeenCalledWith(["run-1"]);
+  });
+
+  it("acknowledges notifications for every run when closing all", async () => {
+    const runs = controller();
+    vi.mocked(runs.list).mockReturnValue([
+      {
+        agent_run_id: "run-1",
+        invocation_name: "explorer:1",
+        agent_name: "explorer",
+        label: "Explore",
+        prompt: "Inspect",
+        status: "completed",
+        started_at: 1,
+        last_activity_at: 1,
+      },
+    ]);
+    const acknowledgeCompletions = vi.fn();
+    const tool = createAgentTool(runs, recipe().subagents, {
+      acknowledgeCompletions,
+    });
+
+    await tool.execute(
+      "call-1",
+      { action: "close" },
+      undefined,
+      undefined
+    );
+
+    expect(acknowledgeCompletions).toHaveBeenCalledWith(["run-1"]);
   });
 });

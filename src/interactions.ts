@@ -208,7 +208,20 @@ export interface AskUserResult {
   details: AskUserDetails;
 }
 
-const interactionAutoResolution = new AsyncLocalStorage<boolean>();
+// Recipe extensions and their host may resolve separate physical copies of
+// pi-recipes (for example, one under the recipe and one under runtime-worker).
+// Keep the async context process-global so either copy can establish the child
+// boundary and every current copy observes it.
+const INTERACTION_AUTO_RESOLUTION_KEY = Symbol.for(
+  "@introspection-ai/pi-recipes/interaction-auto-resolution"
+);
+const interactionGlobals = globalThis as typeof globalThis & {
+  [key: symbol]: AsyncLocalStorage<boolean> | undefined;
+};
+const interactionAutoResolution =
+  interactionGlobals[INTERACTION_AUTO_RESOLUTION_KEY] ??
+  new AsyncLocalStorage<boolean>();
+interactionGlobals[INTERACTION_AUTO_RESOLUTION_KEY] = interactionAutoResolution;
 
 /**
  * Run `fn` with interaction requests resolved without prompting the user.

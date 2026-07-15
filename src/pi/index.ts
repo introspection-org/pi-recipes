@@ -1,5 +1,6 @@
 export {
   AGENT_UPDATE_EVENT,
+  createAgentTool,
   createAgentsExtension,
   type AgentNestedToolSummary,
   type AgentRunController,
@@ -8,6 +9,7 @@ export {
   type CreateAgentRunControllerContext,
   type CreateAgentsExtensionOptions,
   // Compatibility exports.
+  createRecipeAgentTool,
   createRecipeAgentsExtension,
   RECIPE_AGENT_UPDATE_EVENT,
   type CreateRecipeAgentRunControllerContext,

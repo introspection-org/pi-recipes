@@ -9,7 +9,7 @@ import {
   createRecipeScaffold,
 } from "./recipe-dev.js";
 import { isDirectEntry } from "./direct-cli.js";
-import { runRecipeCheck, type RecipeCheckProfile } from "./recipe-check.js";
+import { runRecipeCheck, type RecipeCheckProfile } from "./recipe/check.js";
 import {
   publishRecipe,
   type PublishedRecipe,
@@ -29,7 +29,7 @@ import {
 } from "./recipe-store.js";
 import {
   readPiPackageManifest,
-} from "./recipe-package.js";
+} from "./recipe/package.js";
 import {
   materializeRecipeMcpLocalConfig,
   type RecipeMcpLocalConfigResult,

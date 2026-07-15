@@ -4,7 +4,7 @@
 // fails a recipe command.
 
 import type { InstalledRecipe } from "./recipe-store.js";
-import type { RecipePackageResources } from "./recipe-package.js";
+import type { RecipePackageResources } from "./recipe/package.js";
 import { piRecipesPackageMetadata } from "./package-info.js";
 
 export const DEFAULT_TELEMETRY_ENDPOINT = "https://pi.recipes/api/installs";

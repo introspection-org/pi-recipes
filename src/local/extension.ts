@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   type AuthStorage,
@@ -91,6 +92,7 @@ const COMPLETION_DELIVERY_RETRY_MS = 100;
 interface ChildRun extends ChildRunSnapshot {
   runner: RecipeChildAgentRunner;
   promise: Promise<ChildRun>;
+  notifyUpdate(): void;
 }
 
 interface RecipeLaunchState {
@@ -231,7 +233,8 @@ function formatAgentCall(
   return `${themeFg(theme, "toolTitle", themeBold(theme, `agent ${action}`))} ${themeFg(theme, "accent", agent)}${label}`;
 }
 
-const RECIPE_AGENT_COMPLETIONS_TYPE = "recipe-agent-completions";
+// Keep the legacy wire value so resumed transcripts retain their renderer.
+const AGENT_COMPLETIONS_TYPE = "recipe-agent-completions";
 
 interface AgentCompletionsDetails {
   completions: ChildCompletionEnvelope[];
@@ -288,6 +291,7 @@ function snapshotOf(run: ChildRunSnapshot): ChildRunSnapshot {
     agent: run.agent,
     label: run.label,
     prompt: run.prompt,
+    output_path: run.output_path,
     status: run.status,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
@@ -295,6 +299,28 @@ function snapshotOf(run: ChildRunSnapshot): ChildRunSnapshot {
     error: run.error,
     toolCalls: run.toolCalls.map((call) => ({ ...call })),
   };
+}
+
+function resolveAgentOutputPath(
+  workspaceRoot: string,
+  outputPath: string | undefined
+): string | undefined {
+  if (!outputPath?.trim()) return undefined;
+  const trimmed = outputPath.trim();
+  const workspace = resolve(workspaceRoot);
+  const target = resolve(workspace, trimmed);
+  const tempRoot = resolve("/tmp");
+  const allowed =
+    target === workspace ||
+    target.startsWith(`${workspace}${sep}`) ||
+    (isAbsolute(trimmed) &&
+      (target === tempRoot || target.startsWith(`${tempRoot}${sep}`)));
+  if (!allowed) {
+    throw new Error(
+      `output_path must be under ${workspace} or ${tempRoot}: ${outputPath}`
+    );
+  }
+  return target;
 }
 
 function controllerSummary(
@@ -312,6 +338,7 @@ function controllerSummary(
     agent_name: run.agent,
     label: run.label ?? run.agent,
     prompt: run.prompt,
+    output_path: run.output_path,
     status,
     started_at: Number.isFinite(startedAt) ? startedAt : Date.now(),
     ...(completedAt !== undefined && Number.isFinite(completedAt)
@@ -535,7 +562,7 @@ export function createPiRecipesExtension(
   }
 
   function nextChildRunId(): string {
-    return `recipe-agent-${++childRunIndex}`;
+    return `agent-run-${++childRunIndex}`;
   }
 
   /**
@@ -549,7 +576,7 @@ export function createPiRecipesExtension(
     const persisted = await store.readPersistedSnapshots();
     let restored = 0;
     for (const snapshot of persisted) {
-      const indexMatch = /^recipe-agent-(\d+)$/.exec(snapshot.id);
+      const indexMatch = /^(?:agent-run|recipe-agent)-(\d+)$/.exec(snapshot.id);
       if (indexMatch) {
         childRunIndex = Math.max(childRunIndex, Number(indexMatch[1]));
       }
@@ -594,6 +621,7 @@ export function createPiRecipesExtension(
         input.name,
         input.prompt,
         input.label,
+        input.output_path,
         localAgentContext,
         input.onUpdate
       );
@@ -617,8 +645,29 @@ export function createPiRecipesExtension(
         reason: result.reason,
       };
     },
-    async message() {
-      throw new Error("Local agent runs do not support follow-up messages");
+    async message(id, message) {
+      if (archivedRuns.has(id) && !childRuns.has(id)) {
+        throw new Error(
+          `Agent run ${id} belongs to a previous Pi session and cannot be controlled`
+        );
+      }
+      const run = childRuns.get(id);
+      if (!run) throw new Error(`Unknown agent run: ${id}`);
+      if (run.status === "running") {
+        throw new Error(`Agent run ${id} is already running`);
+      }
+      run.status = "running";
+      run.completedAt = undefined;
+      run.error = undefined;
+      run.output = undefined;
+      run.promise = executeChildPrompt(
+        run,
+        message,
+        state?.cwd ?? process.cwd(),
+        resolveAgentOutputPath(state?.cwd ?? process.cwd(), run.output_path)
+      );
+      void persistRun(state?.cwd ?? process.cwd(), run);
+      return controllerSummary(run);
     },
     async interrupt(id) {
       if (archivedRuns.has(id) && !childRuns.has(id)) {
@@ -647,7 +696,9 @@ export function createPiRecipesExtension(
       if (run.status === "running") {
         run.status = "interrupted";
         await run.runner.cancel();
+        await run.promise;
       }
+      await run.runner.shutdown();
       childRuns.delete(id);
       return controllerSummary(run, "closed");
     },
@@ -882,9 +933,14 @@ export function createPiRecipesExtension(
     agentName: string,
     prompt: string,
     label: string | undefined,
+    outputPath: string | undefined,
     ctx: ExtensionContext,
     onUpdate?: (summary: AgentRunSummary) => void | Promise<void>
   ): Promise<ChildRun> {
+    const resolvedOutputPath = resolveAgentOutputPath(
+      launchState.cwd,
+      outputPath
+    );
     const id = nextChildRunId();
     let run: ChildRun | undefined;
     const notifyUpdate = () => {
@@ -923,23 +979,45 @@ export function createPiRecipesExtension(
       agent: agentName,
       label,
       prompt,
+      output_path: outputPath,
       status: "running",
       startedAt: new Date().toISOString(),
       toolCalls: [],
       runner,
       promise: Promise.resolve(undefined as never),
+      notifyUpdate,
     };
     notifyUpdate();
     void persistRun(launchState.cwd, run);
-    run.promise = (async () => {
+    run.promise = executeChildPrompt(
+      run,
+      prompt,
+      launchState.cwd,
+      resolvedOutputPath
+    );
+    childRuns.set(id, run);
+    return run;
+  }
+
+  function executeChildPrompt(
+    run: ChildRun,
+    prompt: string,
+    cwd: string,
+    resolvedOutputPath: string | undefined
+  ): Promise<ChildRun> {
+    return (async () => {
       try {
-        await runner.start();
-        const result = await runner.prompt(prompt);
+        await run.runner.start();
+        const result = await run.runner.prompt(prompt);
         const finalOutput = promptResultText(result);
         if (finalOutput && finalOutput.length >= (run.output?.length ?? 0)) {
           run.output = finalOutput;
         } else if (!run.output?.trim()) {
           run.output = "(no final response)";
+        }
+        if (resolvedOutputPath) {
+          await mkdir(dirname(resolvedOutputPath), { recursive: true });
+          await writeFile(resolvedOutputPath, run.output ?? "", "utf8");
         }
         if (run.status === "running") run.status = "completed";
       } catch (err) {
@@ -947,18 +1025,15 @@ export function createPiRecipesExtension(
         run.error = err instanceof Error ? err.message : String(err);
       } finally {
         run.completedAt = new Date().toISOString();
-        await persistRun(launchState.cwd, run);
-        notifyUpdate();
+        await persistRun(cwd, run);
+        run.notifyUpdate();
         // Queue a wake-up notice for the parent model. Synchronous readers
         // (blocking start, wait, terminal status) acknowledge it back out.
         const envelope = envelopeFromRun(run);
         if (envelope) completions.enqueue(envelope);
-        await runner.shutdown();
       }
       return run;
     })();
-    childRuns.set(id, run);
-    return run;
   }
 
   /**
@@ -1066,7 +1141,7 @@ export function createPiRecipesExtension(
         if (batch.length === 0) return;
         pi.sendMessage(
           {
-            customType: RECIPE_AGENT_COMPLETIONS_TYPE,
+            customType: AGENT_COMPLETIONS_TYPE,
             content: renderCompletionNotice(batch),
             display: true,
             details: { completions: batch } satisfies AgentCompletionsDetails,
@@ -1087,7 +1162,7 @@ export function createPiRecipesExtension(
     });
 
     pi.registerMessageRenderer<AgentCompletionsDetails>(
-      RECIPE_AGENT_COMPLETIONS_TYPE,
+      AGENT_COMPLETIONS_TYPE,
       (message, options, theme) => {
         const batch = (message.details as AgentCompletionsDetails | undefined)
           ?.completions;
@@ -1117,8 +1192,8 @@ export function createPiRecipesExtension(
             }
             return;
           }
+          await localRunController.closeAll();
           state = null;
-          childRuns.clear();
           archivedRuns.clear();
           completions.clear();
           await ctx.waitForIdle();

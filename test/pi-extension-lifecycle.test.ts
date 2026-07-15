@@ -1,5 +1,5 @@
 /**
- * Lifecycle semantics of recipe child agent runs: wait-abort detaches instead
+ * Lifecycle semantics of background agent runs: wait-abort detaches instead
  * of interrupting, interrupt only targets in-flight work, close stops running
  * children, and persisted runs rehydrate read-only after a process restart.
  */
@@ -127,7 +127,7 @@ function agentTool(pi: MockExtensionAPI) {
   return tool;
 }
 
-describe("recipe child agent run lifecycle", () => {
+describe("background agent run lifecycle", () => {
   it("detaches on wait abort without interrupting the child", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
     try {
@@ -184,7 +184,11 @@ describe("recipe child agent run lifecycle", () => {
       controller.abort();
       const result = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "look around", wait: true },
+        {
+          name: "explorer",
+          prompt: "look around",
+          wait: true,
+        },
         controller.signal,
         undefined,
         ctx
@@ -214,6 +218,7 @@ describe("recipe child agent run lifecycle", () => {
         ctx
       );
       const id = result?.details?.agent?.agent_run_id as string;
+      expect(id).toBe("agent-run-1");
       expect(result?.details?.agent?.status).toBe("completed");
 
       const interrupted = await agentTool(pi).execute(
@@ -380,6 +385,66 @@ describe("recipe child agent run lifecycle", () => {
     }
   });
 
+  it("keeps completed local agents available for follow-up messages", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
+    try {
+      const prompt = vi
+        .fn()
+        .mockResolvedValueOnce("first answer")
+        .mockResolvedValueOnce("second answer");
+      const shutdown = vi.fn(async () => {});
+      const createChildAgentRunner = vi.fn(() => ({
+        async start() {},
+        prompt,
+        async cancel() {},
+        shutdown,
+      }));
+      const { pi, ctx } = await startSession(createChildAgentRunner, root);
+
+      const started = await agentTool(pi).execute(
+        "call-1",
+        { name: "explorer", prompt: "first", wait: true },
+        undefined,
+        undefined,
+        ctx
+      );
+      const id = started?.details?.agent?.agent_run_id as string;
+
+      await agentTool(pi).execute(
+        "call-2",
+        { action: "message", id, message: "second" },
+        undefined,
+        undefined,
+        ctx
+      );
+      const followedUp = await agentTool(pi).execute(
+        "call-3",
+        { action: "wait", id },
+        undefined,
+        undefined,
+        ctx
+      );
+
+      expect(followedUp?.details?.agents?.[0]).toEqual(
+        expect.objectContaining({ status: "completed", output: "second answer" })
+      );
+      expect(prompt).toHaveBeenNthCalledWith(1, "first");
+      expect(prompt).toHaveBeenNthCalledWith(2, "second");
+      expect(shutdown).not.toHaveBeenCalled();
+
+      await agentTool(pi).execute(
+        "call-4",
+        { action: "close", id },
+        undefined,
+        undefined,
+        ctx
+      );
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("persists run snapshots under .pi/agents", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
     try {
@@ -392,7 +457,12 @@ describe("recipe child agent run lifecycle", () => {
       runner.finish("persisted output");
       const result = await agentTool(pi).execute(
         "call-1",
-        { name: "explorer", prompt: "look around", wait: true },
+        {
+          name: "explorer",
+          prompt: "look around",
+          output_path: "results/explorer.md",
+          wait: true,
+        },
         undefined,
         undefined,
         ctx
@@ -406,10 +476,42 @@ describe("recipe child agent run lifecycle", () => {
           id,
           agent: "explorer",
           prompt: "look around",
+          output_path: "results/explorer.md",
           status: "completed",
           output: "persisted output",
         })
       );
+      expect(
+        readFileSync(join(projectDir, "results", "explorer.md"), "utf8")
+      ).toBe("persisted output");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects output paths outside the workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
+    try {
+      const runner = hangingRunner();
+      const { pi, ctx } = await startSession(
+        runner.createChildAgentRunner,
+        root
+      );
+
+      const result = await agentTool(pi).execute(
+        "call-1",
+        {
+          name: "explorer",
+          prompt: "look around",
+          output_path: "../outside.md",
+        },
+        undefined,
+        undefined,
+        ctx
+      );
+
+      expect((result as any)?.isError).toBe(true);
+      expect(runner.createChildAgentRunner).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -495,7 +597,7 @@ describe("recipe child agent run lifecycle", () => {
         undefined,
         ctx
       );
-      expect(started?.details?.agent?.agent_run_id).toBe("recipe-agent-4");
+      expect(started?.details?.agent?.agent_run_id).toBe("agent-run-4");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -194,13 +194,17 @@ best judgment.
 
 ## Host checklist (implementing `PI_INTERRUPT_RESUME`)
 
-1. Watch root-session `tool_execution_end` events for
+1. Wrap every in-process child session prompt with
+   `autoResolveInteractions()`. The guard is shared across separately resolved
+   copies of pi-recipes, so recipe-owned interaction tools observe the child
+   boundary too.
+2. Watch root-session `tool_execution_end` events for
    `details.interrupt.outcome.type === "awaiting_user"`.
-2. Convert the pi-recipes interrupt request into the host UI protocol, pause the run, and
+3. Convert the pi-recipes interrupt request into the host UI protocol, pause the run, and
    persist the host descriptor(s); the pause frame itself is not replayable,
    so persisted descriptors are the source of truth.
-3. On resume, rewrite the paused tool result's text with the frozen envelope
+4. On resume, rewrite the paused tool result's text with the frozen envelope
    for the user's response and continue the run. Declines (`cancelled`,
    no payload) use the declined envelope and are not errors.
-4. Set `PI_INTERRUPT_RESUME=1` in the session environment only when all of
+5. Set `PI_INTERRUPT_RESUME=1` in the session environment only when all of
    the above is wired.

@@ -32,6 +32,7 @@ export interface ChildRunSnapshot {
   agent: string;
   label?: string;
   prompt: string;
+  output_path?: string;
   status: ChildRunStatus;
   startedAt: string;
   completedAt?: string;

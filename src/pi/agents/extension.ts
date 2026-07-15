@@ -280,6 +280,7 @@ async function executeControlAction(
       if (!params.id || !params.message) {
         return errorResult("message requires id and message", controller);
       }
+      acknowledge([params.id]);
       const run = await controller.message(params.id, params.message);
       return {
         content: [{ type: "text" as const, text: `Sent message to ${runLine(run)}` }],
@@ -298,13 +299,16 @@ async function executeControlAction(
     }
     if (params.action === "close") {
       if (!params.id) {
+        const ids = controller.list().map((run) => run.agent_run_id);
         await controller.closeAll();
+        acknowledge(ids);
         return {
           content: [{ type: "text" as const, text: "All agent runs closed." }],
           details: { agents: [] },
         };
       }
       const run = await controller.close(params.id);
+      acknowledge([params.id]);
       return {
         content: [{ type: "text" as const, text: `Closed ${runLine(run)}` }],
         details: { agent: run, subtasks: [subtask(run)] },
@@ -357,18 +361,26 @@ export function createAgentTool(
           controller
         );
       }
-      const started = await controller.start({
-        name: params.name,
-        prompt: params.prompt,
-        label: params.label,
-        output_path: params.output_path,
-        onUpdate(run) {
-          return onUpdate?.({
-            content: [{ type: "text" as const, text: "" }],
-            details: { subtasks: [subtask(run)] },
-          });
-        },
-      });
+      let started: AgentRunSummary;
+      try {
+        started = await controller.start({
+          name: params.name,
+          prompt: params.prompt,
+          label: params.label,
+          output_path: params.output_path,
+          onUpdate(run) {
+            return onUpdate?.({
+              content: [{ type: "text" as const, text: "" }],
+              details: { subtasks: [subtask(run)] },
+            });
+          },
+        });
+      } catch (error) {
+        return errorResult(
+          `Agent start failed: ${error instanceof Error ? error.message : String(error)}`,
+          controller
+        );
+      }
       onUpdate?.({
         content: [{ type: "text" as const, text: "" }],
         details: { subtasks: [subtask(started)] },

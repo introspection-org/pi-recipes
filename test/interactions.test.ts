@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   ExtensionContext,
   ExtensionUIDialogOptions,
@@ -579,6 +579,26 @@ describe("askUser", () => {
       env,
     });
     expect(outside.outcome).toEqual({ type: "awaiting_user" });
+  });
+
+  it("shares child auto-resolution across separately loaded package copies", async () => {
+    vi.resetModules();
+    const isolated = await import("../src/interactions.js");
+    const { ctx } = fakeCtx({ hasUI: false });
+
+    const result = await autoResolveInteractions(() =>
+      isolated.askUserApproval(
+        { title: "Child plan" },
+        {
+          toolCallId: "tool-isolated",
+          ctx,
+          signal: undefined,
+          env: { PI_INTERRUPT_RESUME: "1" },
+        }
+      )
+    );
+
+    expect(result.outcome).toEqual({ type: "approved" });
   });
 
   it("reports unavailability when no interaction channel exists", async () => {

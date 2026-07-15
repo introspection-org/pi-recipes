@@ -18,7 +18,7 @@ import {
   type RecipePackageManifest,
   type RecipePackageMcpConfig,
   type RecipeMcpToolSelection,
-} from "./recipe-package.js";
+} from "./recipe/package.js";
 
 export interface McpToolCatalogEntry {
   name: string;

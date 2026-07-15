@@ -106,7 +106,7 @@ function authStorageForChildAgent(
   const apiKey = getEnvApiKey(model.provider) ?? env[`${model.provider.toUpperCase()}_API_KEY`];
   if (!apiKey) {
     throw new Error(
-      `${model.provider.toUpperCase()}_API_KEY is required when the recipe child agent is not running inside Pi`
+      `${model.provider.toUpperCase()}_API_KEY is required when the background agent is not running inside Pi`
     );
   }
 
@@ -315,7 +315,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
 
   async prompt(prompt: string): Promise<string> {
     await this.start();
-    if (!this.session) throw new Error("Recipe child agent did not start");
+    if (!this.session) throw new Error("Background agent did not start");
     // Child sessions do not own the root session's interaction lifecycle.
     // Resolve their approval tools internally so they cannot open UI or emit
     // an interrupt that would strand the child waiting for the root user.

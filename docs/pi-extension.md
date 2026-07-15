@@ -455,14 +455,22 @@ If it omits `subagents`, every other recipe agent is visible.
 The `agent` tool accepts:
 
 - `name`: child agent name
-- `task`: delegated task
+- `prompt`: delegated instructions
 - `label`: optional display label
-- `wait`: wait for completion on start, defaulting to `true`
-- `action`: `start`, `status`, `wait`, `interrupt`, or `close`
+- `output_path`: optional workspace or `/tmp` file for the final output
+- `wait`: block for the new run, defaulting to `false`
+- `action`: `start`, `status`, `wait`, `message`, `interrupt`, or `close`
 - `id`: child-run id for management actions
+- `ids`: child-run ids for joining multiple runs with `action: "wait"`
+- `message`: follow-up instructions for `action: "message"`
+- `timeout_ms`: optional join timeout; timing out never stops the agents
 
-Child runs use the same recipe directory and current Pi workspace as the parent
-session.
+Starts run in the background by default. Use `wait: true` only when the parent
+must block immediately, or use `action: "wait"` later to join existing runs.
+Completed local agents retain their Pi sessions until closed, so follow-up
+messages preserve context. Child runs use the same recipe directory and current
+Pi workspace as the parent session, but child questions never interrupt the
+root: approvals auto-approve and questions auto-decline.
 
 ## Recipe Extensions
 
