@@ -405,6 +405,7 @@ describe("recipe child agent run lifecycle", () => {
         expect.objectContaining({
           id,
           agent: "explorer",
+          prompt: "look around",
           status: "completed",
           output: "persisted output",
         })
@@ -445,10 +446,17 @@ describe("recipe child agent run lifecycle", () => {
       expect(status?.details?.agents?.[0]).toEqual(
         expect.objectContaining({
           agent_run_id: "recipe-agent-3",
+          prompt: "old task",
           status: "interrupted",
           error: "Pi session restarted while the run was in flight",
         })
       );
+
+      const migratedSnapshot = JSON.parse(
+        readFileSync(join(runDir, "status.json"), "utf8")
+      );
+      expect(migratedSnapshot.prompt).toBe("old task");
+      expect(migratedSnapshot).not.toHaveProperty("task");
 
       // Waiting on a rehydrated run returns immediately with its snapshot.
       const waited = await agentTool(pi).execute(

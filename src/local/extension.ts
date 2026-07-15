@@ -59,7 +59,7 @@ export interface PiRecipesExtensionOptions {
 
 interface RecipeChildAgentRunner {
   start(): Promise<void>;
-  prompt(task: string): Promise<unknown>;
+  prompt(prompt: string): Promise<unknown>;
   cancel(): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -287,7 +287,7 @@ function snapshotOf(run: ChildRunSnapshot): ChildRunSnapshot {
     id: run.id,
     agent: run.agent,
     label: run.label,
-    task: run.task,
+    prompt: run.prompt,
     status: run.status,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
@@ -311,7 +311,7 @@ function controllerSummary(
     invocation_name: run.agent,
     agent_name: run.agent,
     label: run.label ?? run.agent,
-    prompt: run.task,
+    prompt: run.prompt,
     status,
     started_at: Number.isFinite(startedAt) ? startedAt : Date.now(),
     ...(completedAt !== undefined && Number.isFinite(completedAt)
@@ -922,7 +922,7 @@ export function createPiRecipesExtension(
       id,
       agent: agentName,
       label,
-      task: prompt,
+      prompt,
       status: "running",
       startedAt: new Date().toISOString(),
       toolCalls: [],

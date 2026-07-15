@@ -39,7 +39,7 @@ export interface CreateRecipeChildAgentRunnerOptions {
 
 export interface RecipeChildAgentRunner {
   start(): Promise<void>;
-  prompt(task: string): Promise<string>;
+  prompt(prompt: string): Promise<string>;
   cancel(): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -313,13 +313,13 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     });
   }
 
-  async prompt(task: string): Promise<string> {
+  async prompt(prompt: string): Promise<string> {
     await this.start();
     if (!this.session) throw new Error("Recipe child agent did not start");
     // Child sessions do not own the root session's interaction lifecycle.
     // Resolve their approval tools internally so they cannot open UI or emit
     // an interrupt that would strand the child waiting for the root user.
-    await autoResolveInteractions(() => this.session!.prompt(task));
+    await autoResolveInteractions(() => this.session!.prompt(prompt));
     return promptResultText({ messages: [...this.session.messages] });
   }
 
