@@ -44,7 +44,7 @@ function makeRecipe(): string {
       "  name: openai/gpt-5",
       "  thinking_level: high",
       "tools: [read, mcp__search]",
-      "skills: []",
+      "skills: [research]",
       "subagents: []",
       "system_instructions:",
       "  mode: append",
@@ -85,7 +85,9 @@ describe("resolveRecipe", () => {
     expect(resolved.extensionPaths).toEqual([
       join(recipeDir, "extensions", "operator", "index.ts"),
     ]);
-    expect(resolved.skillPaths).toEqual([join(recipeDir, "skills")]);
+    expect(resolved.skillPaths).toEqual([
+      join(recipeDir, "skills", "research", "SKILL.md"),
+    ]);
     expect(resolved.promptPaths).toEqual([join(recipeDir, "prompts")]);
     expect(resolved.systemPromptOverride("Pi base prompt")).toBe(
       "Recipe system prompt\n\nBase instructions"

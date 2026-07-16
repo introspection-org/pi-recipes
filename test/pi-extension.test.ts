@@ -51,7 +51,8 @@ function writeRecipe(root: string) {
       "tools:",
       "  - read",
       "  - bash",
-      "skills: []",
+      "skills:",
+      "  - repo-index",
       "subagents:",
       "  - explorer",
       "system_instructions:",
@@ -67,8 +68,6 @@ function writeRecipe(root: string) {
       "  name: openai/gpt-4.1",
       "  thinking_level: low",
       "tools: []",
-      "skills: []",
-      "subagents: []",
       "system_instructions:",
       "  mode: append",
       "  content: Explorer prompt",
@@ -174,7 +173,7 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
-  it("reports invalid recipe agents before enabling a recipe session", async () => {
+  it("accepts agents that omit empty skills and subagents", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-invalid-agent-"));
     try {
       const recipeDir = join(root, "recipe");
@@ -215,14 +214,11 @@ describe("Pi recipes launch extension", () => {
       createPiRecipesExtension()(pi);
       await pi.emitExtensionEvent({ type: "session_start", reason: "startup" } as any, ctx);
 
-      expect(notify).toHaveBeenCalledWith(
-        expect.stringContaining('Recipe "invalid-agent-recipe" has invalid agents.'),
+      expect(notify).not.toHaveBeenCalledWith(
+        expect.stringContaining("has invalid agents"),
         "warning"
       );
-      const message = notify.mock.calls[0]?.[0] as string;
-      expect(message).toContain('Recipe agent "agent" must declare skills');
-      expect(message).toContain('Recipe agent "agent" must declare subagents');
-      expect(pi.sessionName).toBeUndefined();
+      expect(pi.sessionName).toBe("invalid-agent-recipe@1.0.0 agent:agent");
       expect(pi.activeTools).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -377,7 +373,7 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
-  it("treats an explicit empty subagents list as no visible subagents", async () => {
+  it("treats an omitted subagents list as no visible subagents", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-empty-subagents-"));
     try {
       const recipeDir = writeRecipe(root);
@@ -392,8 +388,6 @@ describe("Pi recipes launch extension", () => {
           "  thinking_level: low",
           "tools:",
           "  - read",
-          "skills: []",
-          "subagents: []",
           "system_instructions:",
           "  mode: append",
           "  content: Agent-specific prompt",
@@ -410,6 +404,58 @@ describe("Pi recipes launch extension", () => {
       );
 
       expect(pi.activeTools).toEqual(["read"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("enables declared subagents when a named agent is invoked directly", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-direct-named-agent-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "explorer.yaml"),
+        [
+          "name: explorer",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - read",
+          "subagents:",
+          "  - researcher",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Explorer prompt",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "defs", "researcher.yaml"),
+        [
+          "name: researcher",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - read",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Researcher prompt",
+        ].join("\n")
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "explorer");
+
+      createPiRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        extensionContext(projectDir)
+      );
+
+      expect(pi.activeTools.sort()).toEqual(["agent", "read"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -791,6 +837,25 @@ describe("Pi recipes launch extension", () => {
           null,
           2
         )}\n`
+      );
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - read",
+          "  - bash",
+          "skills:",
+          "  - new-skill",
+          "subagents:",
+          "  - explorer",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Agent-specific prompt",
+        ].join("\n")
       );
 
       await pi.commands.get("recipe")?.handler("reload", ctx);
