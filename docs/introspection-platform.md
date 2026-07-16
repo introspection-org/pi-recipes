@@ -19,6 +19,7 @@ automatically at deploy/run time without being written in the recipe.
 | Extension | You declare it in the recipe | Platform provides |
 | --- | --- | --- |
 | **Connectors** (`connectors:` on an agent) | **yes** — reference + scope connectors in `agent.yaml` | the connector token broker + per-action human approval |
+| **Policies** (`policies/*.cedar`) | **yes** — Cedar policy files at the recipe root | deterministic evaluation on every connector token request |
 | **Runtime** (the `.introspection` manifest) | **yes** — `name` / `path` / `runtime.llm_mode` / optional `runtime.resources` | the deployment + versioning, managed LLM access, telemetry, the sized sandbox |
 
 Core Pi fields (`model`, `tools`, `skills`, `subagents`, `system_instructions`)
@@ -84,6 +85,54 @@ connectors, on whose behalf, which scopes*.
 > is a separate runtime capability. Until it is available, an agent that declares
 > connectors should describe the intended action and the approval it needs rather
 > than assume a live token.
+
+---
+
+## Policies
+
+`policies/*.cedar` are [Cedar](https://www.cedarpolicy.com/) policy files at the
+recipe root — deterministic guardrails the platform evaluates on **every
+connector token request**, versioned with the agent's code. Where the per-action
+human approval is semantic (and may be advised by a model), policies are the
+hard rail around it: written ahead of time, evaluated deterministically, immune
+to prompt injection.
+
+If the directory exists, connector use is **default-deny**: only what a policy
+explicitly permits can mint a token. Policies can only *narrow* what the
+org-side connector definition allows, never widen it, and a changed policy takes
+effect only when the new commit is deployed.
+
+```cedar
+// policies/payments.cedar — cap any charge at $500, single-use,
+// regardless of what was approved upstream.
+permit (
+  principal,
+  action == Action::"connector:use",
+  resource == Connector::"stripe"   // the connector's slug
+)
+when {
+  context.mission.granted &&
+  context.mission.subject == "person" &&
+  context.mission has amount_cents && context.mission.amount_cents <= 50000 &&
+  context.mission has single_use && context.mission.single_use
+};
+```
+
+The `context` the platform supplies is defined by a schema file
+(`policies/schema.cedarschema`) shipped alongside the policies: the granted
+mission envelope (`context.mission.*`) and the deployed recipe identity
+(`context.recipe.slug` / `context.recipe.commit` — platform-bound, never
+recipe-supplied). Validate locally or in CI with the Cedar CLI:
+
+```bash
+cat policies/*.cedar > /tmp/policyset.cedar
+cedar validate --schema policies/schema.cedarschema --policies /tmp/policyset.cedar
+```
+
+An invalid policy set fails **closed** on the platform — it denies, never falls
+open. `connector:use` is the first action family; the same shape is designed to
+extend to other platform-mediated actions (e.g. tool invocation, egress) as they
+gain enforcement points.
 
 ---
 
