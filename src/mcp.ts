@@ -254,7 +254,15 @@ export async function materializeSessionMcpCli(opts: {
     `export ${MCPORTER_CONFIG_ENV}`,
     `if [ -n "\${${MCP_DAEMON_SOCKET_ENV}:-}" ]; then`,
     ...(nativeClient
-      ? [`  exec ${shellQuote(nativeClient)} "$@"`]
+      ? [
+          `  ${shellQuote(nativeClient)} "$@"`,
+          "  native_status=$?",
+          "  if [ \"$native_status\" -ne 75 ]; then exit \"$native_status\"; fi",
+          `  ${shellQuote(process.execPath)} ${shellQuote(mcpClientEntrypointPath())} --start-daemon`,
+          "  supervisor_status=$?",
+          "  if [ \"$supervisor_status\" -ne 0 ]; then exit \"$supervisor_status\"; fi",
+          `  exec ${shellQuote(nativeClient)} "$@"`,
+        ]
       : [
           `  exec ${shellQuote(process.execPath)} ${shellQuote(mcpClientEntrypointPath())} "$@"`,
         ]),

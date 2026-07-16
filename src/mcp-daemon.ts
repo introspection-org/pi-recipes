@@ -278,7 +278,9 @@ function handle(request: McpDaemonRequest, socket: Socket): void {
     return;
   }
   if (request.type === "ping") {
-    if (request.fingerprint !== fingerprint) {
+    if (stopping) {
+      send(socket, { id: request.id, error: "daemon_unavailable" });
+    } else if (request.fingerprint !== fingerprint) {
       send(socket, { id: request.id, error: "configuration_mismatch" });
     } else {
       send(socket, { id: request.id, ready: true, fingerprint });
