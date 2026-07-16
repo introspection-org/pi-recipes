@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadSkills } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { resolveAgentSkillPaths } from "../src/recipe-skills.js";
 
@@ -38,6 +39,40 @@ describe("recipe agent skills", () => {
       expect(
         resolveAgentSkillPaths(root, [join(root, "skills")], ["public-name"])
       ).toEqual([skillPath]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves diagnostics for malformed selected skills only", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agent-skill-diagnostics-"));
+    try {
+      const selectedPath = join(root, "skills", "folder-name", "SKILL.md");
+      const unselectedPath = join(root, "skills", "unselected", "SKILL.md");
+      mkdirSync(join(root, "skills", "folder-name"), { recursive: true });
+      mkdirSync(join(root, "skills", "unselected"), { recursive: true });
+      writeFileSync(selectedPath, "---\nname: public-name\n---\n");
+      writeFileSync(unselectedPath, "---\n---\n");
+
+      const selectedPaths = resolveAgentSkillPaths(
+        root,
+        [join(root, "skills")],
+        ["public-name"]
+      );
+      expect(selectedPaths).toEqual([selectedPath]);
+
+      const { diagnostics } = loadSkills({
+        cwd: root,
+        agentDir: root,
+        skillPaths: selectedPaths,
+        includeDefaults: false,
+      });
+      expect(diagnostics).toEqual([
+        expect.objectContaining({
+          path: selectedPath,
+          message: "description is required",
+        }),
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
