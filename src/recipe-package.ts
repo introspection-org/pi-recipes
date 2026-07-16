@@ -15,18 +15,51 @@ export interface RecipePackageMcpServer {
 }
 
 export interface RecipeMcpToolSelection {
-  /** Exact tool names or the reserved whole-toolset `*` sentinel. Required by validation. */
+  /** Exact tool names or the reserved whole-toolset `*` sentinel. Omission allows no tools. */
   include?: string[];
   /** Exact tool names removed after inclusion. */
   exclude?: string[];
+}
+
+const INVALID_MCP_TOOL_SELECTION = Symbol("invalidMcpToolSelection");
+
+type ParsedRecipeMcpToolSelection = RecipeMcpToolSelection & {
+  [INVALID_MCP_TOOL_SELECTION]?: true;
+};
+
+/** Parse a selection while preserving whether its source shape was malformed. */
+export function parseRecipeMcpToolSelection(
+  value: unknown
+): RecipeMcpToolSelection {
+  const validObject = Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  const data = asRecord(value);
+  const selection: ParsedRecipeMcpToolSelection = {
+    ...(Object.hasOwn(data, "include") ? { include: stringArray(data.include) } : {}),
+    ...(Object.hasOwn(data, "exclude") ? { exclude: stringArray(data.exclude) } : {}),
+  };
+  const malformedArray = ["include", "exclude"].some(
+    (key) =>
+      Object.hasOwn(data, key) &&
+      (!Array.isArray(data[key]) ||
+        data[key].some((item) => typeof item !== "string"))
+  );
+  if (!validObject || malformedArray) {
+    Object.defineProperty(selection, INVALID_MCP_TOOL_SELECTION, {
+      value: true,
+      enumerable: false,
+    });
+  }
+  return selection;
 }
 
 /** Minimal runtime guard; recipe-check owns detailed authoring diagnostics. */
 export function isValidRecipeMcpToolSelection(
   selection: RecipeMcpToolSelection
 ): boolean {
-  if (selection.include === undefined) return false;
-  return selection.include.every((selector) => {
+  if ((selection as ParsedRecipeMcpToolSelection)[INVALID_MCP_TOOL_SELECTION]) {
+    return false;
+  }
+  return (selection.include ?? []).every((selector) => {
     const value = selector.trim();
     return Boolean(value) && (value === "*" || !value.includes("*"));
   }) && (selection.exclude ?? []).every((selector) => {
@@ -269,21 +302,14 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
     const server = raw as Record<string, unknown>;
     const id = stringValue(server.id);
     if (!id || seen.has(id)) continue;
-    const tools = asRecord(server.tools);
-    const include = Object.hasOwn(tools, "include")
-      ? stringArray(tools.include)
-      : undefined;
-    const exclude = Object.hasOwn(tools, "exclude")
-      ? stringArray(tools.exclude)
-      : undefined;
+    const tools = parseRecipeMcpToolSelection(
+      Object.hasOwn(server, "tools") ? server.tools : {}
+    );
     seen.add(id);
     servers.push({
       id,
       required: server.required === true,
-      tools: {
-        ...(include !== undefined ? { include } : {}),
-        ...(exclude !== undefined ? { exclude } : {}),
-      },
+      tools,
     });
   }
 

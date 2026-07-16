@@ -220,7 +220,7 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("fails closed on an invalid package MCP policy", () => {
+  it("allows a missing package MCP include and fails closed to no tools", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-package-mcp-include-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -234,14 +234,9 @@ describe("recipe package manifest", () => {
         },
       });
 
-      expect(validatePiPackageManifest(readPiPackageManifest(root))).toMatchObject({
-        valid: false,
-        findings: [
-          expect.objectContaining({
-            code: "pi.mcp_invalid",
-            severity: "error",
-          }),
-        ],
+      expect(validatePiPackageManifest(readPiPackageManifest(root))).toEqual({
+        valid: true,
+        findings: [],
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -267,6 +262,25 @@ describe("recipe package manifest", () => {
         },
       });
 
+      expect(validatePiPackageManifest(readPiPackageManifest(root))).toMatchObject({
+        valid: false,
+        findings: [
+          expect.objectContaining({
+            code: "pi.mcp_invalid",
+            severity: "error",
+          }),
+        ],
+      });
+
+      writePiPackageManifest(root, {
+        name: "malformed-package-mcp-policy",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [{ id: "salesforce", tools: [] }],
+          },
+        },
+      });
       expect(validatePiPackageManifest(readPiPackageManifest(root))).toMatchObject({
         valid: false,
         findings: [
@@ -1794,6 +1808,7 @@ describe("recipe child agents", () => {
         {
           agentName: "worker",
           field: "name",
+          severity: "warning",
           message: 'Recipe agent "worker" must declare name',
         },
       ]);
@@ -1802,7 +1817,7 @@ describe("recipe child agents", () => {
     }
   });
 
-  it("collapses agent MCP policy failures into one runtime error per agent", () => {
+  it("fails closed for empty MCP policies without creating runtime errors", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agent-mcp-selector-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -1842,6 +1857,16 @@ describe("recipe child agents", () => {
         );
       writeAgent("missing-include", ["mcp:", "  salesforce: {}"]);
       writeAgent("empty-mcp", ["mcp: {}"]);
+      writeAgent("malformed-mcp-block", ["mcp: []"]);
+      writeAgent("malformed-mcp-null", ["mcp: null"]);
+      writeAgent("malformed-server", ["mcp:", "  salesforce: []"]);
+      writeAgent("inherited-malformed", [
+        "from: malformed-server",
+        "mcp:",
+        "  salesforce:",
+        "    exclude:",
+        "      - archived",
+      ]);
       writeAgent("undeclared-server", [
         "mcp:",
         "  nextplay:",
@@ -1865,9 +1890,11 @@ describe("recipe child agents", () => {
 
       const findings = validateRecipeAgentDefinitions(root);
       expect(findings.map((finding) => finding.agentName).sort()).toEqual([
-        "empty-mcp",
+        "inherited-malformed",
         "invalid-patterns",
-        "missing-include",
+        "malformed-mcp-block",
+        "malformed-mcp-null",
+        "malformed-server",
         "package-blocked-tool",
         "undeclared-server",
       ]);

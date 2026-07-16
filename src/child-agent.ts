@@ -319,7 +319,9 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       services,
       sessionManager: SessionManager.inMemory(this.opts.workspaceDir),
       model,
-      thinkingLevel: (agent.model?.thinkingLevel ?? "low") as ThinkingLevel,
+      ...(agent.model?.thinkingLevel
+        ? { thinkingLevel: agent.model.thinkingLevel as ThinkingLevel }
+        : {}),
       tools: executableTools,
     });
     this.session = created.session;
