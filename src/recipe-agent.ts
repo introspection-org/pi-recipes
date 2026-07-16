@@ -10,6 +10,7 @@ import {
 import {
   isValidRecipeMcpToolSelection,
   packageResourcePaths,
+  parseRecipeMcpToolSelection,
   readPiPackageManifest,
   RecipePackageError,
 } from "./recipe-package.js";
@@ -167,15 +168,7 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
   const raw = asRecord(data.mcp);
   const mcp: RecipeAgentMcp = {};
   for (const [serverId, value] of Object.entries(raw)) {
-    const selectors = asRecord(value);
-    mcp[serverId] = {
-      ...(Object.hasOwn(selectors, "include")
-        ? { include: stringArray(selectors.include) }
-        : {}),
-      ...(Object.hasOwn(selectors, "exclude")
-        ? { exclude: stringArray(selectors.exclude) }
-        : {}),
-    };
+    mcp[serverId] = parseRecipeMcpToolSelection(value);
   }
   return mcp;
 }
@@ -552,7 +545,10 @@ export function validateResolvedRecipeAgentDefinition(opts: {
         ])
       )
     : undefined;
-  const invalidMcpPolicy = Object.entries(mcp ?? {}).some(([serverId, selection]) => {
+  const rawMcp = rawDefinitions.get(agentName)?.mcp;
+  const invalidMcpPolicy = Object.values(rawMcp ?? {}).some(
+    (selection) => !isValidRecipeMcpToolSelection(selection)
+  ) || Object.entries(mcp ?? {}).some(([serverId, selection]) => {
       if (!serverId.trim() || !isValidRecipeMcpToolSelection(selection)) {
         return true;
       }

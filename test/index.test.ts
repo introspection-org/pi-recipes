@@ -271,6 +271,25 @@ describe("recipe package manifest", () => {
           }),
         ],
       });
+
+      writePiPackageManifest(root, {
+        name: "malformed-package-mcp-policy",
+        version: "0.1.0",
+        pi: {
+          mcp: {
+            servers: [{ id: "salesforce", tools: [] }],
+          },
+        },
+      });
+      expect(validatePiPackageManifest(readPiPackageManifest(root))).toMatchObject({
+        valid: false,
+        findings: [
+          expect.objectContaining({
+            code: "pi.mcp_invalid",
+            severity: "error",
+          }),
+        ],
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1838,6 +1857,7 @@ describe("recipe child agents", () => {
         );
       writeAgent("missing-include", ["mcp:", "  salesforce: {}"]);
       writeAgent("empty-mcp", ["mcp: {}"]);
+      writeAgent("malformed-server", ["mcp:", "  salesforce: []"]);
       writeAgent("undeclared-server", [
         "mcp:",
         "  nextplay:",
@@ -1862,6 +1882,7 @@ describe("recipe child agents", () => {
       const findings = validateRecipeAgentDefinitions(root);
       expect(findings.map((finding) => finding.agentName).sort()).toEqual([
         "invalid-patterns",
+        "malformed-server",
         "package-blocked-tool",
         "undeclared-server",
       ]);
