@@ -94,6 +94,12 @@ describe("recipe package manifest", () => {
         name: "agent",
         tools: ["read", "bash"],
       });
+      const scaffoldedAgent = readFileSync(
+        join(result.recipeDir, "agents", "agent.yaml"),
+        "utf8"
+      );
+      expect(scaffoldedAgent).not.toContain("skills: []");
+      expect(scaffoldedAgent).not.toContain("subagents: []");
       expect(validateRecipeDirectory(result.recipeDir)).toMatchObject({
         valid: true,
         findings: [],
@@ -1197,7 +1203,7 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("reports agents missing required launch fields during recipe validation", () => {
+  it("defaults omitted skills and subagents to none during recipe validation", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agent-validation-"));
     try {
       mkdirSync(join(root, "agents"), { recursive: true });
@@ -1225,20 +1231,9 @@ describe("recipe package manifest", () => {
 
       const report = validateRecipeDirectory(root);
 
-      expect(report.valid).toBe(false);
-      expect(report.findings).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            severity: "error",
-            code: "agent.skills_missing",
-            message: 'Recipe agent "agent" must declare skills directly or inherit it with from',
-          }),
-          expect.objectContaining({
-            severity: "error",
-            code: "agent.subagents_missing",
-            message: 'Recipe agent "agent" must declare subagents directly or inherit it with from',
-          }),
-        ])
+      expect(report.valid).toBe(true);
+      expect(resolveRecipeAgentDefinition({ recipeDir: root }).agent).toEqual(
+        expect.objectContaining({ skills: [], subagents: [] })
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1523,9 +1518,21 @@ describe("recipe agent definitions", () => {
           "",
         ].join("\n")
       );
+      writeFileSync(
+        join(root, "agents", "agent-isolated.yaml"),
+        [
+          "name: agent-isolated",
+          "from: agent",
+          "tools: []",
+          "skills: []",
+          "subagents: []",
+          "",
+        ].join("\n")
+      );
 
       const definitions = loadRecipeAgentDefinitions(root);
       const inherited = definitions.get("agent-opus");
+      const isolated = definitions.get("agent-isolated");
 
       expect(resolveRecipeAgentDefinition({ recipeDir: root }).agentName).toBe("agent");
       expect(inherited).toEqual(
@@ -1550,6 +1557,24 @@ describe("recipe agent definitions", () => {
               exclude: ["delete_org", "purge_records"],
             },
           },
+          systemInstructions: {
+            mode: "append",
+            content: "Base prompt",
+          },
+        })
+      );
+      expect(isolated).toEqual(
+        expect.objectContaining({
+          name: "agent-isolated",
+          from: "agent",
+          description: "Base agent",
+          model: {
+            name: "openai/gpt-5.4",
+            thinkingLevel: "low",
+          },
+          tools: [],
+          skills: [],
+          subagents: [],
           systemInstructions: {
             mode: "append",
             content: "Base prompt",

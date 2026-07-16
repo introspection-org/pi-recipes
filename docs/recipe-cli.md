@@ -125,8 +125,6 @@ model:
 tools:
   - read
   - bash
-skills: []
-subagents: []
 system_instructions:
   mode: append
   content: |
@@ -145,6 +143,10 @@ model:
 
 Objects such as `model` and `extensions` merge by key, while arrays such as
 `tools`, `skills`, and `subagents` replace the inherited array.
+
+Omit `skills` or `subagents` when an agent has none. Omission defaults to an
+empty list unless the field is inherited through `from:`. Use an explicit `[]`
+only when a derived agent needs to clear a non-empty inherited list.
 
 Use `system_instructions.content: ""` when an agent intentionally adds no
 instructions beyond `SYSTEM.md` but still needs to declare the field explicitly.

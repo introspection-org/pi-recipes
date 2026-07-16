@@ -63,8 +63,73 @@ describe("recipe child agent tools", () => {
         "  name: openai/test-model",
         "  thinking_level: low",
         "tools: []",
-        "skills: []",
-        "subagents: []",
+        "subagents:",
+        "  - nested-worker",
+        "system_instructions:",
+        "  mode: append",
+        "  content: Test worker",
+        "",
+      ].join("\n")
+    );
+
+    const session = {
+      agent: {},
+      bindExtensions: vi.fn(async () => undefined),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    mocks.createAgentSessionServices.mockResolvedValue({});
+    mocks.createAgentSessionFromServices.mockResolvedValue({ session });
+
+    const runner = createRecipeChildAgentRunner({
+      recipeDir,
+      workspaceDir,
+      agentName: "worker",
+      env: {},
+    });
+    await runner.start();
+
+    expect(mocks.createAgentSessionServices).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resourceLoaderOptions: expect.objectContaining({
+          noSkills: true,
+          additionalSkillPaths: [],
+        }),
+      })
+    );
+    expect(mocks.createAgentSessionFromServices).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: [] })
+    );
+    await runner.shutdown();
+  });
+
+  it("removes the agent tool from delegated agents", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-child-no-nesting-"));
+    roots.push(root);
+    const recipeDir = join(root, "recipe");
+    const workspaceDir = join(root, "workspace");
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(workspaceDir, { recursive: true });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "child-no-nesting-test",
+        version: "0.1.0",
+        pi: { agents: ["agents/*.yaml"] },
+      })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "worker.yaml"),
+      [
+        "name: worker",
+        "model:",
+        "  name: openai/test-model",
+        "  thinking_level: low",
+        "tools:",
+        "  - read",
+        "  - agent",
+        "subagents:",
+        "  - nested-worker",
         "system_instructions:",
         "  mode: append",
         "  content: Test worker",
@@ -90,7 +155,7 @@ describe("recipe child agent tools", () => {
     await runner.start();
 
     expect(mocks.createAgentSessionFromServices).toHaveBeenCalledWith(
-      expect.objectContaining({ tools: [] })
+      expect.objectContaining({ tools: ["read"] })
     );
     await runner.shutdown();
   });
