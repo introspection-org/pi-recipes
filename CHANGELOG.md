@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.4](https://github.com/introspection-org/pi-recipes/compare/v0.10.3...v0.10.4) (2026-07-16)
+
+
+### Bug Fixes
+
+* relax recipe check diagnostics ([#96](https://github.com/introspection-org/pi-recipes/issues/96)) ([7509157](https://github.com/introspection-org/pi-recipes/commit/75091574272f91270e678af25a0221e9ce2a605e))
+
 ## [0.10.3](https://github.com/introspection-org/pi-recipes/compare/v0.10.2...v0.10.3) (2026-07-16)
 
 
