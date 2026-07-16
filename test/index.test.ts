@@ -1857,7 +1857,16 @@ describe("recipe child agents", () => {
         );
       writeAgent("missing-include", ["mcp:", "  salesforce: {}"]);
       writeAgent("empty-mcp", ["mcp: {}"]);
+      writeAgent("malformed-mcp-block", ["mcp: []"]);
+      writeAgent("malformed-mcp-null", ["mcp: null"]);
       writeAgent("malformed-server", ["mcp:", "  salesforce: []"]);
+      writeAgent("inherited-malformed", [
+        "from: malformed-server",
+        "mcp:",
+        "  salesforce:",
+        "    exclude:",
+        "      - archived",
+      ]);
       writeAgent("undeclared-server", [
         "mcp:",
         "  nextplay:",
@@ -1881,7 +1890,10 @@ describe("recipe child agents", () => {
 
       const findings = validateRecipeAgentDefinitions(root);
       expect(findings.map((finding) => finding.agentName).sort()).toEqual([
+        "inherited-malformed",
         "invalid-patterns",
+        "malformed-mcp-block",
+        "malformed-mcp-null",
         "malformed-server",
         "package-blocked-tool",
         "undeclared-server",

@@ -2217,6 +2217,42 @@ mod tests {
     }
 
     #[test]
+    fn rejects_non_object_agent_mcp_blocks() {
+        let package = json!({
+            "name": "invalid-agent-mcp-shape",
+            "description": "Test",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let agent = concat!(
+            "name: agent\n",
+            "description: Test agent\n",
+            "model:\n",
+            "  name: test/provider-model\n",
+            "  thinking_level: low\n",
+            "tools: []\n",
+            "mcp: []\n",
+            "system_instructions:\n",
+            "  content: Test instructions\n",
+        );
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/agent.yaml", agent),
+        ]);
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.mcp_invalid"
+                && diagnostic.severity == Severity::Error));
+    }
+
+    #[test]
     fn missing_agent_mcp_includes_are_silent_and_fail_closed() {
         let input = selector_recipe(json!({}), "  salesforce: {}\n", true);
 

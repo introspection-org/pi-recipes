@@ -38,6 +38,12 @@ export interface RecipeAgentMcpServer {
 
 export type RecipeAgentMcp = Record<string, RecipeAgentMcpServer>;
 
+const INVALID_AGENT_MCP = Symbol("invalidAgentMcp");
+
+type ParsedRecipeAgentMcp = RecipeAgentMcp & {
+  [INVALID_AGENT_MCP]?: true;
+};
+
 export interface RecipeAgentDefinition {
   name: string;
   from?: string;
@@ -165,10 +171,18 @@ function parseExtensions(data: Record<string, unknown>): RecipeAgentExtensions |
 
 function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
   if (!Object.hasOwn(data, "mcp")) return undefined;
-  const raw = asRecord(data.mcp);
-  const mcp: RecipeAgentMcp = {};
+  const value = data.mcp;
+  const validObject = Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  const raw = asRecord(value);
+  const mcp: ParsedRecipeAgentMcp = {};
   for (const [serverId, value] of Object.entries(raw)) {
     mcp[serverId] = parseRecipeMcpToolSelection(value);
+  }
+  if (!validObject) {
+    Object.defineProperty(mcp, INVALID_AGENT_MCP, {
+      value: true,
+      enumerable: false,
+    });
   }
   return mcp;
 }
@@ -511,6 +525,25 @@ export function validateResolvedRecipeAgentDefinition(opts: {
     return mergeMcp(base, definition.mcp);
   }
 
+  function rawMcpChainInvalid(name: string, stack: string[] = []): boolean {
+    const resolvedName = resolveName(name);
+    if (stack.includes(resolvedName)) return false;
+    const definition = rawDefinitions.get(resolvedName);
+    if (!definition) return false;
+    const rawMcp = definition.mcp as ParsedRecipeAgentMcp | undefined;
+    if (
+      rawMcp?.[INVALID_AGENT_MCP] ||
+      Object.values(rawMcp ?? {}).some(
+        (selection) => !isValidRecipeMcpToolSelection(selection)
+      )
+    ) {
+      return true;
+    }
+    return definition.from
+      ? rawMcpChainInvalid(definition.from, [...stack, resolvedName])
+      : false;
+  }
+
   const agentName = resolveName(opts.agentName);
   const findings: RecipeAgentValidationFinding[] = [];
   if (opts.requireExplicitName && explicitNames.get(agentName) !== true) {
@@ -545,10 +578,10 @@ export function validateResolvedRecipeAgentDefinition(opts: {
         ])
       )
     : undefined;
-  const rawMcp = rawDefinitions.get(agentName)?.mcp;
-  const invalidMcpPolicy = Object.values(rawMcp ?? {}).some(
-    (selection) => !isValidRecipeMcpToolSelection(selection)
-  ) || Object.entries(mcp ?? {}).some(([serverId, selection]) => {
+  // Rust recipe-check owns detailed authoring diagnostics. This runtime guard
+  // only ensures malformed raw policies fail closed before agent startup.
+  const invalidMcpPolicy = rawMcpChainInvalid(agentName) ||
+    Object.entries(mcp ?? {}).some(([serverId, selection]) => {
       if (!serverId.trim() || !isValidRecipeMcpToolSelection(selection)) {
         return true;
       }
