@@ -552,6 +552,14 @@ describe("lazy MCP CLI discovery", () => {
 
       if (nativeClient) {
         await stopMcpDaemon({ ...cliEnv });
+        const warmed = await runMcpShim(
+          shim.shimPath,
+          ["--start-daemon"],
+          cliEnv
+        );
+        expect(warmed).toMatchObject({ code: 0, stdout: "", stderr: "" });
+
+        await stopMcpDaemon({ ...cliEnv });
         const recovered = await runMcpShim(
           shim.shimPath,
           ["run"],

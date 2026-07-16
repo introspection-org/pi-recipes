@@ -211,6 +211,9 @@ mod platform {
             Ok(true) => {}
             Ok(false) | Err(_) => return DAEMON_UNAVAILABLE_EXIT_CODE,
         }
+        if args.len() == 1 && args[0] == "--start-daemon" {
+            return 0;
+        }
         let id = request_id();
         let mut stream = match connect(&socket_path) {
             Ok(stream) => stream,
