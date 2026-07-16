@@ -37,3 +37,25 @@ jobs:
       - run: pnpm build
 
       - run: pnpm pack:check
+
+  native-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: cargo test -p pi-mcp-client
+
+      - run: cargo build --release -p pi-mcp-client
+
+      - run: node scripts/package-mcp-client.mjs
+        env:
+          MCP_CLIENT_PLATFORM: linux
+          MCP_CLIENT_ARCH: arm64
+
+      - run: test -x vendor/mcp-client/linux-arm64/mcp-client
