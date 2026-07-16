@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.5.0...pi-recipe-check-v0.5.1) (2026-07-16)
+
+
+### Bug Fixes
+
+* agent skill and subagent omission semantics ([#86](https://github.com/introspection-org/pi-recipes/issues/86)) ([fea3bf6](https://github.com/introspection-org/pi-recipes/commit/fea3bf625a83f375a1c5854d4a5b556512f48b7a))
+
 ## [0.5.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.4.1...pi-recipe-check-v0.5.0) (2026-07-12)
 
 
