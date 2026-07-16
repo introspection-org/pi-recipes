@@ -15,6 +15,8 @@ use serde_json::Value as JsonValue;
 
 #[cfg(feature = "fs")]
 pub mod fs;
+#[cfg(feature = "cedar")]
+pub mod policies;
 pub mod resources;
 
 #[cfg(feature = "fs")]
@@ -323,6 +325,8 @@ pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report 
         }
     }
 
+    validate_policy_files(&mut ctx);
+
     let valid = !ctx
         .diagnostics
         .iter()
@@ -336,6 +340,30 @@ pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report 
         resources: ctx.resources,
     }
 }
+
+/// Validate recipe-resident Cedar policy rails (`policies/**/*.cedar` against
+/// `policies/schema.cedarschema`). A no-op when the recipe has no policy files
+/// or the `cedar` feature is disabled.
+#[cfg(feature = "cedar")]
+fn validate_policy_files(ctx: &mut CheckContext) {
+    let policy_files: Vec<(String, Option<String>)> = ctx
+        .files
+        .iter()
+        .filter(|(path, _)| path.starts_with("policies/") && path.ends_with(".cedar"))
+        .map(|(path, content)| (path.clone(), content.clone()))
+        .collect();
+    if policy_files.is_empty() {
+        return;
+    }
+    ctx.resources
+        .insert("policies".to_owned(), policy_files.len());
+    let schema = ctx.content(policies::SCHEMA_PATH).map(str::to_owned);
+    let diagnostics = policies::validate_policies(schema.as_deref(), &policy_files);
+    ctx.diagnostics.extend(diagnostics);
+}
+
+#[cfg(not(feature = "cedar"))]
+fn validate_policy_files(_ctx: &mut CheckContext) {}
 
 pub fn render_human(report: &Report) -> String {
     let name = report.package_name.as_deref().unwrap_or("<unknown>");

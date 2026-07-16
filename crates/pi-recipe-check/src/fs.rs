@@ -113,6 +113,8 @@ fn needs_content(path: &str) -> bool {
         || path == ".pi/mcp.local.example.json"
         || path.ends_with(".yaml")
         || path.ends_with(".yml")
+        || path.ends_with(".cedar")
+        || path.ends_with(".cedarschema")
 }
 
 fn path_to_slashes(path: &Path) -> String {
