@@ -2,14 +2,16 @@ use std::env;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
 const SOCKET_ENV: &str = "PI_RECIPES_MCP_DAEMON_SOCKET";
 const TOKEN_ENV: &str = "PI_RECIPES_MCP_DAEMON_TOKEN";
 const FINGERPRINT_ENV: &str = "PI_RECIPES_MCP_DAEMON_FINGERPRINT";
-const FALLBACK_EXIT_CODE: i32 = 75;
+const CONNECT_TIMEOUT_ENV: &str = "PI_RECIPES_MCP_CLIENT_CONNECT_TIMEOUT_MS";
+const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 20_000;
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -69,10 +71,22 @@ mod platform {
     use std::os::unix::net::UnixStream;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
-    use std::thread;
 
     fn connect(socket_path: &str) -> io::Result<UnixStream> {
-        UnixStream::connect(socket_path)
+        let timeout_ms = env::var(CONNECT_TIMEOUT_ENV)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CONNECT_TIMEOUT_MS);
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            match UnixStream::connect(socket_path) {
+                Ok(stream) => return Ok(stream),
+                Err(_) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     fn send_line(stream: &mut UnixStream, value: &Value) -> io::Result<()> {
@@ -121,15 +135,24 @@ mod platform {
     pub fn run(args: Vec<String>) -> i32 {
         let socket_path = match env::var(SOCKET_ENV) {
             Ok(value) if !value.is_empty() => value,
-            _ => return FALLBACK_EXIT_CODE,
+            _ => {
+                eprintln!("mcp: daemon socket is not configured");
+                return 1;
+            }
         };
         let token = match env::var(TOKEN_ENV) {
             Ok(value) if !value.is_empty() => value,
-            _ => return FALLBACK_EXIT_CODE,
+            _ => {
+                eprintln!("mcp: daemon token is not configured");
+                return 1;
+            }
         };
         let fingerprint = match env::var(FINGERPRINT_ENV) {
             Ok(value) if !value.is_empty() => value,
-            _ => return FALLBACK_EXIT_CODE,
+            _ => {
+                eprintln!("mcp: daemon fingerprint is not configured");
+                return 1;
+            }
         };
         let stdin = match read_stdin(&args) {
             Ok(value) => value,
@@ -141,7 +164,10 @@ mod platform {
         let id = request_id();
         let mut stream = match connect(&socket_path) {
             Ok(stream) => stream,
-            Err(_) => return FALLBACK_EXIT_CODE,
+            Err(error) => {
+                eprintln!("mcp: daemon did not become ready: {error}");
+                return 1;
+            }
         };
         let request = json!({
             "type": "execute",
@@ -151,8 +177,9 @@ mod platform {
             "args": args,
             "stdin": stdin,
         });
-        if send_line(&mut stream, &request).is_err() {
-            return FALLBACK_EXIT_CODE;
+        if let Err(error) = send_line(&mut stream, &request) {
+            eprintln!("mcp: failed to send daemon request: {error}");
+            return 1;
         }
         let interrupted = Arc::new(AtomicBool::new(false));
         spawn_cancel_handler(
@@ -219,9 +246,6 @@ mod platform {
                 return exit_code.clamp(0, 255) as i32;
             }
             if let Some(error) = envelope.get("error").and_then(Value::as_str) {
-                if matches!(error, "configuration_mismatch" | "daemon_unavailable") {
-                    return FALLBACK_EXIT_CODE;
-                }
                 eprintln!("MCP daemon: {error}");
                 return 1;
             }
@@ -232,7 +256,8 @@ mod platform {
 #[cfg(not(unix))]
 mod platform {
     pub fn run(_args: Vec<String>) -> i32 {
-        super::FALLBACK_EXIT_CODE
+        eprintln!("mcp: native daemon client is unsupported on this platform");
+        1
     }
 }
 

@@ -417,7 +417,9 @@ describe("static MCP session materialization", () => {
       expect(script).toContain("MCPORTER_CONFIG:=");
       if (nativeMcpClientPath()) {
         expect(script).toContain(nativeMcpClientPath());
-        expect(script).toContain("native_status");
+        expect(script).not.toContain("mcp-client.js");
+        expect(script).not.toContain("native_status");
+        expect(script).not.toContain("PI_RECIPES_MCP_NATIVE_REQUIRED");
       }
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -479,7 +481,6 @@ describe("lazy MCP CLI discovery", () => {
       const cliEnv = Object.fromEntries(
         Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
       );
-      if (nativeMcpClientPath()) cliEnv.PI_RECIPES_MCP_NATIVE_REQUIRED = "1";
       const preload = preloadMcpCatalogs({ env });
       for (
         let attempt = 0;
