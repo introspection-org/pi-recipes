@@ -126,7 +126,7 @@ fn validate_section(
             "resources.invalid",
             path,
             format!("resources.{section} must be an object with cpu/memory quantities"),
-            None,
+            Some("declare quantities under the section or omit it"),
         );
         return parsed;
     };

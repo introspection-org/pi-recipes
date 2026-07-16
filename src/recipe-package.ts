@@ -15,7 +15,7 @@ export interface RecipePackageMcpServer {
 }
 
 export interface RecipeMcpToolSelection {
-  /** Exact tool names or the reserved whole-toolset `*` sentinel. Required by validation. */
+  /** Exact tool names or the reserved whole-toolset `*` sentinel. Omission allows no tools. */
   include?: string[];
   /** Exact tool names removed after inclusion. */
   exclude?: string[];
@@ -25,8 +25,7 @@ export interface RecipeMcpToolSelection {
 export function isValidRecipeMcpToolSelection(
   selection: RecipeMcpToolSelection
 ): boolean {
-  if (selection.include === undefined) return false;
-  return selection.include.every((selector) => {
+  return (selection.include ?? []).every((selector) => {
     const value = selector.trim();
     return Boolean(value) && (value === "*" || !value.includes("*"));
   }) && (selection.exclude ?? []).every((selector) => {

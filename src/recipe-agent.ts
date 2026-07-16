@@ -524,6 +524,7 @@ export function validateResolvedRecipeAgentDefinition(opts: {
     findings.push({
       agentName,
       field: "name",
+      severity: "warning",
       message: `Recipe agent "${agentName}" must declare name`,
     });
   }
@@ -536,6 +537,7 @@ export function validateResolvedRecipeAgentDefinition(opts: {
     findings.push({
       agentName,
       field,
+      ...(field === "model.name" ? {} : { severity: "warning" as const }),
       message: `Recipe agent "${agentName}" must declare ${field} directly or inherit it with from`,
     });
   }
@@ -550,9 +552,7 @@ export function validateResolvedRecipeAgentDefinition(opts: {
         ])
       )
     : undefined;
-  const rawMcp = rawDefinitions.get(agentName)?.mcp;
-  const invalidMcpPolicy = Boolean(rawMcp && Object.keys(rawMcp).length === 0) ||
-    Object.entries(mcp ?? {}).some(([serverId, selection]) => {
+  const invalidMcpPolicy = Object.entries(mcp ?? {}).some(([serverId, selection]) => {
       if (!serverId.trim() || !isValidRecipeMcpToolSelection(selection)) {
         return true;
       }

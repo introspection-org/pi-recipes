@@ -25,7 +25,7 @@ export interface ResolvedRecipe {
   subagents: ReadonlyMap<string, RecipeAgentDefinition>;
   modelSpec: string;
   modelConfig?: RecipeAgentModelConfig;
-  thinkingLevel: ThinkingLevel;
+  thinkingLevel?: ThinkingLevel;
   tools: string[];
   mcp: RecipeAgentDefinition["mcp"];
   skillPaths: string[];
@@ -201,7 +201,9 @@ export function resolveRecipe(
     subagents,
     modelSpec,
     ...(agent.modelConfig ? { modelConfig: agent.modelConfig } : {}),
-    thinkingLevel: (agent.model?.thinkingLevel ?? "low") as ThinkingLevel,
+    ...(agent.model?.thinkingLevel
+      ? { thinkingLevel: agent.model.thinkingLevel as ThinkingLevel }
+      : {}),
     tools: [
       ...new Set([
         ...executableRecipeToolNames(agent.tools),

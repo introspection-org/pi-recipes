@@ -804,7 +804,9 @@ export function createPiRecipesExtension(
       );
     }
 
-    pi.setThinkingLevel(launchState.resolved.thinkingLevel);
+    if (launchState.resolved.thinkingLevel) {
+      pi.setThinkingLevel(launchState.resolved.thinkingLevel);
+    }
 
     const activeTools = new Set(launchState.resolved.tools);
     pi.setActiveTools([...activeTools]);

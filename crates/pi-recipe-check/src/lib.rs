@@ -171,6 +171,17 @@ impl AgentField {
             Self::SystemInstructions => "systemInstructions",
         }
     }
+
+    const fn help(self) -> Option<&'static str> {
+        match self {
+            Self::ModelName => Some("set a model or inherit one from a base agent"),
+            Self::ModelThinkingLevel => {
+                Some("omit this field to preserve the provider or session default")
+            }
+            Self::Tools => Some("omit this field for no tools, or declare the intended tools"),
+            Self::Skills | Self::Subagents | Self::SystemInstructions => None,
+        }
+    }
 }
 
 struct CheckContext {
@@ -291,6 +302,17 @@ impl CheckContext {
         help: Option<impl Into<String>>,
     ) {
         self.push(Severity::Warning, code, path, None, message, help);
+    }
+
+    fn warning_at(
+        &mut self,
+        code: impl Into<String>,
+        path: impl Into<String>,
+        span: Option<Span>,
+        message: impl Into<String>,
+        help: Option<impl Into<String>>,
+    ) {
+        self.push(Severity::Warning, code, path, span, message, help);
     }
 }
 
@@ -421,7 +443,7 @@ fn read_package(ctx: &mut CheckContext) -> Option<Package> {
             "package.manifest_invalid",
             PACKAGE_JSON,
             "package.json must be an object",
-            None::<String>,
+            Some("make the top-level JSON value an object"),
         );
         return None;
     };
@@ -549,7 +571,7 @@ fn resource_patterns(
                         format!("pi.{key}_invalid"),
                         PACKAGE_JSON,
                         format!("package.json#pi.{key}[{index}] must be a non-empty string"),
-                        None::<String>,
+                        Some("remove the entry or replace it with a relative resource path"),
                     ),
                 }
             }
@@ -563,7 +585,7 @@ fn resource_patterns(
                 format!("pi.{key}_invalid"),
                 PACKAGE_JSON,
                 format!("package.json#pi.{key} must be an array of strings"),
-                None::<String>,
+                Some("use a list of relative resource paths"),
             );
             ResourcePatterns {
                 explicit: true,
@@ -704,14 +726,23 @@ fn validate_agents(
                     .get(&name)
                     .map(|agent| agent.path.clone())
                     .unwrap_or_default();
-                ctx.error(
+                let severity = match field {
+                    AgentField::ModelName => Severity::Error,
+                    AgentField::ModelThinkingLevel
+                    | AgentField::Tools
+                    | AgentField::SystemInstructions => Severity::Warning,
+                    AgentField::Skills | AgentField::Subagents => continue,
+                };
+                ctx.push(
+                    severity,
                     format!("agent.{}_missing", field.label()),
                     path,
+                    None,
                     format!(
                         "Recipe agent '{name}' must declare {} directly or inherit it with from",
                         field.label()
                     ),
-                    None::<String>,
+                    field.help(),
                 );
             }
         }
@@ -749,7 +780,7 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
             "agent.invalid",
             path,
             "Agent file must contain a YAML object",
-            None::<String>,
+            Some("make the top-level YAML value a mapping"),
         );
         return None;
     };
@@ -759,8 +790,8 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
     let name = explicit_name
         .clone()
         .unwrap_or_else(|| fallback_name.clone());
-    if explicit_name.is_none() {
-        ctx.error(
+    if !map.contains_key("name") {
+        ctx.warning(
             "agent.name_missing",
             path,
             format!("Recipe agent '{name}' must declare name"),
@@ -772,7 +803,7 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
             "agent.name_invalid",
             path,
             "Agent name must be a non-empty string",
-            None::<String>,
+            Some("remove the field to use the filename, or set a non-empty name"),
         );
     }
 
@@ -792,7 +823,7 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
                 "agent.from_invalid",
                 path,
                 "Agent from must be a non-empty string",
-                None::<String>,
+                Some("remove the field or reference an existing agent"),
             );
             None
         }
@@ -841,7 +872,7 @@ fn validate_agent_model(
             "agent.model_invalid",
             path,
             "Agent model must be an object",
-            None::<String>,
+            Some("make model a mapping of supported model settings"),
         );
         return;
     };
@@ -855,7 +886,7 @@ fn validate_agent_model(
                 format!(
                     "Recipe agent '{name}' has invalid model.name '{model_name}' - expected '<provider>/<model_id>'"
                 ),
-                None::<String>,
+                Some("use an available provider and model identifier"),
             );
         }
     } else if model.contains_key("name") {
@@ -863,7 +894,7 @@ fn validate_agent_model(
             "agent.model.name_invalid",
             path,
             "Agent model.name must be a non-empty string",
-            None::<String>,
+            Some("set an available provider and model identifier"),
         );
     }
 
@@ -875,7 +906,7 @@ fn validate_agent_model(
             "agent.model.thinkingLevel_invalid",
             path,
             "Agent model thinking level must be a string",
-            None::<String>,
+            Some("remove the field to preserve the default, or set a supported level"),
         );
     }
 }
@@ -899,7 +930,7 @@ fn validate_agent_string_array(
             format!("agent.{key}_invalid"),
             path,
             message,
-            None::<String>,
+            Some("use a list containing only non-empty strings"),
         ),
     }
 }
@@ -915,19 +946,10 @@ fn validate_agent_mcp(
             "agent.mcp_invalid",
             path,
             "Agent mcp must be an object",
-            None::<String>,
+            Some("remove mcp for no access, or declare server policies"),
         );
         return Some(BTreeMap::new());
     };
-    if mcp.is_empty() {
-        ctx.error(
-            "agent.mcp_empty",
-            path,
-            "Agent mcp must declare at least one server; omit mcp for no access",
-            None::<String>,
-        );
-    }
-
     let mut parsed = BTreeMap::new();
     for (server_key, value) in mcp {
         if server_key.trim().is_empty() {
@@ -935,7 +957,7 @@ fn validate_agent_mcp(
                 "agent.mcp_server_invalid",
                 path,
                 "Agent mcp server ids must be non-empty strings",
-                None::<String>,
+                Some("remove the entry or give the server a non-empty identifier"),
             );
             continue;
         }
@@ -945,7 +967,7 @@ fn validate_agent_mcp(
                 "agent.mcp_invalid",
                 path,
                 format!("Agent mcp server '{server_id}' must be an object"),
-                None::<String>,
+                Some("remove the server for no access, or declare its tool policy"),
             );
             continue;
         };
@@ -959,7 +981,7 @@ fn validate_agent_mcp(
                     "agent.mcp_invalid",
                     path,
                     format!("mcp.{server_id}.{key}: {message}"),
-                    None::<String>,
+                    Some("use a list containing only non-empty tool names"),
                 );
                 continue;
             }
@@ -1262,14 +1284,6 @@ fn validate_resolved_agent_mcp(
 
     for (server_id, selection) in mcp {
         let Some(include) = selection.include else {
-            ctx.error(
-                "agent.mcp_include_missing",
-                path.clone(),
-                format!(
-                    "Recipe agent '{name}' MCP server '{server_id}' must declare include; use ['*'] for all tools or [] for none"
-                ),
-                None::<String>,
-            );
             continue;
         };
         let Some(server_policy) = mcp_tool_policy.and_then(|policy| policy.get(&server_id)) else {
@@ -1327,7 +1341,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                         "pi.mcp_invalid",
                         PACKAGE_JSON,
                         format!("package.json#pi.mcp[{index}] must be a non-empty string"),
-                        None::<String>,
+                        Some("remove the entry or provide a relative manifest path"),
                     );
                 }
             }
@@ -1341,7 +1355,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                         "pi.mcp_invalid",
                         PACKAGE_JSON,
                         "package.json#pi.mcp.manifest must be a non-empty string",
-                        None::<String>,
+                        Some("remove manifest or provide a relative manifest path"),
                     );
                 }
             }
@@ -1356,7 +1370,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                                     "pi.mcp_invalid",
                                     PACKAGE_JSON,
                                     format!("package.json#pi.mcp.manifests[{index}] must be a non-empty string"),
-                                    None::<String>,
+                                    Some("remove the entry or provide a relative manifest path"),
                                 );
                             }
                         }
@@ -1365,7 +1379,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                         "pi.mcp_invalid",
                         PACKAGE_JSON,
                         "package.json#pi.mcp.manifests must be an array of strings",
-                        None::<String>,
+                        Some("use a list of relative manifest paths"),
                     ),
                 }
             }
@@ -1375,7 +1389,7 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             "pi.mcp_invalid",
             PACKAGE_JSON,
             "package.json#pi.mcp must be an object, string, or string array",
-            None::<String>,
+            Some("remove mcp for no access, or use a supported MCP declaration"),
         ),
     }
 }
@@ -1389,7 +1403,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             "pi.mcp_invalid",
             PACKAGE_JSON,
             "package.json#pi.mcp.servers must be an array",
-            None::<String>,
+            Some("use a list of MCP server declarations"),
         );
         return;
     };
@@ -1399,7 +1413,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 "pi.mcp_invalid",
                 PACKAGE_JSON,
                 format!("package.json#pi.mcp.servers[{index}] must be an object"),
-                None::<String>,
+                Some("remove the entry or make it a server declaration"),
             );
             continue;
         };
@@ -1408,7 +1422,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 "pi.mcp_invalid",
                 PACKAGE_JSON,
                 format!("package.json#pi.mcp.servers[{index}].id must be a non-empty string"),
-                None::<String>,
+                Some("give the server a non-empty identifier"),
             );
         }
         if let Some(required) = server.get("required") {
@@ -1417,7 +1431,7 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                     "pi.mcp_invalid",
                     PACKAGE_JSON,
                     format!("package.json#pi.mcp.servers[{index}].required must be boolean"),
-                    None::<String>,
+                    Some("remove required or set it to a boolean value"),
                 );
             }
         }
@@ -1427,18 +1441,18 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                     "pi.mcp_invalid",
                     PACKAGE_JSON,
                     format!("package.json#pi.mcp.servers[{index}].tools must be an object"),
-                    None::<String>,
+                    Some("remove tools for no access, or declare a tool policy"),
                 );
                 continue;
             };
             if !tools.contains_key("include") {
-                ctx.error(
+                ctx.warning(
                     "pi.mcp_include_missing",
                     PACKAGE_JSON,
                     format!(
                         "package.json#pi.mcp.servers[{index}].tools must declare include; use ['*'] for all tools or [] for none"
                     ),
-                    None::<String>,
+                    Some("declare an explicit allowlist or omit the server"),
                 );
             }
             for key in ["include", "exclude"] {
@@ -1481,13 +1495,13 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 }
             }
         } else {
-            ctx.error(
+            ctx.warning(
                 "pi.mcp_include_missing",
                 PACKAGE_JSON,
                 format!(
                     "package.json#pi.mcp.servers[{index}] must declare tools.include; use ['*'] for all tools or [] for none"
                 ),
-                None::<String>,
+                Some("declare an explicit allowlist or omit the server"),
             );
         }
     }
@@ -1554,7 +1568,7 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
         return;
     }
     let Some(content) = ctx.content(MCP_LOCAL_EXAMPLE).map(str::to_owned) else {
-        ctx.error(
+        ctx.warning(
             "mcp.local_example_unreadable",
             MCP_LOCAL_EXAMPLE,
             "MCP local example content was not provided",
@@ -1569,7 +1583,7 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
                 line: err.line(),
                 column: err.column(),
             });
-            ctx.error_at(
+            ctx.warning_at(
                 "mcp.local_example_malformed",
                 MCP_LOCAL_EXAMPLE,
                 span,
@@ -1580,11 +1594,11 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
         }
     };
     let JsonValue::Object(map) = parsed else {
-        ctx.error(
+        ctx.warning(
             "mcp.local_example_invalid",
             MCP_LOCAL_EXAMPLE,
             ".pi/mcp.local.example.json must be an object",
-            None::<String>,
+            Some("fix the file structure or remove the optional example"),
         );
         return;
     };
@@ -1592,53 +1606,53 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
         return;
     };
     let JsonValue::Array(servers) = servers else {
-        ctx.error(
+        ctx.warning(
             "mcp.local_example_invalid",
             MCP_LOCAL_EXAMPLE,
             ".pi/mcp.local.example.json servers must be an array",
-            None::<String>,
+            Some("fix the server list or remove the optional example"),
         );
         return;
     };
     for (index, server) in servers.iter().enumerate() {
         let JsonValue::Object(server) = server else {
-            ctx.error(
+            ctx.warning(
                 "mcp.local_example_invalid",
                 MCP_LOCAL_EXAMPLE,
                 format!("servers[{index}] must be an object"),
-                None::<String>,
+                Some("fix the server entry or remove it"),
             );
             continue;
         };
         for key in ["id", "name", "transport", "url"] {
             if let Some(value) = server.get(key) {
                 if string_value(Some(value)).is_none() {
-                    ctx.error(
+                    ctx.warning(
                         "mcp.local_example_invalid",
                         MCP_LOCAL_EXAMPLE,
                         format!("servers[{index}].{key} must be a non-empty string"),
-                        None::<String>,
+                        Some("remove the field or provide a non-empty value"),
                     );
                 }
             }
         }
         if let Some(headers) = server.get("headers") {
             let JsonValue::Object(headers) = headers else {
-                ctx.error(
+                ctx.warning(
                     "mcp.local_example_invalid",
                     MCP_LOCAL_EXAMPLE,
                     format!("servers[{index}].headers must be an object"),
-                    None::<String>,
+                    Some("remove headers or make it a string-valued mapping"),
                 );
                 continue;
             };
             for (key, value) in headers {
                 if !matches!(value, JsonValue::String(_)) {
-                    ctx.error(
+                    ctx.warning(
                         "mcp.local_example_invalid",
                         MCP_LOCAL_EXAMPLE,
                         format!("servers[{index}].headers.{key} must be a string"),
-                        None::<String>,
+                        Some("remove the header or provide a string value"),
                     );
                 }
             }
@@ -1655,7 +1669,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             "evals.suite_invalid",
             PACKAGE_JSON,
             "package.json#pi.evals must be an object with a suites array",
-            None::<String>,
+            Some("remove evals or declare a suites list"),
         );
         return;
     };
@@ -1667,7 +1681,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             "evals.suite_invalid",
             PACKAGE_JSON,
             "package.json#pi.evals.suites must be an array",
-            None::<String>,
+            Some("use a list of evaluation suite declarations"),
         );
         return;
     };
@@ -1680,7 +1694,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 "evals.suite_invalid",
                 PACKAGE_JSON,
                 format!("{label} must be an object"),
-                None::<String>,
+                Some("remove the entry or make it a suite declaration"),
             );
             continue;
         };
@@ -1691,7 +1705,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                     "evals.name_duplicate",
                     PACKAGE_JSON,
                     format!("{label} reuses suite name '{name}' already declared at pi.evals.suites[{first}]"),
-                    None::<String>,
+                    Some("give each evaluation suite a unique name"),
                 );
             }
         } else {
@@ -1699,7 +1713,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 "evals.suite_invalid",
                 PACKAGE_JSON,
                 format!("{label} must declare a non-empty name"),
-                None::<String>,
+                Some("give the evaluation suite a unique non-empty name"),
             );
         }
         let suite_type = string_value(suite.get("type"));
@@ -1710,7 +1724,7 @@ fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 "evals.suite_invalid",
                 PACKAGE_JSON,
                 format!("{label} must use type 'registry' or 'git'"),
-                None::<String>,
+                Some("choose the suite type that matches the dataset source"),
             ),
         }
     }
@@ -1722,7 +1736,7 @@ fn validate_registry_eval_suite(suite: &JsonMap, label: &str, ctx: &mut CheckCon
             "evals.suite_invalid",
             PACKAGE_JSON,
             format!("{label} registry suite must declare dataset"),
-            None::<String>,
+            Some("set the registry dataset identifier"),
         );
     }
     match string_value(suite.get("version")) {
@@ -1731,13 +1745,13 @@ fn validate_registry_eval_suite(suite: &JsonMap, label: &str, ctx: &mut CheckCon
             "evals.pin_mutable",
             PACKAGE_JSON,
             format!("{label} registry version must be an explicit Harbor registry tag, not a mutable alias or range: {version}"),
-            None::<String>,
+            Some("pin the dataset to an immutable registry tag"),
         ),
         None => ctx.error(
             "evals.suite_invalid",
             PACKAGE_JSON,
             format!("{label} registry suite must declare version"),
-            None::<String>,
+            Some("pin the dataset to an immutable registry tag"),
         ),
     }
 }
@@ -1748,7 +1762,7 @@ fn validate_git_eval_suite(suite: &JsonMap, label: &str, ctx: &mut CheckContext)
             "evals.suite_invalid",
             PACKAGE_JSON,
             format!("{label} git suite must declare repo"),
-            None::<String>,
+            Some("set the repository containing the evaluation dataset"),
         );
     }
     match string_value(suite.get("rev")) {
@@ -1757,13 +1771,13 @@ fn validate_git_eval_suite(suite: &JsonMap, label: &str, ctx: &mut CheckContext)
             "evals.pin_mutable",
             PACKAGE_JSON,
             format!("{label} git rev must be a 7-40 character hex commit SHA: {rev}"),
-            None::<String>,
+            Some("pin the repository to an immutable commit"),
         ),
         None => ctx.error(
             "evals.suite_invalid",
             PACKAGE_JSON,
             format!("{label} git suite must declare rev"),
-            None::<String>,
+            Some("pin the repository to an immutable commit"),
         ),
     }
     if string_value(suite.get("dataset")).is_none() {
@@ -1771,7 +1785,7 @@ fn validate_git_eval_suite(suite: &JsonMap, label: &str, ctx: &mut CheckContext)
             "evals.suite_invalid",
             PACKAGE_JSON,
             format!("{label} git suite must declare dataset"),
-            None::<String>,
+            Some("set the dataset path within the repository"),
         );
     }
 }
@@ -1782,7 +1796,7 @@ fn validate_json_string_array(value: &JsonValue, label: &str, code: &str, ctx: &
             code,
             PACKAGE_JSON,
             format!("{label} must be an array of strings"),
-            None::<String>,
+            Some("use a list containing only non-empty strings"),
         );
         return;
     };
@@ -1792,7 +1806,7 @@ fn validate_json_string_array(value: &JsonValue, label: &str, code: &str, ctx: &
                 code,
                 PACKAGE_JSON,
                 format!("{label}[{index}] must be a non-empty string"),
-                None::<String>,
+                Some("remove the entry or replace it with a non-empty string"),
             );
         }
     }
@@ -2203,20 +2217,97 @@ mod tests {
     }
 
     #[test]
-    fn requires_explicit_package_and_agent_mcp_includes() {
+    fn missing_agent_mcp_includes_are_silent_and_fail_closed() {
         let input = selector_recipe(json!({}), "  salesforce: {}\n", true);
 
         let report = check_recipe_files(&input, CheckProfile::Ci);
 
-        assert!(!report.valid);
+        assert!(report.valid, "{:?}", report.diagnostics);
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "pi.mcp_include_missing"));
-        assert!(report
+            .any(|diagnostic| diagnostic.code == "pi.mcp_include_missing"
+                && diagnostic.severity == Severity::Warning));
+        assert!(!report
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.mcp_include_missing"));
+
+        let empty_agent_mcp = selector_recipe(json!({ "include": ["*"] }), "  {}\n", true);
+        let empty_report = check_recipe_files(&empty_agent_mcp, CheckProfile::Ci);
+        assert!(empty_report.valid, "{:?}", empty_report.diagnostics);
+        assert!(!empty_report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.mcp_empty"));
+    }
+
+    #[test]
+    fn optional_agent_defaults_are_warnings() {
+        let package = json!({
+            "name": "agent-defaults",
+            "description": "Test",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/agent.yaml", "model:\n  name: test/provider-model\n"),
+        ]);
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+        for code in [
+            "agent.name_missing",
+            "agent.model.thinkingLevel_missing",
+            "agent.tools_missing",
+            "agent.systemInstructions_missing",
+        ] {
+            assert!(
+                report.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == code && diagnostic.severity == Severity::Warning
+                }),
+                "missing warning {code}: {:?}",
+                report.diagnostics
+            );
+        }
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.model.thinkingLevel_missing" && diagnostic.help.is_some()
+        }));
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.systemInstructions_missing" && diagnostic.help.is_none()
+        }));
+    }
+
+    #[test]
+    fn malformed_local_mcp_example_is_only_a_warning() {
+        let package = json!({
+            "name": "local-mcp-example",
+            "description": "Test",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\n  thinking_level: low\ntools: []\nsystem_instructions:\n  content: Test\n",
+            ),
+            (".pi/mcp.local.example.json", "{ invalid"),
+        ]);
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "mcp.local_example_malformed"
+                && diagnostic.severity == Severity::Warning
+        }));
     }
 
     #[test]

@@ -100,6 +100,24 @@ describe("resolveRecipe", () => {
     expect(resolved.agentName).toBe("researcher");
   });
 
+  it("uses safe defaults for omitted optional agent fields", () => {
+    const recipeDir = makeRecipe();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      ["model:", "  name: openai/gpt-5", ""].join("\n")
+    );
+    rmSync(join(recipeDir, "agents", "base.yaml"));
+
+    const resolved = resolveRecipe({ recipeDir });
+
+    expect(resolved.agentName).toBe("agent");
+    expect(resolved.thinkingLevel).toBeUndefined();
+    expect(resolved.tools).toEqual([]);
+    expect(resolved.systemPromptOverride("Pi base prompt")).toBe(
+      "Recipe system prompt"
+    );
+  });
+
   it("returns visible subagents and their effective agent tool", () => {
     const recipeDir = makeRecipe();
     writeFileSync(

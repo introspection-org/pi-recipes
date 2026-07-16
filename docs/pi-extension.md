@@ -264,12 +264,15 @@ mcp:
 
 Package selectors are local to their server: use `"*"` for all tools or a bare
 tool name for one tool. Agent MCP policy is keyed by server and uses the same
-bare tool names. Every server entry must declare `include`: use `["*"]` for all
-package-permitted tools, an exact list for a subset, or `[]` for none.
+bare tool names. A server entry can declare `include`: use `["*"]` for all
+package-permitted tools, an exact list for a subset, or `[]` for none. Omitting
+`include` also means none.
 `exclude` subtracts exact names after inclusion. Omitting a server gives the
 agent no access to it; omitting the entire `mcp` block gives it no MCP access.
-Empty package `tools`, agent server (`contacts: {}`), and agent `mcp: {}`
-objects are invalid rather than implicit wildcards.
+A missing package `include` list fails closed to no access and produces a
+non-blocking warning. A missing agent `include` list, an agent server such as
+`contacts: {}`, and an empty agent `mcp: {}` are silently treated as omitted.
+None are interpreted as implicit wildcards.
 
 Package declaration, endpoint binding, and agent selection are independent
 gates. A bound server that is absent from `package.json#pi.mcp.servers` is
@@ -286,8 +289,7 @@ selected only through the agent `mcp` block; the ordinary `tools` list remains
 an explicit list of non-MCP tools.
 
 `recipes check` owns detailed static MCP diagnostics, including:
-`agent.mcp_server_undeclared`, `agent.mcp_tool_undeclared`,
-`agent.mcp_include_missing`, `agent.mcp_empty`, and
+`agent.mcp_server_undeclared`, `agent.mcp_tool_undeclared`, and
 `agent.mcp_selector_invalid`. The TypeScript runtime uses a generic fail-closed
 guard so an invalid policy cannot launch silently without duplicating those
 diagnostics. Runtime configuration also reports a zero-tool intersection for a
