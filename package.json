@@ -62,7 +62,7 @@
   },
   "scripts": {
     "build": "pnpm build:ts && pnpm build:native",
-    "build:ts": "rm -rf dist && tsc && chmod +x dist/cli.js",
+    "build:ts": "rm -rf dist && tsc && node scripts/build-mcp-daemon.mjs && chmod +x dist/cli.js",
     "build:native": "cargo build --release -p pi-recipe-check -p pi-mcp-client && node scripts/package-recipe-check.mjs && node scripts/package-mcp-client.mjs",
     "bench:mcp-client": "pnpm build:ts && cargo build --release -p pi-mcp-client && node scripts/benchmark-mcp-client.mjs",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
@@ -88,6 +88,7 @@
     "@earendil-works/pi-coding-agent": "0.80.6",
     "@earendil-works/pi-tui": "0.80.6",
     "@types/node": "^22.10.0",
+    "esbuild": "^0.28.1",
     "typebox": "^1.0.56",
     "typescript": "^5.7.3",
     "vitest": "^4.0.18"
