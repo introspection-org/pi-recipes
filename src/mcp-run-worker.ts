@@ -1,7 +1,7 @@
 import { Readable, Writable } from "node:stream";
 import { parentPort, workerData } from "node:worker_threads";
 
-import { executeMcpCommand } from "./mcp-cli.js";
+import { executeMcpCommand } from "./mcp-cli-core.js";
 import {
   installMcpCommandIoRouting,
   type McpRuntime,
