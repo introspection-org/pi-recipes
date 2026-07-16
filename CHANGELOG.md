@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.3](https://github.com/introspection-org/pi-recipes/compare/v0.10.2...v0.10.3) (2026-07-16)
+
+
+### Bug Fixes
+
+* require native MCP daemon client ([#94](https://github.com/introspection-org/pi-recipes/issues/94)) ([8b0ec4b](https://github.com/introspection-org/pi-recipes/commit/8b0ec4bb0dcf1ce9dd7f73db4f20d83e61cb35f4))
+
 ## [0.10.2](https://github.com/introspection-org/pi-recipes/compare/v0.10.1...v0.10.2) (2026-07-16)
 
 
