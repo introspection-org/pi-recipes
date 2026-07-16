@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { constants, existsSync, readFileSync } from "node:fs";
+import { access, chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -230,6 +230,17 @@ export async function materializeSessionMcpCli(opts: {
   const binDir = defaultMcpBinDir(opts.cwd);
   const shimPath = join(binDir, "mcp");
   const nativeClient = nativeMcpClientPath();
+  if (process.platform !== "win32" && !nativeClient) {
+    throw new Error(
+      `Native MCP client is unavailable for ${process.platform}-${process.arch}.`
+    );
+  }
+  if (nativeClient && process.platform !== "win32") {
+    await access(nativeClient, constants.X_OK).catch(async () => {
+      await chmod(nativeClient, 0o755);
+      await access(nativeClient, constants.X_OK);
+    });
+  }
   // The shim pins MCPORTER_CONFIG to the session-generated config (the
   // session env normally sets it; the default covers shells that lost the
   // env). mcporter must never fall through to its own config resolution —
@@ -243,14 +254,10 @@ export async function materializeSessionMcpCli(opts: {
     `export ${MCPORTER_CONFIG_ENV}`,
     `if [ -n "\${${MCP_DAEMON_SOCKET_ENV}:-}" ]; then`,
     ...(nativeClient
-      ? [
-          `  ${shellQuote(nativeClient)} "$@"`,
-          "  native_status=$?",
-          "  if [ \"$native_status\" -ne 75 ]; then exit \"$native_status\"; fi",
-          '  if [ "${PI_RECIPES_MCP_NATIVE_REQUIRED:-}" = "1" ]; then exit 75; fi',
-        ]
-      : []),
-    `  exec ${shellQuote(process.execPath)} ${shellQuote(mcpClientEntrypointPath())} "$@"`,
+      ? [`  exec ${shellQuote(nativeClient)} "$@"`]
+      : [
+          `  exec ${shellQuote(process.execPath)} ${shellQuote(mcpClientEntrypointPath())} "$@"`,
+        ]),
     "fi",
     `exec ${shellQuote(process.execPath)} ${shellQuote(mcpCliEntrypointPath())} "$@"`,
     "",
