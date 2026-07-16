@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -19,7 +18,6 @@ import {
   renderToolSignature,
   type ContractTool,
 } from "./mcp-contract.js";
-import { isDirectEntry } from "./direct-cli.js";
 import { mcpCliHelpText } from "./mcp-cli-help.js";
 import {
   defaultMcporterConfigPath,
@@ -2058,32 +2056,4 @@ export async function executeMcpCommand(opts: {
     signal: opts.signal,
   };
   return runWithMcpCommandContext(context, () => main(opts.args));
-}
-
-if (isDirectEntry(import.meta.url)) {
-  let brokenPipe = false;
-  const handleOutputError = (error: NodeJS.ErrnoException) => {
-    if (error.code === "EPIPE") {
-      // A downstream command such as `head` intentionally closed the pipe.
-      // Treat that as normal Unix pipeline completion and avoid leaking a Node
-      // stack trace after the MCP operation has already produced its result.
-      brokenPipe = true;
-      return;
-    }
-    throw error;
-  };
-  stdout.on("error", handleOutputError);
-  stderr.on("error", handleOutputError);
-  main()
-    .then((code) => {
-      process.exitCode = brokenPipe ? 0 : code;
-    })
-    .catch((err: unknown) => {
-      if (brokenPipe) {
-        process.exitCode = 0;
-        return;
-      }
-      stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-      process.exitCode = 1;
-    });
 }

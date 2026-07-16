@@ -9,10 +9,10 @@ const distCli = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
   "dist",
-  "mcp-cli.js"
+  "mcp-cli-entry.js"
 );
 
-describe("mcp CLI entry detection", () => {
+describe("mcp CLI entry", () => {
   let dir: string;
 
   beforeEach(() => {
@@ -59,7 +59,7 @@ describe("mcp CLI entry detection", () => {
     };
   }
 
-  it("runs main when invoked directly", () => {
+  it("runs the CLI when invoked directly", () => {
     const result = runCli(distCli, ["--help"]);
     expect(result.status).toBe(0);
     expect(result.stdout.length).toBeGreaterThan(0);
@@ -111,13 +111,12 @@ describe("mcp CLI entry detection", () => {
     expect(probe.stderr).not.toContain("Unhandled 'error' event");
   });
 
-  it("runs main when invoked through a symlink (pnpm/npm bin shims)", () => {
-    // pnpm exposes packages through node_modules symlinks and npm bin shims
-    // symlink to the entry script; argv[1] is then the symlink while
-    // import.meta.url is the realpath. The CLI must still self-detect.
+  it("runs through a symlink (pnpm/npm bin shims)", () => {
+    // pnpm exposes package binaries through node_modules symlinks and npm bin
+    // shims, so the dedicated entrypoint must work through either path.
     const linkDir = join(dir, "bin");
     mkdirSync(linkDir, { recursive: true });
-    const link = join(linkDir, "mcp-cli.js");
+    const link = join(linkDir, "mcp-cli-entry.js");
     symlinkSync(distCli, link);
 
     const result = runCli(link, ["--help"]);

@@ -102,7 +102,7 @@ function runMcpCli(
   return new Promise((resolve) => {
     const child = spawn(
       process.execPath,
-      [join(process.cwd(), "dist", "mcp-cli.js"), ...args],
+      [join(process.cwd(), "dist", "mcp-cli-entry.js"), ...args],
       {
         env: { ...process.env, ...env },
         stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
