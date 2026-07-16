@@ -9,7 +9,7 @@ const distCli = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
   "dist",
-  "mcp-cli-entry.js"
+  "mcp-cli.js"
 );
 
 describe("mcp CLI entry", () => {
@@ -116,7 +116,7 @@ describe("mcp CLI entry", () => {
     // shims, so the dedicated entrypoint must work through either path.
     const linkDir = join(dir, "bin");
     mkdirSync(linkDir, { recursive: true });
-    const link = join(linkDir, "mcp-cli-entry.js");
+    const link = join(linkDir, "mcp-cli.js");
     symlinkSync(distCli, link);
 
     const result = runCli(link, ["--help"]);

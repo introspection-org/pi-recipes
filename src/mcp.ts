@@ -175,7 +175,7 @@ function compiledEntrypoint(name: string): string {
 }
 
 export function mcpCliEntrypointPath(): string {
-  return compiledEntrypoint("mcp-cli-entry.js");
+  return compiledEntrypoint("mcp-cli.js");
 }
 
 export function mcpClientEntrypointPath(): string {

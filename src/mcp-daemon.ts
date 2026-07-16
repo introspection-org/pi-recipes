@@ -11,7 +11,7 @@ import {
   installMcpCommandIoRouting,
   type McpRuntime,
 } from "./mcp-command-context.js";
-import { discoverMcpCatalogs, executeMcpCommand } from "./mcp-cli.js";
+import { discoverMcpCatalogs, executeMcpCommand } from "./mcp-cli-core.js";
 import {
   MCP_DAEMON_FINGERPRINT_ENV,
   MCP_DAEMON_PARENT_PID_ENV,

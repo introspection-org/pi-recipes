@@ -1,8 +1,11 @@
 import { build } from "esbuild";
 
 await build({
-  entryPoints: ["src/mcp-daemon.ts"],
-  outfile: "dist/mcp-daemon.js",
+  entryPoints: {
+    "mcp-daemon": "src/mcp-daemon.ts",
+    "mcp-run-worker": "src/mcp-run-worker.ts",
+  },
+  outdir: "dist",
   bundle: true,
   platform: "node",
   format: "esm",
