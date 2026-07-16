@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.2](https://github.com/introspection-org/pi-recipes/compare/v0.10.1...v0.10.2) (2026-07-16)
+
+
+### Bug Fixes
+
+* accelerate MCP daemon bootstrap ([#92](https://github.com/introspection-org/pi-recipes/issues/92)) ([b862604](https://github.com/introspection-org/pi-recipes/commit/b8626044e4b73a862f21183f49a660751c978d29))
+* agent skill and subagent omission semantics ([#86](https://github.com/introspection-org/pi-recipes/issues/86)) ([fea3bf6](https://github.com/introspection-org/pi-recipes/commit/fea3bf625a83f375a1c5854d4a5b556512f48b7a))
+* preserve MCP CLI entrypoint ([#93](https://github.com/introspection-org/pi-recipes/issues/93)) ([f9c48f3](https://github.com/introspection-org/pi-recipes/commit/f9c48f3b00ea524a54ef7da5fc2991e337b885ef))
+
 ## [0.10.1](https://github.com/introspection-org/pi-recipes/compare/v0.10.0...v0.10.1) (2026-07-15)
 
 
