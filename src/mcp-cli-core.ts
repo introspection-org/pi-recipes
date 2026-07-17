@@ -29,7 +29,12 @@ import {
   type McpSessionServer,
   type McpToolCatalogEntry,
 } from "./mcp.js";
-import { resolveMcpApproval } from "./mcp-approval.js";
+import {
+  consumeApprovalGrant,
+  formatApprovalMarker,
+  hasMcpApprovalResolver,
+  resolveMcpApproval,
+} from "./mcp-approval.js";
 import {
   createMcpCliSessionPolicy,
   validateDelegatedMcpCommand,
@@ -1910,10 +1915,12 @@ async function callWithSharedRuntime(
     }
   }
 
-  // Approval gate at the true side-effect boundary: resolve this tool's
-  // effective policy and, for always_ask, consult the host resolver. A decline
-  // returns cleanly (not an error); an approval may substitute edited args. A
-  // gate failure never wedges the call — it fails open (allow) and logs.
+  // Approval gate at the true side-effect boundary. For an `always_ask` tool:
+  //  1. a grant left by an approved re-invoke → run the APPROVED args, consume it;
+  //  2. else an in-process resolver (standalone host) → consult it inline;
+  //  3. else (detached daemon) → emit the awaiting marker and DON'T run — the
+  //     host raises the prompt and drops a grant for the model's re-invoke.
+  // A gate failure never wedges the call — it fails open (allow) and logs.
   let callValues = values;
   try {
     const sessionServer = (await readSession()).servers.find(
@@ -1922,14 +1929,26 @@ async function callWithSharedRuntime(
     const policy = sessionServer
       ? resolveMcpApprovalPolicy(sessionServer, tool)
       : "always_allow";
-    const approval = await resolveMcpApproval({ server, tool, policy, args: values });
-    if (approval.decision === "deny") {
-      stdout.write(
-        `User declined to run ${server}.${tool}. Proceed with your best judgment.\n`
-      );
-      return 0;
+    if (policy === "always_ask") {
+      const grant = await consumeApprovalGrant(server, tool);
+      if (grant) {
+        callValues = grant.args;
+      } else if (hasMcpApprovalResolver()) {
+        const approval = await resolveMcpApproval({ server, tool, policy, args: values });
+        if (approval.decision === "deny") {
+          stdout.write(
+            `User declined to run ${server}.${tool}. Proceed with your best judgment.\n`
+          );
+          return 0;
+        }
+        if (approval.editedArgs) callValues = approval.editedArgs;
+      } else {
+        stdout.write(
+          formatApprovalMarker({ server, tool, args: values, nonce: randomUUID() })
+        );
+        return 0;
+      }
     }
-    if (approval.editedArgs) callValues = approval.editedArgs;
   } catch (err) {
     stderr.write(
       `mcp call: approval gate failed (${err instanceof Error ? err.message : String(err)}); allowing.\n`

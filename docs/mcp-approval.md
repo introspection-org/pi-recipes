@@ -121,28 +121,39 @@ access to the interrupt machinery. So today `always_ask` **fails open** (runs
 without prompting) in both local and remote modes. Closing that is the real work,
 and it splits cleanly: **decision at the daemon, delivery + plumbing at the host.**
 
-1. **Await.** On `always_ask`, the daemon gate does not execute. It returns a
-   structured *awaiting-approval* result carrying `(server, tool, args)`.
-2. **Interrupt.** The `mcp` CLI relays that marker; the host recognizes it and
-   raises the **existing** interrupt — a local `ctx.ui` dialog, or a durable
-   AG-UI interrupt in the cloud (reusing `askUserApproval`'s resume envelope, so
-   local and remote are byte-identical). The host never parses the bash string to
-   decide — it only reacts to the daemon's structured signal, so no obfuscation
-   surface is added.
-3. **Grant + re-invoke.** On approval the host mints a **single-use grant token**
-   and the model re-invokes the call. The token is passed **out-of-band** — an env
-   var the CLI reads, never a model-controlled argument — so the agent cannot
-   forge its own approval. The CLI forwards the token to the daemon; the gate
-   verifies and runs, consuming it. (Pi executes a tool only when the model
-   invokes it, so approval necessarily flows through a re-invoke; the grant is
-   what keeps that re-invoke from re-prompting.)
-4. **Deny.** The CLI returns "User declined to run `server.tool`. Proceed with
-   your best judgment." — the same stance the interaction contract takes for a
-   declined question. No execution, no grant.
+1. **Await.** On `always_ask` with no grant and no in-process resolver, the
+   daemon gate (running in the Worker) does not execute. It writes an
+   *awaiting-approval marker* to stdout — `__PI_MCP_APPROVAL_REQUIRED__` + JSON
+   `{server, tool, args, nonce}` — which streams to the host as the `mcp call`
+   result. Implemented: `formatApprovalMarker` in `mcp-approval.ts`.
+2. **Interrupt.** The host scans the `mcp call` result for the marker
+   (`parseApprovalMarker`) and raises the **existing** interrupt — a local
+   `ctx.ui` dialog, or a durable AG-UI interrupt in the cloud (reusing
+   `askUserApproval`'s resume envelope, so local and remote are byte-identical).
+   The host reacts only to the daemon's structured marker; it never parses the
+   bash string to decide, so no obfuscation surface is added.
+3. **Grant + re-invoke.** On approval the host drops a **single-use grant file**
+   into the session-root grants dir (`writeApprovalGrant`) carrying the approved
+   `(server, tool, args)`, and the model re-invokes the call. The gate finds the
+   grant (`consumeApprovalGrant`, matched by `(server, tool)`), runs the
+   **approved** args (not whatever the model re-sent), and deletes the file
+   (single-use). A **file** is the channel because host and Worker share the
+   sandbox filesystem, so it needs no daemon-protocol or thin-client (JS + native)
+   change. (Pi executes a tool only when the model invokes it, so approval flows
+   through a re-invoke; the grant keeps that re-invoke from re-prompting.)
+4. **Deny.** The host rewrites the held result to "User declined to run
+   `server.tool`. Proceed with your best judgment." — no grant, no execution.
 
-The grant is **ephemeral** (it lives from approval to the immediately-following
-re-invoke and is dropped on any fresh turn); the durable record is the interrupt
-itself, persisted the same way every other interrupt is.
+The grant is **ephemeral** (approval → the immediately-following re-invoke, and
+the host clears stale grant files on a fresh turn); the durable record is the
+interrupt itself, persisted the same way every other interrupt is.
+
+**Threat note (unchanged):** host and agent share one sandbox, so an adversarial
+agent with raw `bash` could write a grant file itself — the same conceded
+boundary (a raw-bash agent can bypass MCP entirely). The grant makes the
+*cooperative* flow correct (the model emits tool calls but cannot drop grant
+files); it is not a wall against an adversarial agent, for which the boundary
+stays inclusion + egress.
 
 ## Threat model (stated, not implied)
 

@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   parseApprovalPolicy,
@@ -11,9 +14,16 @@ import {
   resolveMcpApprovalPolicy,
 } from "../src/mcp.js";
 import {
+  consumeApprovalGrant,
+  formatApprovalMarker,
+  hasMcpApprovalResolver,
+  parseApprovalMarker,
   resolveMcpApproval,
   setMcpApprovalResolver,
+  writeApprovalGrant,
 } from "../src/mcp-approval.js";
+
+const SESSION_ROOT_ENV = "PI_RECIPES_MCP_SESSION_ROOT";
 
 describe("approval policy model", () => {
   it("parses valid values and leaves absent as undefined", () => {
@@ -126,5 +136,80 @@ describe("resolveMcpApproval gate", () => {
       decision: "allow",
       editedArgs: { to: "safe@corp.com" },
     });
+  });
+
+  it("reports whether an in-process resolver is installed", () => {
+    expect(hasMcpApprovalResolver()).toBe(false);
+    setMcpApprovalResolver(async () => ({ decision: "allow" }));
+    expect(hasMcpApprovalResolver()).toBe(true);
+  });
+});
+
+describe("approval marker", () => {
+  it("round-trips a payload through the marker line", () => {
+    const payload = {
+      server: "gmail",
+      tool: "send_email",
+      args: { to: "a@b.com" },
+      nonce: "n1",
+    };
+    const marker = formatApprovalMarker(payload);
+    // Embedded in surrounding output the way a tool result would carry it.
+    expect(parseApprovalMarker(`some log\n${marker}more log`)).toEqual(payload);
+  });
+
+  it("returns null when no marker line is present", () => {
+    expect(parseApprovalMarker("just a normal tool result\n")).toBeNull();
+  });
+});
+
+describe("approval file-grant", () => {
+  let root: string;
+  let env: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "pi-mcp-grant-"));
+    env = { [SESSION_ROOT_ENV]: root };
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("consumes a matching grant once, returning the approved args", async () => {
+    await writeApprovalGrant(
+      { server: "gmail", tool: "send_email", args: { to: "safe@corp.com" }, nonce: "n1" },
+      env
+    );
+    const first = await consumeApprovalGrant("gmail", "send_email", env);
+    expect(first?.args).toEqual({ to: "safe@corp.com" });
+    // single-use: the second attempt finds nothing
+    expect(await consumeApprovalGrant("gmail", "send_email", env)).toBeNull();
+  });
+
+  it("does not match a different server or tool", async () => {
+    await writeApprovalGrant(
+      { server: "gmail", tool: "send_email", args: {}, nonce: "n1" },
+      env
+    );
+    expect(await consumeApprovalGrant("gmail", "trash", env)).toBeNull();
+    expect(await consumeApprovalGrant("slack", "send_email", env)).toBeNull();
+    // the real one still consumes
+    expect(await consumeApprovalGrant("gmail", "send_email", env)).not.toBeNull();
+  });
+
+  it("returns null when no grants directory exists", async () => {
+    expect(await consumeApprovalGrant("gmail", "send_email", env)).toBeNull();
+  });
+
+  it("gives each same-tool grant one execution (FIFO by nonce)", async () => {
+    await writeApprovalGrant(
+      { server: "gmail", tool: "send_email", args: { n: 1 }, nonce: "n1" },
+      env
+    );
+    await writeApprovalGrant(
+      { server: "gmail", tool: "send_email", args: { n: 2 }, nonce: "n2" },
+      env
+    );
+    expect((await consumeApprovalGrant("gmail", "send_email", env))?.args).toEqual({ n: 1 });
+    expect((await consumeApprovalGrant("gmail", "send_email", env))?.args).toEqual({ n: 2 });
+    expect(await consumeApprovalGrant("gmail", "send_email", env)).toBeNull();
   });
 });
