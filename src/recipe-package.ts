@@ -8,10 +8,81 @@ export interface RecipePackageResources {
   prompts: string[];
 }
 
+/**
+ * Per-tool approval policy for an MCP server. `always_allow` (the default) runs
+ * without prompting; `always_ask` pauses for the user's approval on every call.
+ * The `always_` prefix is deliberate: the policy re-confirms every call — there
+ * is no remembered "allow once" state.
+ */
+export type McpApprovalPolicy = "always_allow" | "always_ask";
+
+export const MCP_APPROVAL_POLICIES: readonly McpApprovalPolicy[] = [
+  "always_allow",
+  "always_ask",
+];
+
 export interface RecipePackageMcpServer {
   id: string;
   required: boolean;
   tools: RecipeMcpToolSelection;
+  /** Server-wide default approval policy. Omitted = inherit / `always_allow`. */
+  policy?: McpApprovalPolicy;
+  /** Per-tool override of `policy`, keyed by bare tool name. */
+  toolPolicies?: Record<string, McpApprovalPolicy>;
+}
+
+/**
+ * Parse an approval-policy value. An absent value is `undefined` (inherit the
+ * default). A present but unparseable value (typo, wrong case, non-string) fails
+ * **closed** to `always_ask` and warns — a policy mistake never silently opens a
+ * gate. `recipes check` reports the same values at publish time.
+ */
+export function parseApprovalPolicy(value: unknown): McpApprovalPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === "always_allow" || value === "always_ask") return value;
+  console.warn(
+    `[pi-recipes] invalid MCP approval policy ${JSON.stringify(value)}; ` +
+      `treating as "always_ask" (valid: ${MCP_APPROVAL_POLICIES.join(", ")}).`
+  );
+  return "always_ask";
+}
+
+/** Parse a per-tool policy map, dropping empty keys; invalid values fail closed. */
+export function parseMcpToolPolicies(
+  value: unknown
+): Record<string, McpApprovalPolicy> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries: [string, McpApprovalPolicy][] = [];
+  for (const [tool, policy] of Object.entries(value as Record<string, unknown>)) {
+    if (!tool.trim()) continue;
+    const parsed = parseApprovalPolicy(policy);
+    if (parsed !== undefined) entries.push([tool, parsed]);
+  }
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+/** `always_ask` dominates `always_allow` — the stricter of two policies wins. */
+export function tightenApprovalPolicy(
+  left: McpApprovalPolicy | undefined,
+  right: McpApprovalPolicy | undefined
+): McpApprovalPolicy | undefined {
+  if (left === "always_ask" || right === "always_ask") return "always_ask";
+  if (left === "always_allow" || right === "always_allow") return "always_allow";
+  return undefined;
+}
+
+/** Tighten two per-tool policy maps; each tool takes the stricter side. */
+export function tightenMcpToolPolicies(
+  base: Record<string, McpApprovalPolicy> | undefined,
+  child: Record<string, McpApprovalPolicy> | undefined
+): Record<string, McpApprovalPolicy> | undefined {
+  if (!base) return child;
+  if (!child) return base;
+  const merged: Record<string, McpApprovalPolicy> = { ...base };
+  for (const [tool, policy] of Object.entries(child)) {
+    merged[tool] = tightenApprovalPolicy(merged[tool], policy) ?? policy;
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
 export interface RecipeMcpToolSelection {
@@ -276,6 +347,8 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
     const exclude = Object.hasOwn(tools, "exclude")
       ? stringArray(tools.exclude)
       : undefined;
+    const policy = parseApprovalPolicy(server.policy);
+    const toolPolicies = parseMcpToolPolicies(server.toolPolicies);
     seen.add(id);
     servers.push({
       id,
@@ -284,6 +357,8 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
         ...(include !== undefined ? { include } : {}),
         ...(exclude !== undefined ? { exclude } : {}),
       },
+      ...(policy !== undefined ? { policy } : {}),
+      ...(toolPolicies !== undefined ? { toolPolicies } : {}),
     });
   }
 

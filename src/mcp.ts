@@ -14,6 +14,9 @@ import {
 } from "./mcp-daemon-protocol.js";
 import {
   resolvePiPackageMcpManifestPaths,
+  tightenApprovalPolicy,
+  tightenMcpToolPolicies,
+  type McpApprovalPolicy,
   type RecipePackageManifest,
   type RecipePackageMcpConfig,
   type RecipeMcpToolSelection,
@@ -35,6 +38,10 @@ export interface McpSessionServer {
   agent_tools: RecipeMcpToolSelection[];
   /** Optional package-pinned catalog. Dynamic bindings leave this absent. */
   catalog?: McpToolCatalogEntry[];
+  /** Effective server-wide approval policy (package tightened by agent). */
+  policy?: McpApprovalPolicy;
+  /** Effective per-tool approval overrides. */
+  tool_policies?: Record<string, McpApprovalPolicy>;
 }
 
 export interface McpSessionConfig {
@@ -379,15 +386,59 @@ function endpointBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBindi
 export interface ScopedMcpToolSelection {
   serverId: string;
   tools: RecipeMcpToolSelection;
+  policy?: McpApprovalPolicy;
+  toolPolicies?: Record<string, McpApprovalPolicy>;
 }
 
+/** An agent MCP selection carries tool filters plus optional approval policy. */
+type AgentMcpServerSelection = RecipeMcpToolSelection & {
+  policy?: McpApprovalPolicy;
+  toolPolicies?: Record<string, McpApprovalPolicy>;
+};
+
 export function resolveAgentMcpSelections(
-  mcp: Readonly<Record<string, RecipeMcpToolSelection>> | undefined
+  mcp: Readonly<Record<string, AgentMcpServerSelection>> | undefined
 ): ScopedMcpToolSelection[] {
   return Object.entries(mcp ?? {}).map(([serverId, selection]) => ({
     serverId: safeServerId(serverId),
-    tools: selection,
+    tools: {
+      ...(selection.include !== undefined ? { include: selection.include } : {}),
+      ...(selection.exclude !== undefined ? { exclude: selection.exclude } : {}),
+    },
+    ...(selection.policy !== undefined ? { policy: selection.policy } : {}),
+    ...(selection.toolPolicies !== undefined
+      ? { toolPolicies: selection.toolPolicies }
+      : {}),
   }));
+}
+
+/**
+ * Effective approval for a server: the package default/overrides tightened by
+ * every selecting agent layer (`always_ask` wins). Used at materialization to
+ * bake the resolved policy into the session config the daemon reads.
+ */
+export function computeEffectiveApproval(
+  packageServer: { policy?: McpApprovalPolicy; toolPolicies?: Record<string, McpApprovalPolicy> },
+  selections: readonly ScopedMcpToolSelection[]
+): { policy?: McpApprovalPolicy; tool_policies?: Record<string, McpApprovalPolicy> } {
+  let policy = packageServer.policy;
+  let toolPolicies = packageServer.toolPolicies;
+  for (const selection of selections) {
+    policy = tightenApprovalPolicy(policy, selection.policy);
+    toolPolicies = tightenMcpToolPolicies(toolPolicies, selection.toolPolicies);
+  }
+  return {
+    ...(policy !== undefined ? { policy } : {}),
+    ...(toolPolicies !== undefined ? { tool_policies: toolPolicies } : {}),
+  };
+}
+
+/** The effective policy for one tool call: per-tool override, else server default, else always_allow. */
+export function resolveMcpApprovalPolicy(
+  server: Pick<McpSessionServer, "policy" | "tool_policies">,
+  tool: string
+): McpApprovalPolicy {
+  return server.tool_policies?.[tool] ?? server.policy ?? "always_allow";
 }
 
 export function executableRecipeToolNames(tools: readonly string[]): string[] {
@@ -664,12 +715,14 @@ export async function materializeMcpSession(
   const servers: McpSessionServer[] = [];
   for (const packageServer of opts.manifest.mcp.servers) {
     const id = safeServerId(packageServer.id);
-    const selected = agentSelections
-      .filter((selection) => selection.serverId === id)
-      .map((selection) => selection.tools);
+    const selectedScopes = agentSelections.filter(
+      (selection) => selection.serverId === id
+    );
+    const selected = selectedScopes.map((selection) => selection.tools);
     if (selected.length === 0 || selected.every((entry) => entry.include?.length === 0)) {
       continue;
     }
+    const approval = computeEffectiveApproval(packageServer, selectedScopes);
     const binding = bindings.get(id);
     const declared = configured.get(id);
     if (!binding && !declared) continue;
@@ -699,6 +752,10 @@ export async function materializeMcpSession(
       package_tools: packageServer.tools,
       agent_tools: selected,
       ...(declared?.tools ? { catalog } : {}),
+      ...(approval.policy !== undefined ? { policy: approval.policy } : {}),
+      ...(approval.tool_policies !== undefined
+        ? { tool_policies: approval.tool_policies }
+        : {}),
     });
   }
 

@@ -1,5 +1,6 @@
 export * from "./interactions.js";
 export * from "./agent-tool.js";
+export * from "./mcp-approval.js";
 export * from "./mcp-catalog.js";
 export * from "./mcp.js";
 export * from "./pi-extension.js";

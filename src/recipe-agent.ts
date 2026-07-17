@@ -10,8 +10,13 @@ import {
 import {
   isValidRecipeMcpToolSelection,
   packageResourcePaths,
+  parseApprovalPolicy,
+  parseMcpToolPolicies,
   readPiPackageManifest,
   RecipePackageError,
+  tightenApprovalPolicy,
+  tightenMcpToolPolicies,
+  type McpApprovalPolicy,
 } from "./recipe-package.js";
 import {
   mcpSelectionAllowsTool,
@@ -33,6 +38,10 @@ export interface RecipeAgentMcpServer {
   include?: string[];
   /** Exact tool names removed after inclusion. */
   exclude?: string[];
+  /** Server-wide approval policy. Tightens the package bound, never loosens it. */
+  policy?: McpApprovalPolicy;
+  /** Per-tool approval override, keyed by bare tool name. */
+  toolPolicies?: Record<string, McpApprovalPolicy>;
 }
 
 export type RecipeAgentMcp = Record<string, RecipeAgentMcpServer>;
@@ -168,6 +177,8 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
   const mcp: RecipeAgentMcp = {};
   for (const [serverId, value] of Object.entries(raw)) {
     const selectors = asRecord(value);
+    const policy = parseApprovalPolicy(selectors.policy);
+    const toolPolicies = parseMcpToolPolicies(selectors.toolPolicies);
     mcp[serverId] = {
       ...(Object.hasOwn(selectors, "include")
         ? { include: stringArray(selectors.include) }
@@ -175,6 +186,8 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
       ...(Object.hasOwn(selectors, "exclude")
         ? { exclude: stringArray(selectors.exclude) }
         : {}),
+      ...(policy !== undefined ? { policy } : {}),
+      ...(toolPolicies !== undefined ? { toolPolicies } : {}),
     };
   }
   return mcp;
@@ -189,11 +202,18 @@ function mergeMcp(
   const merged: RecipeAgentMcp = { ...base };
   for (const [serverId, childServer] of Object.entries(child)) {
     const baseServer = base[serverId];
+    const policy = tightenApprovalPolicy(baseServer?.policy, childServer.policy);
+    const toolPolicies = tightenMcpToolPolicies(
+      baseServer?.toolPolicies,
+      childServer.toolPolicies
+    );
     merged[serverId] = {
       ...(baseServer?.include !== undefined ? { include: baseServer.include } : {}),
       ...(baseServer?.exclude !== undefined ? { exclude: baseServer.exclude } : {}),
       ...(childServer.include !== undefined ? { include: childServer.include } : {}),
       ...(childServer.exclude !== undefined ? { exclude: childServer.exclude } : {}),
+      ...(policy !== undefined ? { policy } : {}),
+      ...(toolPolicies !== undefined ? { toolPolicies } : {}),
     };
   }
   return merged;

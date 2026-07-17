@@ -281,9 +281,54 @@ by itself.
 `search_*` are invalid. An explicit wildcard opts into tools that the remote
 server may add later; use exact includes when that behavior is not desired.
 
-Package and agent MCP policies use only `include` and `exclude`. MCP tools are
-selected only through the agent `mcp` block; the ordinary `tools` list remains
-an explicit list of non-MCP tools.
+Package and agent MCP policies use `include` and `exclude` for tool selection.
+MCP tools are selected only through the agent `mcp` block; the ordinary `tools`
+list remains an explicit list of non-MCP tools.
+
+### Approval policy
+
+A server may also declare an **approval policy** controlling whether a tool call
+runs automatically or pauses for the user's approval. It is enforced at the MCP
+daemon, immediately before the call reaches the endpoint (see
+[`mcp-approval.md`](mcp-approval.md)):
+
+- `always_allow` (default) — the call runs without a prompt.
+- `always_ask` — the call pauses and requests approval before it executes; a
+  decline returns "User declined…" and the model proceeds without it.
+
+`policy` sets the server-wide default; `toolPolicies` overrides per tool:
+
+```json
+{
+  "pi": {
+    "mcp": {
+      "servers": [
+        {
+          "id": "gmail",
+          "tools": { "include": ["*"] },
+          "policy": "always_allow",
+          "toolPolicies": { "send_email": "always_ask", "trash_thread": "always_ask" }
+        }
+      ]
+    }
+  }
+}
+```
+
+```yaml
+mcp:
+  gmail:
+    include: ["*"]
+    policy: always_ask        # this agent asks for everything on gmail
+```
+
+The effective policy is `toolPolicies[tool] ?? policy ?? "always_allow"`, and it
+**tightens** across the package bound and every selecting agent layer
+(`always_ask` wins) — an agent can raise a tool to `always_ask` but never lower a
+package `always_ask`. An unparseable value fails **closed** to `always_ask` at
+runtime; `recipes check` reports it as `mcp.policy_invalid` /
+`agent.mcp_policy_invalid`. When no host approval channel is wired the daemon
+**fails open and logs** (Phase 0); reaching the user is the Phase 1 back-channel.
 
 `recipes check` owns detailed static MCP diagnostics, including:
 `agent.mcp_server_undeclared`, `agent.mcp_tool_undeclared`,

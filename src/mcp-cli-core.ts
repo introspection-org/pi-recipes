@@ -24,10 +24,12 @@ import {
   defaultMcpSessionPath,
   filterMcpCatalog,
   mcpSessionAllowsTool,
+  resolveMcpApprovalPolicy,
   type McpSessionConfig,
   type McpSessionServer,
   type McpToolCatalogEntry,
 } from "./mcp.js";
+import { resolveMcpApproval } from "./mcp-approval.js";
 import {
   createMcpCliSessionPolicy,
   validateDelegatedMcpCommand,
@@ -1908,9 +1910,35 @@ async function callWithSharedRuntime(
     }
   }
 
+  // Approval gate at the true side-effect boundary: resolve this tool's
+  // effective policy and, for always_ask, consult the host resolver. A decline
+  // returns cleanly (not an error); an approval may substitute edited args. A
+  // gate failure never wedges the call — it fails open (allow) and logs.
+  let callValues = values;
+  try {
+    const sessionServer = (await readSession()).servers.find(
+      (entry) => entry.id === server
+    );
+    const policy = sessionServer
+      ? resolveMcpApprovalPolicy(sessionServer, tool)
+      : "always_allow";
+    const approval = await resolveMcpApproval({ server, tool, policy, args: values });
+    if (approval.decision === "deny") {
+      stdout.write(
+        `User declined to run ${server}.${tool}. Proceed with your best judgment.\n`
+      );
+      return 0;
+    }
+    if (approval.editedArgs) callValues = approval.editedArgs;
+  } catch (err) {
+    stderr.write(
+      `mcp call: approval gate failed (${err instanceof Error ? err.message : String(err)}); allowing.\n`
+    );
+  }
+
   try {
     const call = runtime.callTool(server, tool, {
-      args: values,
+      args: callValues,
       timeoutMs,
       disableOAuth: true,
     });

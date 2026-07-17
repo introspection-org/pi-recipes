@@ -1000,6 +1000,13 @@ fn validate_agent_mcp(
                 selectors.exclude = Some(values);
             }
         }
+        validate_mcp_approval_fields(
+            server,
+            "agent.mcp_policy_invalid",
+            path,
+            &format!("Agent mcp server '{server_id}'"),
+            ctx,
+        );
         parsed.insert(safe_mcp_server_id(server_id), selectors);
     }
     Some(parsed)
@@ -1489,6 +1496,63 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 ),
                 None::<String>,
             );
+        }
+        validate_mcp_approval_fields(
+            server,
+            "pi.mcp_policy_invalid",
+            PACKAGE_JSON,
+            &format!("package.json#pi.mcp.servers[{index}]"),
+            ctx,
+        );
+    }
+}
+
+fn is_valid_mcp_policy(value: &JsonValue) -> bool {
+    matches!(value.as_str(), Some("always_allow") | Some("always_ask"))
+}
+
+/// Validate an MCP server's `policy` (scalar) and `toolPolicies` (map) approval
+/// values. Anything other than `always_allow` / `always_ask` is an error — the
+/// runtime fails such a value closed to `always_ask`, but authoring must be told.
+fn validate_mcp_approval_fields(
+    server: &JsonMap,
+    code: &str,
+    path: &str,
+    label: &str,
+    ctx: &mut CheckContext,
+) {
+    if let Some(policy) = server.get("policy") {
+        if !is_valid_mcp_policy(policy) {
+            ctx.error(
+                code,
+                path,
+                format!("{label} policy must be always_allow or always_ask"),
+                None::<String>,
+            );
+        }
+    }
+    if let Some(tool_policies) = server.get("toolPolicies") {
+        match tool_policies.as_object() {
+            None => ctx.error(
+                code,
+                path,
+                format!("{label} toolPolicies must be an object"),
+                None::<String>,
+            ),
+            Some(map) => {
+                for (tool, value) in map {
+                    if !is_valid_mcp_policy(value) {
+                        ctx.error(
+                            code,
+                            path,
+                            format!(
+                                "{label} toolPolicies.{tool} must be always_allow or always_ask"
+                            ),
+                            None::<String>,
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -2163,6 +2227,95 @@ mod tests {
         let report = check_recipe_files(&input, CheckProfile::Ci);
 
         assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    fn policy_recipe(package_server_extra: JsonValue, agent_mcp: &str) -> RecipeFiles {
+        let mut server = json!({ "id": "gmail", "tools": { "include": ["*"] } });
+        if let (Some(obj), Some(extra)) =
+            (server.as_object_mut(), package_server_extra.as_object())
+        {
+            for (key, value) in extra {
+                obj.insert(key.clone(), value.clone());
+            }
+        }
+        let package = json!({
+            "name": "mcp-policy-test",
+            "version": "0.1.0",
+            "pi": { "agents": ["agents/*.yaml"], "mcp": { "servers": [server] } }
+        });
+        let agent = format!(
+            concat!(
+                "name: agent\ndescription: t\n",
+                "model:\n  name: test/provider-model\n  thinking_level: low\n",
+                "tools:\n  - read\n  - bash\n",
+                "mcp:\n{}",
+                "skills: []\nsubagents: []\n",
+                "system_instructions:\n  mode: append\n  content: t\n",
+            ),
+            agent_mcp
+        );
+        recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/agent.yaml", &agent),
+        ])
+    }
+
+    #[test]
+    fn accepts_valid_mcp_approval_policy() {
+        let input = policy_recipe(
+            json!({ "policy": "always_allow", "toolPolicies": { "send_email": "always_ask" } }),
+            concat!(
+                "  gmail:\n",
+                "    include:\n",
+                "      - '*'\n",
+                "    policy: always_ask\n",
+            ),
+        );
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn rejects_invalid_package_mcp_policy() {
+        let input = policy_recipe(
+            json!({ "policy": "sometimes" }),
+            concat!("  gmail:\n", "    include:\n", "      - '*'\n"),
+        );
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "pi.mcp_policy_invalid"));
+    }
+
+    #[test]
+    fn rejects_invalid_agent_mcp_policy() {
+        let input = policy_recipe(
+            json!({ "policy": "always_allow" }),
+            concat!(
+                "  gmail:\n",
+                "    include:\n",
+                "      - '*'\n",
+                "    toolPolicies:\n",
+                "      send_email: nope\n",
+            ),
+        );
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.mcp_policy_invalid"));
     }
 
     #[test]
