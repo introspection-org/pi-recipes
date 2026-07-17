@@ -36,6 +36,11 @@ import {
   stopMcpDaemon,
 } from "./mcp.js";
 import {
+  parseApprovalMarker,
+  writeApprovalGrant,
+} from "./mcp-approval.js";
+import { askUserApproval } from "./interactions.js";
+import {
   clearMcpCatalogPreload,
   preloadMcpCatalogs,
 } from "./mcp-catalog.js";
@@ -1025,6 +1030,68 @@ export function createPiRecipesExtension(
     pi.on("agent_end", (_event, ctx) => {
       sessionCtx = ctx;
       completions.poke();
+    });
+
+    // MCP approval, local host side. The daemon gate emits an approval marker in
+    // an `mcp call` result for an `always_ask` tool it did NOT run. Catch it,
+    // ask the user through the interaction contract (ctx.ui locally), and on
+    // approval drop a single-use grant + tell the model to re-invoke; the gate
+    // then finds the grant and runs the approved call. No synchronous channel
+    // (remote interrupt host / headless) is handled by the runtime worker
+    // (remote) — until then it fails open + logs, matching the Phase 0 stance.
+    pi.on("tool_result", async (event, ctx) => {
+      if (event.toolName !== "bash") return;
+      const marker = parseApprovalMarker(contentText(event.content));
+      if (!marker) return;
+
+      const grantAndReinvoke = async () => {
+        await writeApprovalGrant({
+          server: marker.server,
+          tool: marker.tool,
+          args: marker.args,
+          nonce: marker.nonce,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Approved. Re-invoke \`mcp call ${marker.server}.${marker.tool}\` now to run it.`,
+            },
+          ],
+        };
+      };
+
+      const { outcome } = await askUserApproval(
+        {
+          kind: "mcp_tool_call",
+          title: `${marker.server}.${marker.tool}`,
+          message: `Approve MCP call ${marker.server}.${marker.tool}?`,
+          metadata: {
+            server: marker.server,
+            tool: marker.tool,
+            input: marker.args,
+          },
+        },
+        { toolCallId: event.toolCallId, ctx, signal: undefined }
+      );
+
+      if (outcome.type === "approved") return grantAndReinvoke();
+      if (outcome.type === "declined" || outcome.type === "revision_requested") {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `User declined to run ${marker.server}.${marker.tool}. Proceed with your best judgment.`,
+            },
+          ],
+        };
+      }
+
+      console.warn(
+        `[pi-recipes] MCP ${marker.server}.${marker.tool} needs approval but no ` +
+          `synchronous channel resolved it (${outcome.type}); allowing (fail open).`
+      );
+      return grantAndReinvoke();
     });
 
     pi.registerMessageRenderer<AgentCompletionsDetails>(
