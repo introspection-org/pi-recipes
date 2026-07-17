@@ -1,6 +1,9 @@
 # MCP Tool Approval (`always_ask` at the daemon)
 
-**Status:** Proposal
+**Status:** Implemented — Phase 0 (config + daemon enforcement) and Phase 1
+(marker + file-grant, local `ctx.ui` host, remote AG-UI interrupt host). The
+remote interrupt→resume→grant flow is wired against Pi's tool-result/interrupt
+contract; end-to-end verification on a live cloud stack is the remaining check.
 
 ## Summary
 
