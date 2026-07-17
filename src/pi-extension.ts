@@ -36,6 +36,7 @@ import {
   stopMcpDaemon,
 } from "./mcp.js";
 import {
+  clearApprovalGrants,
   parseApprovalMarker,
   writeApprovalGrant,
 } from "./mcp-approval.js";
@@ -1178,6 +1179,11 @@ export function createPiRecipesExtension(
     pi.on("session_start", async (_event, ctx) => {
       sessionCtx = ctx;
       localAgentContext = ctx;
+      // Sweep any MCP approval grant orphaned by a prior process: a grant only
+      // ever bridges an approval to the re-invoke in the same turn, so nothing
+      // pending at session start is live. Prevents a stale grant from silently
+      // authorizing a first call in the new session.
+      await clearApprovalGrants(env);
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return;
       visibleAgentDefinitions.clear();

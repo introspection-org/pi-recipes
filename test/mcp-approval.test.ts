@@ -14,6 +14,8 @@ import {
   resolveMcpApprovalPolicy,
 } from "../src/mcp.js";
 import {
+  APPROVAL_GRANT_TTL_MS,
+  clearApprovalGrants,
   consumeApprovalGrant,
   formatApprovalMarker,
   hasMcpApprovalResolver,
@@ -178,10 +180,10 @@ describe("approval file-grant", () => {
       { server: "gmail", tool: "send_email", args: { to: "safe@corp.com" }, nonce: "n1" },
       env
     );
-    const first = await consumeApprovalGrant("gmail", "send_email", env);
+    const first = await consumeApprovalGrant("gmail", "send_email", undefined, env);
     expect(first?.args).toEqual({ to: "safe@corp.com" });
     // single-use: the second attempt finds nothing
-    expect(await consumeApprovalGrant("gmail", "send_email", env)).toBeNull();
+    expect(await consumeApprovalGrant("gmail", "send_email", undefined, env)).toBeNull();
   });
 
   it("does not match a different server or tool", async () => {
@@ -189,27 +191,98 @@ describe("approval file-grant", () => {
       { server: "gmail", tool: "send_email", args: {}, nonce: "n1" },
       env
     );
-    expect(await consumeApprovalGrant("gmail", "trash", env)).toBeNull();
-    expect(await consumeApprovalGrant("slack", "send_email", env)).toBeNull();
+    expect(await consumeApprovalGrant("gmail", "trash", undefined, env)).toBeNull();
+    expect(await consumeApprovalGrant("slack", "send_email", undefined, env)).toBeNull();
     // the real one still consumes
-    expect(await consumeApprovalGrant("gmail", "send_email", env)).not.toBeNull();
+    expect(await consumeApprovalGrant("gmail", "send_email", undefined, env)).not.toBeNull();
   });
 
   it("returns null when no grants directory exists", async () => {
-    expect(await consumeApprovalGrant("gmail", "send_email", env)).toBeNull();
+    expect(await consumeApprovalGrant("gmail", "send_email", undefined, env)).toBeNull();
   });
 
-  it("gives each same-tool grant one execution (FIFO by nonce)", async () => {
+  it("gives each same-tool grant one execution (FIFO by createdAt)", async () => {
+    const t = Date.now();
     await writeApprovalGrant(
-      { server: "gmail", tool: "send_email", args: { n: 1 }, nonce: "n1" },
+      { server: "gmail", tool: "send_email", args: { n: 1 }, nonce: "n1", createdAt: t },
       env
     );
     await writeApprovalGrant(
-      { server: "gmail", tool: "send_email", args: { n: 2 }, nonce: "n2" },
+      { server: "gmail", tool: "send_email", args: { n: 2 }, nonce: "n2", createdAt: t + 1_000 },
       env
     );
-    expect((await consumeApprovalGrant("gmail", "send_email", env))?.args).toEqual({ n: 1 });
-    expect((await consumeApprovalGrant("gmail", "send_email", env))?.args).toEqual({ n: 2 });
-    expect(await consumeApprovalGrant("gmail", "send_email", env)).toBeNull();
+    expect((await consumeApprovalGrant("gmail", "send_email", undefined, env))?.args).toEqual({ n: 1 });
+    expect((await consumeApprovalGrant("gmail", "send_email", undefined, env))?.args).toEqual({ n: 2 });
+    expect(await consumeApprovalGrant("gmail", "send_email", undefined, env)).toBeNull();
+  });
+
+  it("binds a grant to the approved args: a different call misses it", async () => {
+    await writeApprovalGrant(
+      { server: "gmail", tool: "send_email", args: { to: "a@b.com" }, nonce: "n1" },
+      env
+    );
+    // A genuinely different send_email (B) must NOT consume A's grant.
+    expect(
+      await consumeApprovalGrant("gmail", "send_email", { to: "c@d.com" }, env)
+    ).toBeNull();
+    // The approved call (A) still matches, tolerating key-order reformatting.
+    const grant = await consumeApprovalGrant(
+      "gmail",
+      "send_email",
+      { to: "a@b.com" },
+      env
+    );
+    expect(grant?.args).toEqual({ to: "a@b.com" });
+  });
+
+  it("disambiguates concurrent same-tool grants by args", async () => {
+    const t = Date.now();
+    await writeApprovalGrant(
+      { server: "gmail", tool: "send_email", args: { to: "a@b.com" }, nonce: "n1", createdAt: t },
+      env
+    );
+    await writeApprovalGrant(
+      { server: "gmail", tool: "send_email", args: { to: "b@b.com" }, nonce: "n2", createdAt: t + 1_000 },
+      env
+    );
+    // Each re-invoke consumes exactly its own approval, regardless of order.
+    expect((await consumeApprovalGrant("gmail", "send_email", { to: "b@b.com" }, env))?.nonce).toBe("n2");
+    expect((await consumeApprovalGrant("gmail", "send_email", { to: "a@b.com" }, env))?.nonce).toBe("n1");
+    expect(await consumeApprovalGrant("gmail", "send_email", { to: "a@b.com" }, env)).toBeNull();
+  });
+
+  it("sweeps an orphaned grant past its TTL instead of consuming it", async () => {
+    await writeApprovalGrant(
+      {
+        server: "gmail",
+        tool: "send_email",
+        args: { to: "a@b.com" },
+        nonce: "n1",
+        createdAt: Date.now() - (APPROVAL_GRANT_TTL_MS + 1_000),
+      },
+      env
+    );
+    expect(
+      await consumeApprovalGrant("gmail", "send_email", { to: "a@b.com" }, env)
+    ).toBeNull();
+    // and it is gone — a fresh grant for the same call is unaffected
+    await writeApprovalGrant(
+      { server: "gmail", tool: "send_email", args: { to: "a@b.com" }, nonce: "n2" },
+      env
+    );
+    expect(
+      await consumeApprovalGrant("gmail", "send_email", { to: "a@b.com" }, env)
+    ).not.toBeNull();
+  });
+
+  it("clearApprovalGrants sweeps every pending grant", async () => {
+    await writeApprovalGrant(
+      { server: "gmail", tool: "send_email", args: { to: "a@b.com" }, nonce: "n1" },
+      env
+    );
+    await clearApprovalGrants(env);
+    expect(
+      await consumeApprovalGrant("gmail", "send_email", { to: "a@b.com" }, env)
+    ).toBeNull();
   });
 });

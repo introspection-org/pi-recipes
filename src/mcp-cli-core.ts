@@ -1930,7 +1930,9 @@ async function callWithSharedRuntime(
       ? resolveMcpApprovalPolicy(sessionServer, tool)
       : "always_allow";
     if (policy === "always_ask") {
-      const grant = await consumeApprovalGrant(server, tool);
+      // Bind the grant to THIS call's arguments: a grant approving another
+      // `(server, tool)` invocation must not silently authorize this one.
+      const grant = await consumeApprovalGrant(server, tool, values);
       if (grant) {
         callValues = grant.args;
       } else if (hasMcpApprovalResolver()) {

@@ -90,6 +90,37 @@ export interface McpApprovalGrant {
   /** The user-approved arguments to run (may differ from the proposed ones). */
   args: Record<string, unknown>;
   nonce: string;
+  /** Epoch ms the grant was written; used to expire orphans and order FIFO. */
+  createdAt?: number;
+}
+
+/**
+ * A grant lives only long enough for the model's immediately-following
+ * re-invocation. Past this it is an orphan (the model never re-invoked) and is
+ * ignored + swept, so a stale approval can never authorize a much-later call.
+ */
+export const APPROVAL_GRANT_TTL_MS = 10 * 60_000;
+
+/**
+ * Structural, key-order-insensitive equality for parsed tool arguments. The
+ * daemon re-parses the model's re-invocation independently of the host's marker,
+ * so the grant is matched on argument *value*, tolerating benign reformatting
+ * (key order, whitespace) while still distinguishing a genuinely different call.
+ */
+export function approvalArgsEqual(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>
+): boolean {
+  return canonicalize(a) === canonicalize(b);
+}
+
+function canonicalize(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  const entries = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalize((value as Record<string, unknown>)[key])}`);
+  return `{${entries.join(",")}}`;
 }
 
 /** Render the awaiting-approval marker line the daemon emits to stdout. */
@@ -128,18 +159,27 @@ export async function writeApprovalGrant(
 ): Promise<void> {
   const dir = approvalGrantsDir(env);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${grant.nonce}.json`), JSON.stringify(grant), "utf8");
+  const stamped: McpApprovalGrant = { ...grant, createdAt: grant.createdAt ?? Date.now() };
+  await writeFile(join(dir, `${grant.nonce}.json`), JSON.stringify(stamped), "utf8");
 }
 
 /**
- * Gate side: find and CONSUME a grant for this call. Matches by `(server, tool)`
- * — the model re-invokes with a fresh call it cannot predict, so grants key on
- * the tool, not a call id — takes the oldest, deletes it (single-use), and
- * returns the approved arguments to run. Null when no grant is pending.
+ * Gate side: find and CONSUME a grant for this call.
+ *
+ * The grant is bound to the exact call it approved: it matches `(server, tool)`
+ * AND — when `matchArgs` is supplied (the model's re-parsed re-invocation
+ * arguments) — the approved argument *value*. That binding is what keeps
+ * `always_ask` honest: a grant approving `send_email(A)` cannot authorize a
+ * later `send_email(B)`; B misses the match and is asked on its own. Expired
+ * orphans (the model never re-invoked) are swept, never consumed. Among valid
+ * matches the OLDEST (by `createdAt`) is taken and deleted (single-use).
+ *
+ * Returns null when nothing valid matches — the caller then asks (or re-asks).
  */
 export async function consumeApprovalGrant(
   server: string,
   tool: string,
+  matchArgs?: Record<string, unknown>,
   env: NodeJS.ProcessEnv = process.env
 ): Promise<McpApprovalGrant | null> {
   const dir = approvalGrantsDir(env);
@@ -149,7 +189,9 @@ export async function consumeApprovalGrant(
   } catch {
     return null;
   }
-  for (const file of files.filter((name) => name.endsWith(".json")).sort()) {
+  const now = Date.now();
+  const candidates: Array<{ path: string; grant: McpApprovalGrant }> = [];
+  for (const file of files.filter((name) => name.endsWith(".json"))) {
     const path = join(dir, file);
     let grant: McpApprovalGrant;
     try {
@@ -157,12 +199,38 @@ export async function consumeApprovalGrant(
     } catch {
       continue;
     }
-    if (grant.server === server && grant.tool === tool) {
+    // Sweep orphaned grants the model never re-invoked (TTL elapsed).
+    if (grant.createdAt !== undefined && now - grant.createdAt > APPROVAL_GRANT_TTL_MS) {
       await rm(path, { force: true });
-      return grant;
+      continue;
     }
+    if (grant.server !== server || grant.tool !== tool) continue;
+    // Bind to the approved argument value when the caller can prove the call.
+    if (matchArgs !== undefined && !approvalArgsEqual(grant.args, matchArgs)) continue;
+    candidates.push({ path, grant });
   }
-  return null;
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => (a.grant.createdAt ?? 0) - (b.grant.createdAt ?? 0));
+  const chosen = candidates[0];
+  await rm(chosen.path, { force: true });
+  return chosen.grant;
+}
+
+/**
+ * Host side: sweep every pending grant. Called at session start (and any point
+ * the approval context resets) so an orphaned grant from a prior turn or a
+ * crashed process can never authorize a future call. Best-effort — a missing
+ * directory is a no-op.
+ */
+export async function clearApprovalGrants(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  const dir = approvalGrantsDir(env);
+  try {
+    await rm(dir, { recursive: true, force: true });
+  } catch {
+    // best-effort: nothing to clear
+  }
 }
 
 function normalize(

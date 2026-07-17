@@ -137,19 +137,55 @@ and it splits cleanly: **decision at the daemon, delivery + plumbing at the host
    bash string to decide, so no obfuscation surface is added.
 3. **Grant + re-invoke.** On approval the host drops a **single-use grant file**
    into the session-root grants dir (`writeApprovalGrant`) carrying the approved
-   `(server, tool, args)`, and the model re-invokes the call. The gate finds the
-   grant (`consumeApprovalGrant`, matched by `(server, tool)`), runs the
-   **approved** args (not whatever the model re-sent), and deletes the file
-   (single-use). A **file** is the channel because host and Worker share the
-   sandbox filesystem, so it needs no daemon-protocol or thin-client (JS + native)
-   change. (Pi executes a tool only when the model invokes it, so approval flows
-   through a re-invoke; the grant keeps that re-invoke from re-prompting.)
+   `(server, tool, args, createdAt)`, and the model re-invokes the call. The gate
+   consumes it (`consumeApprovalGrant`) only when it matches **both** the
+   `(server, tool)` **and the approved argument value** of the re-invocation, then
+   runs the **approved** args and deletes the file (single-use). A **file** is the
+   channel because host and Worker share the sandbox filesystem, so it needs no
+   daemon-protocol or thin-client (JS + native) change. (Pi executes a tool only
+   when the model invokes it, so approval flows through a re-invoke; the grant
+   keeps that one re-invoke from re-prompting — and nothing else.)
 4. **Deny.** The host rewrites the held result to "User declined to run
    `server.tool`. Proceed with your best judgment." — no grant, no execution.
 
-The grant is **ephemeral** (approval → the immediately-following re-invoke, and
-the host clears stale grant files on a fresh turn); the durable record is the
-interrupt itself, persisted the same way every other interrupt is.
+The grant is **ephemeral**: it authorizes exactly the immediately-following
+re-invoke of the approved call and nothing more. Three properties enforce that,
+so `always_ask` truly asks on *every* distinct call:
+
+- **Argument-bound.** The grant matches on the approved argument *value*
+  (`approvalArgsEqual`, key-order/whitespace insensitive). A grant approving
+  `send_email(A)` cannot authorize a later `send_email(B)` — B misses the match
+  and is asked on its own. This is what makes "ask on every email" hold even when
+  the agent batches or defers the re-invoke.
+- **Single-use + FIFO.** Consuming deletes the file; with several pending grants
+  for one tool the oldest (by `createdAt`) that matches is taken, so N approvals
+  authorize exactly N re-invokes, paired by argument value.
+- **TTL + sweep.** A grant the model never re-invokes is an orphan; it is ignored
+  and deleted once `APPROVAL_GRANT_TTL_MS` (10 min) elapses, and the local host
+  also sweeps the whole dir at `session_start` (`clearApprovalGrants`). An
+  abandoned approval can never linger to authorize a much-later call.
+
+The durable record is the interrupt itself, persisted the same way every other
+interrupt is.
+
+## Edge cases and how they resolve
+
+| Situation | Resolution |
+| --- | --- |
+| Agent approves, then never re-invokes | Grant orphaned → swept at TTL / `session_start`. No effect on any later call (argument-bound). |
+| Agent approves `send_email(A)`, then calls `send_email(B)` before re-invoking A | B's args miss A's grant → B is asked on its own; A's grant waits for A (or expires). "Ask every time" holds. |
+| Agent re-invokes with reformatted args (key order / whitespace) | `approvalArgsEqual` canonicalizes → still matches, runs once. |
+| Agent re-invokes with genuinely different args (revised the call) | No match → re-asked. Correct: the prior approval was for different arguments. |
+| Two concurrent `send_email` calls, both approved | Two grants (distinct nonces); each re-invoke consumes its own by argument value. |
+| Same call approved, then the model repeats it later | First re-invoke consumes the grant; the repeat finds none → asked again. Every send is confirmed. |
+| Decline, then the model re-invokes anyway | No grant was written → asked again (never silently allowed). |
+
+**Residual (accepted).** If the agent makes *more* identical-argument calls than
+were approved, within the TTL window, a leftover grant for that exact call could
+authorize one of them. This requires a cooperative agent to over-call beyond what
+the user approved, in minutes — outside the guardrail's threat model, and bounded
+by single-use + TTL. The real boundary for an adversarial agent stays inclusion +
+egress (see Threat model).
 
 **Threat note (unchanged):** host and agent share one sandbox, so an adversarial
 agent with raw `bash` could write a grant file itself — the same conceded
