@@ -1061,7 +1061,7 @@ export function createPiRecipesExtension(
         };
       };
 
-      const { outcome } = await askUserApproval(
+      const approval = await askUserApproval(
         {
           kind: "mcp_tool_call",
           title: `${marker.server}.${marker.tool}`,
@@ -1070,10 +1070,12 @@ export function createPiRecipesExtension(
             server: marker.server,
             tool: marker.tool,
             input: marker.args,
+            nonce: marker.nonce,
           },
         },
         { toolCallId: event.toolCallId, ctx, signal: undefined }
       );
+      const outcome = approval.outcome;
 
       if (outcome.type === "approved") return grantAndReinvoke();
       if (outcome.type === "declined" || outcome.type === "revision_requested") {
@@ -1086,10 +1088,18 @@ export function createPiRecipesExtension(
           ],
         };
       }
+      if (outcome.type === "awaiting_user") {
+        // Remote interrupt host: hand the pause descriptor to the runtime worker,
+        // which raises the AG-UI interrupt and, on approval, writes the grant and
+        // nudges the re-invoke (mirroring grantAndReinvoke above, on resume).
+        return { content: approval.content, details: approval.details };
+      }
 
+      // `unavailable`: truly no channel (headless with no interrupt host). Fail
+      // open + log so an always_ask call is not silently blocked.
       console.warn(
         `[pi-recipes] MCP ${marker.server}.${marker.tool} needs approval but no ` +
-          `synchronous channel resolved it (${outcome.type}); allowing (fail open).`
+          `channel resolved it (${outcome.type}); allowing (fail open).`
       );
       return grantAndReinvoke();
     });
