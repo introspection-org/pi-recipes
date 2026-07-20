@@ -3,11 +3,13 @@
   "bootstrap-sha": "3e48ebaccb8eadd9672419d517173ac45a02e65d",
   "release-type": "node",
   "include-component-in-tag": false,
-  "separate-pull-requests": true,
+  "separate-pull-requests": false,
+  "group-pull-request-title-pattern": "chore(${branch}): release pi-recipe-check libraries",
   "packages": {
     ".": {
       "release-type": "node",
       "component": "pi-recipes",
+      "separate-pull-requests": true,
       "bump-minor-pre-major": true
     },
     "crates/pi-recipe-check": {
@@ -34,7 +36,8 @@
       "components": [
         "pi-recipe-check",
         "pi-recipe-check-python"
-      ]
+      ],
+      "merge": false
     }
   ],
   "bump-minor-pre-major": true
