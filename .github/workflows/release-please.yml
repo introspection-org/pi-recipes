@@ -232,7 +232,8 @@ jobs:
     needs:
       - release-please
       - build-python-wheels
-    if: ${{ always() && needs.build-python-wheels.result == 'success' && (needs.release-please.outputs.python_release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+      - publish-crate
+    if: ${{ always() && needs.build-python-wheels.result == 'success' && needs.publish-crate.result == 'success' && (needs.release-please.outputs.python_release_created == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:

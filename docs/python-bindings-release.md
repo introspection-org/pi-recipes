@@ -19,7 +19,8 @@ When Release Please creates a Python binding release, the release workflow:
    x86-64 and ARM64, macOS Apple Silicon and Intel, and Windows x86-64.
 2. Builds a source distribution containing the local Rust workspace
    dependency.
-3. Publishes all artifacts to PyPI through trusted publishing.
+3. Waits for the matching `pi-recipe-check` crate publication to succeed.
+4. Publishes all Python artifacts to PyPI through trusted publishing.
 
 ## One-time PyPI setup
 
