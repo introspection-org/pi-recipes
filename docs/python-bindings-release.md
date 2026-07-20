@@ -1,17 +1,17 @@
 # Python bindings release
 
-The `pi-recipe-check` Python distribution is versioned independently from the
-Rust crate and npm package. Release Please owns its version in
-`bindings/python/Cargo.toml`, changelog, `pi-recipe-check-python-v*` tags, and
-GitHub releases. Routine releases must not bump the Cargo version manually.
-Its versioned workspace dependency on the Rust engine allows Release Please's
-existing `cargo-workspace` plugin to patch-release the Python distribution
-whenever a new embedded `pi-recipe-check` version must be shipped.
+The `pi-recipe-check` Rust crate and Python distribution are two artifacts of
+one validator product and always use the same version. The binding's Cargo
+package and dependency on the core must both match the core crate version.
+`scripts/check-recipe-check-versions.mjs` enforces this invariant in CI.
 
-The binding is intentionally absent from `.release-please-manifest.json` in
-its bootstrap change. Release Please will create the initial `0.1.0` release
-entry when its first release PR is merged; subsequent releases update the
-manifest normally.
+Release Please owns both versions, changelogs, component tags, and GitHub
+releases. Its `linked-versions` plugin advances both components to the same
+version whenever either has a releasable change. The `cargo-workspace` plugin
+keeps the local dependency current, but leaves candidate merging to
+`linked-versions`. A Python-only fix therefore creates a patch release for
+both artifacts, and a core release always includes a matching Python release.
+Routine releases must not bump either Cargo version manually.
 
 When Release Please creates a Python binding release, the release workflow:
 

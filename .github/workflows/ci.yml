@@ -28,6 +28,8 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - run: node scripts/check-recipe-check-versions.mjs
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm typecheck

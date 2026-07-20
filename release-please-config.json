@@ -24,7 +24,16 @@
   },
   "plugins": [
     {
-      "type": "cargo-workspace"
+      "type": "cargo-workspace",
+      "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "pi-recipe-check",
+      "components": [
+        "pi-recipe-check",
+        "pi-recipe-check-python"
+      ]
     }
   ],
   "bump-minor-pre-major": true

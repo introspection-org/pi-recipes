@@ -1,6 +1,6 @@
 [package]
 name = "pi-recipe-check-python"
-version = "0.1.0"
+version = "0.5.2"
 edition = "2021"
 description = "Python bindings for the I/O-free pi-recipe-check validation engine"
 license = "Apache-2.0"
