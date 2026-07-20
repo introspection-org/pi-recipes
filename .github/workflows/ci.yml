@@ -59,3 +59,28 @@ jobs:
           MCP_CLIENT_ARCH: arm64
 
       - run: test -x vendor/mcp-client/linux-arm64/mcp-client
+
+  python-bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - run: python -m pip install "maturin==1.11.5" "mypy==2.3.0" pytest "ruff==0.15.22"
+
+      - run: ruff format --check bindings/python/python bindings/python/tests
+
+      - run: ruff check bindings/python/python bindings/python/tests
+
+      - run: mypy --strict bindings/python/python bindings/python/tests
+
+      - run: maturin build --locked --release --out dist --manifest-path bindings/python/Cargo.toml
+
+      - run: python -m pip install dist/*.whl
+
+      - run: python -m pytest bindings/python/tests

@@ -23,6 +23,7 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created || steps.release.outputs.releases_created }}
       crate_release_created: ${{ steps.release.outputs['crates/pi-recipe-check--release_created'] }}
+      python_release_created: ${{ steps.release.outputs['bindings/python--release_created'] }}
     steps:
       - uses: googleapis/release-please-action@v5
         id: release
@@ -185,3 +186,79 @@ jobs:
           else
             cargo publish -p pi-recipe-check
           fi
+
+  build-python-wheels:
+    needs: release-please
+    if: ${{ always() && (needs.release-please.outputs.python_release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2_28"
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: "2_28"
+          - os: macos-14
+            target: aarch64-apple-darwin
+            manylinux: auto
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            manylinux: auto
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: auto
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          maturin-version: v1.11.5
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --locked --compatibility pypi --out dist --manifest-path bindings/python/Cargo.toml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish-python:
+    needs:
+      - release-please
+      - build-python-wheels
+    if: ${{ always() && needs.build-python-wheels.result == 'success' && (needs.release-please.outputs.python_release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    environment: publish
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: pypi-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - run: python -m pip install "maturin==1.11.5"
+
+      - run: maturin sdist --out dist --manifest-path bindings/python/Cargo.toml
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheel-*
+          path: dist
+          merge-multiple: true
+
+      - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true

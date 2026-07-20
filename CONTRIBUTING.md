@@ -44,6 +44,26 @@ cargo build -p pi-recipe-check --no-default-features
 The last command guards the pure, I/O-free core: it must keep building without
 the `fs`/`cli` features so the crate stays embeddable (native, wasm, Python).
 
+## Python Bindings
+
+The typed Python package and PyO3 extension live in
+[`bindings/python`](bindings/python). Build and test it in a virtual
+environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install "maturin==1.11.5" "mypy==2.3.0" pytest "ruff==0.15.22"
+ruff format --check bindings/python/python bindings/python/tests
+ruff check bindings/python/python bindings/python/tests
+mypy --strict bindings/python/python bindings/python/tests
+maturin develop --manifest-path bindings/python/Cargo.toml
+python -m pytest bindings/python/tests
+```
+
+The Python binding must depend on `pi-recipe-check` with default features
+disabled so it cannot accidentally introduce filesystem access.
+
 ## Commits and Releases
 
 - Use [Conventional Commit](https://www.conventionalcommits.org) messages:

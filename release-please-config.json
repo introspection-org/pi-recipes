@@ -14,6 +14,12 @@
       "component": "pi-recipe-check",
       "include-component-in-tag": true,
       "bump-minor-pre-major": true
+    },
+    "bindings/python": {
+      "release-type": "rust",
+      "component": "pi-recipe-check-python",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
     }
   },
   "plugins": [

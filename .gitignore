@@ -4,6 +4,8 @@ dist/
 .turbo/
 coverage/
 __pycache__/
+.pytest_cache/
+.venv/
 tmp/
 target/
 vendor/recipe-check/
