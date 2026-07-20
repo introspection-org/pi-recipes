@@ -1,12 +1,5 @@
 # Changelog
 
-## [0.6.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.5.2...pi-recipe-check-v0.6.0) (2026-07-20)
-
-
-### Miscellaneous Chores
-
-* **pi-recipe-check:** Synchronize pi-recipe-check versions
-
 ## [0.5.2](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.5.1...pi-recipe-check-v0.5.2) (2026-07-16)
 
 
