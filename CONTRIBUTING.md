@@ -47,18 +47,17 @@ the `fs`/`cli` features so the crate stays embeddable (native, wasm, Python).
 ## Python Bindings
 
 The typed Python package and PyO3 extension live in
-[`bindings/python`](bindings/python). Build and test it in a virtual
-environment:
+[`bindings/python`](bindings/python). Install
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/), then build and
+test it from the repository root:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install "maturin==1.11.5" "mypy==2.3.0" pytest "ruff==0.15.22"
-ruff format --check bindings/python/python bindings/python/tests
-ruff check bindings/python/python bindings/python/tests
-mypy --strict bindings/python/python bindings/python/tests
-maturin develop --manifest-path bindings/python/Cargo.toml
-python -m pytest bindings/python/tests
+uv sync --project bindings/python --locked
+uv run --project bindings/python --locked ruff format --check bindings/python/python bindings/python/tests
+uv run --project bindings/python --locked ruff check bindings/python/python bindings/python/tests
+uv run --project bindings/python --locked mypy --strict bindings/python/python bindings/python/tests
+uv run --project bindings/python --locked maturin develop --manifest-path bindings/python/Cargo.toml
+uv run --project bindings/python --no-sync pytest bindings/python/tests
 ```
 
 The Python binding must depend on `pi-recipe-check` with default features

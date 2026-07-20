@@ -34,11 +34,13 @@ Before the first release, create a pending trusted publisher for the unclaimed
 The GitHub `publish` environment should retain its existing deployment
 protection. No long-lived PyPI API token is required.
 
-Local release artifact checks use the same pinned maturin version as CI:
+Local release artifact checks use the locked development environment and the
+same pinned maturin version as CI:
 
 ```sh
-maturin build --locked --release --out dist \
+uv sync --project bindings/python --locked
+uv run --project bindings/python --locked maturin build --locked --release --out dist \
   --manifest-path bindings/python/Cargo.toml
-maturin sdist --out dist \
+uv run --project bindings/python --locked maturin sdist --out dist \
   --manifest-path bindings/python/Cargo.toml
 ```

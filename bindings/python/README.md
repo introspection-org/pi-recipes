@@ -4,7 +4,7 @@ Native Python bindings for the pure, I/O-free
 [`pi-recipe-check`](https://crates.io/crates/pi-recipe-check) validation engine.
 
 ```sh
-pip install pi-recipe-check
+uv add pi-recipe-check
 ```
 
 ```python
@@ -39,12 +39,10 @@ filesystem I/O and does not include the Rust crate's `fs` or `cli` features.
 ## Development
 
 ```sh
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install "maturin==1.11.5" "mypy==2.3.0" pytest "ruff==0.15.22"
-ruff format --check bindings/python/python bindings/python/tests
-ruff check bindings/python/python bindings/python/tests
-mypy --strict bindings/python/python bindings/python/tests
-maturin develop --manifest-path bindings/python/Cargo.toml
-python -m pytest bindings/python/tests
+uv sync --project bindings/python --locked
+uv run --project bindings/python --locked ruff format --check bindings/python/python bindings/python/tests
+uv run --project bindings/python --locked ruff check bindings/python/python bindings/python/tests
+uv run --project bindings/python --locked mypy --strict bindings/python/python bindings/python/tests
+uv run --project bindings/python --locked maturin develop --manifest-path bindings/python/Cargo.toml
+uv run --project bindings/python --no-sync pytest bindings/python/tests
 ```

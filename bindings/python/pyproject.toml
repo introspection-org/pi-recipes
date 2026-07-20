@@ -30,6 +30,19 @@ Homepage = "https://pi.recipes"
 Repository = "https://github.com/introspection-org/pi-recipes"
 Issues = "https://github.com/introspection-org/pi-recipes/issues"
 
+[dependency-groups]
+dev = [
+  "maturin==1.11.5",
+  "mypy==2.3.0",
+  "pytest>=9,<10",
+  "ruff==0.15.22",
+]
+
+[tool.uv]
+# Keep the development lock independent of the release-managed Cargo version.
+package = false
+required-version = "==0.11.21"
+
 [tool.maturin]
 bindings = "pyo3"
 module-name = "pi_recipe_check._native"
