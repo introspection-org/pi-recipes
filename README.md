@@ -56,6 +56,9 @@ and prompts.
   [`crates/pi-recipe-check`](crates/pi-recipe-check)): the pure recipe
   validation engine behind the vendored `recipe-check` binary, embeddable by
   other hosts such as `introspection-cli`.
+- [`pi-recipe-check`](https://pypi.org/project/pi-recipe-check/) (Python package,
+  [`bindings/python`](bindings/python)): typed native bindings for validating
+  an in-memory recipe snapshot without filesystem I/O.
 
 ## Quick Start
 

@@ -14,11 +14,26 @@
       "component": "pi-recipe-check",
       "include-component-in-tag": true,
       "bump-minor-pre-major": true
+    },
+    "bindings/python": {
+      "release-type": "rust",
+      "component": "pi-recipe-check-python",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
     }
   },
   "plugins": [
     {
-      "type": "cargo-workspace"
+      "type": "cargo-workspace",
+      "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "pi-recipe-check",
+      "components": [
+        "pi-recipe-check",
+        "pi-recipe-check-python"
+      ]
     }
   ],
   "bump-minor-pre-major": true

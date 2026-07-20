@@ -28,6 +28,8 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - run: node scripts/check-recipe-check-versions.mjs
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm typecheck
@@ -59,3 +61,34 @@ jobs:
           MCP_CLIENT_ARCH: arm64
 
       - run: test -x vendor/mcp-client/linux-arm64/mcp-client
+
+  python-bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.21"
+          enable-cache: true
+          cache-dependency-glob: bindings/python/uv.lock
+
+      - run: uv sync --project bindings/python --locked
+
+      - run: uv run --project bindings/python --locked ruff format --check bindings/python/python bindings/python/tests
+
+      - run: uv run --project bindings/python --locked ruff check bindings/python/python bindings/python/tests
+
+      - run: uv run --project bindings/python --locked mypy --strict bindings/python/python bindings/python/tests
+
+      - run: uv run --project bindings/python --locked maturin build --locked --release --out dist --manifest-path bindings/python/Cargo.toml
+
+      - run: uv pip install --python bindings/python/.venv/bin/python dist/*.whl
+
+      - run: uv run --project bindings/python --no-sync pytest bindings/python/tests
