@@ -954,12 +954,17 @@ export function createPiRecipesExtension(
         run.error = err instanceof Error ? err.message : String(err);
       } finally {
         run.completedAt = new Date().toISOString();
-        await persistRun(cwd, run);
-        run.notifyUpdate();
-        // Queue a wake-up notice for the parent model. Wait and terminal
-        // status reads acknowledge it back out.
+        // Queue the parent wake-up BEFORE persisting. The deliverer reads the
+        // in-memory queue (not disk), so enqueuing first makes a persisted
+        // status.json imply the completion is already queued — closing a race
+        // where the agent_end poke could observe the run's status.json but hit
+        // an empty queue, deferring delivery to the full batch window. It also
+        // still notifies if the disk write fails. Wait and terminal status
+        // reads acknowledge it back out.
         const envelope = envelopeFromRun(run);
         if (envelope) completions.enqueue(envelope);
+        run.notifyUpdate();
+        await persistRun(cwd, run);
       }
       return run;
     })();
