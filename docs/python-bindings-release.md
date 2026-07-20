@@ -15,8 +15,8 @@ manifest normally.
 
 When Release Please creates a Python binding release, the release workflow:
 
-1. Builds CPython stable-ABI wheels for Linux x86-64 and ARM64, macOS Apple
-   Silicon and Intel, and Windows x86-64.
+1. Builds `abi3` wheels compatible with CPython 3.10 and newer for Linux
+   x86-64 and ARM64, macOS Apple Silicon and Intel, and Windows x86-64.
 2. Builds a source distribution containing the local Rust workspace
    dependency.
 3. Publishes all artifacts to PyPI through trusted publishing.
