@@ -317,7 +317,7 @@ fn validate_request(value: Option<&Value>, path: &str, ctx: &mut CheckContext) {
             );
         }
     }
-    if let Some(value) = request.get("max_tokens") {
+    if let Some(value) = request.get("max_tokens").filter(|value| !value.is_null()) {
         let valid = value
             .as_u64()
             .is_some_and(|tokens| (1..=MAX_OUTPUT_TOKENS).contains(&tokens));
@@ -330,7 +330,10 @@ fn validate_request(value: Option<&Value>, path: &str, ctx: &mut CheckContext) {
             );
         }
     }
-    if let Some(value) = request.get("reasoning_effort") {
+    if let Some(value) = request
+        .get("reasoning_effort")
+        .filter(|value| !value.is_null())
+    {
         let valid = value.as_str().is_some_and(|effort| {
             !effort.is_empty()
                 && effort.len() <= MAX_REASONING_EFFORT_BYTES
@@ -580,13 +583,6 @@ fn validate_match_field(field: &str, index: usize, path: &str, ctx: &mut CheckCo
             path,
             format!("Judge on[{index}].match contains an empty field path"),
             Some("use a non-empty field or dotted field path"),
-        );
-    } else if field == "event" {
-        ctx.error(
-            "judge.on.match_field_invalid",
-            path,
-            format!("Judge on[{index}].match.event is invalid because event belongs beside match"),
-            Some("move event to the matcher entry beside match"),
         );
     } else if matches!(field, "environment" | "runtime_group")
         || field.split('.').next_back() == Some("pattern_id")
@@ -932,6 +928,31 @@ llm:
   local:
     base_url: http://127.0.0.1:4000/v1
     api_key_env: _MODEL_KEY
+"#,
+                ),
+            )]),
+            CheckProfile::Ci,
+        );
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn accepts_explicit_null_request_options_and_event_match_field_for_engine_parity() {
+        let report = check_recipe_files(
+            &snapshot(&[(
+                "judges/parser-parity.yaml",
+                Some(
+                    r#"judge: parser-parity
+instructions: Grade it.
+on:
+  - event: message
+    match:
+      event: message
+llm:
+  model: gpt-5
+  request:
+    max_tokens: null
+    reasoning_effort: null
 "#,
                 ),
             )]),

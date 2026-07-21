@@ -93,9 +93,10 @@ block is rejected.
   providers because custom slugs can be used with an explicit local endpoint.
 - `model` is a trimmed, non-empty string of at most 255 bytes.
 - `request.temperature` is a finite number from 0 through 2 and defaults to 0.
-- `request.max_tokens` is an integer from 1 through 131072 when present.
+- `request.max_tokens` is an integer from 1 through 131072 when present;
+  explicit `null` is treated as omitted.
 - `request.reasoning_effort` is a 1-64 byte lowercase slug containing ASCII
-  letters and hyphens.
+  letters and hyphens; explicit `null` is treated as omitted.
 - `transport.timeout_ms` is an integer from 1 through 600000 and defaults to
   60000.
 - `transport.max_retries` is an integer from 0 through 10 and defaults to 0.
