@@ -162,15 +162,10 @@ model:
   name: openrouter/anthropic/claude-opus-4.8
 ```
 
-Objects such as `model`, `extensions`, and `mcp` merge by key. Arrays such as
-`tools`, `skills`, and `subagents` replace the inherited array. Within
-`extensions`, a child's `include` or `exclude` replaces that selector list.
-Within `mcp`, servers merge by id, and each child's `include` or `exclude`
-replaces that server's corresponding list while inheriting the other list.
-
-Omitted `skills` and `subagents` default to none. A derived agent that omits
-either field inherits it through `from:`; use an explicit `[]` only to clear a
-non-empty inherited list.
+`from:` resolves the complete effective agent definition. Objects merge
+selectively, arrays replace, and omission inherits. See
+[Agent Composition](agent-composition.md) for the full field-by-field matrix,
+including models, extensions, MCP, instructions, skills, and subagents.
 
 `system_instructions.mode` can be:
 
@@ -182,11 +177,13 @@ Use `content: ""` when an agent intentionally adds no instructions beyond
 
 ## Session Prompt
 
-The session prompt uses recipe `SYSTEM.md` when present, otherwise Pi's base
-system prompt, then applies the selected agent's `system_instructions` according
-to its `append` or `replace` mode. Pi-recipes does not add capability notices,
-filesystem paths, or other implicit instructions. Recipes own all durable
-workflow guidance without changing where the user is working.
+`SYSTEM.md` is the recipe-wide instruction layer shared by root and delegated
+agents. When present it is the recipe's starting prompt; otherwise the session
+starts from Pi's base prompt. Pi Recipes then applies the selected agent's
+specialized `system_instructions` according to its `append` or `replace` mode.
+Pi Recipes does not add capability notices, filesystem paths, or other implicit
+instructions. Recipes own all durable workflow guidance without changing where
+the user is working.
 
 ## Tools
 

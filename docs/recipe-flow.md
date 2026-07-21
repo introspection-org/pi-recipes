@@ -105,6 +105,12 @@ my-recipe/
     agent.yaml
 ```
 
+`SYSTEM.md` contains instructions shared by every root and delegated agent in
+the recipe. Each `agents/*.yaml` file specializes one agent's model,
+capabilities, selected skills, visible subagents, and instructions. Use `from:`
+to derive variants and subagents from another agent. See
+[Agent Composition](agent-composition.md) for the merge and override rules.
+
 Validate and try it locally:
 
 ```bash

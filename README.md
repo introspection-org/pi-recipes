@@ -42,6 +42,7 @@ and prompts.
 
 - [Recipe Flow](docs/recipe-flow.md): quick user-facing guide to installing, customizing, creating, and publishing recipes.
 - [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
+- [Agent Composition](docs/agent-composition.md): shared `SYSTEM.md`, specialized agent instructions, `from:` inheritance, capabilities, and subagents.
 - [Recipe Judges](docs/recipe-judges.md): portable authored judge YAML, static validation, and the runtime ownership boundary.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
 - [Recipe Evals](docs/recipe-evals.md): declaring and running Harbor offline eval suites with exact pins.
@@ -103,8 +104,9 @@ telemetry, and lifecycle. The resolver owns recipe interpretation; the shared
 tool delegates run execution to the host controller. Pass the resolved model,
 tools, prompts, skills, and extensions to Pi's normal session constructors.
 
-`recipes create` writes a starter `package.json`, `SYSTEM.md`, `agents/agent.yaml`,
-and recipe README. Edit those files as the recipe grows. Named variants are
+`recipes create` writes a starter `package.json`, shared `SYSTEM.md`,
+`agents/agent.yaml`, and recipe README. Put package-wide instructions in
+`SYSTEM.md` and role-specific instructions in agent YAML. Named variants are
 agents too:
 
 ```yaml
@@ -113,6 +115,9 @@ from: agent
 model:
   name: openrouter/anthropic/claude-opus-4.8
 ```
+
+See [Agent Composition](docs/agent-composition.md) for the complete inheritance
+and prompt-layering rules.
 
 ## Install Recipes
 
