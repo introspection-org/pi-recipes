@@ -68,7 +68,13 @@ pub struct JudgeDefinition {
     /// Model configuration used to run the judge.
     pub llm: JudgeLlmConfig,
     /// The grading rubric. Required and non-empty.
+    // `Option` only so strict parsing can report a spec-level "empty
+    // instructions" error instead of a serde missing-field error; the
+    // exported schema requires a non-empty string (see
+    // `judge_definition_json_schema`), and normalized definitions always
+    // carry one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(schema_with = "instructions_schema"))]
     pub instructions: Option<String>,
 }
 
@@ -408,10 +414,31 @@ fn regex_literal(value: &str) -> Result<Option<(&str, &str)>, JudgeSpecError> {
 
 /// JSON Schema for the authored judge definition, for authoring tools and
 /// agents discovering how to write `judges/*.yaml`.
+///
+/// The schema must never allow a definition the strict parser rejects:
+/// `instructions` is `Option` internally (for friendlier parse errors) but
+/// required here, since [`normalize_judge_definition`] rejects its absence.
 #[cfg(feature = "schema")]
 pub fn judge_definition_json_schema() -> String {
     let schema = schemars::schema_for!(JudgeDefinition);
-    serde_json::to_string_pretty(&schema).expect("judge schema serializes")
+    let mut value = serde_json::to_value(&schema).expect("judge schema serializes");
+    let required = value["required"]
+        .as_array_mut()
+        .expect("judge schema has required fields");
+    let instructions = serde_json::json!("instructions");
+    if !required.contains(&instructions) {
+        required.push(instructions);
+    }
+    serde_json::to_string_pretty(&value).expect("judge schema serializes")
+}
+
+#[cfg(feature = "schema")]
+fn instructions_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "description": "The grading rubric. Required and non-empty.",
+        "type": "string",
+        "minLength": 1
+    })
 }
 
 #[cfg(feature = "schema")]
@@ -657,9 +684,13 @@ llm:
             assert!(properties.contains_key(field), "missing {field}");
         }
         assert_eq!(schema["additionalProperties"], json!(false));
-        assert!(schema["required"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("judge")));
+        let required = schema["required"].as_array().unwrap();
+        for field in ["judge", "llm", "instructions"] {
+            assert!(required.contains(&json!(field)), "{field} must be required");
+        }
+        // A schema-guided client must not be able to produce a definition
+        // the strict parser rejects: instructions is a non-null string.
+        assert_eq!(properties["instructions"]["type"], json!("string"));
+        assert_eq!(properties["instructions"]["minLength"], json!(1));
     }
 }

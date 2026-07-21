@@ -119,3 +119,8 @@ def test_judge_definition_schema_names_authored_fields() -> None:
     assert isinstance(required, list)
     assert "judge" in required
     assert "llm" in required
+    assert "instructions" in required
+    instructions = properties["instructions"]
+    assert isinstance(instructions, dict)
+    assert instructions["type"] == "string"
+    assert instructions["minLength"] == 1
