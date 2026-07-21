@@ -3,7 +3,8 @@
 //! Walks a recipe directory into a [`RecipeFiles`] snapshot and runs
 //! [`check_recipe_files`]. Content is read only for the files the core
 //! inspects: `package.json`, `.pi/mcp.local.example.json`, and YAML files
-//! (agent definitions can match anywhere via `package.json#pi` patterns).
+//! (agent definitions can match anywhere via `package.json#pi` patterns;
+//! judges are direct children of `judges/`).
 
 use std::path::{Component, Path};
 
@@ -180,6 +181,53 @@ mod tests {
         assert_eq!(report.package_name.as_deref(), Some("fs-test"));
         assert_eq!(report.resources.get("agents"), Some(&1));
         assert_ne!(report.recipe_dir, ".");
+    }
+
+    #[test]
+    fn checks_judge_yaml_from_disk_through_the_shared_core() {
+        let root = temp_recipe("fs-judge");
+        fs::create_dir_all(root.join("judges")).expect("create judges dir");
+        fs::write(
+            root.join("package.json"),
+            concat!(
+                "{\n",
+                "  \"name\": \"fs-judge-test\",\n",
+                "  \"description\": \"Test recipe\",\n",
+                "  \"pi\": { \"agents\": [\"agents/*.yaml\"] }\n",
+                "}\n"
+            ),
+        )
+        .expect("write package");
+        fs::write(
+            root.join("agents").join("agent.yaml"),
+            concat!(
+                "name: agent\n",
+                "description: Test agent\n",
+                "model:\n",
+                "  name: test/provider-model\n",
+                "  thinking_level: low\n",
+                "tools: []\n",
+                "skills: []\n",
+                "subagents: []\n",
+                "system_instructions:\n",
+                "  content: Test instructions\n",
+            ),
+        )
+        .expect("write agent");
+        fs::write(
+            root.join("judges").join("invalid.yml"),
+            "judge: helpful\ninstructions: Grade it.\nllm:\n  model: ''\n",
+        )
+        .expect("write judge");
+
+        let report = check_recipe(&root, CheckProfile::Ci).expect("check recipe");
+        fs::remove_dir_all(&root).expect("cleanup recipe");
+
+        assert!(!report.valid);
+        assert_eq!(report.resources.get("judges"), Some(&1));
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "judge.llm.model_invalid" && diagnostic.path == "judges/invalid.yml"
+        }));
     }
 
     #[test]

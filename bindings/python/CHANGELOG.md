@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* return structured recipe judge diagnostics from the shared validation core
+
 ## [0.6.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-python-v0.5.2...pi-recipe-check-python-v0.6.0) (2026-07-20)
 
 

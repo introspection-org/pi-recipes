@@ -1177,6 +1177,62 @@ describe("recipe package manifest", () => {
     }
   });
 
+  it("surfaces judge diagnostics through recipes check", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-cli-judge-check-"));
+    const previousBin = process.env.PI_RECIPE_CHECK_BIN;
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    let stdout = "";
+    write.mockImplementation((chunk: string | Uint8Array) => {
+      stdout += chunk.toString();
+      return true;
+    });
+    try {
+      mkdirSync(join(root, "agents"));
+      mkdirSync(join(root, "judges"));
+      writePiPackageManifest(root, {
+        name: "judge-cli-test",
+        description: "Judge CLI test",
+        pi: { agents: ["agents/*.yaml"] },
+      });
+      writeFileSync(join(root, "agents", "agent.yaml"), fullAgentYaml());
+      writeFileSync(
+        join(root, "judges", "invalid.yaml"),
+        "judge: helpful\ninstructions: Grade it.\nllm:\n  model: ''\n"
+      );
+      process.env.PI_RECIPE_CHECK_BIN = join(
+        import.meta.dirname,
+        "..",
+        "target",
+        "debug",
+        process.platform === "win32" ? "recipe-check.exe" : "recipe-check"
+      );
+
+      await expect(
+        recipesCliMain(["check", root, "--profile", "ci", "--json"])
+      ).resolves.toBe(1);
+
+      const report = JSON.parse(stdout) as {
+        valid: boolean;
+        diagnostics: Array<{ code: string; path: string }>;
+      };
+      expect(report.valid).toBe(false);
+      expect(report.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "judge.llm.model_invalid",
+          path: "judges/invalid.yaml",
+        })
+      );
+    } finally {
+      write.mockRestore();
+      if (previousBin === undefined) {
+        delete process.env.PI_RECIPE_CHECK_BIN;
+      } else {
+        process.env.PI_RECIPE_CHECK_BIN = previousBin;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects unknown check profiles", async () => {
     await expect(
       recipesCliMain(["check", ".", "--profile", "staging"])

@@ -35,6 +35,9 @@ are inferred; `directories` is only needed for empty directories.
 Invalid recipes return a `Report` with `valid=False`. Malformed input and
 unknown validation profiles raise `ValueError`. The binding performs no
 filesystem I/O and does not include the Rust crate's `fs` or `cli` features.
+Direct-child `judges/*.yaml` and `judges/*.yml` content is validated through the
+same core. Invalid judge content returns structured `judge.*` diagnostics; it
+does not raise a content exception or return project-scoped judge identity.
 
 ## Development
 
