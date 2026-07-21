@@ -331,7 +331,6 @@ pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report 
         validate_runtime_dependencies(&package, &mut ctx);
         validate_publish_metadata(&package, &mut ctx);
         let resources = validate_pi_config(&package, &mut ctx);
-        validate_system_prompt_resources(&resources, &mut ctx);
         validate_mcp_local_example(&mut ctx);
 
         let mcp_tool_policy = package
@@ -365,24 +364,6 @@ pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report 
         package_name: ctx.package_name,
         diagnostics: ctx.diagnostics,
         resources: ctx.resources,
-    }
-}
-
-fn validate_system_prompt_resources(
-    resources: &HashMap<&'static str, Vec<String>>,
-    ctx: &mut CheckContext,
-) {
-    if ctx.has_file("SYSTEM.md")
-        && resources
-            .get("skills")
-            .is_some_and(|paths| !paths.is_empty())
-    {
-        ctx.warning(
-            "package.system_prompt_hides_skill_inventory",
-            "SYSTEM.md",
-            "SYSTEM.md replaces Pi's base prompt, including the discovered-skill inventory",
-            Some("remove SYSTEM.md and append recipe guidance through agent system_instructions, or explicitly preserve skill discovery in the replacement prompt"),
-        );
     }
 }
 
@@ -2657,44 +2638,6 @@ mod tests {
 
         let report = check_recipe_files(&input, CheckProfile::Publish);
         assert!(report.valid, "{:?}", report.diagnostics);
-    }
-
-    #[test]
-    fn warns_when_system_prompt_can_hide_declared_skills() {
-        let package = json!({
-            "name": "skill-recipe",
-            "version": "0.1.0",
-            "pi": {
-                "agents": ["agents/*.yaml"],
-                "skills": ["skills/**/SKILL.md"]
-            }
-        });
-        let agent = concat!(
-            "name: agent\n",
-            "model:\n",
-            "  name: test/provider-model\n",
-            "tools: []\n",
-            "skills:\n",
-            "  - review\n",
-            "system_instructions:\n",
-            "  content: Test instructions\n",
-        );
-        let input = recipe_files(&[
-            (
-                "package.json",
-                &serde_json::to_string_pretty(&package).expect("serialize package"),
-            ),
-            ("agents/agent.yaml", agent),
-            ("skills/review/SKILL.md", "---\ndescription: Review\n---\n"),
-            ("SYSTEM.md", "Replacement prompt\n"),
-        ]);
-
-        let report = check_recipe_files(&input, CheckProfile::Local);
-        assert!(report.valid, "{:?}", report.diagnostics);
-        assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "package.system_prompt_hides_skill_inventory"
-                && diagnostic.severity == Severity::Warning
-        }));
     }
 
     #[test]
