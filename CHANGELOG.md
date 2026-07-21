@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.11.0](https://github.com/introspection-org/pi-recipes/compare/v0.10.4...v0.11.0) (2026-07-21)
+
+
+### Features
+
+* **python:** add pi-recipe-check bindings ([#100](https://github.com/introspection-org/pi-recipes/issues/100)) ([37fc176](https://github.com/introspection-org/pi-recipes/commit/37fc176a198fcf96823b2b110a1e8ee106576d97))
+
+
+### Bug Fixes
+
+* **agent:** enqueue child completion before persisting to close poke race ([#106](https://github.com/introspection-org/pi-recipes/issues/106)) ([592ed89](https://github.com/introspection-org/pi-recipes/commit/592ed89603c145775f7e8bff10e8119cb14f81ef))
+* **release:** make root own platform package versions ([#114](https://github.com/introspection-org/pi-recipes/issues/114)) ([bf29058](https://github.com/introspection-org/pi-recipes/commit/bf2905825f3ad0f6aa9dffe8287a479c968c4687))
+* **release:** use manifest grouping for checker libraries ([#105](https://github.com/introspection-org/pi-recipes/issues/105)) ([21e553c](https://github.com/introspection-org/pi-recipes/commit/21e553c8cb75b0c21c790c092a443f1e29d12010))
+* unify recipe-check release versions ([#112](https://github.com/introspection-org/pi-recipes/issues/112)) ([25badb6](https://github.com/introspection-org/pi-recipes/commit/25badb6339c5141e965f982979874f2a15f47e30))
+
+
+### Performance Improvements
+
+* ship recipe-check as per-platform optional dependencies ([#110](https://github.com/introspection-org/pi-recipes/issues/110)) ([3c7ad24](https://github.com/introspection-org/pi-recipes/commit/3c7ad2402517d4cd31694d08bc1b505f63652355))
+
 ## [0.10.4](https://github.com/introspection-org/pi-recipes/compare/v0.10.3...v0.10.4) (2026-07-16)
 
 
