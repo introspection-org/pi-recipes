@@ -124,3 +124,17 @@ def test_judge_definition_schema_names_authored_fields() -> None:
     assert isinstance(instructions, dict)
     assert instructions["type"] == "string"
     assert instructions["minLength"] == 1
+    assert instructions["pattern"] == r"\S"
+
+    judge = properties["judge"]
+    assert isinstance(judge, dict)
+    assert judge["maxLength"] == 255
+    assert judge["pattern"] == r"\S"
+
+    defs = schema["$defs"]
+    assert isinstance(defs, dict)
+    request = defs["JudgeLlmRequest"]
+    assert isinstance(request, dict)
+    temperature = request["properties"]["temperature"]
+    assert temperature["minimum"] == 0.0
+    assert temperature["maximum"] == 2.0

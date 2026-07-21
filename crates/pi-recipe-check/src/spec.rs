@@ -55,9 +55,11 @@ macro_rules! spec_bail {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct JudgeDefinition {
     /// Unique judge name within the recipe (at most 255 characters).
+    #[cfg_attr(feature = "schema", schemars(length(max = 255), pattern(r"\S")))]
     pub judge: String,
     /// Optional human description (at most 2000 characters).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(length(max = 2000)))]
     pub description: Option<String>,
     /// Applicability gate: `{}` (always) or a list of
     /// `{ event, match? }` matchers where `event` is one of
@@ -84,8 +86,14 @@ pub struct JudgeDefinition {
 pub struct JudgeLlmConfig {
     /// Provider slug (lowercase ASCII, digits, and `-`). Defaults to `openai`.
     #[serde(default = "default_provider")]
+    #[cfg_attr(feature = "schema", schemars(pattern(r"^[a-z0-9-]{1,64}$")))]
     pub provider: String,
-    /// Model name. Required and non-empty (at most 255 bytes).
+    /// Model name. Required and non-empty (at most 255 bytes), with no
+    /// surrounding whitespace.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(length(min = 1, max = 255), pattern(r"^\S([\s\S]*\S)?$"))
+    )]
     pub model: String,
     #[serde(default)]
     pub request: JudgeLlmRequest,
@@ -102,12 +110,15 @@ pub struct JudgeLlmConfig {
 pub struct JudgeLlmRequest {
     /// Sampling temperature between 0 and 2. Defaults to 0.
     #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 2.0)))]
     pub temperature: f64,
     /// Maximum output tokens (1..=131072).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 131_072)))]
     pub max_tokens: Option<u64>,
     /// Reasoning effort hint (lowercase ASCII and `-`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(pattern(r"^[a-z-]{1,64}$")))]
     pub reasoning_effort: Option<String>,
 }
 
@@ -117,12 +128,15 @@ pub struct JudgeLlmRequest {
 pub struct JudgeLlmTransport {
     /// Request timeout in milliseconds (1..=600000). Defaults to 60000.
     #[serde(default = "default_timeout_ms")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 600_000)))]
     pub timeout_ms: u64,
     /// Retry attempts (0..=10). Defaults to 0.
     #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(range(max = 10)))]
     pub max_retries: u64,
     /// Exponential backoff cap in milliseconds (..=60000). Defaults to 5000.
     #[serde(default = "default_max_retry_delay_ms")]
+    #[cfg_attr(feature = "schema", schemars(range(max = 60_000)))]
     pub max_retry_delay_ms: u64,
 }
 
@@ -142,8 +156,10 @@ impl Default for JudgeLlmTransport {
 pub struct JudgeLlmLocal {
     /// HTTP(S) base URL; HTTPS required outside loopback. No credentials,
     /// query, or fragment.
+    #[cfg_attr(feature = "schema", schemars(pattern(r"^https?://\S+$")))]
     pub base_url: String,
     /// Environment variable naming the API key (identifier characters only).
+    #[cfg_attr(feature = "schema", schemars(pattern(r"^[A-Za-z_][A-Za-z0-9_]*$")))]
     pub api_key_env: String,
 }
 
@@ -415,9 +431,14 @@ fn regex_literal(value: &str) -> Result<Option<(&str, &str)>, JudgeSpecError> {
 /// JSON Schema for the authored judge definition, for authoring tools and
 /// agents discovering how to write `judges/*.yaml`.
 ///
-/// The schema must never allow a definition the strict parser rejects:
-/// `instructions` is `Option` internally (for friendlier parse errors) but
-/// required here, since [`normalize_judge_definition`] rejects its absence.
+/// The schema encodes every authored constraint JSON Schema can express —
+/// required non-blank `instructions` (its `Option` is internal, for
+/// friendlier parse errors), name/description lengths, provider/model/effort
+/// shapes, and numeric ranges — so schema-valid definitions parse strictly.
+/// Two rule families remain parser-only because a per-document schema cannot
+/// express them: batch-level judge-name uniqueness, and the semantic
+/// `llm.local.base_url` rules (no credentials, query, or fragment; HTTPS
+/// outside loopback) beyond the basic `http(s)://` pattern.
 #[cfg(feature = "schema")]
 pub fn judge_definition_json_schema() -> String {
     let schema = schemars::schema_for!(JudgeDefinition);
@@ -437,7 +458,8 @@ fn instructions_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::
     schemars::json_schema!({
         "description": "The grading rubric. Required and non-empty.",
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "pattern": r"\S"
     })
 }
 
@@ -689,8 +711,35 @@ llm:
             assert!(required.contains(&json!(field)), "{field} must be required");
         }
         // A schema-guided client must not be able to produce a definition
-        // the strict parser rejects: instructions is a non-null string.
+        // the strict parser rejects: instructions is a non-null, non-blank
+        // string, and the scalar constraints mirror the parser's bounds.
         assert_eq!(properties["instructions"]["type"], json!("string"));
         assert_eq!(properties["instructions"]["minLength"], json!(1));
+        assert_eq!(properties["instructions"]["pattern"], json!(r"\S"));
+        assert_eq!(properties["judge"]["maxLength"], json!(255));
+        assert_eq!(properties["judge"]["pattern"], json!(r"\S"));
+        assert_eq!(properties["description"]["maxLength"], json!(2000));
+
+        let llm = schema["$defs"]["JudgeLlmConfig"].as_object().unwrap();
+        let model = &llm["properties"]["model"];
+        assert_eq!(model["minLength"], json!(1));
+        assert_eq!(model["maxLength"], json!(255));
+        assert!(model["pattern"].is_string());
+        assert_eq!(
+            llm["properties"]["provider"]["pattern"],
+            json!(r"^[a-z0-9-]{1,64}$")
+        );
+
+        let request = schema["$defs"]["JudgeLlmRequest"].as_object().unwrap();
+        assert_eq!(request["properties"]["temperature"]["minimum"], json!(0.0));
+        assert_eq!(request["properties"]["temperature"]["maximum"], json!(2.0));
+        assert_eq!(request["properties"]["max_tokens"]["maximum"], json!(131_072));
+
+        let transport = schema["$defs"]["JudgeLlmTransport"].as_object().unwrap();
+        assert_eq!(
+            transport["properties"]["timeout_ms"]["maximum"],
+            json!(600_000)
+        );
+        assert_eq!(transport["properties"]["max_retries"]["maximum"], json!(10));
     }
 }
