@@ -23,6 +23,36 @@
       "component": "pi-recipe-check-python",
       "include-component-in-tag": true,
       "bump-minor-pre-major": true
+    },
+    "packages/recipe-check-darwin-arm64": {
+      "release-type": "node",
+      "component": "recipe-check-darwin-arm64",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
+    },
+    "packages/recipe-check-darwin-x64": {
+      "release-type": "node",
+      "component": "recipe-check-darwin-x64",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
+    },
+    "packages/recipe-check-linux-arm64": {
+      "release-type": "node",
+      "component": "recipe-check-linux-arm64",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
+    },
+    "packages/recipe-check-linux-x64": {
+      "release-type": "node",
+      "component": "recipe-check-linux-x64",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
+    },
+    "packages/recipe-check-win32-x64": {
+      "release-type": "node",
+      "component": "recipe-check-win32-x64",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
     }
   },
   "plugins": [

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -42,3 +43,40 @@ if (!coreDependency || coreDependency.req !== expectedRequirement) {
 }
 
 console.log(`pi-recipe-check artifacts are locked at ${core.version}`);
+
+// The per-platform binary packages are optionalDependencies pinned to this
+// package's exact version. release-please bumps each package independently, so
+// a release can silently pin a version that was never published — which fails
+// as a missing optional dependency, i.e. silently, with recipe-check simply
+// absent at runtime. Fail the build instead.
+const rootManifest = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+);
+const optional = rootManifest.optionalDependencies ?? {};
+const platformPackages = Object.keys(optional).filter((name) =>
+  name.startsWith("@introspection-ai/recipe-check-"),
+);
+if (platformPackages.length === 0) {
+  throw new Error(
+    "No @introspection-ai/recipe-check-* optionalDependencies found; the binary would ship nowhere.",
+  );
+}
+for (const name of platformPackages) {
+  if (optional[name] !== rootManifest.version) {
+    throw new Error(
+      `${name} is pinned to ${optional[name]}, but this package is ${rootManifest.version}; they must match exactly.`,
+    );
+  }
+  const dir = name.replace("@introspection-ai/", "");
+  const own = JSON.parse(
+    readFileSync(new URL(`../packages/${dir}/package.json`, import.meta.url), "utf8"),
+  );
+  if (own.version !== rootManifest.version) {
+    throw new Error(
+      `packages/${dir} is at ${own.version}, but this package is ${rootManifest.version}; they must match exactly.`,
+    );
+  }
+}
+console.log(
+  `recipe-check binary packages locked at ${rootManifest.version} (${platformPackages.length} platforms)`,
+);

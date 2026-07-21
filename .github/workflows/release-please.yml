@@ -81,7 +81,7 @@ jobs:
         with:
           name: native-tools-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            vendor/recipe-check/${{ matrix.platform }}-${{ matrix.arch }}
+            packages/recipe-check-${{ matrix.platform }}-${{ matrix.arch }}/recipe-check*
             vendor/mcp-client/${{ matrix.platform }}-${{ matrix.arch }}
           if-no-files-found: error
 
@@ -126,16 +126,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf vendor/recipe-check vendor/mcp-client
-          mkdir -p vendor/recipe-check vendor/mcp-client
+          rm -rf vendor/mcp-client
+          mkdir -p vendor/mcp-client
           for artifact in native-tool-artifacts/native-tools-*; do
             platform_id="${artifact##*/native-tools-}"
-            mkdir -p "vendor/recipe-check/${platform_id}" "vendor/mcp-client/${platform_id}"
-            find "$artifact" -type f -name 'recipe-check*' -exec cp {} "vendor/recipe-check/${platform_id}/" \;
+            mkdir -p "vendor/mcp-client/${platform_id}"
+            # recipe-check now ships in its own per-platform package, so each
+            # published tarball carries exactly one binary instead of all five.
+            find "$artifact" -type f -name 'recipe-check*' \
+              -exec cp {} "packages/recipe-check-${platform_id}/" \;
             find "$artifact" -type f -name 'mcp-client*' -exec cp {} "vendor/mcp-client/${platform_id}/" \;
           done
-          find vendor/recipe-check vendor/mcp-client -type f ! -name '*.exe' -exec chmod 755 {} \;
-          find vendor/recipe-check vendor/mcp-client -maxdepth 3 -type f -print
+          find packages vendor/mcp-client -type f -name 'recipe-check*' -o -type f -name 'mcp-client*' \
+            | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
+          find packages -maxdepth 2 -type f -name 'recipe-check*' -print
+          find vendor/mcp-client -maxdepth 2 -type f -print
 
       - run: pnpm pack:check
 
@@ -151,6 +156,21 @@ jobs:
           if [[ "$version" == *-* ]]; then
             tag="beta"
           fi
+
+          # Platform packages FIRST. They are optionalDependencies of the parent
+          # pinned to this exact version, so publishing the parent first leaves a
+          # window where installs resolve nothing -- and a missing optional
+          # dependency fails silently, leaving recipe-check simply absent.
+          for pkg_dir in packages/recipe-check-*; do
+            [ -d "$pkg_dir" ] || continue
+            pkg="$(node -p "require('./$pkg_dir/package.json').name")"
+            if npm view "$pkg@$version" version >/dev/null 2>&1; then
+              echo "$pkg@$version is already published"
+            else
+              ( cd "$pkg_dir" && npm publish --access public --tag "$tag" )
+            fi
+            npm access set status=public "$pkg" || true
+          done
           if npm view "$package_name@$version" version >/dev/null 2>&1; then
             echo "$package_name@$version is already published"
           else

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -55,11 +56,46 @@ function platformPackageId(): string {
   return `${process.platform}-${process.arch}`;
 }
 
+/** npm package carrying the recipe-check binary for the host platform. */
+function platformPackageName(): string {
+  return `@introspection-ai/recipe-check-${platformPackageId()}`;
+}
+
+/**
+ * Locate the binary inside its per-platform optional dependency.
+ *
+ * The binaries used to ship inside this package for every platform at once:
+ * ~11MB of executables, of which any given machine can run one. Every consumer
+ * paid for all five, including the agent runtime, which never runs recipe-check
+ * at all — it imports this module only because the package index re-exports it.
+ *
+ * Per-platform packages with `os`/`cpu` are the standard fix (esbuild, swc, and
+ * friends all do this): the installer resolves exactly the one that matches, and
+ * `optionalDependencies` means an unsupported platform degrades to the error
+ * below instead of failing the install.
+ *
+ * Returns null when the package is absent, so resolution falls through to the
+ * in-repo build paths that a contributor working from source relies on.
+ */
+function platformPackageBinary(): string | null {
+  try {
+    const require = createRequire(import.meta.url);
+    return require.resolve(`${platformPackageName()}/${executableName()}`);
+  } catch {
+    return null;
+  }
+}
+
 function recipeCheckCommand(env: NodeJS.ProcessEnv): RecipeCheckCommand {
   if (env.PI_RECIPE_CHECK_BIN) {
     return { command: env.PI_RECIPE_CHECK_BIN, args: [] };
   }
 
+  const fromPlatformPackage = platformPackageBinary();
+  if (fromPlatformPackage) return { command: fromPlatformPackage, args: [] };
+
+  // Retained so an install predating the split, or a tree still carrying the
+  // vendored layout, keeps working without a reinstall.
   const root = packageRoot();
   const packaged = resolve(
     root,
@@ -89,8 +125,8 @@ function recipeCheckCommand(env: NodeJS.ProcessEnv): RecipeCheckCommand {
   throw new Error(
     [
       `recipe-check binary is not available for ${platformPackageId()}.`,
-      `Expected packaged binary at ${packaged}.`,
-      "Reinstall @introspection-ai/pi-recipes or set PI_RECIPE_CHECK_BIN to a compatible recipe-check binary.",
+      `Expected the optional dependency ${platformPackageName()}, or a packaged binary at ${packaged}.`,
+      `Install ${platformPackageName()}, reinstall @introspection-ai/pi-recipes without --no-optional, or set PI_RECIPE_CHECK_BIN to a compatible recipe-check binary.`,
     ].join("\n")
   );
 }

@@ -16,7 +16,15 @@ if (!existsSync(source)) {
   throw new Error(`recipe-check build output not found: ${source}`);
 }
 
-const targetDir = resolve(root, "vendor", "recipe-check", `${platform}-${arch}`);
+// Into the per-platform package rather than vendor/, so each publish carries
+// exactly one binary. The old layout put all five in the main tarball, and npm
+// has no partial install: every consumer downloaded ~11MB to run one of them.
+const targetDir = resolve(root, "packages", `recipe-check-${platform}-${arch}`);
+if (!existsSync(resolve(targetDir, "package.json"))) {
+  throw new Error(
+    `No package for ${platform}-${arch} at ${targetDir}. Add it to packages/ and to optionalDependencies in the root package.json.`
+  );
+}
 const target = resolve(targetDir, basename(exe));
 mkdirSync(targetDir, { recursive: true });
 copyFileSync(source, target);

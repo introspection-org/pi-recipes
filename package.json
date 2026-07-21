@@ -8,7 +8,6 @@
   "files": [
     "dist",
     "harbor/pi_recipe_agent.py",
-    "vendor/recipe-check",
     "vendor/mcp-client",
     "docs",
     "README.md",
@@ -92,5 +91,12 @@
     "typebox": "^1.0.56",
     "typescript": "^5.7.3",
     "vitest": "^4.0.18"
+  },
+  "optionalDependencies": {
+    "@introspection-ai/recipe-check-darwin-arm64": "0.10.4",
+    "@introspection-ai/recipe-check-darwin-x64": "0.10.4",
+    "@introspection-ai/recipe-check-linux-arm64": "0.10.4",
+    "@introspection-ai/recipe-check-linux-x64": "0.10.4",
+    "@introspection-ai/recipe-check-win32-x64": "0.10.4"
   }
 }
