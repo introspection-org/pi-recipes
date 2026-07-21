@@ -1,18 +1,34 @@
 from ._api import (
     CheckProfile,
     Diagnostic,
+    JudgeDefinition,
+    JudgeLlmConfig,
+    JudgeLlmLocal,
+    JudgeLlmRequest,
+    JudgeLlmTransport,
+    JudgeSource,
+    ParsedJudgeDefinition,
     RecipeFile,
     RecipeFiles,
     Report,
     Severity,
     Span,
     check_recipe_files,
+    judge_definition_schema,
+    parse_judge_definitions,
 )
 from ._native import __version__
 
 __all__ = [
     "CheckProfile",
     "Diagnostic",
+    "JudgeDefinition",
+    "JudgeLlmConfig",
+    "JudgeLlmLocal",
+    "JudgeLlmRequest",
+    "JudgeLlmTransport",
+    "JudgeSource",
+    "ParsedJudgeDefinition",
     "RecipeFile",
     "RecipeFiles",
     "Report",
@@ -20,4 +36,6 @@ __all__ = [
     "Span",
     "__version__",
     "check_recipe_files",
+    "judge_definition_schema",
+    "parse_judge_definitions",
 ]

@@ -4,7 +4,8 @@
 //! authored, platform-neutral contract but does not calculate project-scoped
 //! identities, normalize registry rows, assemble transcripts, call models, or
 //! evaluate applicability gates. Those operations belong to the runtime judge
-//! engine.
+//! engine. The typed, exported form of the same contract lives in
+//! [`crate::spec`]; the two are held in agreement by tests there.
 
 use std::collections::BTreeMap;
 
