@@ -67,7 +67,7 @@
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "pnpm build:ts && cargo test -p pi-mcp-client && cargo build -p pi-mcp-client -p pi-recipe-check && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
-    "pack:check": "npm pack --dry-run --json | node scripts/check-npm-pack.mjs",
+    "pack:check": "pnpm pack --dry-run --json | node scripts/check-npm-pack.mjs && node scripts/check-packed-recipe-check-versions.mjs",
     "clean": "rm -rf dist .turbo node_modules target vendor/recipe-check vendor/mcp-client"
   },
   "dependencies": {
@@ -93,10 +93,10 @@
     "vitest": "^4.0.18"
   },
   "optionalDependencies": {
-    "@introspection-ai/recipe-check-darwin-arm64": "0.10.4",
-    "@introspection-ai/recipe-check-darwin-x64": "0.10.4",
-    "@introspection-ai/recipe-check-linux-arm64": "0.10.4",
-    "@introspection-ai/recipe-check-linux-x64": "0.10.4",
-    "@introspection-ai/recipe-check-win32-x64": "0.10.4"
+    "@introspection-ai/recipe-check-darwin-arm64": "workspace:*",
+    "@introspection-ai/recipe-check-darwin-x64": "workspace:*",
+    "@introspection-ai/recipe-check-linux-arm64": "workspace:*",
+    "@introspection-ai/recipe-check-linux-x64": "workspace:*",
+    "@introspection-ai/recipe-check-win32-x64": "workspace:*"
   }
 }

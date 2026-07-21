@@ -174,7 +174,9 @@ jobs:
           if npm view "$package_name@$version" version >/dev/null 2>&1; then
             echo "$package_name@$version is already published"
           else
-            npm publish --access public --tag "$tag"
+            # pnpm replaces workspace:* with exact platform-package versions in
+            # the packed manifest; publishing through pnpm preserves that step.
+            pnpm publish --access public --tag "$tag" --no-git-checks
           fi
           npm dist-tag add "$package_name@$version" "$tag"
           if [[ "$tag" != "latest" ]]; then

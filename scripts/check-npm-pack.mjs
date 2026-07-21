@@ -9,7 +9,8 @@ process.stdin.on("data", (chunk) => {
 });
 process.stdin.on("end", () => {
   const packed = JSON.parse(input);
-  const files = packed.flatMap((entry) =>
+  const entries = Array.isArray(packed) ? packed : [packed];
+  const files = entries.flatMap((entry) =>
     Array.isArray(entry.files) ? entry.files.map((file) => file.path) : []
   );
   const forbidden = files.filter((path) =>

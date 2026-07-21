@@ -2495,10 +2495,9 @@ describe("package boundary", () => {
     expect(pkg.bin).toEqual({ recipes: "dist/cli.js" });
   });
 
-  it("declares one recipe-check binary package per platform, version-locked", () => {
-    // The parent pins these to its own exact version; a drift publishes a
-    // reference to something that does not exist, and a missing OPTIONAL
-    // dependency fails silently — recipe-check would simply be absent.
+  it("keeps recipe-check binary packages in the parent release group", () => {
+    // Source uses workspace:* so release bumps do not rewrite the lockfile.
+    // pnpm pack replaces it with the matching exact version for consumers.
     const pkg = JSON.parse(
       readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")
     ) as { version: string; optionalDependencies?: Record<string, string> };
@@ -2515,7 +2514,7 @@ describe("package boundary", () => {
       "@introspection-ai/recipe-check-win32-x64",
     ]);
     for (const [, range] of platformPackages) {
-      expect(range).toBe(pkg.version);
+      expect(range).toBe("workspace:*");
     }
 
     // Each package must restrict itself by os/cpu, or every consumer installs
@@ -2536,6 +2535,37 @@ describe("package boundary", () => {
         platform === "win32" ? "recipe-check.exe" : "recipe-check",
       ]);
     }
+
+    const releaseConfig = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "..", "release-please-config.json"),
+        "utf8"
+      )
+    ) as {
+      packages?: Record<string, { "separate-pull-requests"?: boolean }>;
+      plugins?: Array<{
+        type?: string;
+        groupName?: string;
+        components?: string[];
+      }>;
+    };
+    expect(
+      releaseConfig.packages?.["."]?.["separate-pull-requests"]
+    ).not.toBe(true);
+    expect(
+      releaseConfig.plugins?.find(
+        (plugin) =>
+          plugin.type === "linked-versions" &&
+          plugin.groupName === "recipe-check-binaries"
+      )?.components
+    ).toEqual([
+      "pi-recipes",
+      "recipe-check-darwin-arm64",
+      "recipe-check-darwin-x64",
+      "recipe-check-linux-arm64",
+      "recipe-check-linux-x64",
+      "recipe-check-win32-x64",
+    ]);
   });
 
   it("keeps the package free of Introspection runtime dependencies", async () => {

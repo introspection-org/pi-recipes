@@ -9,7 +9,6 @@
     ".": {
       "release-type": "node",
       "component": "pi-recipes",
-      "separate-pull-requests": true,
       "bump-minor-pre-major": true
     },
     "crates/pi-recipe-check": {
