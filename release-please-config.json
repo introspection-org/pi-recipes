@@ -68,6 +68,19 @@
         "pi-recipe-check-python"
       ],
       "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "recipe-check-binaries",
+      "components": [
+        "pi-recipes",
+        "recipe-check-darwin-arm64",
+        "recipe-check-darwin-x64",
+        "recipe-check-linux-arm64",
+        "recipe-check-linux-x64",
+        "recipe-check-win32-x64"
+      ],
+      "merge": false
     }
   ],
   "bump-minor-pre-major": true

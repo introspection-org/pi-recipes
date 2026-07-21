@@ -45,10 +45,10 @@ if (!coreDependency || coreDependency.req !== expectedRequirement) {
 console.log(`pi-recipe-check artifacts are locked at ${core.version}`);
 
 // The per-platform binary packages are optionalDependencies pinned to this
-// package's exact version. release-please bumps each package independently, so
-// a release can silently pin a version that was never published — which fails
-// as a missing optional dependency, i.e. silently, with recipe-check simply
-// absent at runtime. Fail the build instead.
+// package's exact version. release-please links their versions, and this guard
+// catches any future configuration drift before a release can silently pin a
+// version that was never published. A missing optional dependency does not fail
+// installation; recipe-check would simply be absent at runtime.
 const rootManifest = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 );
