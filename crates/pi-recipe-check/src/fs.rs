@@ -111,6 +111,8 @@ fn read_recipe_file(disk_path: &Path, path: String) -> Result<RecipeFile> {
 
 fn needs_content(path: &str) -> bool {
     path == "package.json"
+        || path == "package-lock.json"
+        || path == "npm-shrinkwrap.json"
         || path == ".pi/mcp.local.example.json"
         || path.ends_with(".yaml")
         || path.ends_with(".yml")

@@ -101,6 +101,9 @@ describe("recipe package manifest", () => {
       );
       expect(scaffoldedAgent).not.toContain("skills: []");
       expect(scaffoldedAgent).not.toContain("subagents: []");
+      const scaffoldedReadme = readFileSync(join(result.recipeDir, "README.md"), "utf8");
+      expect(scaffoldedReadme).toContain("pi --recipe . --agent agent");
+      expect(scaffoldedReadme).not.toContain("recipes install .");
       expect(validateRecipeDirectory(result.recipeDir)).toMatchObject({
         valid: true,
         findings: [],
@@ -2183,6 +2186,47 @@ describe("recipe store", () => {
     }
   });
 
+  it("customizes an installed recipe into an owned output directory", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-customize-output-"));
+    const storeDir = join(root, "store");
+    const sourceDir = join(root, "source");
+    const outputDir = join(root, "workspace", "owned-recipe");
+    try {
+      mkdirSync(join(sourceDir, "agents"), { recursive: true });
+      writePiPackageManifest(sourceDir, {
+        name: "upstream-owned",
+        version: "0.1.0",
+        pi: { agents: ["agents/*.yaml"] },
+      });
+      writeFileSync(join(sourceDir, "agents", "agent.yaml"), fullAgentYaml());
+      mkdirSync(join(sourceDir, ".pi"), { recursive: true });
+      writeFileSync(join(sourceDir, ".pi", "mcp.local.json"), "{\"secret\":true}\n");
+      writeFileSync(join(sourceDir, ".pi", "mcp.local.example.json"), "{}\n");
+
+      await addRecipe(sourceDir, { storeDir });
+      const customized = await customizeRecipe("upstream-owned", {
+        storeDir,
+        outputDir,
+      });
+
+      expect(customized.path).toBe(outputDir);
+      expect(existsSync(join(outputDir, "package.json"))).toBe(true);
+      expect(existsSync(join(outputDir, "agents", "agent.yaml"))).toBe(true);
+      expect(existsSync(join(outputDir, ".pi", "mcp.local.json"))).toBe(false);
+      expect(existsSync(join(outputDir, ".pi", "mcp.local.example.json"))).toBe(true);
+      expect(resolveRecipeDirectory(outputDir, { storeDir })).toBe(outputDir);
+
+      const alreadyOwned = await customizeRecipe("upstream-owned", {
+        storeDir,
+        outputDir,
+      });
+      expect(alreadyOwned.path).toBe(outputDir);
+      expect(alreadyOwned.overwritten).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("publishes an installed git recipe by customizing it into a local editable repo", async () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-publish-"));
     const sourceDir = join(root, "source");
@@ -2200,6 +2244,15 @@ describe("recipe store", () => {
         },
       });
       writeFileSync(join(sourceDir, "agents", "agent.yaml"), fullAgentYaml());
+      writeFileSync(
+        join(sourceDir, "package-lock.json"),
+        `${JSON.stringify({
+          name: "upstream-review",
+          version: "0.1.0",
+          lockfileVersion: 3,
+          packages: { "": { name: "upstream-review", version: "0.1.0" } },
+        }, null, 2)}\n`
+      );
       await execFileAsync("git", ["init"], { cwd: sourceDir });
       await execFileAsync("git", ["add", "."], { cwd: sourceDir });
       await execFileAsync(
@@ -2256,6 +2309,11 @@ describe("recipe store", () => {
         pushed: true,
       });
       expect(readPiPackageManifest(result.recipeDir).name).toBe("@acme/upstream-review");
+      const publishedLock = JSON.parse(
+        readFileSync(join(result.recipeDir, "package-lock.json"), "utf8")
+      ) as { name: string; packages: { "": { name: string } } };
+      expect(publishedLock.name).toBe("@acme/upstream-review");
+      expect(publishedLock.packages[""].name).toBe("@acme/upstream-review");
       expect(readFileSync(join(result.recipeDir, ".gitignore"), "utf8")).toContain("node_modules/");
       expect(resolveRecipeDirectory("upstream-review", { storeDir })).toBe(result.recipeDir);
       expect(resolveRecipeDirectory("acme/upstream-review", { storeDir })).toBe(result.recipeDir);
@@ -2302,6 +2360,48 @@ describe("recipe store", () => {
       ).rejects.toThrow(/is not ready to publish/);
 
       expect(readPiPackageManifest(recipeDir).name).toBe("invalid-review");
+      expect(existsSync(join(recipeDir, ".gitignore"))).toBe(false);
+      expect(commands).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stale lock identity before publish mutates the recipe", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-publish-stale-lock-"));
+    const recipeDir = join(root, "recipe");
+    const commands: string[] = [];
+    try {
+      mkdirSync(join(recipeDir, "agents"), { recursive: true });
+      writePiPackageManifest(recipeDir, {
+        name: "owned-review",
+        version: "0.2.0",
+        description: "Publishable recipe",
+        pi: { agents: ["agents/*.yaml"] },
+      });
+      writeFileSync(join(recipeDir, "agents", "agent.yaml"), fullAgentYaml());
+      writeFileSync(
+        join(recipeDir, "package-lock.json"),
+        `${JSON.stringify({
+          name: "upstream-review",
+          version: "0.1.0",
+          lockfileVersion: 3,
+          packages: { "": { name: "upstream-review", version: "0.1.0" } },
+        }, null, 2)}\n`
+      );
+
+      await expect(
+        publishRecipe(recipeDir, {
+          github: "acme/owned-review",
+          visibility: "public",
+          commandRunner: async (command, args) => {
+            commands.push([command, ...args].join(" "));
+            return { stdout: "", stderr: "" };
+          },
+        })
+      ).rejects.toThrow(/does not match package.json/);
+
+      expect(readPiPackageManifest(recipeDir).name).toBe("owned-review");
       expect(existsSync(join(recipeDir, ".gitignore"))).toBe(false);
       expect(commands).toEqual([]);
     } finally {

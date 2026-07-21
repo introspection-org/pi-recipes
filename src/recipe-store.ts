@@ -445,7 +445,7 @@ function copyRecipeDirectory(
   if (existed) {
     if (!opts.force) {
       throw new Error(
-        `Local editable recipe already exists at ${targetDir}. Re-run with --force to overwrite it.`
+        `Recipe destination already exists at ${targetDir}. Re-run with --force to overwrite it.`
       );
     }
     rmSync(targetDir, { recursive: true, force: true });
@@ -456,7 +456,9 @@ function copyRecipeDirectory(
     filter(source) {
       const relativePath = relative(sourceDir, source).replace(/\\/g, "/");
       const parts = relativePath.split("/");
-      return !parts.includes(".git") && !parts.includes("node_modules");
+      return !parts.includes(".git")
+        && !parts.includes("node_modules")
+        && relativePath !== ".pi/mcp.local.json";
     },
   });
   return existed;
@@ -864,7 +866,7 @@ export function removeRecipe(identifier: string, opts: RecipeStoreOptions = {}):
 
 export async function customizeRecipe(
   identifier: string,
-  opts: RecipeStoreOptions & { force?: boolean } = {}
+  opts: RecipeStoreOptions & { force?: boolean; outputDir?: string } = {}
 ): Promise<CustomizedRecipe> {
   const storeDir = opts.storeDir ?? defaultRecipeStoreDir(opts.env);
   const original = withRecipeStoreLock(storeDir, () =>
@@ -872,7 +874,9 @@ export async function customizeRecipe(
   );
   if (!original) throw new Error(`Recipe not found: ${identifier}`);
 
-  const targetPath = localRecipeDirectoryForName(original.name, storeDir);
+  const targetPath = opts.outputDir
+    ? resolve(opts.cwd ?? process.cwd(), expandHome(opts.outputDir))
+    : localRecipeDirectoryForName(original.name, storeDir);
   const overwritten = copyRecipeDirectory(original.path, targetPath, opts);
   const recipe = await addRecipe(targetPath, opts);
   return {

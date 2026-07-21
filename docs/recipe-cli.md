@@ -141,18 +141,12 @@ model:
   thinking_level: high
 ```
 
-Objects such as `model` and `extensions` merge by key, while arrays such as
-`tools`, `skills`, and `subagents` replace the inherited array.
-
-Omit `skills` or `subagents` when an agent has none. Omission defaults to an
-empty list unless the field is inherited through `from:`. Use an explicit `[]`
-only when a derived agent needs to clear a non-empty inherited list.
-
-Use `system_instructions.content: ""` when an agent intentionally adds no
-instructions beyond `SYSTEM.md` but still needs to declare the field explicitly.
-
-`SYSTEM.md` is optional. When present, Pi uses it as the recipe-level system
-prompt before applying the selected agent's `system_instructions`.
+`SYSTEM.md` is shared by every root and delegated agent in the recipe.
+`system_instructions` specializes the selected agent. `from:` derives a complete
+agent definition with field-specific merge rules: objects merge selectively,
+arrays replace, and explicit `[]` clears an inherited array. See
+[Agent Composition](agent-composition.md) for the full inheritance matrix,
+prompt layering, capability selection, and subagent behavior.
 
 ## Develop a Recipe
 
@@ -179,13 +173,19 @@ The CI profile exits non-zero for invalid recipes and promotes checks that are
 unsafe for committed recipes, such as missing lockfiles for runtime
 dependencies.
 
-Register the local recipe:
+Run the local recipe directly by path:
+
+```bash
+pi --recipe . --agent agent
+```
+
+Registration is optional when you want a stable store identifier:
 
 ```bash
 recipes install ./my-recipe
 ```
 
-Inspect what was registered:
+Then inspect or run the registered name:
 
 ```bash
 recipes list
@@ -609,21 +609,22 @@ When you want to make a small local change to a recipe installed from elsewhere,
 copy it into an editable local recipe:
 
 ```bash
-recipes customize pi-codex
+recipes customize pi-codex --output ./my-agent
 ```
 
-This creates a copy under the recipe store's `local/` directory, registers that
-copy under the same recipe name, and leaves remote clone caches alone. Edit the
-printed directory, then run:
+With `--output`, this creates an owned copy at the requested path, registers that
+path under the same recipe name, and leaves remote clone caches alone. Without
+`--output`, it preserves the legacy recipe-store `local/` destination. Edit the
+printed directory, then run it directly:
 
 ```bash
-recipes check pi-codex
-pi --recipe pi-codex
+recipes check ./my-agent
+pi --recipe ./my-agent
 ```
 
 If the recipe is already registered as an editable local copy, `customize`
-reuses it. Pass `--force` only when the target local directory already exists
-while copying from another registered source.
+reuses it. Pass `--force` only when copying from another registered source into
+an existing destination.
 
 ## Resolve Recipes
 

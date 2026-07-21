@@ -128,13 +128,42 @@ function readPackageJson(recipeDir: string): Record<string, unknown> {
   return JSON.parse(readFileSync(join(recipeDir, "package.json"), "utf8")) as Record<string, unknown>;
 }
 
-function writePackageName(recipeDir: string, packageName: string): boolean {
+function writePackageIdentity(recipeDir: string, packageName: string): boolean {
   const packagePath = join(recipeDir, "package.json");
   const pkg = readPackageJson(recipeDir);
-  if (pkg.name === packageName) return false;
-  pkg.name = packageName;
-  writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
-  return true;
+  let changed = false;
+  if (pkg.name !== packageName) {
+    pkg.name = packageName;
+    writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+    changed = true;
+  }
+
+  for (const filename of ["package-lock.json", "npm-shrinkwrap.json"]) {
+    const lockPath = join(recipeDir, filename);
+    if (!existsSync(lockPath)) continue;
+    const lock = JSON.parse(readFileSync(lockPath, "utf8")) as Record<string, unknown>;
+    let lockChanged = false;
+    if (typeof lock.name === "string" && lock.name !== packageName) {
+      lock.name = packageName;
+      lockChanged = true;
+    }
+    if (lock.packages && typeof lock.packages === "object" && !Array.isArray(lock.packages)) {
+      const packages = lock.packages as Record<string, unknown>;
+      const root = packages[""];
+      if (root && typeof root === "object" && !Array.isArray(root)) {
+        const rootPackage = root as Record<string, unknown>;
+        if (typeof rootPackage.name === "string" && rootPackage.name !== packageName) {
+          rootPackage.name = packageName;
+          lockChanged = true;
+        }
+      }
+    }
+    if (lockChanged) {
+      writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function ensureGitignore(recipeDir: string): boolean {
@@ -392,7 +421,7 @@ export async function publishRecipe(
   }
   const report = validateRecipeDirectory(recipeDir);
 
-  writePackageName(recipeDir, github.packageName);
+  writePackageIdentity(recipeDir, github.packageName);
   ensureGitignore(recipeDir);
 
   const env = opts.env ?? process.env;
