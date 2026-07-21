@@ -1,0 +1,16 @@
+{
+  "name": "@introspection-ai/recipe-check-linux-arm64",
+  "version": "0.10.4",
+  "description": "recipe-check binary for linux-arm64. Installed automatically as an optional dependency of @introspection-ai/pi-recipes; not intended for direct use.",
+  "license": "Apache-2.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "recipe-check"
+  ],
+  "preferUnplugged": true
+}

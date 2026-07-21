@@ -2477,11 +2477,7 @@ describe("package boundary", () => {
     ) as { bin?: Record<string, string>; files?: string[] };
 
     expect(pkg.files).toEqual(
-      expect.arrayContaining([
-        "dist",
-        "vendor/recipe-check",
-        "harbor/pi_recipe_agent.py",
-      ])
+      expect.arrayContaining(["dist", "harbor/pi_recipe_agent.py"])
     );
     expect(pkg.files).not.toEqual(
       expect.arrayContaining([
@@ -2490,9 +2486,56 @@ describe("package boundary", () => {
         "crates/pi-recipe-check/Cargo.toml",
         "crates/pi-recipe-check/src",
         "harbor",
+        // recipe-check binaries ship in per-platform packages now. Shipping
+        // them here meant every consumer downloaded ~11MB of executables to run
+        // one of them, since npm has no partial install.
+        "vendor/recipe-check",
       ])
     );
     expect(pkg.bin).toEqual({ recipes: "dist/cli.js" });
+  });
+
+  it("declares one recipe-check binary package per platform, version-locked", () => {
+    // The parent pins these to its own exact version; a drift publishes a
+    // reference to something that does not exist, and a missing OPTIONAL
+    // dependency fails silently — recipe-check would simply be absent.
+    const pkg = JSON.parse(
+      readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")
+    ) as { version: string; optionalDependencies?: Record<string, string> };
+
+    const platformPackages = Object.entries(
+      pkg.optionalDependencies ?? {}
+    ).filter(([name]) => name.startsWith("@introspection-ai/recipe-check-"));
+
+    expect(platformPackages.map(([name]) => name).sort()).toEqual([
+      "@introspection-ai/recipe-check-darwin-arm64",
+      "@introspection-ai/recipe-check-darwin-x64",
+      "@introspection-ai/recipe-check-linux-arm64",
+      "@introspection-ai/recipe-check-linux-x64",
+      "@introspection-ai/recipe-check-win32-x64",
+    ]);
+    for (const [, range] of platformPackages) {
+      expect(range).toBe(pkg.version);
+    }
+
+    // Each package must restrict itself by os/cpu, or every consumer installs
+    // all five again and the split achieves nothing.
+    for (const [name] of platformPackages) {
+      const dir = name.replace("@introspection-ai/", "");
+      const own = JSON.parse(
+        readFileSync(
+          join(import.meta.dirname, "..", "packages", dir, "package.json"),
+          "utf8"
+        )
+      ) as { version: string; os?: string[]; cpu?: string[]; files?: string[] };
+      const [, platform, arch] = /^recipe-check-(\w+)-(\w+)$/.exec(dir) ?? [];
+      expect(own.os).toEqual([platform]);
+      expect(own.cpu).toEqual([arch]);
+      expect(own.version).toBe(pkg.version);
+      expect(own.files).toEqual([
+        platform === "win32" ? "recipe-check.exe" : "recipe-check",
+      ]);
+    }
   });
 
   it("keeps the package free of Introspection runtime dependencies", async () => {

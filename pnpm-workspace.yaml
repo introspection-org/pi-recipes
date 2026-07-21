@@ -1,3 +1,9 @@
+packages:
+  - packages/recipe-check-*
+
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+
 allowBuilds:
   '@google/genai': true
   protobufjs: true

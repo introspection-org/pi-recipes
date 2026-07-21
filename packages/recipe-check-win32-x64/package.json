@@ -1,0 +1,16 @@
+{
+  "name": "@introspection-ai/recipe-check-win32-x64",
+  "version": "0.10.4",
+  "description": "recipe-check binary for win32-x64. Installed automatically as an optional dependency of @introspection-ai/pi-recipes; not intended for direct use.",
+  "license": "Apache-2.0",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "recipe-check.exe"
+  ],
+  "preferUnplugged": true
+}
