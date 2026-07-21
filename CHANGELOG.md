@@ -9,6 +9,7 @@
 ### Bug Fixes
 
 * **cli:** keep judge diagnostics and resource counts out of `recipes check`
+* **recipe-check:** accept IPv6 loopback URLs in judge local model configuration
 
 ## [0.11.0](https://github.com/introspection-org/pi-recipes/compare/v0.10.4...v0.11.0) (2026-07-21)
 

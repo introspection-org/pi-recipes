@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use regex::RegexBuilder;
 use serde_json::{Map, Value};
-use url::Url;
+use url::{Host, Url};
 
 use crate::{span_from_message, CheckContext};
 
@@ -469,9 +469,13 @@ fn validate_base_url(value: Option<&Value>, path: &str, ctx: &mut CheckContext) 
         );
         return;
     };
-    let host = url.host_str().unwrap_or_default();
-    let loopback = matches!(host, "localhost" | "127.0.0.1" | "::1");
-    let valid = !host.is_empty()
+    let loopback = match url.host() {
+        Some(Host::Domain(host)) => host == "localhost",
+        Some(Host::Ipv4(host)) => host == std::net::Ipv4Addr::LOCALHOST,
+        Some(Host::Ipv6(host)) => host == std::net::Ipv6Addr::LOCALHOST,
+        None => false,
+    };
+    let valid = url.host().is_some()
         && matches!(url.scheme(), "http" | "https")
         && url.username().is_empty()
         && url.password().is_none()
@@ -928,6 +932,27 @@ llm:
   local:
     base_url: http://127.0.0.1:4000/v1
     api_key_env: _MODEL_KEY
+"#,
+                ),
+            )]),
+            CheckProfile::Ci,
+        );
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn accepts_ipv6_loopback_local_url() {
+        let report = check_recipe_files(
+            &snapshot(&[(
+                "judges/ipv6-loopback.yaml",
+                Some(
+                    r#"judge: ipv6-loopback
+instructions: Grade it.
+llm:
+  model: gpt-5
+  local:
+    base_url: http://[::1]:4000/v1
+    api_key_env: MODEL_KEY
 "#,
                 ),
             )]),
