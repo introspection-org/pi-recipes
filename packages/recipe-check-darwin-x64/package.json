@@ -1,6 +1,6 @@
 {
   "name": "@introspection-ai/recipe-check-darwin-x64",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "recipe-check binary for darwin-x64. Installed automatically as an optional dependency of @introspection-ai/pi-recipes; not intended for direct use.",
   "license": "Apache-2.0",
   "os": [
