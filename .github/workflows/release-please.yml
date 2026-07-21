@@ -5,6 +5,15 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      train:
+        description: Release train to recover
+        type: choice
+        options:
+          - all
+          - root
+          - checker
+        default: all
 
 permissions: {}
 
@@ -27,20 +36,29 @@ jobs:
       issues: write
       pull-requests: write
     outputs:
-      release_created: ${{ steps.release.outputs.release_created || steps.release.outputs.releases_created }}
-      crate_release_created: ${{ steps.release.outputs['crates/pi-recipe-check--release_created'] }}
-      python_release_created: ${{ steps.release.outputs['bindings/python--release_created'] }}
+      root_release_created: ${{ steps.root_release.outputs.release_created }}
+      crate_release_created: ${{ steps.checker_release.outputs['crates/pi-recipe-check--release_created'] }}
+      python_release_created: ${{ steps.checker_release.outputs['bindings/python--release_created'] }}
     steps:
+      # Each train owns a different manifest. Concurrent release PRs therefore
+      # never edit the same version-state file.
       - uses: googleapis/release-please-action@v5
-        id: release
+        id: root_release
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      - uses: googleapis/release-please-action@v5
+        id: checker_release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-checker-config.json
+          manifest-file: .release-please-checker-manifest.json
+
   build-native-tools:
     needs: release-please
-    if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root'))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -89,7 +107,7 @@ jobs:
     needs:
       - release-please
       - build-native-tools
-    if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root'))) }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:
@@ -186,7 +204,7 @@ jobs:
 
   publish-crate:
     needs: release-please
-    if: ${{ always() && (needs.release-please.outputs.crate_release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (needs.release-please.outputs.crate_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'checker'))) }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:
@@ -217,7 +235,7 @@ jobs:
 
   build-python-wheels:
     needs: release-please
-    if: ${{ always() && (needs.release-please.outputs.python_release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (needs.release-please.outputs.python_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'checker'))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -261,7 +279,7 @@ jobs:
       - release-please
       - build-python-wheels
       - publish-crate
-    if: ${{ always() && needs.build-python-wheels.result == 'success' && needs.publish-crate.result == 'success' && (needs.release-please.outputs.python_release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && needs.build-python-wheels.result == 'success' && needs.publish-crate.result == 'success' && (needs.release-please.outputs.python_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'checker'))) }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:
