@@ -1221,9 +1221,7 @@ describe("recipe package manifest", () => {
       expect(report.diagnostics).not.toEqual([]);
       expect(report.diagnostics).toEqual(
         report.diagnostics.filter(
-          (diagnostic) =>
-            !diagnostic.code.startsWith("judge.") &&
-            !diagnostic.path.startsWith("judges/")
+          (diagnostic) => !diagnostic.code.startsWith("judge.")
         )
       );
       expect(report.resources).not.toHaveProperty("judges");
@@ -1234,6 +1232,67 @@ describe("recipe package manifest", () => {
         recipesCliMain(["check", root, "--profile", "ci"])
       ).resolves.toBe(0);
       expect(stdout).not.toContain("judge");
+    } finally {
+      write.mockRestore();
+      if (previousBin === undefined) {
+        delete process.env.PI_RECIPE_CHECK_BIN;
+      } else {
+        process.env.PI_RECIPE_CHECK_BIN = previousBin;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves non-judge diagnostics from a judge-path YAML file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-cli-shared-source-check-"));
+    const previousBin = process.env.PI_RECIPE_CHECK_BIN;
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    let stdout = "";
+    write.mockImplementation((chunk: string | Uint8Array) => {
+      stdout += chunk.toString();
+      return true;
+    });
+    try {
+      mkdirSync(join(root, "judges"));
+      writePiPackageManifest(root, {
+        name: "shared-source-cli-test",
+        description: "Shared source CLI test",
+        pi: { agents: ["judges/shared.yaml"] },
+      });
+      writeFileSync(
+        join(root, "judges", "shared.yaml"),
+        "judge: helpful\ninstructions: Grade it.\nllm:\n  model: gpt-5\n"
+      );
+      process.env.PI_RECIPE_CHECK_BIN = join(
+        import.meta.dirname,
+        "..",
+        "target",
+        "debug",
+        process.platform === "win32" ? "recipe-check.exe" : "recipe-check"
+      );
+
+      await expect(
+        recipesCliMain(["check", root, "--profile", "ci", "--json"])
+      ).resolves.toBe(1);
+
+      const report = JSON.parse(stdout) as {
+        valid: boolean;
+        diagnostics: Array<{ code: string; path: string }>;
+        resources: Record<string, number>;
+      };
+      expect(report.valid).toBe(false);
+      expect(report.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "agent.name_missing",
+          path: "judges/shared.yaml",
+        })
+      );
+      expect(report.diagnostics).toEqual(
+        report.diagnostics.filter(
+          (diagnostic) => !diagnostic.code.startsWith("judge.")
+        )
+      );
+      expect(report.resources).not.toHaveProperty("judges");
     } finally {
       write.mockRestore();
       if (previousBin === undefined) {

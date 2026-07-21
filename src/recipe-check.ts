@@ -149,9 +149,7 @@ export async function runRecipeCheck(
 
 function hideJudgeDetails(report: RecipeCheckReport): RecipeCheckReport {
   const diagnostics = report.diagnostics.filter(
-    (diagnostic) =>
-      !diagnostic.code.startsWith("judge.") &&
-      !/^judges\/[^/]+\.ya?ml$/i.test(diagnostic.path)
+    (diagnostic) => !diagnostic.code.startsWith("judge.")
   );
   const resources = { ...report.resources };
   delete resources.judges;
