@@ -135,30 +135,14 @@ export async function runRecipeCheck(
   recipeDir: string,
   opts: RecipeCheckOptions = {}
 ): Promise<number> {
-  const report = hideJudgeDetails(
-    await readRecipeCheckReport(recipeDir, {
-      profile: opts.profile,
-      env: opts.env,
-    })
-  );
+  const report = await readRecipeCheckReport(recipeDir, {
+    profile: opts.profile,
+    env: opts.env,
+  });
   process.stdout.write(
     opts.json ? `${JSON.stringify(report, null, 2)}\n` : renderRecipeCheckReport(report)
   );
   return report.valid ? 0 : 1;
-}
-
-function hideJudgeDetails(report: RecipeCheckReport): RecipeCheckReport {
-  const diagnostics = report.diagnostics.filter(
-    (diagnostic) => !diagnostic.code.startsWith("judge.")
-  );
-  const resources = { ...report.resources };
-  delete resources.judges;
-  return {
-    ...report,
-    valid: !diagnostics.some((diagnostic) => diagnostic.severity === "error"),
-    diagnostics,
-    resources,
-  };
 }
 
 function renderRecipeCheckReport(report: RecipeCheckReport): string {

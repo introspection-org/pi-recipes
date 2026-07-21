@@ -1178,7 +1178,7 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("hides judge validation from recipes check", async () => {
+  it("surfaces judge validation through recipes check", async () => {
     const root = mkdtempSync(join(tmpdir(), "recipes-cli-hidden-check-"));
     const previousBin = process.env.PI_RECIPE_CHECK_BIN;
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -1210,28 +1210,28 @@ describe("recipe package manifest", () => {
 
       await expect(
         recipesCliMain(["check", root, "--profile", "ci", "--json"])
-      ).resolves.toBe(0);
+      ).resolves.toBe(1);
 
       const report = JSON.parse(stdout) as {
         valid: boolean;
         diagnostics: Array<{ code: string; path: string }>;
         resources: Record<string, number>;
       };
-      expect(report.valid).toBe(true);
-      expect(report.diagnostics).not.toEqual([]);
-      expect(report.diagnostics).toEqual(
-        report.diagnostics.filter(
-          (diagnostic) => !diagnostic.code.startsWith("judge.")
-        )
+      expect(report.valid).toBe(false);
+      expect(report.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "judge.llm.model_invalid",
+          path: "judges/invalid.yaml",
+        })
       );
-      expect(report.resources).not.toHaveProperty("judges");
-      expect(stdout).not.toContain("judge");
+      expect(report.resources.judges).toBe(1);
 
       stdout = "";
       await expect(
         recipesCliMain(["check", root, "--profile", "ci"])
-      ).resolves.toBe(0);
-      expect(stdout).not.toContain("judge");
+      ).resolves.toBe(1);
+      expect(stdout).toContain("judge.llm.model_invalid");
+      expect(stdout).toContain("  judges: 1");
     } finally {
       write.mockRestore();
       if (previousBin === undefined) {
@@ -1243,7 +1243,7 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("preserves non-judge diagnostics from a judge-path YAML file", async () => {
+  it("reports every diagnostic role for a shared judge-path YAML file", async () => {
     const root = mkdtempSync(join(tmpdir(), "recipes-cli-shared-source-check-"));
     const previousBin = process.env.PI_RECIPE_CHECK_BIN;
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -1287,12 +1287,7 @@ describe("recipe package manifest", () => {
           path: "judges/shared.yaml",
         })
       );
-      expect(report.diagnostics).toEqual(
-        report.diagnostics.filter(
-          (diagnostic) => !diagnostic.code.startsWith("judge.")
-        )
-      );
-      expect(report.resources).not.toHaveProperty("judges");
+      expect(report.resources.judges).toBe(1);
     } finally {
       write.mockRestore();
       if (previousBin === undefined) {
