@@ -44,11 +44,10 @@ if (!coreDependency || coreDependency.req !== expectedRequirement) {
 
 console.log(`pi-recipe-check artifacts are locked at ${core.version}`);
 
-// The per-platform binary packages are optionalDependencies pinned to this
-// package's exact version. release-please links their versions, and this guard
-// catches any future configuration drift before a release can silently pin a
-// version that was never published. A missing optional dependency does not fail
-// installation; recipe-check would simply be absent at runtime.
+// Source manifests use workspace:* so the lockfile stays stable when
+// release-please bumps the linked packages. pnpm replaces workspace:* with each
+// package's exact version when it packs the parent for publication; pack:check
+// verifies that consumer-facing invariant separately.
 const rootManifest = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 );
@@ -62,9 +61,9 @@ if (platformPackages.length === 0) {
   );
 }
 for (const name of platformPackages) {
-  if (optional[name] !== rootManifest.version) {
+  if (optional[name] !== "workspace:*") {
     throw new Error(
-      `${name} is pinned to ${optional[name]}, but this package is ${rootManifest.version}; they must match exactly.`,
+      `${name} must use workspace:* in the source manifest; found ${optional[name]}.`,
     );
   }
   const dir = name.replace("@introspection-ai/", "");

@@ -44,19 +44,19 @@ importers:
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@22.19.21)(vite@8.0.16(@types/node@22.19.21)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))
     optionalDependencies:
       '@introspection-ai/recipe-check-darwin-arm64':
-        specifier: 0.10.4
+        specifier: workspace:*
         version: link:packages/recipe-check-darwin-arm64
       '@introspection-ai/recipe-check-darwin-x64':
-        specifier: 0.10.4
+        specifier: workspace:*
         version: link:packages/recipe-check-darwin-x64
       '@introspection-ai/recipe-check-linux-arm64':
-        specifier: 0.10.4
+        specifier: workspace:*
         version: link:packages/recipe-check-linux-arm64
       '@introspection-ai/recipe-check-linux-x64':
-        specifier: 0.10.4
+        specifier: workspace:*
         version: link:packages/recipe-check-linux-x64
       '@introspection-ai/recipe-check-win32-x64':
-        specifier: 0.10.4
+        specifier: workspace:*
         version: link:packages/recipe-check-win32-x64
 
   packages/recipe-check-darwin-arm64: {}
