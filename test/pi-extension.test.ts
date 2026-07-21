@@ -373,6 +373,41 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
+  it("aborts instead of falling back when the recipe model has no credentials", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-model-auth-"));
+    const previousExitCode = process.exitCode;
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      const notify = vi.fn();
+      const abort = vi.fn();
+      const ctx = { ...extensionContext(projectDir, notify), abort, mode: "json" };
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      (pi as any).setModel = vi.fn().mockResolvedValue(false);
+
+      createPiRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(pi.activeTools).toEqual([]);
+      expect(notify).toHaveBeenCalledWith(
+        "Recipe session cannot start: Recipe model has no configured API key: openai/gpt-4.1",
+        "warning"
+      );
+      expect(process.exitCode).toBe(1);
+      await pi.emitExtensionEvent({ type: "agent_start" } as any, ctx);
+      expect(abort).toHaveBeenCalledOnce();
+    } finally {
+      process.exitCode = previousExitCode;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("treats an omitted subagents list as no visible subagents", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-empty-subagents-"));
     try {

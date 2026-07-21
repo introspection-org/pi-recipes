@@ -77,14 +77,12 @@ Create a local recipe:
 ```bash
 recipes create ./my-recipe
 recipes check ./my-recipe
-recipes install ./my-recipe
 ```
 
 Launch it with Pi:
 
 ```bash
-pi --recipe my-recipe
-pi --recipe my-recipe --agent agent
+pi --recipe ./my-recipe --agent agent
 ```
 
 Hosts that embed Pi can resolve the same recipe semantics without adopting a
@@ -144,12 +142,12 @@ Use `--visibility public` to submit the recipe's public GitHub metadata to the
 marketplace catalog after a successful push. Catalog submissions are
 best-effort; private publishes are not listed.
 
-Customize an installed recipe into an editable local copy:
+Customize an installed recipe into an owned editable path:
 
 ```bash
-recipes customize pi-codex
-recipes check pi-codex
-pi --recipe pi-codex
+recipes customize pi-codex --output ./my-agent
+recipes check ./my-agent
+pi --recipe ./my-agent
 ```
 
 ## Contributing

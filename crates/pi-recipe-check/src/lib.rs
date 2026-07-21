@@ -115,7 +115,9 @@ type JsonMap = serde_json::Map<String, JsonValue>;
 #[derive(Debug, Clone)]
 struct Package {
     name: Option<String>,
+    version: Option<String>,
     description: Option<String>,
+    license: Option<String>,
     pi: Option<JsonValue>,
     runtime_dependencies: bool,
 }
@@ -327,7 +329,9 @@ pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report 
         ctx.package_name = package.name.clone();
         validate_package_identity(&package, &mut ctx);
         validate_runtime_dependencies(&package, &mut ctx);
+        validate_publish_metadata(&package, &mut ctx);
         let resources = validate_pi_config(&package, &mut ctx);
+        validate_system_prompt_resources(&resources, &mut ctx);
         validate_mcp_local_example(&mut ctx);
 
         let mcp_tool_policy = package
@@ -361,6 +365,24 @@ pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report 
         package_name: ctx.package_name,
         diagnostics: ctx.diagnostics,
         resources: ctx.resources,
+    }
+}
+
+fn validate_system_prompt_resources(
+    resources: &HashMap<&'static str, Vec<String>>,
+    ctx: &mut CheckContext,
+) {
+    if ctx.has_file("SYSTEM.md")
+        && resources
+            .get("skills")
+            .is_some_and(|paths| !paths.is_empty())
+    {
+        ctx.warning(
+            "package.system_prompt_hides_skill_inventory",
+            "SYSTEM.md",
+            "SYSTEM.md replaces Pi's base prompt, including the discovered-skill inventory",
+            Some("remove SYSTEM.md and append recipe guidance through agent system_instructions, or explicitly preserve skill discovery in the replacement prompt"),
+        );
     }
 }
 
@@ -467,7 +489,9 @@ fn read_package(ctx: &mut CheckContext) -> Option<Package> {
 
     Some(Package {
         name: string_value(object.get("name")),
+        version: string_value(object.get("version")),
         description: string_value(object.get("description")),
+        license: string_value(object.get("license")),
         pi,
         runtime_dependencies: has_non_empty_object(object.get("dependencies"))
             || has_non_empty_object(object.get("optionalDependencies")),
@@ -509,6 +533,97 @@ fn validate_runtime_dependencies(package: &Package, ctx: &mut CheckContext) {
         "Recipe declares runtime dependencies but has no lockfile",
         Some("commit package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, or yarn.lock"),
     );
+}
+
+fn validate_publish_metadata(package: &Package, ctx: &mut CheckContext) {
+    if ctx.profile != CheckProfile::Publish {
+        return;
+    }
+
+    if let Some(license) = package.license.as_deref() {
+        let normalized = license.trim().to_ascii_uppercase();
+        let has_license_text = if normalized.starts_with("SEE LICENSE IN ") {
+            let path = license["SEE LICENSE IN ".len()..].trim();
+            validate_relative_pattern(path).is_ok() && ctx.has_file(path)
+        } else {
+            ctx.files.keys().any(|path| {
+                if path.contains('/') {
+                    return false;
+                }
+                let upper = path.to_ascii_uppercase();
+                ["LICENSE", "LICENCE", "COPYING"]
+                    .iter()
+                    .any(|base| upper == *base || upper.starts_with(&format!("{base}.")))
+            })
+        };
+        if normalized != "UNLICENSED" && !has_license_text {
+            ctx.error(
+                "package.license_file_missing",
+                PACKAGE_JSON,
+                format!("Package declares license '{license}' but no root license file exists"),
+                Some("add the matching license text at the recipe root before distribution"),
+            );
+        }
+    }
+
+    if ctx.has_file(".pi/mcp.local.json") {
+        ctx.error(
+            "package.local_config_present",
+            ".pi/mcp.local.json",
+            "Local capability configuration must not be distributed with a recipe",
+            Some("remove .pi/mcp.local.json and keep only a redacted example when needed"),
+        );
+    }
+
+    for lockfile in ["package-lock.json", "npm-shrinkwrap.json"] {
+        let Some(content) = ctx.content(lockfile).map(str::to_owned) else {
+            continue;
+        };
+        let parsed: JsonValue = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(err) => {
+                ctx.error(
+                    "package.lockfile_malformed",
+                    lockfile,
+                    format!("{lockfile} is not valid JSON: {err}"),
+                    Some("regenerate the lockfile from the current package.json"),
+                );
+                continue;
+            }
+        };
+        let Some(root) = parsed.as_object() else {
+            continue;
+        };
+        let package_root = root
+            .get("packages")
+            .and_then(JsonValue::as_object)
+            .and_then(|packages| packages.get(""))
+            .and_then(JsonValue::as_object);
+        for (location, entry) in [("top-level", Some(root)), ("packages[\"\"]", package_root)] {
+            let Some(entry) = entry else {
+                continue;
+            };
+            for (field, package_value) in [
+                ("name", package.name.as_deref()),
+                ("version", package.version.as_deref()),
+            ] {
+                if let (Some(expected), Some(actual)) =
+                    (package_value, string_value(entry.get(field)))
+                {
+                    if expected != actual {
+                        ctx.error(
+                            format!("package.lockfile_{field}_mismatch"),
+                            lockfile,
+                            format!(
+                                "{lockfile} {location} {field} '{actual}' does not match package.json '{expected}'"
+                            ),
+                            Some("regenerate the lockfile after changing recipe identity"),
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn validate_pi_config(
@@ -2466,6 +2581,120 @@ mod tests {
             .push(RecipeFile::new("pnpm-lock.yaml", "lockfileVersion: 9\n"));
         let report = check_recipe_files(&with_lockfile, CheckProfile::Ci);
         assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn publish_requires_declared_license_text_and_current_lock_identity() {
+        let package = json!({
+            "name": "owned-recipe",
+            "version": "0.2.0",
+            "description": "Test",
+            "license": "Apache-2.0",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let agent = concat!(
+            "name: agent\n",
+            "description: Test agent\n",
+            "model:\n",
+            "  name: test/provider-model\n",
+            "tools: []\n",
+            "system_instructions:\n",
+            "  content: Test instructions\n",
+        );
+        let lockfile = json!({
+            "name": "upstream-recipe",
+            "version": "0.1.0",
+            "lockfileVersion": 3,
+            "packages": { "": { "name": "upstream-recipe", "version": "0.1.0" } }
+        });
+        let mut input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "package-lock.json",
+                &serde_json::to_string_pretty(&lockfile).expect("serialize lockfile"),
+            ),
+            ("agents/agent.yaml", agent),
+            (".pi/mcp.local.json", "{\"servers\": []}\n"),
+        ]);
+
+        let report = check_recipe_files(&input, CheckProfile::Publish);
+        assert!(!report.valid);
+        for code in [
+            "package.license_file_missing",
+            "package.lockfile_name_mismatch",
+            "package.lockfile_version_mismatch",
+            "package.local_config_present",
+        ] {
+            assert!(
+                report
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == code),
+                "missing {code}: {:?}",
+                report.diagnostics
+            );
+        }
+
+        input.files.retain(|file| file.path != ".pi/mcp.local.json");
+        input
+            .files
+            .push(RecipeFile::new("LICENSE", "Apache License\n"));
+        let current_lock = json!({
+            "name": "owned-recipe",
+            "version": "0.2.0",
+            "lockfileVersion": 3,
+            "packages": { "": { "name": "owned-recipe", "version": "0.2.0" } }
+        });
+        input
+            .files
+            .iter_mut()
+            .find(|file| file.path == "package-lock.json")
+            .expect("lockfile")
+            .content = Some(serde_json::to_string_pretty(&current_lock).expect("serialize lock"));
+
+        let report = check_recipe_files(&input, CheckProfile::Publish);
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn warns_when_system_prompt_can_hide_declared_skills() {
+        let package = json!({
+            "name": "skill-recipe",
+            "version": "0.1.0",
+            "pi": {
+                "agents": ["agents/*.yaml"],
+                "skills": ["skills/**/SKILL.md"]
+            }
+        });
+        let agent = concat!(
+            "name: agent\n",
+            "model:\n",
+            "  name: test/provider-model\n",
+            "tools: []\n",
+            "skills:\n",
+            "  - review\n",
+            "system_instructions:\n",
+            "  content: Test instructions\n",
+        );
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/agent.yaml", agent),
+            ("skills/review/SKILL.md", "---\ndescription: Review\n---\n"),
+            ("SYSTEM.md", "Replacement prompt\n"),
+        ]);
+
+        let report = check_recipe_files(&input, CheckProfile::Local);
+        assert!(report.valid, "{:?}", report.diagnostics);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "package.system_prompt_hides_skill_inventory"
+                && diagnostic.severity == Severity::Warning
+        }));
     }
 
     #[test]

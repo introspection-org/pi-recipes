@@ -52,6 +52,7 @@ interface ParsedArgs {
   values: string[];
   storeDir?: string;
   name?: string;
+  output?: string;
   setupSource?: string;
   github?: string;
   message?: string;
@@ -76,7 +77,7 @@ function usage(commandName = "recipes"): string {
     "  setup [source]     Install the Pi recipes extension into Pi",
     "  create <dir>       Create a starter recipe directory",
     "  install <source>   Install or register a recipe source",
-    "  customize <recipe> Copy an installed recipe into an editable local copy",
+    "  customize <recipe> Copy an installed recipe into an editable copy",
     "  list               List installed recipes",
     "  remove <recipe>     Remove an installed recipe record",
     "  path <recipe|path>  Print the resolved recipe directory",
@@ -88,6 +89,7 @@ function usage(commandName = "recipes"): string {
     "Options:",
     "  --store <dir>      Use a custom recipe store",
     "  --name <name>      Recipe name for create",
+    "  --output <dir>     Owned destination for customize",
     "  --setup-source <source>",
     "                     Pi extension source for auto-setup",
     "  --github <owner/repo>",
@@ -114,8 +116,7 @@ function usage(commandName = "recipes"): string {
     "Create and try a recipe:",
     `  ${commandName} create ./my-recipe`,
     `  ${commandName} check ./my-recipe`,
-    `  ${commandName} install ./my-recipe`,
-    "  pi --recipe my-recipe",
+    "  pi --recipe ./my-recipe --agent agent",
     "",
     "Publish a recipe:",
     `  ${commandName} publish ./my-recipe --github owner/my-recipe --visibility private`,
@@ -160,6 +161,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let command = "";
   let storeDir: string | undefined;
   let name: string | undefined;
+  let output: string | undefined;
   let setupSource: string | undefined;
   let github: string | undefined;
   let message: string | undefined;
@@ -190,6 +192,10 @@ function parseArgs(argv: string[]): ParsedArgs {
       const value = argv[++index];
       if (!value) throw new Error("--name requires a value");
       name = value;
+    } else if (arg === "--output") {
+      const value = argv[++index];
+      if (!value) throw new Error("--output requires a directory");
+      output = value;
     } else if (arg === "--setup-source") {
       const value = argv[++index];
       if (!value) throw new Error("--setup-source requires a value");
@@ -248,6 +254,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     values,
     storeDir,
     name,
+    output,
     setupSource,
     github,
     message,
@@ -534,8 +541,7 @@ export async function main(argv: string[]): Promise<number> {
           "",
           "Next steps:",
           `  ${commandName} check ${result.recipeDir}`,
-          `  ${commandName} install ${result.recipeDir}`,
-          `  pi --recipe ${result.name}`,
+          `  pi --recipe ${result.recipeDir} --agent agent`,
           `  ${commandName} publish ${result.recipeDir}`,
           "",
         ].join("\n")
@@ -564,7 +570,11 @@ export async function main(argv: string[]): Promise<number> {
 
   if (args.command === "customize") {
     const identifier = requireOne(args, "<recipe>");
-    const result = await customizeRecipe(identifier, { ...opts, force: args.force });
+    const result = await customizeRecipe(identifier, {
+      ...opts,
+      force: args.force,
+      ...(args.output ? { outputDir: args.output } : {}),
+    });
     if (args.json) {
       printJson(result);
     } else {
@@ -580,8 +590,8 @@ export async function main(argv: string[]): Promise<number> {
           `  ${result.path}`,
           "",
           "Then check and run it:",
-          `  ${commandName} check ${identifier}`,
-          `  pi --recipe ${identifier}`,
+          `  ${commandName} check ${result.path}`,
+          `  pi --recipe ${result.path}`,
           "",
         ].join("\n")
       );

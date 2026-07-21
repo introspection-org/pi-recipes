@@ -510,6 +510,7 @@ export function createPiRecipesExtension(
   // Latest extension context, for the idle check gating completion delivery.
   let sessionCtx: Pick<ExtensionContext, "isIdle"> | null = null;
   let localAgentContext: ExtensionContext | null = null;
+  let sessionConfigurationError: string | null = null;
   const visibleAgentDefinitions = new Map<string, RecipeAgentDefinition>();
 
   function storeFor(cwd: string): ChildAgentRunStore {
@@ -811,6 +812,7 @@ export function createPiRecipesExtension(
     const activeTools = new Set(launchState.resolved.tools);
     pi.setActiveTools([...activeTools]);
     launchState.configured = true;
+    sessionConfigurationError = null;
   }
 
   async function configureMcp(
@@ -1124,7 +1126,21 @@ export function createPiRecipesExtension(
         );
         return;
       }
-      await configureSession(pi, ctx, launchState);
+      try {
+        await configureSession(pi, ctx, launchState);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // A recipe's declared model is part of its behavior contract. Continuing
+        // with Pi's previously active model can produce plausible but invalid
+        // results, so stop the session instead of silently falling back.
+        sessionConfigurationError = message;
+        pi.setActiveTools([]);
+        ctx.ui.notify(`Recipe session cannot start: ${message}`, "warning");
+        if (ctx.mode === "json" || ctx.mode === "print") {
+          process.exitCode = 1;
+        }
+        return;
+      }
       // Restore run snapshots persisted by a previous Pi process so run ids
       // referenced in a resumed conversation stay resolvable (read-only).
       try {
@@ -1148,6 +1164,14 @@ export function createPiRecipesExtension(
       await closeAllChildRuns();
       clearMcpCatalogPreload(env);
       await stopMcpDaemon(env);
+    });
+
+    pi.on("agent_start", (_event, ctx) => {
+      if (!sessionConfigurationError) return;
+      // setModel(false) leaves Pi's previously active model selected. Abort as
+      // soon as the agent loop starts so that model can never receive a recipe
+      // prompt after recipe configuration failed.
+      ctx.abort();
     });
 
     pi.on("resources_discover", (event) => {

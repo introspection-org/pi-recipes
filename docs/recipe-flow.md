@@ -60,7 +60,7 @@ pi --recipe tfidfwastaken/pi-codex
 Use `customize` when you want to edit a recipe you installed from elsewhere:
 
 ```bash
-recipes customize pi-codex
+recipes customize pi-codex --output ./my-agent
 ```
 
 Example output:
@@ -69,27 +69,22 @@ Example output:
 Created editable copy for pi-codex
 
 Edit this folder:
-  ~/.pi/recipes/local/tfidfwastaken-pi-codex
+  ./my-agent
 
 Then check and run it:
-  recipes check pi-codex
-  pi --recipe pi-codex
+  recipes check ./my-agent
+  pi --recipe ./my-agent
 ```
 
-Edit files in the printed folder, then validate and run the customized copy:
+Edit files in the printed owned folder, then validate and run the customized copy:
 
 ```bash
-recipes check pi-codex
-pi --recipe pi-codex
+recipes check ./my-agent
+pi --recipe ./my-agent
 ```
 
-To discard a customized copy, delete the editable folder and reinstall the
-original source:
-
-```bash
-rm -rf ~/.pi/recipes/local/tfidfwastaken-pi-codex
-recipes install github:tfidfwastaken/pi-codex
-```
+The installed source remains cached separately. Removing an owned derivative is
+an explicit filesystem or Git operation; `recipes customize` does not delete it.
 
 ## 4. Create a New Recipe
 
@@ -114,8 +109,7 @@ Validate and try it locally:
 
 ```bash
 recipes check ./my-recipe
-recipes install ./my-recipe
-pi --recipe my-recipe
+pi --recipe ./my-recipe --agent agent
 ```
 
 ## 5. Publish a Recipe
