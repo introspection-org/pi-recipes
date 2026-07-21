@@ -2547,6 +2547,7 @@ describe("package boundary", () => {
       packages?: Record<
         string,
         {
+          "package-name"?: string;
           "separate-pull-requests"?: boolean;
           "extra-files"?: Array<{
             type?: string;
@@ -2569,6 +2570,7 @@ describe("package boundary", () => {
     expect(
       releaseConfig.packages?.["."]?.["separate-pull-requests"]
     ).not.toBe(true);
+    expect(releaseConfig.packages?.["."]?.["package-name"]).toBe("");
     expect(releaseConfig.packages?.["."]?.["extra-files"]).toEqual(
       platformPackages.map(([name]) => ({
         type: "json",
