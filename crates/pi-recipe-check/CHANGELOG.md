@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* validate the portable authored judge contract in `check_recipe_files`
+
 ## [0.6.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.5.2...pi-recipe-check-v0.6.0) (2026-07-20)
 
 

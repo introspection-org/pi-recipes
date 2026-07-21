@@ -27,11 +27,11 @@ Git and customize it locally.
 ## Overview
 
 Recipes are Pi packages: folders with a `package.json` manifest containing a
-`pi` block, plus agent YAML files, prompts, skills, and optional TypeScript
-runtime extensions. The `recipes` CLI installs or registers recipes in a
-local store and ensures the Pi extension is installed before recipes are run.
-The Pi extension resolves an installed recipe into a local directory and wires
-those recipe files into the live Pi session at launch time.
+`pi` block, plus agent YAML files, prompts, skills, optional judge YAML, and
+optional TypeScript runtime extensions. The `recipes` CLI installs or registers
+recipes in a local store and ensures the Pi extension is installed before
+recipes are run. The Pi extension resolves an installed recipe into a local
+directory and wires those recipe files into the live Pi session at launch time.
 
 `package.json` owns both recipe identity and Node dependency metadata. The
 top-level `name`, `version`, and `description` identify the recipe, while the
@@ -42,6 +42,7 @@ and prompts.
 
 - [Recipe Flow](docs/recipe-flow.md): quick user-facing guide to installing, customizing, creating, and publishing recipes.
 - [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
+- [Recipe Judges](docs/recipe-judges.md): portable authored judge YAML, static validation, and the runtime ownership boundary.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
 - [Recipe Evals](docs/recipe-evals.md): declaring and running Harbor offline eval suites with exact pins.
 

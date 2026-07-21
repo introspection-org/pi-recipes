@@ -135,36 +135,38 @@ export async function runRecipeCheck(
   recipeDir: string,
   opts: RecipeCheckOptions = {}
 ): Promise<number> {
-  const env = recipeCheckEnv(opts.env);
-  const base = recipeCheckCommand(env);
-  const args = [
-    ...base.args,
-    recipeDir,
-    "--profile",
-    opts.profile ?? "local",
-    ...(opts.json ? ["--json"] : []),
-  ];
-
-  return await new Promise<number>((resolveRun, rejectRun) => {
-    const child = spawn(base.command, args, {
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", rejectRun);
-    child.on("close", (code, signal) => {
-      if (stdout.length > 0) process.stdout.write(Buffer.concat(stdout));
-      if (stderr.length > 0) process.stderr.write(Buffer.concat(stderr));
-      if (signal) {
-        rejectRun(new Error(`recipe-check terminated by signal ${signal}`));
-        return;
-      }
-      resolveRun(code ?? 1);
-    });
+  const report = await readRecipeCheckReport(recipeDir, {
+    profile: opts.profile,
+    env: opts.env,
   });
+  process.stdout.write(
+    opts.json ? `${JSON.stringify(report, null, 2)}\n` : renderRecipeCheckReport(report)
+  );
+  return report.valid ? 0 : 1;
+}
+
+function renderRecipeCheckReport(report: RecipeCheckReport): string {
+  const lines = [report.package_name ?? "<unknown>", ""];
+  for (const diagnostic of report.diagnostics) {
+    let location = "";
+    if (diagnostic.path) {
+      location = diagnostic.span
+        ? ` (${diagnostic.path}:${diagnostic.span.line}:${diagnostic.span.column})`
+        : ` (${diagnostic.path})`;
+    }
+    lines.push(
+      `${diagnostic.severity}: ${diagnostic.code}: ${diagnostic.message}${location}`
+    );
+    if (diagnostic.help) lines.push(`  help: ${diagnostic.help}`);
+  }
+  if (report.diagnostics.length === 0) lines.push("ok");
+  if (Object.keys(report.resources).length > 0) {
+    lines.push("", "Resources:");
+    for (const [key, count] of Object.entries(report.resources)) {
+      lines.push(`  ${key}: ${count}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 export async function readRecipeCheckReport(

@@ -1144,6 +1144,7 @@ describe("recipe package manifest", () => {
           "#!/usr/bin/env node",
           "import { writeFileSync } from 'node:fs';",
           "writeFileSync(process.env.RECIPE_CHECK_ARGS_PATH, JSON.stringify(process.argv.slice(2)));",
+          "console.log(JSON.stringify({ valid: true, profile: 'ci', recipe_dir: '.', diagnostics: [], resources: {} }));",
           "process.exit(0);",
           "",
         ].join("\n")
@@ -1172,6 +1173,127 @@ describe("recipe package manifest", () => {
         delete process.env.RECIPE_CHECK_ARGS_PATH;
       } else {
         process.env.RECIPE_CHECK_ARGS_PATH = previousArgsPath;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces judge validation through recipes check", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-cli-hidden-check-"));
+    const previousBin = process.env.PI_RECIPE_CHECK_BIN;
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    let stdout = "";
+    write.mockImplementation((chunk: string | Uint8Array) => {
+      stdout += chunk.toString();
+      return true;
+    });
+    try {
+      mkdirSync(join(root, "agents"));
+      mkdirSync(join(root, "judges"));
+      writePiPackageManifest(root, {
+        name: "cli-test",
+        description: "CLI test",
+        pi: { agents: ["agents/*.yaml"] },
+      });
+      writeFileSync(join(root, "agents", "agent.yaml"), fullAgentYaml());
+      writeFileSync(
+        join(root, "judges", "invalid.yaml"),
+        "judge: helpful\ninstructions: Grade it.\nllm:\n  model: ''\n"
+      );
+      process.env.PI_RECIPE_CHECK_BIN = join(
+        import.meta.dirname,
+        "..",
+        "target",
+        "debug",
+        process.platform === "win32" ? "recipe-check.exe" : "recipe-check"
+      );
+
+      await expect(
+        recipesCliMain(["check", root, "--profile", "ci", "--json"])
+      ).resolves.toBe(1);
+
+      const report = JSON.parse(stdout) as {
+        valid: boolean;
+        diagnostics: Array<{ code: string; path: string }>;
+        resources: Record<string, number>;
+      };
+      expect(report.valid).toBe(false);
+      expect(report.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "judge.llm.model_invalid",
+          path: "judges/invalid.yaml",
+        })
+      );
+      expect(report.resources.judges).toBe(1);
+
+      stdout = "";
+      await expect(
+        recipesCliMain(["check", root, "--profile", "ci"])
+      ).resolves.toBe(1);
+      expect(stdout).toContain("judge.llm.model_invalid");
+      expect(stdout).toContain("  judges: 1");
+    } finally {
+      write.mockRestore();
+      if (previousBin === undefined) {
+        delete process.env.PI_RECIPE_CHECK_BIN;
+      } else {
+        process.env.PI_RECIPE_CHECK_BIN = previousBin;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports every diagnostic role for a shared judge-path YAML file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-cli-shared-source-check-"));
+    const previousBin = process.env.PI_RECIPE_CHECK_BIN;
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    let stdout = "";
+    write.mockImplementation((chunk: string | Uint8Array) => {
+      stdout += chunk.toString();
+      return true;
+    });
+    try {
+      mkdirSync(join(root, "judges"));
+      writePiPackageManifest(root, {
+        name: "shared-source-cli-test",
+        description: "Shared source CLI test",
+        pi: { agents: ["judges/shared.yaml"] },
+      });
+      writeFileSync(
+        join(root, "judges", "shared.yaml"),
+        "judge: helpful\ninstructions: Grade it.\nllm:\n  model: gpt-5\n"
+      );
+      process.env.PI_RECIPE_CHECK_BIN = join(
+        import.meta.dirname,
+        "..",
+        "target",
+        "debug",
+        process.platform === "win32" ? "recipe-check.exe" : "recipe-check"
+      );
+
+      await expect(
+        recipesCliMain(["check", root, "--profile", "ci", "--json"])
+      ).resolves.toBe(1);
+
+      const report = JSON.parse(stdout) as {
+        valid: boolean;
+        diagnostics: Array<{ code: string; path: string }>;
+        resources: Record<string, number>;
+      };
+      expect(report.valid).toBe(false);
+      expect(report.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "agent.name_missing",
+          path: "judges/shared.yaml",
+        })
+      );
+      expect(report.resources.judges).toBe(1);
+    } finally {
+      write.mockRestore();
+      if (previousBin === undefined) {
+        delete process.env.PI_RECIPE_CHECK_BIN;
+      } else {
+        process.env.PI_RECIPE_CHECK_BIN = previousBin;
       }
       rmSync(root, { recursive: true, force: true });
     }

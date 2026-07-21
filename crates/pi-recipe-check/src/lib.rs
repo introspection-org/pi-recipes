@@ -2,10 +2,10 @@
 //!
 //! The core API is I/O-free: [`check_recipe_files`] takes an in-memory
 //! [`RecipeFiles`] snapshot of a recipe directory and returns a [`Report`].
-//! Hosts (the bundled `recipe-check` binary, npm wrapper, future wasm/PyO3
-//! bindings) are responsible for reading files. The `fs` feature (default)
-//! provides [`check_recipe`], a filesystem front-end that walks a recipe
-//! directory and feeds the pure core.
+//! Hosts (the bundled `recipe-check` binary, npm wrapper, Python binding, or a
+//! future wasm binding) are responsible for reading files. The `fs` feature
+//! (default) provides [`check_recipe`], a filesystem front-end that walks a
+//! recipe directory and feeds the pure core.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path};
@@ -15,6 +15,7 @@ use serde_json::Value as JsonValue;
 
 #[cfg(feature = "fs")]
 pub mod fs;
+mod judges;
 pub mod resources;
 
 #[cfg(feature = "fs")]
@@ -341,6 +342,11 @@ pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report 
                 ctx.resources.insert(key.to_owned(), paths.len());
             }
         }
+    }
+
+    let judge_count = judges::validate_judges(&mut ctx);
+    if judge_count > 0 {
+        ctx.resources.insert("judges".to_owned(), judge_count);
     }
 
     let valid = !ctx

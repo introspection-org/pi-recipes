@@ -2,8 +2,8 @@
 
 Pure validation engine for [Pi recipe](https://pi.recipes) packages: the
 `package.json#pi` manifest, agent YAML files (required fields, `from`
-inheritance, name conflicts), MCP tool include/exclude policy, evals pinning,
-and dependency lockfile rules.
+inheritance, name conflicts), direct-child judge YAML definitions, MCP tool
+include/exclude policy, evals pinning, and dependency lockfile rules.
 
 ## Design: I/O-free core
 
@@ -43,6 +43,13 @@ Diagnostics carry a stable `code`, a recipe-relative `path`, an optional
 `message`, and an optional `help` string. Profiles (`local`, `ci`, `publish`)
 escalate advisory checks — e.g. a missing dependency lockfile is a warning
 locally and an error in `ci`/`publish`.
+
+Judge sources are optional and discovered only at `judges/*.yaml` and
+`judges/*.yml`; nested YAML is ignored. The core validates the portable authored
+contract and returns `judge.*` diagnostics plus a `resources.judges` count. It
+does not expose normalized registry projections or project-scoped identity.
+See the [recipe judge specification](https://github.com/introspection-org/pi-recipes/blob/main/docs/recipe-judges.md)
+for the complete schema and the boundary with runtime evaluation.
 
 ## License
 

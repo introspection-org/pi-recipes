@@ -163,8 +163,10 @@ recipes check .
 ```
 
 `check` checks the manifest, resolves declared resources, catches missing
-required agent globs, validates Harbor eval suite pins, and warns when no
-default agent can be inferred.
+required agent globs, validates optional direct-child `judges/*.yaml` and
+`judges/*.yml` definitions, validates Harbor eval suite pins, and warns when no
+default agent can be inferred. See [Recipe judge definitions](recipe-judges.md)
+for the portable authored judge contract and runtime ownership boundary.
 
 Use the CI profile when validation should block a pull request or push:
 
