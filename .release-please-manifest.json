@@ -2,9 +2,9 @@
   ".": "0.10.4",
   "crates/pi-recipe-check": "0.6.0",
   "bindings/python": "0.6.0",
-  "packages/recipe-check-darwin-arm64": "0.10.4",
-  "packages/recipe-check-darwin-x64": "0.10.4",
-  "packages/recipe-check-linux-arm64": "0.10.4",
-  "packages/recipe-check-linux-x64": "0.10.4",
-  "packages/recipe-check-win32-x64": "0.10.4"
+  "packages/recipe-check-darwin-arm64": "0.10.5",
+  "packages/recipe-check-darwin-x64": "0.10.5",
+  "packages/recipe-check-linux-arm64": "0.10.5",
+  "packages/recipe-check-linux-x64": "0.10.5",
+  "packages/recipe-check-win32-x64": "0.10.5"
 }
