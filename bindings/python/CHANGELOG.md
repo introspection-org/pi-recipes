@@ -6,6 +6,20 @@
 
 * return structured recipe judge diagnostics from the shared validation core
 
+## [0.8.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-python-v0.7.0...pi-recipe-check-python-v0.8.0) (2026-07-21)
+
+
+### Features
+
+* **recipe-check:** export the typed judge spec model ([#120](https://github.com/introspection-org/pi-recipes/issues/120)) ([49bf99d](https://github.com/introspection-org/pi-recipes/commit/49bf99d7c92297bd512dc52fccac9de2acea3d01))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * pi-recipe-check bumped from 0.7.0 to 0.8.0
+
 ## [0.7.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-python-v0.6.0...pi-recipe-check-python-v0.7.0) (2026-07-21)
 
 
