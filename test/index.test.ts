@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { createRecipeChildAgentRunner } from "../src/child-agent.js";
 import {
   addRecipe,
@@ -2658,19 +2659,18 @@ describe("package boundary", () => {
       ]);
     }
 
-    const releaseConfig = JSON.parse(
+    const rootReleaseConfig = JSON.parse(
       readFileSync(
         join(import.meta.dirname, "..", "release-please-config.json"),
         "utf8"
       )
     ) as {
-      "group-pull-request-title-pattern"?: string;
-      "separate-pull-requests"?: boolean;
+      "always-update"?: boolean;
       packages?: Record<
         string,
         {
           "package-name"?: string;
-          "separate-pull-requests"?: boolean;
+          "exclude-paths"?: string[];
           "extra-files"?: Array<{
             type?: string;
             path?: string;
@@ -2678,6 +2678,16 @@ describe("package boundary", () => {
           }>;
         }
       >;
+    };
+    const checkerReleaseConfig = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "..", "release-please-checker-config.json"),
+        "utf8"
+      )
+    ) as {
+      "always-update"?: boolean;
+      "separate-pull-requests"?: boolean;
+      packages?: Record<string, { component?: string }>;
       plugins?: Array<{
         type?: string;
         groupName?: string;
@@ -2685,52 +2695,118 @@ describe("package boundary", () => {
         merge?: boolean;
       }>;
     };
-    expect(releaseConfig["group-pull-request-title-pattern"]).toBe(
-      "chore(${branch}): release pi-recipe-check libraries"
-    );
-    expect(releaseConfig["separate-pull-requests"]).toBe(true);
-    expect(
-      releaseConfig.packages?.["."]?.["separate-pull-requests"]
-    ).not.toBe(true);
-    expect(releaseConfig.packages?.["."]?.["package-name"]).toBe("");
-    expect(releaseConfig.packages?.["."]?.["extra-files"]).toEqual(
+
+    expect(Object.keys(rootReleaseConfig.packages ?? {})).toEqual(["."]);
+    expect(rootReleaseConfig["always-update"]).toBe(true);
+    expect(rootReleaseConfig.packages?.["."]?.["package-name"]).toBe("");
+    expect(rootReleaseConfig.packages?.["."]?.["exclude-paths"]).toEqual([
+      "bindings/python",
+    ]);
+    expect(rootReleaseConfig.packages?.["."]?.["extra-files"]).toEqual(
       platformPackages.map(([name]) => ({
         type: "json",
         path: `packages/${name.replace("@introspection-ai/", "")}/package.json`,
         jsonpath: "$.version",
       }))
     );
+    expect(Object.keys(checkerReleaseConfig.packages ?? {}).sort()).toEqual([
+      "bindings/python",
+      "crates/pi-recipe-check",
+    ]);
+    expect(checkerReleaseConfig["separate-pull-requests"]).toBe(true);
+    expect(checkerReleaseConfig["always-update"]).toBe(true);
     expect(
-      Object.keys(releaseConfig.packages ?? {}).filter((path) =>
-        path.startsWith("packages/recipe-check-")
-      )
-    ).toEqual([]);
-    expect(
-      releaseConfig.plugins?.find(
+      checkerReleaseConfig.plugins?.find(
         (plugin) =>
           plugin.type === "linked-versions" &&
           plugin.groupName === "recipe-check-binaries"
       )
     ).toBeUndefined();
     expect(
-      releaseConfig.plugins?.find(
+      checkerReleaseConfig.plugins?.find(
         (plugin) =>
           plugin.type === "linked-versions" &&
           plugin.groupName === "pi-recipe-check"
       )?.merge
     ).toBe(true);
 
-    const releaseManifest = JSON.parse(
+    const rootReleaseManifest = JSON.parse(
       readFileSync(
         join(import.meta.dirname, "..", ".release-please-manifest.json"),
         "utf8"
       )
     ) as Record<string, string>;
+    const checkerReleaseManifest = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "..", ".release-please-checker-manifest.json"),
+        "utf8"
+      )
+    ) as Record<string, string>;
+    expect(Object.keys(rootReleaseManifest)).toEqual(["."]);
+    expect(rootReleaseManifest["."]).toBe(pkg.version);
+    expect(Object.keys(checkerReleaseManifest).sort()).toEqual([
+      "bindings/python",
+      "crates/pi-recipe-check",
+    ]);
+    expect(checkerReleaseManifest["crates/pi-recipe-check"]).toBe(
+      checkerReleaseManifest["bindings/python"]
+    );
     expect(
-      Object.keys(releaseManifest).filter((path) =>
-        path.startsWith("packages/recipe-check-")
+      Object.keys(rootReleaseManifest).filter(
+        (path) => path in checkerReleaseManifest
       )
     ).toEqual([]);
+
+    const releaseWorkflow = parseYaml(
+      readFileSync(
+        join(import.meta.dirname, "..", ".github", "workflows", "release-please.yml"),
+        "utf8"
+      )
+    ) as {
+      jobs?: Record<
+        string,
+        {
+          if?: string;
+          outputs?: Record<string, string>;
+          steps?: Array<{
+            id?: string;
+            with?: Record<string, string>;
+          }>;
+        }
+      >;
+    };
+    const releaseJob = releaseWorkflow.jobs?.["release-please"];
+    expect(
+      releaseJob?.steps?.find((step) => step.id === "root_release")?.with
+    ).toMatchObject({
+      "config-file": "release-please-config.json",
+      "manifest-file": ".release-please-manifest.json",
+    });
+    expect(
+      releaseJob?.steps?.find((step) => step.id === "checker_release")?.with
+    ).toMatchObject({
+      "config-file": "release-please-checker-config.json",
+      "manifest-file": ".release-please-checker-manifest.json",
+    });
+    expect(releaseJob?.outputs?.root_release_created).toContain(
+      "steps.root_release.outputs.release_created"
+    );
+    expect(JSON.stringify(releaseJob?.outputs)).not.toContain("releases_created");
+    expect(releaseWorkflow.jobs?.["build-native-tools"]?.if).toContain(
+      "inputs.train == 'root'"
+    );
+    expect(releaseWorkflow.jobs?.["publish"]?.if).toContain(
+      "inputs.train == 'root'"
+    );
+    expect(releaseWorkflow.jobs?.["publish-crate"]?.if).toContain(
+      "inputs.train == 'checker'"
+    );
+    expect(releaseWorkflow.jobs?.["build-python-wheels"]?.if).toContain(
+      "inputs.train == 'checker'"
+    );
+    expect(releaseWorkflow.jobs?.["publish-python"]?.if).toContain(
+      "inputs.train == 'checker'"
+    );
   });
 
   it("keeps the package free of Introspection runtime dependencies", async () => {
