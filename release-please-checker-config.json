@@ -4,7 +4,7 @@
   "release-type": "rust",
   "always-update": true,
   "separate-pull-requests": true,
-  "group-pull-request-title-pattern": "chore(${branch}): release pi-recipe-check libraries",
+  "group-pull-request-title-pattern": "chore(${branch}): release pi-recipe-check ${version}",
   "packages": {
     "crates/pi-recipe-check": {
       "release-type": "rust",
