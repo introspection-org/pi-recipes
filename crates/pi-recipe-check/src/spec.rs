@@ -435,10 +435,12 @@ fn regex_literal(value: &str) -> Result<Option<(&str, &str)>, JudgeSpecError> {
 /// required non-blank `instructions` (its `Option` is internal, for
 /// friendlier parse errors), name/description lengths, provider/model/effort
 /// shapes, and numeric ranges — so schema-valid definitions parse strictly.
-/// Two rule families remain parser-only because a per-document schema cannot
-/// express them: batch-level judge-name uniqueness, and the semantic
+/// A few rules remain parser-only because a per-document schema cannot
+/// express them: batch-level judge-name uniqueness; the semantic
 /// `llm.local.base_url` rules (no credentials, query, or fragment; HTTPS
-/// outside loopback) beyond the basic `http(s)://` pattern.
+/// outside loopback) beyond the basic `http(s)://` pattern; regex-literal
+/// flag validity in gate `match` values; and `llm.model`'s 255 limit, which
+/// the parser counts in UTF-8 bytes while `maxLength` counts characters.
 #[cfg(feature = "schema")]
 pub fn judge_definition_json_schema() -> String {
     let schema = schemars::schema_for!(JudgeDefinition);
@@ -478,7 +480,17 @@ fn gate_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
                     "additionalProperties": false,
                     "properties": {
                         "event": { "type": "string", "enum": ["message", "tool", "feedback"] },
-                        "match": { "type": "object", "additionalProperties": true }
+                        "match": {
+                            "type": "object",
+                            "additionalProperties": true,
+                            "propertyNames": {
+                                "allOf": [
+                                    { "minLength": 1 },
+                                    { "not": { "enum": ["environment", "runtime_group"] } },
+                                    { "not": { "pattern": "(?:^|\\.)pattern_id$" } }
+                                ]
+                            }
+                        }
                     }
                 }
             }
@@ -741,5 +753,19 @@ llm:
             json!(600_000)
         );
         assert_eq!(transport["properties"]["max_retries"]["maximum"], json!(10));
+
+        // Gate match property names mirror validate_gate's path rules.
+        let matcher_names = &properties["on"]["anyOf"][2]["items"]["properties"]["match"]
+            ["propertyNames"]["allOf"];
+        let constraints = matcher_names.as_array().unwrap();
+        assert_eq!(constraints[0], json!({ "minLength": 1 }));
+        assert_eq!(
+            constraints[1],
+            json!({ "not": { "enum": ["environment", "runtime_group"] } })
+        );
+        assert_eq!(
+            constraints[2],
+            json!({ "not": { "pattern": "(?:^|\\.)pattern_id$" } })
+        );
     }
 }
