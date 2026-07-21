@@ -45,9 +45,10 @@ if (!coreDependency || coreDependency.req !== expectedRequirement) {
 console.log(`pi-recipe-check artifacts are locked at ${core.version}`);
 
 // Source manifests use workspace:* so the lockfile stays stable when
-// release-please bumps the linked packages. pnpm replaces workspace:* with each
-// package's exact version when it packs the parent for publication; pack:check
-// verifies that consumer-facing invariant separately.
+// release-please copies the root version into the platform package manifests.
+// pnpm replaces workspace:* with each package's exact version when it packs the
+// parent for publication; pack:check verifies that consumer-facing invariant
+// separately.
 const rootManifest = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 );

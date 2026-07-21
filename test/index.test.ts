@@ -2495,7 +2495,7 @@ describe("package boundary", () => {
     expect(pkg.bin).toEqual({ recipes: "dist/cli.js" });
   });
 
-  it("keeps recipe-check binary packages in the parent release group", () => {
+  it("makes the parent release own recipe-check binary package versions", () => {
     // Source uses workspace:* so release bumps do not rewrite the lockfile.
     // pnpm pack replaces it with the matching exact version for consumers.
     const pkg = JSON.parse(
@@ -2542,7 +2542,17 @@ describe("package boundary", () => {
         "utf8"
       )
     ) as {
-      packages?: Record<string, { "separate-pull-requests"?: boolean }>;
+      packages?: Record<
+        string,
+        {
+          "separate-pull-requests"?: boolean;
+          "extra-files"?: Array<{
+            type?: string;
+            path?: string;
+            jsonpath?: string;
+          }>;
+        }
+      >;
       plugins?: Array<{
         type?: string;
         groupName?: string;
@@ -2552,20 +2562,37 @@ describe("package boundary", () => {
     expect(
       releaseConfig.packages?.["."]?.["separate-pull-requests"]
     ).not.toBe(true);
+    expect(releaseConfig.packages?.["."]?.["extra-files"]).toEqual(
+      platformPackages.map(([name]) => ({
+        type: "json",
+        path: `packages/${name.replace("@introspection-ai/", "")}/package.json`,
+        jsonpath: "$.version",
+      }))
+    );
+    expect(
+      Object.keys(releaseConfig.packages ?? {}).filter((path) =>
+        path.startsWith("packages/recipe-check-")
+      )
+    ).toEqual([]);
     expect(
       releaseConfig.plugins?.find(
         (plugin) =>
           plugin.type === "linked-versions" &&
           plugin.groupName === "recipe-check-binaries"
-      )?.components
-    ).toEqual([
-      "pi-recipes",
-      "recipe-check-darwin-arm64",
-      "recipe-check-darwin-x64",
-      "recipe-check-linux-arm64",
-      "recipe-check-linux-x64",
-      "recipe-check-win32-x64",
-    ]);
+      )
+    ).toBeUndefined();
+
+    const releaseManifest = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "..", ".release-please-manifest.json"),
+        "utf8"
+      )
+    ) as Record<string, string>;
+    expect(
+      Object.keys(releaseManifest).filter((path) =>
+        path.startsWith("packages/recipe-check-")
+      )
+    ).toEqual([]);
   });
 
   it("keeps the package free of Introspection runtime dependencies", async () => {
