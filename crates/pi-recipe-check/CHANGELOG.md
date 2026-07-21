@@ -6,6 +6,13 @@
 
 * validate the portable authored judge contract in `check_recipe_files`
 
+## [0.7.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.6.0...pi-recipe-check-v0.7.0) (2026-07-21)
+
+
+### Features
+
+* **recipe-check:** validate recipe judge YAML ([#117](https://github.com/introspection-org/pi-recipes/issues/117)) ([32ecf79](https://github.com/introspection-org/pi-recipes/commit/32ecf79a808dec375c2c961f09ebf6615eeb2835))
+
 ## [0.6.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.5.2...pi-recipe-check-v0.6.0) (2026-07-20)
 
 
