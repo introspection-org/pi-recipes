@@ -220,17 +220,90 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(pattern);
 }
 
-function listPackageEntries(root: string): string[] {
+/**
+ * Directories never enumerated when resolving recipe globs.
+ *
+ * A materialized recipe carries its installed dependency tree, which dwarfs the
+ * recipe's own sources — measured at ~19,400 entries for a small agent, almost
+ * all of it `node_modules`. No recipe resource or MCP manifest is declared
+ * inside a dependency tree or `.git`, so enumerating them is pure cost.
+ */
+const UNSCANNED_DIRS = new Set(["node_modules", ".git"]);
+
+/**
+ * The static directory prefix of a glob — the part before its first wildcard.
+ *
+ * `skills/**` scans `skills`, `agents/*.md` scans `agents`, and a root-level
+ * pattern like `*.json` yields `""` (the package root). This is what lets a
+ * declared glob scope its own scan instead of enumerating the whole package.
+ */
+function globScanRoot(glob: string): string {
+  // Normalized exactly as globToRegExp normalizes, so a `./skills/**` glob
+  // yields relative entries the resulting pattern can still match.
+  const segments = normalizeResourcePath(glob).split("/");
+  const staticSegments: string[] = [];
+  for (const segment of segments) {
+    if (hasGlob(segment)) break;
+    staticSegments.push(segment);
+  }
+  return staticSegments.join("/");
+}
+
+/**
+ * Relative paths under `root` that could match `globs`.
+ *
+ * Scoped to the globs' static prefixes rather than walking the package: this
+ * ran once per resource key plus once for MCP manifests, each time enumerating
+ * the entire materialized recipe, and cost ~970ms of synchronous readdirSync on
+ * a real boot — blocking the event loop, so the agent's HTTP server could not
+ * answer health probes while it ran. Under gVisor, where readdir and stat are
+ * amplified, it is worse.
+ *
+ * Only the search is narrowed; every glob is still matched against the full
+ * relative path exactly as before, so which paths match is unchanged.
+ */
+function listPackageEntries(root: string, globs: readonly string[]): string[] {
+  const scanRoots = new Set<string>();
+  for (const glob of globs) {
+    if (!glob.trim() || !hasGlob(glob)) continue;
+    scanRoots.add(globScanRoot(glob));
+  }
+  if (scanRoots.size === 0) return [];
+  // A glob anchored at the package root subsumes every narrower scan root.
+  const roots = scanRoots.has("") ? [""] : [...scanRoots];
+
   const entries: string[] = [];
-  function visit(dir: string, relativeDir = ""): void {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const relative = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
-      const fullPath = join(dir, entry.name);
-      entries.push(relative);
-      if (entry.isDirectory()) visit(fullPath, relative);
+  const seen = new Set<string>();
+  function visit(dir: string, relativeDir: string): void {
+    let dirEntries;
+    try {
+      dirEntries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      // A declared prefix need not exist; an absent directory simply matches
+      // nothing, which the callers already handle for empty results.
+      return;
+    }
+    for (const entry of dirEntries) {
+      const relativePath = relativeDir
+        ? `${relativeDir}/${entry.name}`
+        : entry.name;
+      if (entry.isDirectory() && UNSCANNED_DIRS.has(entry.name)) continue;
+      if (!seen.has(relativePath)) {
+        seen.add(relativePath);
+        entries.push(relativePath);
+      }
+      if (entry.isDirectory()) visit(join(dir, entry.name), relativePath);
     }
   }
-  visit(root);
+
+  for (const scanRoot of roots) {
+    // The prefix itself is an entry too, so a glob may match the directory.
+    if (scanRoot && !seen.has(scanRoot)) {
+      seen.add(scanRoot);
+      entries.push(scanRoot);
+    }
+    visit(scanRoot ? join(root, scanRoot) : root, scanRoot);
+  }
   return entries;
 }
 
@@ -600,7 +673,7 @@ export function resolvePiPackageMcpManifestPaths(
 ): string[] {
   const globs = pkg.mcp.manifests;
   const resolved = new Set<string>();
-  const entries = globs.some(hasGlob) ? listPackageEntries(pkg.path) : [];
+  const entries = listPackageEntries(pkg.path, globs);
 
   for (const glob of globs) {
     if (!glob.trim()) continue;
@@ -654,7 +727,7 @@ export function resolvePiPackageResourcePaths(
 ): string[] {
   const globs = pkg.resources[key];
   const resolved = new Set<string>();
-  const entries = globs.some(hasGlob) ? listPackageEntries(pkg.path) : [];
+  const entries = listPackageEntries(pkg.path, globs);
 
   for (const glob of globs) {
     if (!glob.trim()) continue;

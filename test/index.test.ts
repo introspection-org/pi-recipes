@@ -642,6 +642,71 @@ describe("recipe package manifest", () => {
     }
   });
 
+  it("scopes glob expansion to declared prefixes and skips dependency trees", async () => {
+    // A materialized recipe ships its installed dependency tree. Enumerating it
+    // to resolve `skills/**` cost ~970ms of synchronous readdirSync per resource
+    // key on a real boot, blocking the event loop that serves health probes.
+    const { resolvePiPackageResourcePaths } = await import("../src/index.js");
+    const root = mkdtempSync(join(tmpdir(), "pi-package-scope-"));
+    try {
+      mkdirSync(join(root, "skills", "repo-index"), { recursive: true });
+      writeFileSync(join(root, "skills", "repo-index", "SKILL.md"), "Index\n");
+
+      // Decoys that must never be matched. The one that matters is INSIDE the
+      // declared prefix: a skill can itself be an installed package, so its own
+      // node_modules sits under skills/ and would match `skills/**/SKILL.md`
+      // if the walk did not prune. The sibling copies outside the prefix are
+      // excluded by scoping alone.
+      mkdirSync(join(root, "skills", "repo-index", "node_modules", "dep"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(root, "skills", "repo-index", "node_modules", "dep", "SKILL.md"),
+        "no\n"
+      );
+      mkdirSync(join(root, "skills", ".git", "objects"), { recursive: true });
+      writeFileSync(join(root, "skills", ".git", "objects", "SKILL.md"), "no\n");
+      mkdirSync(join(root, "node_modules", "dep", "skills"), { recursive: true });
+      writeFileSync(join(root, "node_modules", "dep", "skills", "SKILL.md"), "no\n");
+
+      writePiPackageManifest(root, {
+        name: "recipe-package",
+        version: "0.1.0",
+        pi: { skills: ["skills/**/SKILL.md"] },
+      });
+      const manifest = readPiPackageManifest(root);
+      const resolved = resolvePiPackageResourcePaths(manifest, "skills");
+
+      expect(resolved).toEqual([join(root, "skills", "repo-index", "SKILL.md")]);
+      expect(resolved.some((path) => path.includes("node_modules"))).toBe(false);
+      expect(resolved.some((path) => path.includes(".git"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("still matches root-anchored globs across the package", async () => {
+    // `*.json` has no static prefix, so it must fall back to scanning the root —
+    // narrowing the search must never narrow which paths match.
+    const { resolvePiPackageResourcePaths } = await import("../src/index.js");
+    const root = mkdtempSync(join(tmpdir(), "pi-package-root-"));
+    try {
+      mkdirSync(join(root, "nested"), { recursive: true });
+      writeFileSync(join(root, "nested", "a.md"), "a\n");
+      writePiPackageManifest(root, {
+        name: "recipe-package",
+        version: "0.1.0",
+        pi: { prompts: ["**/*.md"] },
+      });
+      const manifest = readPiPackageManifest(root);
+      expect(resolvePiPackageResourcePaths(manifest, "prompts")).toEqual([
+        join(root, "nested", "a.md"),
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("expands declared package resource globs and tolerates empty optional globs", async () => {
     const {
       packageResourcePaths,
