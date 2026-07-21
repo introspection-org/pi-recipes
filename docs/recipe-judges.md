@@ -10,15 +10,18 @@ my-recipe/
 ```
 
 Nested files such as `judges/calibration/helpful.yaml` are not judge sources.
-`recipes check` discovers the same direct-child set for local authoring, CI,
-and immutable recipe-import snapshots.
+The standalone `recipe-check` binary and in-memory bindings discover the same
+direct-child set. The npm `recipes check` command intentionally omits judge
+diagnostics and resource counts from its user-facing output; hosted import
+validation consumes the unfiltered binding report.
 
 ## Ownership boundary
 
 `pi-recipe-check` owns the portable authored YAML specification and its static,
-file-oriented diagnostics. The I/O-free `check_recipe_files` core is the common
-validation path used by the filesystem checker, npm CLI, serialized snapshot
-API, and Python binding.
+file-oriented diagnostics. The I/O-free `check_recipe_files` core is shared by
+the filesystem checker, serialized snapshot API, and Python binding. The npm
+CLI invokes the filesystem checker but filters judge results at its presentation
+boundary; this does not change the underlying report used by hosted validators.
 
 The Introspection judge engine owns runtime evaluation: applicability
 execution, conversation assembly and transcript protection, model request
@@ -28,12 +31,12 @@ authored specification defined here; new authored fields must land in this
 checker and its contract tests rather than being introduced only in a runtime
 parser.
 
-The checker returns a `Report` containing diagnostics and, when judges exist, a
-`resources.judges` source count. It does not return a normalized judge
-definition, `judge_id`, `definition_hash`, or registry projection. Migrating
-project-scoped registry projection away from the runtime parser is a separate
-platform change and must not add project or tenant context to this portable
-API.
+The Rust checker and Python binding return a `Report` containing diagnostics
+and, when judges exist, a `resources.judges` source count. The report does not
+contain a normalized judge definition, `judge_id`, `definition_hash`, or
+registry projection. Migrating project-scoped registry projection away from
+the runtime parser is a separate platform change and must not add project or
+tenant context to this portable API.
 
 ## Definition shape
 

@@ -1144,6 +1144,7 @@ describe("recipe package manifest", () => {
           "#!/usr/bin/env node",
           "import { writeFileSync } from 'node:fs';",
           "writeFileSync(process.env.RECIPE_CHECK_ARGS_PATH, JSON.stringify(process.argv.slice(2)));",
+          "console.log(JSON.stringify({ valid: true, profile: 'ci', recipe_dir: '.', diagnostics: [], resources: {} }));",
           "process.exit(0);",
           "",
         ].join("\n")
@@ -1177,8 +1178,8 @@ describe("recipe package manifest", () => {
     }
   });
 
-  it("surfaces judge diagnostics through recipes check", async () => {
-    const root = mkdtempSync(join(tmpdir(), "recipes-cli-judge-check-"));
+  it("hides judge validation from recipes check", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-cli-hidden-check-"));
     const previousBin = process.env.PI_RECIPE_CHECK_BIN;
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     let stdout = "";
@@ -1190,8 +1191,8 @@ describe("recipe package manifest", () => {
       mkdirSync(join(root, "agents"));
       mkdirSync(join(root, "judges"));
       writePiPackageManifest(root, {
-        name: "judge-cli-test",
-        description: "Judge CLI test",
+        name: "cli-test",
+        description: "CLI test",
         pi: { agents: ["agents/*.yaml"] },
       });
       writeFileSync(join(root, "agents", "agent.yaml"), fullAgentYaml());
@@ -1209,19 +1210,30 @@ describe("recipe package manifest", () => {
 
       await expect(
         recipesCliMain(["check", root, "--profile", "ci", "--json"])
-      ).resolves.toBe(1);
+      ).resolves.toBe(0);
 
       const report = JSON.parse(stdout) as {
         valid: boolean;
         diagnostics: Array<{ code: string; path: string }>;
+        resources: Record<string, number>;
       };
-      expect(report.valid).toBe(false);
-      expect(report.diagnostics).toContainEqual(
-        expect.objectContaining({
-          code: "judge.llm.model_invalid",
-          path: "judges/invalid.yaml",
-        })
+      expect(report.valid).toBe(true);
+      expect(report.diagnostics).not.toEqual([]);
+      expect(report.diagnostics).toEqual(
+        report.diagnostics.filter(
+          (diagnostic) =>
+            !diagnostic.code.startsWith("judge.") &&
+            !diagnostic.path.startsWith("judges/")
+        )
       );
+      expect(report.resources).not.toHaveProperty("judges");
+      expect(stdout).not.toContain("judge");
+
+      stdout = "";
+      await expect(
+        recipesCliMain(["check", root, "--profile", "ci"])
+      ).resolves.toBe(0);
+      expect(stdout).not.toContain("judge");
     } finally {
       write.mockRestore();
       if (previousBin === undefined) {

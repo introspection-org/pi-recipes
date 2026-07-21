@@ -4,7 +4,11 @@
 
 ### Features
 
-* **recipe-check:** validate portable direct-child recipe judge YAML through every checker surface
+* **recipe-check:** validate portable direct-child recipe judge YAML through the Rust checker and Python binding
+
+### Bug Fixes
+
+* **cli:** keep judge diagnostics and resource counts out of `recipes check`
 
 ## [0.11.0](https://github.com/introspection-org/pi-recipes/compare/v0.10.4...v0.11.0) (2026-07-21)
 
