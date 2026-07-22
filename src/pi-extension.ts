@@ -1128,15 +1128,6 @@ export function createPiRecipesExtension(
       }
       await loadRecipeExtensions(pi, ctx, launchState);
       try {
-        await configureMcp(launchState, ctx);
-      } catch (err) {
-        ctx.ui.notify(
-          `Recipe MCP failed to configure: ${err instanceof Error ? err.message : String(err)}`,
-          "warning"
-        );
-        return;
-      }
-      try {
         await configureSession(pi, ctx, launchState);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1149,6 +1140,15 @@ export function createPiRecipesExtension(
         if (ctx.mode === "json" || ctx.mode === "print") {
           process.exitCode = 1;
         }
+        return;
+      }
+      try {
+        await configureMcp(launchState, ctx);
+      } catch (err) {
+        ctx.ui.notify(
+          `Recipe MCP failed to configure: ${err instanceof Error ? err.message : String(err)}`,
+          "warning"
+        );
         return;
       }
       // Restore run snapshots persisted by a previous Pi process so run ids

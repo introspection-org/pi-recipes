@@ -401,6 +401,87 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
+  it("selects the recipe model before MCP configuration can fail", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-model-before-mcp-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      mkdirSync(join(recipeDir, ".pi"), { recursive: true });
+      writeFileSync(join(recipeDir, ".pi", "mcp.local.json"), "{");
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: anthropic/claude-sonnet-4-6",
+          "  thinking_level: medium",
+          "tools:",
+          "  - read",
+          "mcp:",
+          "  support:",
+          "    include:",
+          "      - search",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Support prompt",
+          "",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: {
+              agents: ["defs/*.yaml"],
+              mcp: {
+                servers: [
+                  {
+                    id: "support",
+                    required: true,
+                    tools: { include: ["search"] },
+                  },
+                ],
+              },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      const notify = vi.fn();
+      const ctx = {
+        ...extensionContext(projectDir, notify),
+        model: { provider: "openai-codex", id: "gpt-5.3-codex-spark" },
+      };
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(pi.model).toEqual({
+        provider: "anthropic",
+        id: "claude-sonnet-4-6",
+      });
+      expect(pi.thinkingLevel).toBe("medium");
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("Recipe MCP failed to configure:"),
+        "warning"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("aborts instead of falling back when the recipe model has no credentials", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-model-auth-"));
     const previousExitCode = process.exitCode;
