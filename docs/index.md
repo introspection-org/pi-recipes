@@ -16,6 +16,8 @@ improving them.
 | Understand what the Pi extension loads | [Pi Recipes extension](pi-extension.md) |
 | Package authored quality criteria | [Recipe judges](recipe-judges.md) |
 | Pin an offline Harbor suite | [Recipe evals](recipe-evals.md) |
+| Ask for user input or approval across hosts | [Recipe interactions](interactions.md) |
+| Declare portable runtime resource intent | [Deployment configuration](deployment-configuration.md) |
 
 ## Package anatomy
 

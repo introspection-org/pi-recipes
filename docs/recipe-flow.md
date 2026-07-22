@@ -33,7 +33,7 @@ Recipes are stored under:
 Install a recipe from GitHub:
 
 ```bash
-recipes install github:tfidfwastaken/pi-codex
+recipes install introspection-recipes/pi-codex#0.1.1
 ```
 
 See what is installed:
@@ -52,7 +52,7 @@ If two installed recipes share the same short name, use the scoped name shown by
 `recipes list`:
 
 ```bash
-pi --recipe tfidfwastaken/pi-codex
+pi --recipe introspection-recipes/pi-codex
 ```
 
 ## 3. Customize an Installed Recipe

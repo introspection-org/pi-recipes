@@ -60,10 +60,13 @@ improvement loops around the same portable artifact.
 - [Recipe Judges](docs/recipe-judges.md): portable authored judge YAML, static validation, and the runtime ownership boundary.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
 - [Recipe Evals](docs/recipe-evals.md): declaring and running Harbor offline eval suites with exact pins.
+- [Recipe Interactions](docs/interactions.md): asking for user input or approval across local, RPC, and pause/resume hosts.
+- [Deployment Configuration](docs/deployment-configuration.md): portable resource intent and the host enforcement boundary.
 
 ## Package Exports
 
 - `@introspection-ai/pi-recipes`: extension factory and recipe-loading helpers.
+- `@introspection-ai/pi-recipes/interactions`: cross-host user-question and approval helpers for recipe tools.
 - `@introspection-ai/pi-recipes/pi-extension`: Pi extension entrypoint.
 - `@introspection-ai/pi-recipes/recipe`: recipe parsing and resolved session inputs.
 - `@introspection-ai/pi-recipes/pi`: the shared `agent` tool and controller types.

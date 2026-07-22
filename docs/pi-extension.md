@@ -296,7 +296,7 @@ guard so an invalid policy cannot launch silently without duplicating those
 diagnostics. Runtime configuration also reports a zero-tool intersection for a
 package-pinned catalog as `mcp.tools_filtered`.
 
-When the selected agent declares MCP access, the extension writes a
+When the active agent or one of its visible subagents declares MCP access, the extension writes a
 session-local shim at `.pi/bin/mcp` and prepends `.pi/bin` to `PATH` for
 commands run from that Pi session. It writes the static package, agent, and
 binding policy to `.pi/mcp-session.json` and an
@@ -398,11 +398,13 @@ always headless; local users complete OAuth with mcporter outside the agent
 session, while hosted environments supply their configured credentials. See
 [MCP authentication](mcp-auth.md).
 
-`recipes install` creates the recipe-local `.pi/mcp.local.json` template for MCP
-recipes if it is missing and prints the env vars that need values. The extension
+`recipes install` creates the recipe-local `.pi/mcp.local.json` template when
+the recipe provides `.pi/mcp.local.example.json` or declares
+`pi.mcp.servers`; a manifest-only recipe needs no generated local file. When a
+template is created, install prints the env vars that need values. The extension
 does not translate or adapt MCP tool names. The server must expose the tool names
-declared by the selected recipe agent, or `mcp call` fails with the underlying
-MCP error.
+allowed by the active agent and visible-subagent selections, or `mcp call` fails
+with the underlying MCP error.
 
 ## Commands
 

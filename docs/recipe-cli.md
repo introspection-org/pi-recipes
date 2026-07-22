@@ -41,16 +41,16 @@ recipes --help
 
 The package also bundles MCP CLI implementation code for recipe sessions, but
 does not install `mcp` as a global binary. When a Pi session launches a recipe
-whose selected agent declares MCP access, the extension creates a session-local
+whose active agent or visible subagents declare MCP access, the extension creates a session-local
 `.pi/bin/mcp` shim and prepends that directory to the Pi session's bash `PATH`.
 The generated paths are recorded in `PI_RECIPES_MCP_SESSION` and
 `PI_RECIPES_MCP_BIN_DIR`.
 
-When `recipes install` installs a recipe that declares `pi.mcp`, it also creates
-`.pi/mcp.local.json` in the installed recipe if that file is missing. If the
-recipe ships `.pi/mcp.local.example.json`, install copies it; otherwise install
-generates a template from `pi.mcp.servers`. The install output prints the config
-path and the environment variables referenced by the template.
+When `recipes install` installs a recipe that declares `pi.mcp`, it creates
+`.pi/mcp.local.json` when the recipe ships `.pi/mcp.local.example.json` or
+declares `pi.mcp.servers` from which a template can be generated. A manifest-only
+recipe needs no local file. When a file is created, install prints its path and
+the environment variables referenced by the template.
 
 ## Store
 
@@ -256,7 +256,7 @@ When entries are omitted, conventional folders are used if present:
 ## MCP Manifests
 
 See [MCP configuration](mcp-configuration.md) for the package policy, per-agent
-selection, and environment-binding model in one place.
+selection, and package- or environment-supplied endpoint model in one place.
 
 Recipes can declare MCP endpoint policy with `package.json#pi.mcp`:
 
@@ -397,8 +397,8 @@ session, while hosted environments supply their configured credentials. See
 [MCP authentication](mcp-auth.md).
 
 The extension does not translate or adapt MCP tool names. The server must expose
-the tool names declared by the selected recipe agent, or `mcp call` fails with
-the underlying MCP error.
+the tool names allowed by the active agent and visible-subagent selections, or
+`mcp call` fails with the underlying MCP error.
 
 ## Harbor Evals
 
@@ -676,7 +676,7 @@ Publish a recipe to GitHub:
 recipes publish ./my-recipe --github owner/my-recipe --visibility public
 ```
 
-`recipes publish` runs the same development validation as `check`, updates
+`recipes publish` runs the stricter publish-profile validation, updates
 `package.json#name` to `@owner/my-recipe`, commits local changes, creates the
 GitHub repository when needed, pushes `main`, and re-registers the local recipe.
 When `--visibility public` is used, it also submits the public package metadata
@@ -745,7 +745,7 @@ When you install a recipe from a remote source (`github:` or a Git URL),
 `recipes install` sends a single anonymous ping to the public recipe directory
 at [pi.recipes](https://pi.recipes) so it can rank recipes by install count.
 
-The ping contains only the recipe's canonical id, name, recipe version, and
+The ping contains only the recipe's canonical id, name, manifest package version, and
 `pi-recipes` CLI version:
 
 ```json
