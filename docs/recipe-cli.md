@@ -278,6 +278,8 @@ When entries are omitted, conventional folders are used if present:
 
 `extensions` are only loaded when declared.
 
+The declarable `pi` resources are `agents`, `extensions`, `skills`, `prompts`, `mcp`, and `evals`. There is no separate `scripts` resource: package deterministic operations as ordinary files (commonly inside a skill directory) and invoke them through an agent's `bash` tool, or wrap them in an extension tool when they need Pi lifecycle hooks.
+
 ## MCP Manifests
 
 See [MCP configuration](mcp-configuration.md) for the package policy, per-agent
