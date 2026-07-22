@@ -5,6 +5,16 @@ maps recipe resources into the live Pi session.
 
 ## Install
 
+Install [Pi](https://pi.dev/docs/latest/quickstart) first and confirm `pi` is on
+`PATH`. Pi Recipes extends an existing Pi harness; it does not install Pi.
+Pi Recipes currently requires Node.js 24 or later, matching its MCP runtime
+dependency.
+
+```bash
+node --version
+pi --version
+```
+
 Install the recipe tooling:
 
 ```bash
@@ -92,10 +102,10 @@ metadata and filesystem paths are not injected into the system prompt.
 
 ## Manifest File
 
-`package.json` is the recipe manifest. Top-level package fields tell Pi what
-recipe this is:
+`package.json` is the recipe manifest. Top-level package fields describe the
+package:
 
-- `name`, `version`, and `description`
+- `name` and `description`, plus optional `version` display/package metadata
 
 The `pi` block tells Pi which recipe-owned files should be loaded:
 
@@ -218,6 +228,9 @@ extensions. `exclude` subtracts matching extension names.
 
 ## MCP
 
+For a concise explanation of package policy, agent selection, and local or
+hosted endpoint bindings, start with [MCP configuration](mcp-configuration.md).
+
 Recipes can expose MCP endpoint tools through a generated session-local `mcp` CLI.
 The recipe declares an upper-bound MCP server policy in `package.json#pi.mcp`,
 and each agent declares its own MCP selection in a separate `mcp` block.
@@ -271,11 +284,12 @@ non-blocking warning. A missing agent `include` list, an agent server such as
 `contacts: {}`, and an empty agent `mcp: {}` are silently treated as omitted.
 None are interpreted as implicit wildcards.
 
-Package declaration, endpoint binding, and agent selection are independent
-gates. A bound server that is absent from `package.json#pi.mcp.servers` is
-ignored, and an agent cannot select it. An empty package server list therefore
-permits no MCP servers; creating a local or cloud binding never grants access
-by itself.
+Package declaration and agent selection are the two authorization gates. An
+authorized server must also have an endpoint from a configured package manifest
+or a local/host binding. A bound server absent from
+`package.json#pi.mcp.servers` is ignored, and an agent cannot select it. An empty
+package server list therefore permits no MCP servers; creating a binding never
+grants access by itself.
 
 `"*"` is a reserved whole-toolset sentinel, not a glob. Patterns such as
 `search_*` are invalid. An explicit wildcard opts into tools that the remote
@@ -292,7 +306,7 @@ guard so an invalid policy cannot launch silently without duplicating those
 diagnostics. Runtime configuration also reports a zero-tool intersection for a
 package-pinned catalog as `mcp.tools_filtered`.
 
-When the selected agent declares MCP access, the extension writes a
+When the active agent or one of its visible subagents declares MCP access, the extension writes a
 session-local shim at `.pi/bin/mcp` and prepends `.pi/bin` to `PATH` for
 commands run from that Pi session. It writes the static package, agent, and
 binding policy to `.pi/mcp-session.json` and an
@@ -307,6 +321,12 @@ Because MCP endpoint tools are invoked through the session-local CLI, agents
 normally need `bash` or another command-capable tool. Recipe validation emits a
 non-blocking warning when an agent declares MCP access without `bash`;
 recipes that provide a custom shell wrapper may intentionally ignore it.
+
+These `.pi/` artifacts — `.pi/bin/`, `.pi/mcp-session.json`, `.pi/mcporter.json`,
+`.pi/mcp-catalogs/`, and `.pi/mcp.local.json` — are generated workspace state and
+belong in `.gitignore`; `recipes publish` adds them automatically. Keep only the
+distributable `.pi/mcp.local.example.json` in Git. Never commit
+`.pi/mcp-session.json`, which can hold resolved session material.
 
 ```bash
 mcp search "contact lookup"              # find relevant tool references
@@ -394,11 +414,13 @@ always headless; local users complete OAuth with mcporter outside the agent
 session, while hosted environments supply their configured credentials. See
 [MCP authentication](mcp-auth.md).
 
-`recipes install` creates the recipe-local `.pi/mcp.local.json` template for MCP
-recipes if it is missing and prints the env vars that need values. The extension
+`recipes install` creates the recipe-local `.pi/mcp.local.json` template when
+the recipe provides `.pi/mcp.local.example.json` or declares
+`pi.mcp.servers`; a manifest-only recipe needs no generated local file. When a
+template is created, install prints the env vars that need values. The extension
 does not translate or adapt MCP tool names. The server must expose the tool names
-declared by the selected recipe agent, or `mcp call` fails with the underlying
-MCP error.
+allowed by the active agent and visible-subagent selections, or `mcp call` fails
+with the underlying MCP error.
 
 ## Commands
 
@@ -484,6 +506,11 @@ runs are removed from the active inventory and further actions report that the
 run is already closed. Child runs use the same recipe directory and current Pi
 workspace as the parent session, but child questions never interrupt the root:
 approvals auto-approve and questions auto-decline.
+
+Child-run state persists under `<workspace>/.pi/agents/<run-id>/` and rehydrates
+across restarts, so `status`/`wait` still resolve a run started in an earlier
+process. This is generated workspace state — gitignore `.pi/agents/` (publish
+handles it automatically).
 
 ## Recipe Extensions
 

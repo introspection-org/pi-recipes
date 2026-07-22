@@ -102,13 +102,54 @@ describe("recipe package manifest", () => {
       expect(scaffoldedAgent).not.toContain("skills: []");
       expect(scaffoldedAgent).not.toContain("subagents: []");
       const scaffoldedReadme = readFileSync(join(result.recipeDir, "README.md"), "utf8");
+      expect(scaffoldedReadme).toContain("https://pi.dev/docs/latest/quickstart");
+      expect(scaffoldedReadme).toContain("pi --version");
+      expect(scaffoldedReadme).toContain("recipes setup");
       expect(scaffoldedReadme).toContain("pi --recipe . --agent agent");
+      expect(scaffoldedReadme.indexOf("recipes setup")).toBeLessThan(
+        scaffoldedReadme.indexOf("pi --recipe . --agent agent")
+      );
       expect(scaffoldedReadme).not.toContain("recipes install .");
       expect(validateRecipeDirectory(result.recipeDir)).toMatchObject({
         valid: true,
         findings: [],
       });
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prints setup before the first direct Pi launch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-create-cli-"));
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    let stdout = "";
+    write.mockImplementation((chunk: string | Uint8Array) => {
+      stdout += chunk.toString();
+      return true;
+    });
+    try {
+      await expect(recipesCliMain(["--help"])).resolves.toBe(0);
+      expect(stdout).toContain("https://pi.dev/docs/latest/quickstart");
+      expect(stdout).toContain("Node.js 24+");
+      expect(stdout.indexOf("node --version")).toBeLessThan(
+        stdout.indexOf("npm install -g @introspection-ai/pi-recipes")
+      );
+      expect(stdout.indexOf("pi --version")).toBeLessThan(
+        stdout.indexOf("npm install -g @introspection-ai/pi-recipes")
+      );
+      expect(stdout.indexOf("recipes setup")).toBeLessThan(
+        stdout.indexOf("pi --recipe ./my-recipe --agent agent")
+      );
+
+      stdout = "";
+      const recipeDir = join(root, "my-recipe");
+      await expect(recipesCliMain(["create", recipeDir])).resolves.toBe(0);
+      expect(stdout).toContain("https://pi.dev/docs/latest/quickstart");
+      expect(stdout.indexOf("recipes setup")).toBeLessThan(
+        stdout.indexOf(`pi --recipe ${recipeDir} --agent agent`)
+      );
+    } finally {
+      write.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
   });

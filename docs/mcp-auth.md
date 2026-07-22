@@ -1,9 +1,13 @@
 # MCP authentication in recipe sessions
 
-Recipe MCP authentication follows the binding that made an already-approved
-server reachable. Authentication never selects a server or grants tools: the
-materialized package, binding, and active-agent policies still determine the
-final server/tool inventory.
+This page covers authentication after capability has been declared and selected.
+Start with [MCP configuration](mcp-configuration.md) for the complete policy and
+endpoint model.
+
+Recipe MCP authentication follows the endpoint source that made an
+already-approved server reachable: a configured package manifest or a local/host
+binding. Authentication never selects a server or grants tools; the package and
+active/visible-agent selections still determine the final server/tool inventory.
 
 ## Local OAuth
 

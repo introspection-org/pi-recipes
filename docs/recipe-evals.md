@@ -61,6 +61,10 @@ Git suites use:
 - `rev`: exact 7 to 40 character hex commit SHA.
 - `dataset`: dataset name inside the Harbor registry.
 
+Producing that `registry.json` (scaffolding a Harbor task into a registry-bearing
+repository) is Harbor's own registry/publish tooling — author the task with the
+Harbor `create-task` skill, then publish it to a repo before pinning it here.
+
 `recipes check` validates the schema offline. It rejects registry aliases such
 as `latest`, version ranges, wildcard versions, branch-like Git refs, missing
 registry datasets, malformed suite entries, and duplicate suite names. It does

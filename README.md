@@ -8,7 +8,7 @@
   </a>
 </div>
 
-<h4 align="center">Reproducible frontier-grade agents</h4>
+<h4 align="center">Portable agent systems, built on Pi.</h4>
 
 <div align="center">
   <a href="https://pi.recipes"><img src="https://img.shields.io/badge/website-pi.recipes-blue" alt="Website"></a>
@@ -20,9 +20,10 @@
 
 <br>
 
-A Pi recipe captures the expertise behind a frontier-grade agent so the same
-workflow can be run, measured, and improved anywhere Pi runs. Install one from
-Git and customize it locally.
+A **recipe** is a portable agent-system package. **Pi Recipes** is the open
+format and toolchain for creating, validating, running, and distributing those
+packages. It keeps instructions, agents, skills, extensions, capability policy,
+and quality definitions together as source you can inspect, fork, and own.
 
 ## Overview
 
@@ -33,23 +34,42 @@ recipes in a local store and ensures the Pi extension is installed before
 recipes are run. The Pi extension resolves an installed recipe into a local
 directory and wires those recipe files into the live Pi session at launch time.
 
-`package.json` owns both recipe identity and Node dependency metadata. The
-top-level `name`, `version`, and `description` identify the recipe, while the
-`pi` block declares recipe resources such as agents, extensions, skills,
-and prompts.
+`package.json` is both the package manifest and the recipe entry point. `name`
+is the package identity, `description` explains the package, and the optional
+`version` is useful display/package metadata. The `pi` block declares resources
+and policies. A reproducible distributed release is identified by its Git
+source plus a commit SHA, or a tag protected by an immutable-release policy—not
+by the mutable manifest alone.
+
+Recipes remain ordinary Git-backed packages. Pi Recipes supplies the open
+format, validator, CLI, resolver, and catalog; it does not require a registry
+or a particular cloud. Run a recipe locally or embed it in your own compatible
+Pi host, then deploy that host wherever its runtime requirements are supported.
+Pi Recipes does not supply provider-specific Fly.io or Vercel deployment adapters.
+[Introspection](https://docs.introspection.dev) is the first-party managed cloud
+for operating and improving them, with isolated runtimes and production
+improvement loops around the same portable artifact. For guided coding-agent
+workflows around this toolchain — create, migrate, improve, and deploy a recipe
+from Claude Code or Codex — install the
+[Introspection plugin](https://github.com/introspection-org/introspection-plugin).
 
 ## Documentation
 
+- [Documentation index](docs/index.md): choose the shortest path for creating, composing, validating, running, or distributing a recipe.
 - [Recipe Flow](docs/recipe-flow.md): quick user-facing guide to installing, customizing, creating, and publishing recipes.
 - [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
 - [Agent Composition](docs/agent-composition.md): shared `SYSTEM.md`, specialized agent instructions, `from:` inheritance, capabilities, and subagents.
+- [MCP Configuration](docs/mcp-configuration.md): package policy, per-agent selection, and package- or environment-supplied endpoints.
 - [Recipe Judges](docs/recipe-judges.md): portable authored judge YAML, static validation, and the runtime ownership boundary.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
 - [Recipe Evals](docs/recipe-evals.md): declaring and running Harbor offline eval suites with exact pins.
+- [Recipe Interactions](docs/interactions.md): asking for user input or approval across local, RPC, and pause/resume hosts.
+- [Deployment Configuration](docs/deployment-configuration.md): portable resource intent and the host enforcement boundary.
 
 ## Package Exports
 
 - `@introspection-ai/pi-recipes`: extension factory and recipe-loading helpers.
+- `@introspection-ai/pi-recipes/interactions`: cross-host user-question and approval helpers for recipe tools.
 - `@introspection-ai/pi-recipes/pi-extension`: Pi extension entrypoint.
 - `@introspection-ai/pi-recipes/recipe`: recipe parsing and resolved session inputs.
 - `@introspection-ai/pi-recipes/pi`: the shared `agent` tool and controller types.
@@ -63,6 +83,12 @@ and prompts.
   an in-memory recipe snapshot without filesystem I/O.
 
 ## Quick Start
+
+Install [Pi](https://pi.dev/docs/latest/quickstart) first and confirm `pi` is on
+`PATH`. Pi Recipes extends Pi; it does not install the harness itself.
+
+Pi Recipes currently requires Node.js 24 or later, matching its MCP runtime
+dependency.
 
 Install the recipe tooling:
 
@@ -78,6 +104,7 @@ Create a local recipe:
 ```bash
 recipes create ./my-recipe
 recipes check ./my-recipe
+recipes setup
 ```
 
 Launch it with Pi:
@@ -87,16 +114,17 @@ pi --recipe ./my-recipe --agent agent
 ```
 
 Hosts that embed Pi can resolve the same recipe semantics without adopting a
-second runtime abstraction:
+second recipe abstraction. The following is integration pseudocode: the host
+implements `AgentRunController` and owns session construction and lifecycle.
 
 ```ts
 import { resolveRecipe } from "@introspection-ai/pi-recipes/recipe";
-import { createAgentTool } from "@introspection-ai/pi-recipes/pi";
+import { createAgentTool, type AgentRunController } from "@introspection-ai/pi-recipes/pi";
 
 const recipe = resolveRecipe({ recipeDir, agentName });
-const runs = createHostRunController(recipe.subagents);
+const runs: AgentRunController = host.createRunController(recipe.subagents);
 
-pi.registerTool(createAgentTool(runs, recipe.subagents));
+host.registerTool(createAgentTool(runs, recipe.subagents));
 ```
 
 The host remains responsible for model credentials, session persistence,

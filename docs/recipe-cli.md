@@ -5,6 +5,17 @@ validates, scaffolds, and publishes recipe folders for Pi.
 
 ## Install
 
+Install [Pi](https://pi.dev/docs/latest/quickstart) first and confirm `pi` is on
+`PATH`. Pi Recipes installs its companion extension into that existing harness;
+it does not install Pi itself.
+
+Pi Recipes currently requires Node.js 24 or later, matching its MCP runtime
+dependency. Check the active runtime before installation:
+
+```bash
+node --version
+```
+
 Install the recipe tooling into the environment where you run Pi:
 
 ```bash
@@ -41,16 +52,16 @@ recipes --help
 
 The package also bundles MCP CLI implementation code for recipe sessions, but
 does not install `mcp` as a global binary. When a Pi session launches a recipe
-whose selected agent declares MCP access, the extension creates a session-local
+whose active agent or visible subagents declare MCP access, the extension creates a session-local
 `.pi/bin/mcp` shim and prepends that directory to the Pi session's bash `PATH`.
 The generated paths are recorded in `PI_RECIPES_MCP_SESSION` and
 `PI_RECIPES_MCP_BIN_DIR`.
 
-When `recipes install` installs a recipe that declares `pi.mcp`, it also creates
-`.pi/mcp.local.json` in the installed recipe if that file is missing. If the
-recipe ships `.pi/mcp.local.example.json`, install copies it; otherwise install
-generates a template from `pi.mcp.servers`. The install output prints the config
-path and the environment variables referenced by the template.
+When `recipes install` installs a recipe that declares `pi.mcp`, it creates
+`.pi/mcp.local.json` when the recipe ships `.pi/mcp.local.example.json` or
+declares `pi.mcp.servers` from which a template can be generated. A manifest-only
+recipe needs no local file. When a file is created, install prints its path and
+the environment variables referenced by the template.
 
 ## Store
 
@@ -161,8 +172,10 @@ required agent globs, validates optional direct-child `judges/*.yaml` and
 `judges/*.yml` definitions, validates Harbor eval suite pins, and warns when no
 default agent can be inferred. See [Recipe judge definitions](recipe-judges.md)
 for the portable authored judge contract and runtime ownership boundary.
+`recipes doctor` is an alias for `recipes check`.
 
-Use the CI profile when validation should block a pull request or push:
+`--profile` takes `local` (default), `ci`, or `publish`. Use the CI profile when
+validation should block a pull request or push:
 
 ```bash
 recipes check . --profile ci
@@ -171,13 +184,22 @@ recipes check . --profile ci --json
 
 The CI profile exits non-zero for invalid recipes and promotes checks that are
 unsafe for committed recipes, such as missing lockfiles for runtime
-dependencies.
+dependencies. The `publish` profile is the strictest and runs automatically
+inside `recipes publish`; it additionally rejects local-only configuration such
+as `.pi/mcp.local.json` (see [MCP configuration](mcp-configuration.md)).
 
 Run the local recipe directly by path:
 
 ```bash
+recipes setup
 pi --recipe . --agent agent
 ```
+
+`recipes create` does not install the companion Pi extension. Run setup before
+the first direct local launch; `recipes install` performs that setup
+automatically when needed. `recipes setup [source]` installs from an explicit
+extension source; `--local` writes project rather than user settings, and
+`recipes install --no-setup` skips the automatic extension install.
 
 Registration is optional when you want a stable store identifier:
 
@@ -203,11 +225,20 @@ pi --recipe my-recipe --agent agent
 ## `package.json` and `pi`
 
 Recipes use `package.json` as their manifest. Top-level package fields describe
-the recipe identity:
+the package:
 
-- `name`: the identifier users pass to `pi --recipe` and `recipes path`
-- `version`: the recipe version shown in Pi sessions
+- `name`: the package identity; installed recipes can also resolve by source,
+  normalized scoped identity, or an unambiguous short-name alias
+- `version`: optional package/display metadata shown in Pi sessions; omitted
+  versions resolve as `0.0.0` for compatibility
 - `description`: a short summary for humans
+- `license`: optional distribution metadata; when a publishable recipe declares a
+  license other than `UNLICENSED`, include the matching root license file (or a
+  valid `SEE LICENSE IN ...` reference)
+
+For distribution, the reproducible identity is the Git source plus a commit SHA,
+or a tag protected by an immutable-release policy. The manifest version is not
+a substitute for that source pin.
 
 The `pi` block declares recipe-owned resources:
 
@@ -247,7 +278,12 @@ When entries are omitted, conventional folders are used if present:
 
 `extensions` are only loaded when declared.
 
+The declarable `pi` resources are `agents`, `extensions`, `skills`, `prompts`, `mcp`, and `evals`. There is no separate `scripts` resource: package deterministic operations as ordinary files (commonly inside a skill directory) and invoke them through an agent's `bash` tool, or wrap them in an extension tool when they need Pi lifecycle hooks.
+
 ## MCP Manifests
+
+See [MCP configuration](mcp-configuration.md) for the package policy, per-agent
+selection, and package- or environment-supplied endpoint model in one place.
 
 Recipes can declare MCP endpoint policy with `package.json#pi.mcp`:
 
@@ -289,14 +325,16 @@ package-permitted tool, an exact list enables a subset, and `[]` enables none.
 `exclude` removes exact names after inclusion and always wins. `"*"` is a
 whole-toolset sentinel, not a glob; patterns such as `search_*` are invalid.
 Omitting a server or the agent `mcp` block means no access. Exact includes avoid
-automatically exposing tools that a remote server adds later. Empty package
-`tools`, agent server (`contacts: {}`), and agent `mcp: {}` objects are invalid
-rather than implicit wildcards.
+automatically exposing tools that a remote server adds later. Missing package
+`tools` fails closed with a warning. Agent server (`contacts: {}`) and empty
+agent `mcp: {}` objects are valid but silently treated as omitted; none imply a
+wildcard.
 
-Package declaration, endpoint binding, and agent selection are all required.
-A local or cloud binding never grants access by itself, and a bound server not
-listed in `package.json#pi.mcp.servers` is ignored. An empty package server list
-therefore permits no MCP servers.
+Package declaration and agent selection are the two authorization gates. The
+authorized server also needs an endpoint from a configured package manifest or
+a local/host binding. A binding never grants access by itself, and a bound server
+not listed in `package.json#pi.mcp.servers` is ignored. An empty package server
+list therefore permits no MCP servers.
 
 Package and agent MCP policies use only `include` and `exclude`, and MCP tools
 are selected only through the agent `mcp` block. Missing package declarations,
@@ -386,8 +424,8 @@ session, while hosted environments supply their configured credentials. See
 [MCP authentication](mcp-auth.md).
 
 The extension does not translate or adapt MCP tool names. The server must expose
-the tool names declared by the selected recipe agent, or `mcp call` fails with
-the underlying MCP error.
+the tool names allowed by the active agent and visible-subagent selections, or
+`mcp call` fails with the underlying MCP error.
 
 ## Harbor Evals
 
@@ -663,11 +701,16 @@ Publish a recipe to GitHub:
 
 ```bash
 recipes publish ./my-recipe --github owner/my-recipe --visibility public
+recipes publish ./my-recipe --github owner/my-recipe --visibility private \
+  --message "Prepare 0.2.0"
 ```
 
-`recipes publish` runs the same development validation as `check`, updates
-`package.json#name` to `@owner/my-recipe`, commits local changes, creates the
-GitHub repository when needed, pushes `main`, and re-registers the local recipe.
+`--github <owner/repo>` and `--visibility <public|private>` are both required;
+`--message` sets the commit message. `recipes publish` runs the stricter publish-profile validation, updates
+`package.json#name` to `@owner/my-recipe`, ensures a `.gitignore` covering
+`node_modules/`, build output, and generated `.pi/` runtime state, commits local
+changes, creates the GitHub repository when needed, pushes `main`, and
+re-registers the local recipe.
 When `--visibility public` is used, it also submits the public package metadata
 to the recipe catalog so the marketplace can add or refresh the listing.
 
@@ -734,7 +777,7 @@ When you install a recipe from a remote source (`github:` or a Git URL),
 `recipes install` sends a single anonymous ping to the public recipe directory
 at [pi.recipes](https://pi.recipes) so it can rank recipes by install count.
 
-The ping contains only the recipe's canonical id, name, recipe version, and
+The ping contains only the recipe's canonical id, name, manifest package version, and
 `pi-recipes` CLI version:
 
 ```json

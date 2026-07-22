@@ -108,6 +108,40 @@ Arrays never merge item by item. This makes capability boundaries reviewable:
 a derived agent that declares `tools: [read]` receives only `read`, not the
 base agent's other tools.
 
+## Model Configuration
+
+Beyond `name` and `thinking_level`, the `model` block accepts request and
+transport tuning and provider routing. Set only what a case needs.
+
+```yaml
+model:
+  name: anthropic/claude-sonnet-4-6
+  thinking_level: medium        # or reasoning_effort (an alias; a conflicting value errors)
+  temperature: 0.2
+  max_tokens: 4096
+  cache_retention: short        # none | short | long
+  timeout_ms: 60000
+  max_retries: 2
+  max_retry_delay_ms: 8000
+  providers:
+    anthropic:
+      betas: [context-1m]
+      context_management: {}
+    openrouter:
+      routing:                  # allow_fallbacks, require_parameters, data_collection,
+        order: [anthropic]      # zdr, order, only, ignore, quantizations, sort, max_price,
+        sort: throughput        # preferred_min_throughput, preferred_max_latency, …
+```
+
+All keys are optional and merge by key along a `from:` chain. Use `reasoning_effort`
+or `thinking_level`, not both with different values.
+
+## Instruction Shorthand
+
+A top-level `prompt:` string on an agent is shorthand for append-mode
+`system_instructions` — the text is appended to `SYSTEM.md` for that agent. Use
+the explicit `system_instructions` block when you need `mode: replace`.
+
 ## Resources and Capabilities
 
 The manifest declares what the package can provide; the selected agent narrows

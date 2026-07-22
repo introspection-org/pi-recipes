@@ -7,7 +7,7 @@ with those declarations.
 This spec is defined here, in pi-recipes, because it describes *recipe
 intent*: portable, platform-neutral declarations that any host can honor.
 The validation grammar lives in `pi_recipe_check::resources`
-(`validate_resources`, `validate_disk`) so every host — the recipes CLI, a
+(`validate_resources`) so every host — the recipes CLI, a
 platform's manifest validator, wasm/Python bindings — applies identical
 rules with stable diagnostic codes. Platform-specific enforcement (floors,
 caps, billing) is the implementer's job, not part of the grammar.
@@ -33,7 +33,8 @@ runtime:
 Kubernetes-style `requests`/`limits` (`validate_resources`). Grammar:
 `500m` millicores or decimal cores for CPU; bytes with binary
 (`Ki`/`Mi`/`Gi`/`Ti`) or decimal (`k`/`M`/`G`/`T`) suffixes for memory and
-storage (`0.1T` works). A request must not exceed its limit.
+storage (`0.1T` works). Quantities may also be JSON numbers — `cpu: 1.5`
+(cores) or an integer byte count for memory. A request must not exceed its limit.
 
 `storage` is the sandbox scratch-volume size and follows the PVC
 convention (`spec.resources.requests.storage`): request-only — declaring

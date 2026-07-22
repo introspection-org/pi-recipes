@@ -381,7 +381,7 @@ class PiRecipeAgent(BaseInstalledAgent):
         )
         root_commands = [
             "command -v curl >/dev/null || (command -v apt-get >/dev/null && apt-get update && apt-get install -y curl ca-certificates gnupg)",
-            "node -e \"process.exit(Number(process.versions.node.split('.')[0]) >= 20 ? 0 : 1)\" >/dev/null 2>&1 || (command -v apt-get >/dev/null && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs)",
+            "node -e \"process.exit(Number(process.versions.node.split('.')[0]) >= 24 ? 0 : 1)\" >/dev/null 2>&1 || (command -v apt-get >/dev/null && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs)",
         ]
         if not recipe_runtime:
             root_commands.append(
