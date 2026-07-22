@@ -48,7 +48,10 @@ Pi host, then deploy that host wherever its runtime requirements are supported.
 Pi Recipes does not supply provider-specific Fly.io or Vercel deployment adapters.
 [Introspection](https://docs.introspection.dev) is the first-party managed cloud
 for operating and improving them, with isolated runtimes and production
-improvement loops around the same portable artifact.
+improvement loops around the same portable artifact. For guided coding-agent
+workflows around this toolchain — create, migrate, improve, and deploy a recipe
+from Claude Code or Codex — install the
+[Introspection plugin](https://github.com/introspection-org/introspection-plugin).
 
 ## Documentation
 

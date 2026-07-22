@@ -60,3 +60,7 @@ host wherever its runtime requirements are supported, without redefining package
 semantics. Pi Recipes does not provide provider-specific deployment adapters.
 For the first-party managed cloud—with isolated runtimes, production evidence,
 and controlled improvement loops—see [Introspection documentation](https://docs.introspection.dev).
+For guided coding-agent workflows around this toolchain (create, migrate,
+improve, deploy), install the
+[Introspection plugin](https://github.com/introspection-org/introspection-plugin)
+in Claude Code or Codex.
