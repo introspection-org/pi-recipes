@@ -19,7 +19,7 @@ materialized inside a running sandbox, after the machine that runs them
 already exists — so deployment configuration cannot live there. It lives in
 the host's deployment manifest, the file the platform reads *before*
 provisioning. On Introspection that is the repo-root
-`.introspection/<name>.yaml` manifest's `runtime:` block:
+`.introspection/<slug>.yaml` manifest's `runtime:` block:
 
 ```yaml
 runtime:
