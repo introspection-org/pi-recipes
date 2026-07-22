@@ -44,6 +44,12 @@ tool set available from each one. It can also reference portable MCP manifests.
 Prefer exact tool names. `"*"` explicitly permits the package-visible tool set,
 including tools a server may add later; patterns such as `search_*` are invalid.
 
+`manifest` accepts a single path; `manifests` accepts an array, and either the
+`mcp` value or a manifest reference may be given as a string shorthand for a
+single path. A server marked `"required": true` must resolve to a bound endpoint
+at session materialization or the session fails closed rather than starting
+without the capability.
+
 ## 2. Narrow access for each agent
 
 An agent selects a subset of the package-permitted servers and tools. It cannot

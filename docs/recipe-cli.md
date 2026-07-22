@@ -172,8 +172,10 @@ required agent globs, validates optional direct-child `judges/*.yaml` and
 `judges/*.yml` definitions, validates Harbor eval suite pins, and warns when no
 default agent can be inferred. See [Recipe judge definitions](recipe-judges.md)
 for the portable authored judge contract and runtime ownership boundary.
+`recipes doctor` is an alias for `recipes check`.
 
-Use the CI profile when validation should block a pull request or push:
+`--profile` takes `local` (default), `ci`, or `publish`. Use the CI profile when
+validation should block a pull request or push:
 
 ```bash
 recipes check . --profile ci
@@ -182,7 +184,9 @@ recipes check . --profile ci --json
 
 The CI profile exits non-zero for invalid recipes and promotes checks that are
 unsafe for committed recipes, such as missing lockfiles for runtime
-dependencies.
+dependencies. The `publish` profile is the strictest and runs automatically
+inside `recipes publish`; it additionally rejects local-only configuration such
+as `.pi/mcp.local.json` (see [MCP configuration](mcp-configuration.md)).
 
 Run the local recipe directly by path:
 
@@ -193,7 +197,9 @@ pi --recipe . --agent agent
 
 `recipes create` does not install the companion Pi extension. Run setup before
 the first direct local launch; `recipes install` performs that setup
-automatically when needed.
+automatically when needed. `recipes setup [source]` installs from an explicit
+extension source; `--local` writes project rather than user settings, and
+`recipes install --no-setup` skips the automatic extension install.
 
 Registration is optional when you want a stable store identifier:
 
@@ -226,6 +232,9 @@ the package:
 - `version`: optional package/display metadata shown in Pi sessions; omitted
   versions resolve as `0.0.0` for compatibility
 - `description`: a short summary for humans
+- `license`: optional distribution metadata; when a publishable recipe declares a
+  license other than `UNLICENSED`, include the matching root license file (or a
+  valid `SEE LICENSE IN ...` reference)
 
 For distribution, the reproducible identity is the Git source plus a commit SHA,
 or a tag protected by an immutable-release policy. The manifest version is not
@@ -690,9 +699,12 @@ Publish a recipe to GitHub:
 
 ```bash
 recipes publish ./my-recipe --github owner/my-recipe --visibility public
+recipes publish ./my-recipe --github owner/my-recipe --visibility private \
+  --message "Prepare 0.2.0"
 ```
 
-`recipes publish` runs the stricter publish-profile validation, updates
+`--github <owner/repo>` and `--visibility <public|private>` are both required;
+`--message` sets the commit message. `recipes publish` runs the stricter publish-profile validation, updates
 `package.json#name` to `@owner/my-recipe`, commits local changes, creates the
 GitHub repository when needed, pushes `main`, and re-registers the local recipe.
 When `--visibility public` is used, it also submits the public package metadata
