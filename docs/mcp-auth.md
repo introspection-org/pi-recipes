@@ -7,7 +7,7 @@ endpoint model.
 Recipe MCP authentication follows the endpoint source that made an
 already-approved server reachable: a configured package manifest or a local/host
 binding. Authentication never selects a server or grants tools; the package and
-active-agent policies still determine the final server/tool inventory.
+active/visible-agent selections still determine the final server/tool inventory.
 
 ## Local OAuth
 

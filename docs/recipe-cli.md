@@ -5,6 +5,17 @@ validates, scaffolds, and publishes recipe folders for Pi.
 
 ## Install
 
+Install [Pi](https://pi.dev/docs/latest/quickstart) first and confirm `pi` is on
+`PATH`. Pi Recipes installs its companion extension into that existing harness;
+it does not install Pi itself.
+
+Pi Recipes currently requires Node.js 24 or later, matching its MCP runtime
+dependency. Check the active runtime before installation:
+
+```bash
+node --version
+```
+
 Install the recipe tooling into the environment where you run Pi:
 
 ```bash
@@ -176,8 +187,13 @@ dependencies.
 Run the local recipe directly by path:
 
 ```bash
+recipes setup
 pi --recipe . --agent agent
 ```
+
+`recipes create` does not install the companion Pi extension. Run setup before
+the first direct local launch; `recipes install` performs that setup
+automatically when needed.
 
 Registration is optional when you want a stable store identifier:
 

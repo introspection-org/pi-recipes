@@ -8,19 +8,18 @@ publish your own.
 
 ## 1. Install the Tooling
 
+Install [Pi](https://pi.dev/docs/latest/quickstart) first and confirm `pi` is on
+`PATH`. Pi Recipes currently requires Node.js 24 or later.
+
 Install the recipe CLI once:
 
 ```bash
 npm install -g @introspection-ai/pi-recipes
 ```
 
-`recipes` works with a companion Pi extension. Install it explicitly with:
-
-```bash
-recipes setup
-```
-
-After that, install recipes with `recipes install ...`.
+`recipes` works with a companion Pi extension. `recipes install ...` sets it up
+automatically when needed. For a recipe created from scratch and run directly
+by path, run `recipes setup` immediately before the first Pi launch.
 
 Recipes are stored under:
 
@@ -115,6 +114,7 @@ Validate and try it locally:
 
 ```bash
 recipes check ./my-recipe
+recipes setup
 pi --recipe ./my-recipe --agent agent
 ```
 

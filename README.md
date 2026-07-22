@@ -81,6 +81,12 @@ improvement loops around the same portable artifact.
 
 ## Quick Start
 
+Install [Pi](https://pi.dev/docs/latest/quickstart) first and confirm `pi` is on
+`PATH`. Pi Recipes extends Pi; it does not install the harness itself.
+
+Pi Recipes currently requires Node.js 24 or later, matching its MCP runtime
+dependency.
+
 Install the recipe tooling:
 
 ```bash
@@ -95,6 +101,7 @@ Create a local recipe:
 ```bash
 recipes create ./my-recipe
 recipes check ./my-recipe
+recipes setup
 ```
 
 Launch it with Pi:

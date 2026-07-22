@@ -5,6 +5,16 @@ maps recipe resources into the live Pi session.
 
 ## Install
 
+Install [Pi](https://pi.dev/docs/latest/quickstart) first and confirm `pi` is on
+`PATH`. Pi Recipes extends an existing Pi harness; it does not install Pi.
+Pi Recipes currently requires Node.js 24 or later, matching its MCP runtime
+dependency.
+
+```bash
+node --version
+pi --version
+```
+
 Install the recipe tooling:
 
 ```bash

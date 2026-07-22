@@ -11,6 +11,11 @@ target/
 vendor/recipe-check/
 vendor/mcp-client/
 harbor/jobs/
+.pi/bin/
+.pi/mcp-catalogs/
+.pi/mcp-session.json
+.pi/mcporter.json
+.pi/mcp.local.json
 .DS_Store
 *.log
 .env
