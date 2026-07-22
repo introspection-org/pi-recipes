@@ -203,11 +203,15 @@ pi --recipe my-recipe --agent agent
 ## `package.json` and `pi`
 
 Recipes use `package.json` as their manifest. Top-level package fields describe
-the recipe identity:
+the package:
 
 - `name`: the identifier users pass to `pi --recipe` and `recipes path`
-- `version`: the recipe version shown in Pi sessions
+- `version`: optional package/display metadata shown in Pi sessions; omitted
+  versions resolve as `0.0.0` for compatibility
 - `description`: a short summary for humans
+
+For distribution, the reproducible identity is the Git source plus an immutable
+tag or commit. The manifest version is not a substitute for that source pin.
 
 The `pi` block declares recipe-owned resources:
 
@@ -248,6 +252,9 @@ When entries are omitted, conventional folders are used if present:
 `extensions` are only loaded when declared.
 
 ## MCP Manifests
+
+See [MCP configuration](mcp-configuration.md) for the package policy, per-agent
+selection, and environment-binding model in one place.
 
 Recipes can declare MCP endpoint policy with `package.json#pi.mcp`:
 

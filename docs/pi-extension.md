@@ -92,10 +92,10 @@ metadata and filesystem paths are not injected into the system prompt.
 
 ## Manifest File
 
-`package.json` is the recipe manifest. Top-level package fields tell Pi what
-recipe this is:
+`package.json` is the recipe manifest. Top-level package fields describe the
+package:
 
-- `name`, `version`, and `description`
+- `name` and `description`, plus optional `version` display/package metadata
 
 The `pi` block tells Pi which recipe-owned files should be loaded:
 
@@ -217,6 +217,9 @@ Omitting `extensions` or `extensions.include` loads all declared recipe
 extensions. `exclude` subtracts matching extension names.
 
 ## MCP
+
+For a concise explanation of package policy, agent selection, and local or
+hosted endpoint bindings, start with [MCP configuration](mcp-configuration.md).
 
 Recipes can expose MCP endpoint tools through a generated session-local `mcp` CLI.
 The recipe declares an upper-bound MCP server policy in `package.json#pi.mcp`,

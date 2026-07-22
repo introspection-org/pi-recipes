@@ -1,5 +1,9 @@
 # MCP authentication in recipe sessions
 
+This page covers authentication after capability has been declared and selected.
+Start with [MCP configuration](mcp-configuration.md) for the complete three-gate
+model.
+
 Recipe MCP authentication follows the binding that made an already-approved
 server reachable. Authentication never selects a server or grants tools: the
 materialized package, binding, and active-agent policies still determine the

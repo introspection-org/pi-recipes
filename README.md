@@ -8,7 +8,7 @@
   </a>
 </div>
 
-<h4 align="center">Reproducible frontier-grade agents</h4>
+<h4 align="center">Portable agent systems, built on Pi</h4>
 
 <div align="center">
   <a href="https://pi.recipes"><img src="https://img.shields.io/badge/website-pi.recipes-blue" alt="Website"></a>
@@ -20,9 +20,10 @@
 
 <br>
 
-A Pi recipe captures the expertise behind a frontier-grade agent so the same
-workflow can be run, measured, and improved anywhere Pi runs. Install one from
-Git and customize it locally.
+A Pi recipe packages the behavior behind an agent as source you can inspect,
+run, fork, and distribute. It keeps instructions, agents, skills, extensions,
+capability policy, and quality definitions together so the system can run
+anywhere Pi runs.
 
 ## Overview
 
@@ -33,16 +34,27 @@ recipes in a local store and ensures the Pi extension is installed before
 recipes are run. The Pi extension resolves an installed recipe into a local
 directory and wires those recipe files into the live Pi session at launch time.
 
-`package.json` owns both recipe identity and Node dependency metadata. The
-top-level `name`, `version`, and `description` identify the recipe, while the
-`pi` block declares recipe resources such as agents, extensions, skills,
-and prompts.
+`package.json` is both the package manifest and the recipe entry point. `name`
+is the local selector, `description` explains the package, and the optional
+`version` is useful display/package metadata. The `pi` block declares resources
+and policies. A reproducible distributed release is identified by its Git
+source plus an immutable tag or commit—not by the mutable manifest alone.
+
+Recipes remain ordinary Git-backed packages. Pi Recipes supplies the open
+format, validator, CLI, resolver, and catalog; it does not require a registry or
+a particular cloud. Run a recipe locally, embed it in your own Pi host, or
+deploy that host on infrastructure such as Fly.io, Vercel, or your own cluster.
+[Introspection](https://docs.introspection.dev) is the first-party managed cloud
+for teams that want isolated runtimes and production improvement loops around
+the same portable artifact.
 
 ## Documentation
 
+- [Documentation index](docs/index.md): choose the shortest path for creating, composing, validating, running, or distributing a recipe.
 - [Recipe Flow](docs/recipe-flow.md): quick user-facing guide to installing, customizing, creating, and publishing recipes.
 - [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
 - [Agent Composition](docs/agent-composition.md): shared `SYSTEM.md`, specialized agent instructions, `from:` inheritance, capabilities, and subagents.
+- [MCP Configuration](docs/mcp-configuration.md): package policy, per-agent selection, and environment-owned endpoint bindings.
 - [Recipe Judges](docs/recipe-judges.md): portable authored judge YAML, static validation, and the runtime ownership boundary.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
 - [Recipe Evals](docs/recipe-evals.md): declaring and running Harbor offline eval suites with exact pins.
