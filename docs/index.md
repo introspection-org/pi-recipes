@@ -1,8 +1,9 @@
 # Pi Recipes documentation
 
-Pi Recipes is the open standard and toolchain for portable agent systems built on
-Pi. A recipe is an inspectable Git-backed package; Pi Recipes defines how to
-compose it, validate it, resolve it, run it locally, and distribute it.
+A **recipe** is a portable agent-system package. **Pi Recipes** is the open
+format and toolchain for creating, validating, running, and distributing those
+packages. **Introspection** is the first-party managed cloud for operating and
+improving them.
 
 ## Choose a path
 

@@ -8,7 +8,7 @@
   </a>
 </div>
 
-<h4 align="center">Portable agent systems, built on Pi</h4>
+<h4 align="center">Portable agent systems, built on Pi.</h4>
 
 <div align="center">
   <a href="https://pi.recipes"><img src="https://img.shields.io/badge/website-pi.recipes-blue" alt="Website"></a>
@@ -20,10 +20,10 @@
 
 <br>
 
-A Pi recipe packages the behavior behind an agent as source you can inspect,
-run, fork, and distribute. It keeps instructions, agents, skills, extensions,
-capability policy, and quality definitions together so the system can run
-anywhere Pi runs.
+A **recipe** is a portable agent-system package. **Pi Recipes** is the open
+format and toolchain for creating, validating, running, and distributing those
+packages. It keeps instructions, agents, skills, extensions, capability policy,
+and quality definitions together as source you can inspect, fork, and own.
 
 ## Overview
 
@@ -42,13 +42,13 @@ source plus a commit SHA, or a tag protected by an immutable-release policy—no
 by the mutable manifest alone.
 
 Recipes remain ordinary Git-backed packages. Pi Recipes supplies the open
-standard, validator, CLI, resolver, and catalog; it does not require a registry
+format, validator, CLI, resolver, and catalog; it does not require a registry
 or a particular cloud. Run a recipe locally or embed it in your own compatible
 Pi host, then deploy that host wherever its runtime requirements are supported.
 Pi Recipes does not supply provider-specific Fly.io or Vercel deployment adapters.
 [Introspection](https://docs.introspection.dev) is the first-party managed cloud
-for teams that want isolated runtimes and production improvement loops around
-the same portable artifact.
+for operating and improving them, with isolated runtimes and production
+improvement loops around the same portable artifact.
 
 ## Documentation
 
