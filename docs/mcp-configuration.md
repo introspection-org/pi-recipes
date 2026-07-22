@@ -1,14 +1,19 @@
 # MCP configuration
 
-MCP capability is resolved through three independent gates. No layer grants
-access by itself.
+MCP authorization is the intersection of two fail-closed policy gates: the
+package boundary and the subsets selected by the active agent and its visible
+subagents. The authorized server must
+also have a reachable endpoint, supplied either by a package-declared MCP
+manifest or by a local/host binding. A binding supplies connectivity; it never
+expands authorization.
 
 ```text
-package policy       agent selection       environment binding
-package.json#pi.mcp  agents/*.yaml#mcp     .pi/mcp.local.json or host
-        └─────────────── intersection ───────────────┘
-                            ↓
-                   session-local mcp CLI
+package policy  ∩  active/visible-agent selections  =  authorized tools
+       package.json#pi.mcp             agents/*.yaml#mcp
+                              +
+ endpoint from package manifest or local/host binding
+                              ↓
+                     session-local mcp CLI
 ```
 
 ## 1. Declare the package boundary
@@ -57,10 +62,11 @@ Omitting a server—or the entire agent `mcp` block—means no access. `exclude`
 removes exact names after inclusion and always wins. MCP tools are selected here,
 not in the agent's ordinary `tools` list.
 
-## 3. Bind the environment
+## 3. Supply endpoint configuration
 
-Policy is portable; connectivity is environment-specific. For local runs,
-provide endpoints and credential references in `.pi/mcp.local.json`:
+A referenced MCP manifest can carry a portable configured endpoint and catalog.
+When connectivity varies by environment, provide an endpoint and credential
+references in `.pi/mcp.local.json` for local runs, or through a host binding:
 
 ```json
 {
@@ -77,18 +83,23 @@ provide endpoints and credential references in `.pi/mcp.local.json`:
 }
 ```
 
-Commit an example when helpful, but never commit credentials. A hosted runtime
-binds its own endpoint and credential system to the same shape. A bound server
-that the package and selected agent do not permit remains unavailable.
+Do not commit or distribute `.pi/mcp.local.json`; publish validation rejects
+local configuration. Commit `.pi/mcp.local.example.json` when a binding template
+is helpful. A hosted runtime binds its own endpoint and credential system to the
+same shape. A binding overrides a package-manifest endpoint with the same id,
+but a server that the package does not permit, or that none of the active/visible
+agents permit, remains unavailable.
 
-`recipes install` creates `.pi/mcp.local.json` when the recipe declares MCP and
-the file is absent, using `.pi/mcp.local.example.json` when provided or a
-generated template otherwise.
+When the local file is absent, `recipes install` copies
+`.pi/mcp.local.example.json` when provided or generates a template from declared
+`pi.mcp.servers`. A manifest-only recipe with no example needs no generated
+local file because its manifest can supply the endpoint.
 
 ## Use capabilities from an agent
 
-When the selected agent has MCP access, the extension creates a session-local
-`mcp` command. Discover narrowly, inspect one schema, then call or compose:
+When the active agent or one of its visible subagents has MCP access, the
+extension creates a session-local `mcp` command from their combined selections.
+Discover narrowly, inspect one schema, then call or compose:
 
 ```bash
 mcp search "contact lookup"

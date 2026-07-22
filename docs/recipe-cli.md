@@ -205,13 +205,15 @@ pi --recipe my-recipe --agent agent
 Recipes use `package.json` as their manifest. Top-level package fields describe
 the package:
 
-- `name`: the identifier users pass to `pi --recipe` and `recipes path`
+- `name`: the package identity; installed recipes can also resolve by source,
+  normalized scoped identity, or an unambiguous short-name alias
 - `version`: optional package/display metadata shown in Pi sessions; omitted
   versions resolve as `0.0.0` for compatibility
 - `description`: a short summary for humans
 
-For distribution, the reproducible identity is the Git source plus an immutable
-tag or commit. The manifest version is not a substitute for that source pin.
+For distribution, the reproducible identity is the Git source plus a commit SHA,
+or a tag protected by an immutable-release policy. The manifest version is not
+a substitute for that source pin.
 
 The `pi` block declares recipe-owned resources:
 
@@ -296,14 +298,16 @@ package-permitted tool, an exact list enables a subset, and `[]` enables none.
 `exclude` removes exact names after inclusion and always wins. `"*"` is a
 whole-toolset sentinel, not a glob; patterns such as `search_*` are invalid.
 Omitting a server or the agent `mcp` block means no access. Exact includes avoid
-automatically exposing tools that a remote server adds later. Empty package
-`tools`, agent server (`contacts: {}`), and agent `mcp: {}` objects are invalid
-rather than implicit wildcards.
+automatically exposing tools that a remote server adds later. Missing package
+`tools` fails closed with a warning. Agent server (`contacts: {}`) and empty
+agent `mcp: {}` objects are valid but silently treated as omitted; none imply a
+wildcard.
 
-Package declaration, endpoint binding, and agent selection are all required.
-A local or cloud binding never grants access by itself, and a bound server not
-listed in `package.json#pi.mcp.servers` is ignored. An empty package server list
-therefore permits no MCP servers.
+Package declaration and agent selection are the two authorization gates. The
+authorized server also needs an endpoint from a configured package manifest or
+a local/host binding. A binding never grants access by itself, and a bound server
+not listed in `package.json#pi.mcp.servers` is ignored. An empty package server
+list therefore permits no MCP servers.
 
 Package and agent MCP policies use only `include` and `exclude`, and MCP tools
 are selected only through the agent `mcp` block. Missing package declarations,

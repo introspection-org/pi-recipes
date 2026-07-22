@@ -35,15 +35,17 @@ recipes are run. The Pi extension resolves an installed recipe into a local
 directory and wires those recipe files into the live Pi session at launch time.
 
 `package.json` is both the package manifest and the recipe entry point. `name`
-is the local selector, `description` explains the package, and the optional
+is the package identity, `description` explains the package, and the optional
 `version` is useful display/package metadata. The `pi` block declares resources
 and policies. A reproducible distributed release is identified by its Git
-source plus an immutable tag or commit—not by the mutable manifest alone.
+source plus a commit SHA, or a tag protected by an immutable-release policy—not
+by the mutable manifest alone.
 
 Recipes remain ordinary Git-backed packages. Pi Recipes supplies the open
-format, validator, CLI, resolver, and catalog; it does not require a registry or
-a particular cloud. Run a recipe locally, embed it in your own Pi host, or
-deploy that host on infrastructure such as Fly.io, Vercel, or your own cluster.
+standard, validator, CLI, resolver, and catalog; it does not require a registry
+or a particular cloud. Run a recipe locally or embed it in your own compatible
+Pi host, then deploy that host wherever its runtime requirements are supported.
+Pi Recipes does not supply provider-specific Fly.io or Vercel deployment adapters.
 [Introspection](https://docs.introspection.dev) is the first-party managed cloud
 for teams that want isolated runtimes and production improvement loops around
 the same portable artifact.
@@ -54,7 +56,7 @@ the same portable artifact.
 - [Recipe Flow](docs/recipe-flow.md): quick user-facing guide to installing, customizing, creating, and publishing recipes.
 - [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
 - [Agent Composition](docs/agent-composition.md): shared `SYSTEM.md`, specialized agent instructions, `from:` inheritance, capabilities, and subagents.
-- [MCP Configuration](docs/mcp-configuration.md): package policy, per-agent selection, and environment-owned endpoint bindings.
+- [MCP Configuration](docs/mcp-configuration.md): package policy, per-agent selection, and package- or environment-supplied endpoints.
 - [Recipe Judges](docs/recipe-judges.md): portable authored judge YAML, static validation, and the runtime ownership boundary.
 - [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
 - [Recipe Evals](docs/recipe-evals.md): declaring and running Harbor offline eval suites with exact pins.
@@ -99,16 +101,17 @@ pi --recipe ./my-recipe --agent agent
 ```
 
 Hosts that embed Pi can resolve the same recipe semantics without adopting a
-second runtime abstraction:
+second recipe abstraction. The following is integration pseudocode: the host
+implements `AgentRunController` and owns session construction and lifecycle.
 
 ```ts
 import { resolveRecipe } from "@introspection-ai/pi-recipes/recipe";
-import { createAgentTool } from "@introspection-ai/pi-recipes/pi";
+import { createAgentTool, type AgentRunController } from "@introspection-ai/pi-recipes/pi";
 
 const recipe = resolveRecipe({ recipeDir, agentName });
-const runs = createHostRunController(recipe.subagents);
+const runs: AgentRunController = host.createRunController(recipe.subagents);
 
-pi.registerTool(createAgentTool(runs, recipe.subagents));
+host.registerTool(createAgentTool(runs, recipe.subagents));
 ```
 
 The host remains responsible for model credentials, session persistence,

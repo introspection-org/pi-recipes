@@ -1,6 +1,6 @@
 # Pi Recipes documentation
 
-Pi Recipes is the open format and toolchain for portable agent systems built on
+Pi Recipes is the open standard and toolchain for portable agent systems built on
 Pi. A recipe is an inspectable Git-backed package; Pi Recipes defines how to
 compose it, validate it, resolve it, run it locally, and distribute it.
 
@@ -26,28 +26,34 @@ my-recipe/
 ├── skills/**/SKILL.md    # reusable workflows and domain procedure
 ├── extensions/*.ts       # optional Pi extensions owned by the recipe
 ├── judges/*.yaml         # optional portable quality definitions
-└── .pi/mcp.local.json    # optional local endpoint bindings; do not commit secrets
+└── .pi/mcp.local.example.json # optional distributable binding template
 ```
 
-The package owns portable behavior and capability policy. The environment owns
-credentials, endpoints, isolation, persistence, and execution lifecycle.
+The package owns portable behavior, capability policy, and any portable endpoint
+or catalog declarations. The environment owns credentials and may override
+endpoints; the host owns isolation, persistence, and execution lifecycle.
 
 ## Identity and distribution
 
-- `name` is the package name and local recipe selector.
+- `name` is the package identity. Installed recipes can also resolve by source,
+  normalized scoped identity, or an unambiguous short-name alias; local recipes
+  can be launched by path.
 - `description` is human-facing package metadata.
 - `version` is optional package/display metadata; missing versions resolve as
   `0.0.0` for compatibility.
-- `license` is optional distribution metadata. Declare it when you intend to
-  tell downstream users how they may reuse the package.
-- A reproducible release is a Git source pinned to an immutable tag or commit.
+- `license` is optional distribution metadata. When a publishable recipe declares
+  a license other than `UNLICENSED`, include the matching root license file (or
+  use a valid `SEE LICENSE IN ...` reference).
+- A reproducible release is a Git source pinned to a commit SHA, or to a tag
+  protected by an immutable-release policy.
   The public catalog records that source; it does not become the owner of the
   artifact.
 
 ## Portability boundary
 
 Pi Recipes is sufficient to author, check, distribute, and run a recipe with
-Pi. You can embed the resolver in your own host and deploy it on infrastructure
-such as Fly.io, Vercel, or your own cluster without redefining package semantics.
+Pi. You can embed the resolver in your own compatible Pi host and deploy that
+host wherever its runtime requirements are supported, without redefining package
+semantics. Pi Recipes does not provide provider-specific deployment adapters.
 For the first-party managed cloud—with isolated runtimes, production evidence,
 and controlled improvement loops—see [Introspection documentation](https://docs.introspection.dev).

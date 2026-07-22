@@ -274,11 +274,12 @@ non-blocking warning. A missing agent `include` list, an agent server such as
 `contacts: {}`, and an empty agent `mcp: {}` are silently treated as omitted.
 None are interpreted as implicit wildcards.
 
-Package declaration, endpoint binding, and agent selection are independent
-gates. A bound server that is absent from `package.json#pi.mcp.servers` is
-ignored, and an agent cannot select it. An empty package server list therefore
-permits no MCP servers; creating a local or cloud binding never grants access
-by itself.
+Package declaration and agent selection are the two authorization gates. An
+authorized server must also have an endpoint from a configured package manifest
+or a local/host binding. A bound server absent from
+`package.json#pi.mcp.servers` is ignored, and an agent cannot select it. An empty
+package server list therefore permits no MCP servers; creating a binding never
+grants access by itself.
 
 `"*"` is a reserved whole-toolset sentinel, not a glob. Patterns such as
 `search_*` are invalid. An explicit wildcard opts into tools that the remote
