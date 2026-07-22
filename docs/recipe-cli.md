@@ -705,8 +705,10 @@ recipes publish ./my-recipe --github owner/my-recipe --visibility private \
 
 `--github <owner/repo>` and `--visibility <public|private>` are both required;
 `--message` sets the commit message. `recipes publish` runs the stricter publish-profile validation, updates
-`package.json#name` to `@owner/my-recipe`, commits local changes, creates the
-GitHub repository when needed, pushes `main`, and re-registers the local recipe.
+`package.json#name` to `@owner/my-recipe`, ensures a `.gitignore` covering
+`node_modules/`, build output, and generated `.pi/` runtime state, commits local
+changes, creates the GitHub repository when needed, pushes `main`, and
+re-registers the local recipe.
 When `--visibility public` is used, it also submits the public package metadata
 to the recipe catalog so the marketplace can add or refresh the listing.
 

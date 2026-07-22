@@ -322,6 +322,12 @@ normally need `bash` or another command-capable tool. Recipe validation emits a
 non-blocking warning when an agent declares MCP access without `bash`;
 recipes that provide a custom shell wrapper may intentionally ignore it.
 
+These `.pi/` artifacts — `.pi/bin/`, `.pi/mcp-session.json`, `.pi/mcporter.json`,
+`.pi/mcp-catalogs/`, and `.pi/mcp.local.json` — are generated workspace state and
+belong in `.gitignore`; `recipes publish` adds them automatically. Keep only the
+distributable `.pi/mcp.local.example.json` in Git. Never commit
+`.pi/mcp-session.json`, which can hold resolved session material.
+
 ```bash
 mcp search "contact lookup"              # find relevant tool references
 mcp list                                 # configured servers and tool counts
@@ -500,6 +506,11 @@ runs are removed from the active inventory and further actions report that the
 run is already closed. Child runs use the same recipe directory and current Pi
 workspace as the parent session, but child questions never interrupt the root:
 approvals auto-approve and questions auto-decline.
+
+Child-run state persists under `<workspace>/.pi/agents/<run-id>/` and rehydrates
+across restarts, so `status`/`wait` still resolve a run started in an earlier
+process. This is generated workspace state — gitignore `.pi/agents/` (publish
+handles it automatically).
 
 ## Recipe Extensions
 

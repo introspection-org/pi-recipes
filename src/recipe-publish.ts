@@ -168,7 +168,21 @@ function writePackageIdentity(recipeDir: string, packageName: string): boolean {
 
 function ensureGitignore(recipeDir: string): boolean {
   const gitignorePath = join(recipeDir, ".gitignore");
-  const desired = ["node_modules/", "dist/", ".DS_Store", ".env", ".env.*"];
+  const desired = [
+    "node_modules/",
+    "dist/",
+    ".DS_Store",
+    ".env",
+    ".env.*",
+    // Generated Pi runtime state written into the workspace at launch. Keep the
+    // distributable .pi/mcp.local.example.json (not listed here) committable.
+    ".pi/bin/",
+    ".pi/mcp-catalogs/",
+    ".pi/mcp-session.json",
+    ".pi/mcporter.json",
+    ".pi/mcp.local.json",
+    ".pi/agents/",
+  ];
   const existing = existsSync(gitignorePath)
     ? readFileSync(gitignorePath, "utf8").split(/\r?\n/)
     : [];
