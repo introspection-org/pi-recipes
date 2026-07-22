@@ -373,6 +373,34 @@ describe("Pi recipes launch extension", () => {
     }
   });
 
+  it("does not re-authenticate an already-selected recipe model", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-model-selected-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      const pi = createMockExtensionAPI();
+      const setModel = vi.spyOn(pi, "setModel");
+      const ctx = {
+        ...extensionContext(projectDir),
+        model: { provider: "openai", id: "gpt-4.1" },
+      };
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createPiRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(setModel).not.toHaveBeenCalled();
+      expect(pi.thinkingLevel).toBe("low");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("aborts instead of falling back when the recipe model has no credentials", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-model-auth-"));
     const previousExitCode = process.exitCode;

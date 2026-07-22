@@ -798,11 +798,21 @@ export function createPiRecipesExtension(
       resolvedModel,
       launchState.resolved.modelConfig
     );
-    const ok = await pi.setModel(resolvedModel);
-    if (!ok) {
-      throw new Error(
-        `Recipe model has no configured API key: ${launchState.resolved.modelSpec}`
-      );
+    // Pi has already selected and authenticated its initial model before
+    // extensions receive session_start. Avoid re-running that auth check when
+    // the recipe selects the same model; OAuth providers may rotate a refresh
+    // token, and a second concurrent refresh can invalidate the first one.
+    const currentModel = ctx.model;
+    if (
+      currentModel?.provider !== resolvedModel.provider ||
+      currentModel?.id !== resolvedModel.id
+    ) {
+      const ok = await pi.setModel(resolvedModel);
+      if (!ok) {
+        throw new Error(
+          `Recipe model has no configured API key: ${launchState.resolved.modelSpec}`
+        );
+      }
     }
 
     if (launchState.resolved.thinkingLevel) {
