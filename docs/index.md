@@ -18,6 +18,7 @@ improving them.
 | Pin an offline Harbor suite | [Recipe evals](recipe-evals.md) |
 | Ask for user input or approval across hosts | [Recipe interactions](interactions.md) |
 | Declare portable runtime resource intent | [Deployment configuration](deployment-configuration.md) |
+| Run a recipe as a service on any cloud | [Recipe serve](recipe-serve.md) (proposal) |
 
 ## Package anatomy
 
@@ -57,7 +58,9 @@ endpoints; the host owns isolation, persistence, and execution lifecycle.
 Pi Recipes is sufficient to author, check, distribute, and run a recipe with
 Pi. You can embed the resolver in your own compatible Pi host and deploy that
 host wherever its runtime requirements are supported, without redefining package
-semantics. Pi Recipes does not provide provider-specific deployment adapters.
+semantics. Pi Recipes does not provide provider-specific deployment adapters;
+the proposed [serve layer](recipe-serve.md) keeps that boundary by shipping one
+portable HTTP host plus per-target deploy templates.
 For the first-party managed cloud—with isolated runtimes, production evidence,
 and controlled improvement loops—see [Introspection documentation](https://docs.introspection.dev).
 For guided coding-agent workflows around this toolchain (create, migrate,
