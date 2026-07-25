@@ -26,7 +26,7 @@ every rung is public: convenience at the top, control by peeling a layer,
 never by configuring one.
 
 ```
-serveRecipe()                  ./serve     AG-UI service: turns, streaming, lifecycle
+serveRecipe()                  ./serve     Tasks API service: tasks, runs, AG-UI streams
   └─ runRecipe()               ./run       one-shot: prompt in → result out
        └─ createRecipeSession() ./session  a live Pi session you drive
             └─ resolveRecipe()  ./recipe   interpretation only (exists today)
@@ -154,86 +154,103 @@ caller mistakes (bad options, unreadable recipe) throw.
 
 ## Rung 1: `serveRecipe` — export `./serve`
 
-An **AG-UI server** for the recipe: a fetch-native app speaking the
-[AG-UI protocol](https://docs.ag-ui.com/) — the open agent↔user
-interaction standard — plus a Node listener. Serving a recipe therefore
-requires no custom client: any AG-UI consumer (`@ag-ui/client`'s
-`HttpAgent`, CopilotKit UI components, or a plain SSE reader) talks to it
-as-is.
+A **standalone Tasks API server** for the recipe: a fetch-native app
+serving the Introspection public Tasks surface — CRUD over tasks, runs
+within a task, and [AG-UI](https://docs.ag-ui.com/) event streams per run
+— with all state held in-process. A *task* is a conversation; creating one
+creates a Pi session; deploying a recipe therefore yields a small
+self-contained conversation service, not just a bare turn endpoint.
+
+This is the AgentOS pattern (define agents in code, hand them to a
+runtime, get a self-hosted app with a full REST API that SDKs and UIs
+connect to directly), applied to recipes — with the API shape being the
+Introspection Tasks contract rather than an invented one, so existing
+task clients work against a served recipe by changing the base URL.
 
 ```ts
 interface ServeRecipeOptions {
   recipeDir: string;
-  agentName?: string;
+  agentName?: string;   // default agent for created tasks (overridable per task)
   token?: string;       // inbound bearer; default env RECIPES_SERVE_TOKEN;
                         // unset → auth disabled (trusted-network deploys)
-  workspace?: string;   // agent cwd; default process.cwd()
-  onEvent?: (event: AgentSessionEvent) => void; // observability tap only
+  workspace?: string;   // workspace root; each task gets <root>/<task_id>/
+  maxTasks?: number;    // live-session cap; default 8; excess → 409
+  onEvent?: (taskId: string, event: AgentSessionEvent) => void; // observability tap
 }
 
 interface RecipeServer {
   fetch(request: Request): Promise<Response>; // default-exportable on fetch runtimes
   listen(options?: { port?: number; hostname?: string }): Promise<void>;
-  close(): Promise<void>; // drain in-flight run, then stop
+  close(): Promise<void>; // drain in-flight runs, dispose sessions, stop
 }
 ```
 
-That is the whole options surface, deliberately. The server holds **one
-agent session for the process lifetime**: constructed lazily on the first
-run, reused across turns. Scale-out is the deploy target's job — one
-container per conversation, which is also what makes snapshot/pause-resume
-clouds (Daytona, Vercel Sandbox) work naturally.
-
-### Wire contract (AG-UI)
+### Wire contract — the Tasks API subset
 
 | Method | Path | Purpose | Auth |
 | --- | --- | --- | --- |
-| `POST` | `/` | Run one turn: `RunAgentInput` in, AG-UI event stream (SSE) out | bearer |
-| `GET` | `/health` | Liveness for orchestrator probes: `{ "status": "ok" }` (non-normative) | none |
+| `POST` | `/v1/tasks` | Create a task (= conversation = Pi session); optional first `prompt`, optional `agent_name` | bearer |
+| `GET` | `/v1/tasks` | Cursor-paginated list of live tasks | bearer |
+| `GET` | `/v1/tasks/{task_id}` | Task view: id, status, agent_name, timestamps, last-response metadata | bearer |
+| `DELETE` | `/v1/tasks/{task_id}` | End the conversation: dispose the session, free the slot | bearer |
+| `POST` | `/v1/tasks/{task_id}/cancel` | Abort the task's in-flight run | bearer |
+| `POST` | `/v1/tasks/{task_id}/runs` | Submit a turn (prompt or steer) → run view | bearer |
+| `GET` | `/v1/tasks/{task_id}/runs/{run_id}/stream` | AG-UI event stream (SSE) for the run | bearer |
+| `GET` | `/health` | Liveness probe (non-normative) | none |
 
-The request body, event vocabulary, and stream encoding are AG-UI's, not
-ours: `RunAgentInput` (`threadId`, `runId`, `messages`, `state`, `tools`,
-`forwardedProps`) in; `RUN_STARTED`, `TEXT_MESSAGE_START/CONTENT/END`,
-`TOOL_CALL_START/ARGS/END`, `TOOL_CALL_RESULT`,
-`STATE_SNAPSHOT`/`MESSAGES_SNAPSHOT`, `RUN_FINISHED` / `RUN_ERROR` out.
-This spec defines only how a recipe session binds to that protocol:
+Shapes follow the platform's public Tasks API: CRUD-only routes plus the
+sanctioned protocol verbs `/cancel` and `/stream`; task and run ids are
+UUIDv7; list pagination is cursor-based; task `status` uses the platform
+vocabulary restricted to what a standalone server owns (`running`, `idle`,
+`completed`, `failed`, `cancelled` — no provisioning states, since
+creating a task creates the session synchronously).
 
-- **The session is the thread.** The process holds one Pi session; every
-  run belongs to it. A `threadId` is accepted and echoed but does not
-  select among sessions (there is only one — see non-goals).
-- **Server-side history is authoritative.** AG-UI clients conventionally
-  send the full message list each run; this server consumes only the
-  newest user message and ignores the rest of the incoming transcript.
-  Stateless or reconnecting clients rehydrate from `MESSAGES_SNAPSHOT`,
-  which the server emits at run start when the incoming history has
-  diverged from the session's.
-- **One run at a time.** A `POST` while a run is in flight is rejected
-  with `409 Conflict` and `{ "error": "…" }`; aborting is closing the
-  request/stream (AG-UI's cancellation model), which aborts the turn.
-- **Event mapping is the translator's job.** Pi session events map onto
-  AG-UI events (`message_*` deltas → `TEXT_MESSAGE_*`,
-  `tool_execution_*` → `TOOL_CALL_*`/`TOOL_CALL_RESULT`, turn settle →
-  `RUN_FINISHED`, session error → `RUN_ERROR`) under AG-UI's strict
-  start/content/end id discipline. This translator already exists,
-  battle-tested, in the first-party managed runtime; adopting this spec
-  includes extracting it here so it is written once and shared.
-- **Streaming hygiene:** responses set
-  `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no` so
-  intermediaries don't buffer; SSE comment lines keep idle connections
-  alive.
-- Auth is a timing-safe byte compare against the configured token.
+Binding semantics:
 
-Protocol versioning is AG-UI's concern, not this package's; clients must
-ignore event types they don't know, per the AG-UI spec.
+- **Task = conversation = one Pi session**, created via rung 3 at
+  `POST /v1/tasks`, disposed at `DELETE`. Each task runs in its own
+  workspace subdirectory under the workspace root.
+- **One run at a time per task.** A new prompt while a run is in flight →
+  `409 Conflict`; a steer joins the in-flight turn. Tasks are independent
+  — concurrent runs on different tasks are fine, bounded by `maxTasks`.
+- **State is in-process.** The task registry and transcripts live with
+  their sessions; a restart is a fresh server (see non-goals). Durable
+  conversation state is the platform's product, not this server's.
+- Auth is a timing-safe byte compare against the configured token; there
+  is one bearer for the whole server (no tenancy — see non-goals).
+
+### Run streams (AG-UI)
+
+Each run's `/stream` is an AG-UI event stream — `RUN_STARTED`,
+`TEXT_MESSAGE_START/CONTENT/END`, `TOOL_CALL_START/ARGS/END`,
+`TOOL_CALL_RESULT`, `RUN_FINISHED` / `RUN_ERROR` — encoded per the AG-UI
+spec (`@ag-ui/core` types + `@ag-ui/encoder`, SSE with JSON/protobuf
+content negotiation). Pi session events map onto AG-UI events under the
+protocol's strict start/content/end id discipline; this translator
+already exists, battle-tested, in the first-party managed runtime, and
+adopting this spec includes extracting it here so it is written once and
+shared. Responses set `Cache-Control: no-cache, no-transform` and
+`X-Accel-Buffering: no`; SSE comments keep idle connections alive. Any
+AG-UI consumer (`@ag-ui/client`, CopilotKit components, a plain SSE
+reader) can render a run's stream as-is.
+
+### Compatibility promise
+
+The acceptance test for this surface is client reuse: a task client built
+for the platform's public Tasks API — including the Introspection SDKs'
+task runner (create → run → stream → cancel), pointed at this server's
+base URL with its bearer — round-trips unchanged. Resources this server
+does not implement (conversations, files, events, metrics, shares) return
+`404`; clients that need them need the platform.
 
 ### Future surfaces
 
-`serveRecipe` binds the session to exactly one protocol today. The
-internal seam is adapter-shaped — a surface takes a `RecipeSessionHandle`
-and returns a fetch sub-app — so additional protocol facades (A2A for
+The internal seam is adapter-shaped — a surface takes the task registry /
+`RecipeSessionHandle`s and returns a fetch sub-app — so additional
+protocol facades (a bare single-session AG-UI endpoint, A2A for
 agent-to-agent delegation and discovery, MCP for recipe-as-tool) can be
-added later as small adapters without reworking the server. They are
-deliberately not part of v1.
+added later as small adapters without reworking the server. None ship in
+v1.
 
 ## CLI: `recipes serve`
 
@@ -318,12 +335,16 @@ traces wire an instrumentation of their choice into the tap.
 
 ## Non-goals (v1)
 
-- **Multi-session serving.** One recipe, one session, one process.
-- **Durable run state.** No local database; completed runs live only in
-  the bounded stream buffer and the caller's transcript.
-- **File-transfer routes.** The workspace is the container's filesystem;
-  artifact movement is the deploy target's concern (volumes, object
-  storage).
+- **Durability and tenancy.** The task registry is in-process: a restart
+  is a fresh server, and there is one bearer for the whole instance — no
+  users, orgs, or per-task auth. Durable, multi-tenant conversation state
+  is a platform product, not this server.
+- **Task isolation beyond a workspace directory.** Tasks in one process
+  share the container (filesystem, network, env). Deployments that need
+  hard isolation run one task per container and put a router in front —
+  the sandbox clouds' native model.
+- **Non-task resources.** No conversations, files, events, metrics, or
+  shares routes; unimplemented resources return `404`.
 - **Serve implementations in other languages.** The agent loop is Pi
   (TypeScript); other languages are clients of the HTTP contract.
 
@@ -332,7 +353,7 @@ traces wire an instrumentation of their choice into the tap.
 | Phase | Deliverable |
 | --- | --- |
 | 1 | `./session` + `./run`, Pi `^0.82` / `ModelRuntime` migration, tests against a scripted model |
-| 2 | `./serve` + `recipes serve` + Dockerfile scaffold + contract tests |
+| 2 | `./serve` + `recipes serve` + Dockerfile scaffold; acceptance = an Introspection SDK task client round-trips (create → run → stream → cancel) against the served base URL |
 | 3 | `recipes inspect` + `examples/deploy/*` templates |
 
 ## Open questions
@@ -340,9 +361,11 @@ traces wire an instrumentation of their choice into the tap.
 1. **Subagent bounds.** Proposed defaults for the in-process controller:
    concurrency 4, depth 2 — to validate against recipes shipping subagents
    today.
-2. **Session persistence across restarts.** Snapshot/pause-resume clouds
-   preserve process memory, so resume works there by construction; a
-   `sessionManager`-backed persistence option would extend it to cold
-   restarts. Deferred until a template needs it.
+2. **Task persistence across restarts.** Snapshot/pause-resume clouds
+   preserve process memory, so live tasks survive there by construction; a
+   `sessionManager`-backed persistence option would extend the registry to
+   cold restarts. Deferred until a template needs it.
+4. **`maxTasks` default.** 8 is a guess; validate against real recipe
+   memory footprints (a Pi session + MCP daemon per task).
 3. **`recipes run` CLI.** `pi --mode json -p` already covers one-shot CLI;
    add a `recipes run` alias only if CI users ask.
