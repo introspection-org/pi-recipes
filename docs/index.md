@@ -55,12 +55,15 @@ endpoints; the host owns isolation, persistence, and execution lifecycle.
 
 ## Portability boundary
 
-Pi Recipes is sufficient to author, check, distribute, and run a recipe with
-Pi. You can embed the resolver in your own compatible Pi host and deploy that
-host wherever its runtime requirements are supported, without redefining package
-semantics. Pi Recipes does not provide provider-specific deployment adapters;
-the proposed [serve layer](recipe-serve.md) keeps that boundary by shipping one
-portable HTTP host plus per-target deploy templates.
+Pi Recipes is sufficient to author, check, distribute, run, and serve a
+recipe. The embedding ladder is public at every rung — `resolveRecipe`
+(interpretation), `createRecipeSession` (a live session), `runRecipe`
+(one-shot), and `serveRecipe` / `recipes serve` (a standalone Tasks API
+service) — so you can embed any rung in your own host without redefining
+package semantics. Pi Recipes does not provide provider-specific deployment
+adapters; the [serve layer](recipe-serve.md) keeps that boundary by shipping
+one portable HTTP host plus per-target deploy templates
+(`examples/deploy/`).
 For the first-party managed cloud—with isolated runtimes, production evidence,
 and controlled improvement loops—see [Introspection documentation](https://docs.introspection.dev).
 For guided coding-agent workflows around this toolchain (create, migrate,
