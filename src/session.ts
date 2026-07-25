@@ -93,11 +93,11 @@ export interface CreateRecipeSessionOptions {
   /** Tap on `session.subscribe`, detached at dispose. */
   onEvent?: (event: AgentSessionEvent) => void;
   /**
-   * Span identity when recipe telemetry is initialized (see
-   * `initRecipeTelemetry`): `conversation_id` groups this session's gen_ai
+   * Span identity when recipe tracing is initialized (see
+   * `initRecipeTracing`): `conversation_id` groups this session's gen_ai
    * spans. Default: a fresh UUID per session.
    */
-  telemetry?: { conversationId?: string };
+  tracing?: { conversationId?: string };
 }
 
 export interface RecipeSessionHandle {
@@ -394,11 +394,11 @@ export async function createRecipeSession(
 
   const unsubscribe = opts.onEvent ? session.subscribe(opts.onEvent) : undefined;
 
-  // GenAI-semconv spans when the host initialized recipe telemetry (or its
+  // GenAI-semconv spans when the host initialized recipe tracing (or its
   // own global provider is registered through instrumentRecipeSession).
   const detachTelemetry = instrumentRecipeSession(session, {
     meta: {
-      conversationId: opts.telemetry?.conversationId ?? randomUUID(),
+      conversationId: opts.tracing?.conversationId ?? randomUUID(),
       agentId: `${recipe.manifest.name}/${recipe.agentName}`,
       agentName: recipe.agentName,
     },

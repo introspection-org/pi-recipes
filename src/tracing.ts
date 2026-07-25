@@ -23,7 +23,7 @@ export type { AgentMeta } from "@introspection-sdk/introspection-pi";
  * export, so a recipe served or embedded anywhere ships its traces to any
  * OTLP backend.
  *
- * Nothing is emitted by default. `initRecipeTelemetry` builds a provider only
+ * Nothing is emitted by default. `initRecipeTracing` builds a provider only
  * when an export target is configured, from either or both of:
  *
  *   - `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
@@ -39,14 +39,14 @@ export type { AgentMeta } from "@introspection-sdk/introspection-pi";
  * every embedding rung without paying for the export stack. The provider
  * bootstrap (SDK trace provider, OTLP exporters, protobuf encoding) lives in
  * `tracing-bootstrap.ts` and is loaded lazily, only when
- * `initRecipeTelemetry` is actually called.
+ * `initRecipeTracing` is actually called.
  *
  * Once initialized, `createRecipeSession` attaches the instrumentation to
  * every session it builds (subagent sessions included). Hosts that already
- * own an OTel provider skip `initRecipeTelemetry` and call
+ * own an OTel provider skip `initRecipeTracing` and call
  * `instrumentRecipeSession` with their own tracer instead.
  */
-export interface InitRecipeTelemetryOptions {
+export interface InitRecipeTracingOptions {
   /** Fallback service name; `OTEL_SERVICE_NAME` wins. Default: "pi-recipes". */
   serviceName?: string;
   /** Extra resource attributes stamped on all spans. */
@@ -66,11 +66,11 @@ export interface InitRecipeTelemetryOptions {
 }
 
 /**
- * Handle to a provider created by `initRecipeTelemetry`: ownership of
+ * Handle to a provider created by `initRecipeTracing`: ownership of
  * shutdown is holding the handle. `flush` after a run settles on
  * short-lived hosts; `shutdown` once on host close.
  */
-export interface RecipeTelemetry {
+export interface RecipeTracing {
   flush(): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -86,7 +86,7 @@ export interface RecipeTraceProvider {
 
 let provider: RecipeTraceProvider | null = null;
 let ownsContextManager = false;
-let initializing: Promise<RecipeTelemetry | null> | null = null;
+let initializing: Promise<RecipeTracing | null> | null = null;
 
 /**
  * Initialize the recipe trace provider. Returns a handle when this call
@@ -95,9 +95,9 @@ let initializing: Promise<RecipeTelemetry | null> | null = null;
  * keeps its handle), or the host's own global OTel provider is already
  * registered (the host wins; nothing is overwritten).
  */
-export function initRecipeTelemetry(
-  options: InitRecipeTelemetryOptions = {}
-): Promise<RecipeTelemetry | null> {
+export function initRecipeTracing(
+  options: InitRecipeTracingOptions = {}
+): Promise<RecipeTracing | null> {
   if (provider || initializing) {
     // Whoever got here first owns the provider; later callers get null once
     // any in-flight init settles.
@@ -113,8 +113,8 @@ export function initRecipeTelemetry(
       provider = created.provider;
       ownsContextManager = created.ownsContextManager;
       return {
-        flush: flushRecipeTelemetry,
-        shutdown: shutdownRecipeTelemetry,
+        flush: flushRecipeTracing,
+        shutdown: shutdownRecipeTracing,
       };
     } finally {
       initializing = null;
@@ -130,12 +130,12 @@ export function getRecipeTracer(): Tracer | undefined {
 }
 
 /** Flush pending spans; call after a run settles on short-lived hosts. */
-export async function flushRecipeTelemetry(): Promise<void> {
+export async function flushRecipeTracing(): Promise<void> {
   await provider?.forceFlush();
 }
 
 /** Flush, shut down, and unregister the provider (idempotent). */
-export async function shutdownRecipeTelemetry(): Promise<void> {
+export async function shutdownRecipeTracing(): Promise<void> {
   if (!provider) return;
   const active = provider;
   const ownedContextManager = ownsContextManager;
@@ -156,7 +156,7 @@ export async function shutdownRecipeTelemetry(): Promise<void> {
 export interface InstrumentRecipeSessionOptions {
   /** Span identity for this session. */
   meta: AgentMeta;
-  /** Default: the recipe tracer (when `initRecipeTelemetry` ran). */
+  /** Default: the recipe tracer (when `initRecipeTracing` ran). */
   tracer?: Tracer;
   /**
    * Emit one `invoke_agent` span per run and nest chat/tool spans under it.

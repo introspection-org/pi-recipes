@@ -1,6 +1,6 @@
 /**
  * The heavy half of recipe tracing: provider construction and the OTLP
- * export pipelines. Loaded lazily from `initRecipeTelemetry` so hosts that
+ * export pipelines. Loaded lazily from `initRecipeTracing` so hosts that
  * never export (and every embedding rung below serve) don't pay for the
  * exporter stack at module-eval time.
  */
@@ -14,7 +14,7 @@ import {
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import type {
-  InitRecipeTelemetryOptions,
+  InitRecipeTracingOptions,
   RecipeTraceProvider,
 } from "./tracing.js";
 
@@ -60,7 +60,7 @@ function envSpanProcessors(env: NodeJS.ProcessEnv): SpanProcessor[] {
  * registered — the host's OTel setup wins and nothing is overwritten.
  */
 export async function bootstrapRecipeTracing(
-  options: InitRecipeTelemetryOptions
+  options: InitRecipeTracingOptions
 ): Promise<RecipeTracingBootstrap | null> {
   const env = options.env ?? process.env;
   const spanProcessors = options.spanProcessors ?? envSpanProcessors(env);
@@ -96,7 +96,7 @@ export async function bootstrapRecipeTracing(
         : undefined,
     ].filter(Boolean);
     console.error(
-      `[telemetry] trace export enabled (service=${serviceName}) -> ${targets.join(", ")}`
+      `[tracing] trace export enabled (service=${serviceName}) -> ${targets.join(", ")}`
     );
   }
   return { provider, ownsContextManager };

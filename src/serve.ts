@@ -18,9 +18,9 @@ import {
 } from "./session.js";
 import type { ResolvedRecipe } from "./recipe/resolve.js";
 import {
-  flushRecipeTelemetry,
-  initRecipeTelemetry,
-  type RecipeTelemetry,
+  flushRecipeTracing,
+  initRecipeTracing,
+  type RecipeTracing,
 } from "./tracing.js";
 
 /**
@@ -209,7 +209,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
   let inspection: RecipeInspection | null = null;
   let workspaceRoot: string | null = null;
   let mcpMaterialized = false;
-  let telemetry: RecipeTelemetry | null = null;
+  let tracing: RecipeTracing | null = null;
   let httpServer: ServerType | null = null;
   let closed = false;
 
@@ -224,7 +224,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     // Trace export out of the server, env-gated (OTEL_EXPORTER_OTLP_* or
     // the ingest pair in tracing.ts); null when unconfigured or when the
     // host already owns a provider — the handle is ownership.
-    telemetry = await initRecipeTelemetry({ serviceName: inspection.name });
+    tracing = await initRecipeTracing({ serviceName: inspection.name });
     workspaceRoot =
       options.workspace !== undefined
         ? resolve(options.workspace)
@@ -318,7 +318,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     task.updatedAt = now();
     closeRunStreams(run);
     // Settled runs flush eagerly so short-lived deploys don't lose spans.
-    void flushRecipeTelemetry().catch(() => {});
+    void flushRecipeTracing().catch(() => {});
   }
 
   function createRun(task: TaskEntry, status: RunStatus): RunEntry {
@@ -506,7 +506,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
         ...(agentName ? { agentName } : {}),
         cwd: workspaceDir,
         mcpMode: "inherit",
-        telemetry: { conversationId: taskId },
+        tracing: { conversationId: taskId },
       });
     } catch (err) {
       return c.json(
@@ -704,7 +704,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
         clearMcpCatalogPreload(process.env);
         await stopMcpDaemon(process.env).catch(() => {});
       }
-      await telemetry?.shutdown().catch(() => {});
+      await tracing?.shutdown().catch(() => {});
       if (httpServer) {
         await new Promise<void>((resolvePromise, rejectPromise) => {
           httpServer!.close((err) =>

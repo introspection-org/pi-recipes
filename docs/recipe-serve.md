@@ -395,7 +395,7 @@ the managed runtime uses and exports the traces out of the host — three
 layers, all opt-in:
 
 1. **Built-in OTel export (env-gated).** `serveRecipe` (and any host that
-   calls `initRecipeTelemetry` from `./tracing`) builds a trace
+   calls `initRecipeTracing` from `./tracing`) builds a trace
    provider when an OTLP target is configured, and every session the
    engine creates — subagents included — is instrumented: one
    `invoke_agent` span per run, `chat {model}` spans with token usage,
@@ -422,8 +422,8 @@ layers, all opt-in:
    they return the session/handle directly.
 
 3. **Host-owned providers (composition).** A host that already runs its
-   own OTel setup skips `initRecipeTelemetry` (which returns a
-   `RecipeTelemetry` handle — flush/shutdown ownership — only to the
+   own OTel setup skips `initRecipeTracing` (which returns a
+   `RecipeTracing` handle — flush/shutdown ownership — only to the
    caller that created the provider, and `null` whenever one exists; if
    the host registered a global tracer provider first, init backs off
    without overwriting it) and calls
@@ -436,7 +436,7 @@ layers, all opt-in:
 
 The `./tracing` module keeps its runtime imports to the OTel API plus the
 instrumentation package; the export pipeline (SDK provider, OTLP/protobuf
-exporters) loads lazily inside `initRecipeTelemetry`, so embedding rungs
+exporters) loads lazily inside `initRecipeTracing`, so embedding rungs
 that never export pay nothing at module-eval time.
 
 Catalog telemetry opt-outs (`DO_NOT_TRACK`, `PI_RECIPES_NO_TELEMETRY`)

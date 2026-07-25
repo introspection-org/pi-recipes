@@ -22,10 +22,10 @@ import { serveRecipe } from "../src/serve.js";
 import type { RecipeSessionHandle } from "../src/session.js";
 import {
   getRecipeTracer,
-  initRecipeTelemetry,
+  initRecipeTracing,
   instrumentRecipeSession,
-  flushRecipeTelemetry,
-  shutdownRecipeTelemetry,
+  flushRecipeTracing,
+  shutdownRecipeTracing,
 } from "../src/tracing.js";
 import { writeFixtureRecipe } from "../src/test-utils.js";
 
@@ -100,11 +100,11 @@ function scriptedStreamFn(): (...args: unknown[]) => MockAssistantStream {
 
 describe("recipe telemetry", () => {
   afterEach(async () => {
-    await shutdownRecipeTelemetry();
+    await shutdownRecipeTracing();
   });
 
   it("stays inert when no export target is configured", async () => {
-    await expect(initRecipeTelemetry({ env: {} })).resolves.toBeNull();
+    await expect(initRecipeTracing({ env: {} })).resolves.toBeNull();
     expect(getRecipeTracer()).toBeUndefined();
 
     const streamFunction = scriptedStreamFn();
@@ -130,7 +130,7 @@ describe("recipe telemetry", () => {
       // Even with an export target configured, the host's provider wins and
       // no recipe provider (or tracer) is created.
       await expect(
-        initRecipeTelemetry({
+        initRecipeTracing({
           spanProcessors: [new SimpleSpanProcessor(new InMemorySpanExporter())],
         })
       ).resolves.toBeNull();
@@ -145,7 +145,7 @@ describe("recipe telemetry", () => {
   it("emits chat spans through the wrapped stream function", async () => {
     const exporter = new InMemorySpanExporter();
     await expect(
-      initRecipeTelemetry({
+      initRecipeTracing({
         spanProcessors: [new SimpleSpanProcessor(exporter)],
       })
     ).resolves.not.toBeNull();
@@ -197,7 +197,7 @@ describe("recipe telemetry", () => {
 
   it("hosts that own their span topology parent chat spans themselves", async () => {
     const exporter = new InMemorySpanExporter();
-    await initRecipeTelemetry({
+    await initRecipeTracing({
       spanProcessors: [new SimpleSpanProcessor(exporter)],
     });
     const tracer = getRecipeTracer()!;
@@ -267,7 +267,7 @@ describe("recipe telemetry", () => {
     const port = (receiver.address() as AddressInfo).port;
 
     try {
-      const handle = await initRecipeTelemetry({
+      const handle = await initRecipeTracing({
         env: {
           INTROSPECTION_TOKEN: "ingest-token",
           INTROSPECTION_BASE_OTEL_URL: `http://127.0.0.1:${port}`,
@@ -319,7 +319,7 @@ describe("recipe telemetry", () => {
       process.env.ANTHROPIC_API_KEY = "telemetry-test-key";
     }
     const exporter = new InMemorySpanExporter();
-    await initRecipeTelemetry({
+    await initRecipeTracing({
       spanProcessors: [new SimpleSpanProcessor(exporter)],
     });
 
@@ -360,7 +360,7 @@ describe("recipe telemetry", () => {
         await new Promise((r) => setTimeout(r, 25));
       }
 
-      await flushRecipeTelemetry();
+      await flushRecipeTracing();
       const spans = exporter.getFinishedSpans();
       const run = spans.find((span) => span.name.startsWith("invoke_agent"));
       expect(run).toBeDefined();
