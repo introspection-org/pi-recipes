@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  type AuthStorage,
   type ExtensionAPI,
   type ExtensionContext,
   type ExtensionFactory,
@@ -70,7 +69,6 @@ type CreateRecipeChildAgentRunner = (opts: {
   workspaceDir: string;
   agentName: string;
   env?: NodeJS.ProcessEnv;
-  authStorage?: AuthStorage;
   modelRegistry?: ModelRegistry;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
@@ -899,7 +897,6 @@ export function createPiRecipesExtension(
       workspaceDir: launchState.cwd,
       env,
       agentName,
-      authStorage: ctx.modelRegistry.authStorage,
       modelRegistry: ctx.modelRegistry,
       onAssistantMessage(text, stream) {
         if (!run) return;

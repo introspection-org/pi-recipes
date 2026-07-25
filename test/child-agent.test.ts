@@ -14,8 +14,8 @@ vi.mock("@earendil-works/pi-ai/compat", () => ({
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
-    inMemory: vi.fn(() => ({ setRuntimeApiKey: vi.fn() })),
+  ModelRuntime: {
+    create: vi.fn(async () => ({ kind: "mock-model-runtime" })),
   },
   createAgentSessionFromServices: mocks.createAgentSessionFromServices,
   createAgentSessionServices: mocks.createAgentSessionServices,

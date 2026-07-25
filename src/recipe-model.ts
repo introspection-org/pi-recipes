@@ -464,8 +464,8 @@ export function applyRecipeAgentModelConfigToSession(
   if (!config) return;
 
   if (config.streamOptions) {
-    const baseStreamFn = session.agent.streamFn;
-    session.agent.streamFn = (model, context, options) =>
+    const baseStreamFn = session.agent.streamFunction;
+    session.agent.streamFunction = (model, context, options) =>
       baseStreamFn(
         model,
         context,

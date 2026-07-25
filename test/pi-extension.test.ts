@@ -7,14 +7,13 @@ import { createPiRecipesExtension } from "../src/pi-extension.js";
 import { createMockExtensionAPI } from "../src/testing.js";
 
 function extensionContext(cwd: string, notify = vi.fn()) {
-  const authStorage = { kind: "shared-auth-storage" };
   return {
     cwd,
     hasUI: true,
     ui: { notify },
     modelRegistry: {
-      authStorage,
       find: vi.fn((provider: string, id: string) => ({ provider, id })),
+      getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "test-key" })),
     },
   } as any;
 }
@@ -1229,7 +1228,6 @@ describe("Pi recipes launch extension", () => {
           recipeDir,
           agentName: "explorer",
           workspaceDir: projectDir,
-          authStorage: ctx.modelRegistry.authStorage,
           modelRegistry: ctx.modelRegistry,
         })
       );
