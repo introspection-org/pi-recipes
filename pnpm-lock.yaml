@@ -36,6 +36,9 @@ importers:
       '@earendil-works/pi-tui':
         specifier: 0.82.0
         version: 0.82.0
+      '@introspection-sdk/introspection-node':
+        specifier: ^0.12.0
+        version: 0.12.0(@earendil-works/pi-agent-core@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@opentelemetry/semantic-conventions@1.41.1)
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.21
@@ -413,6 +416,95 @@ packages:
   '@iarna/toml@2.2.5':
     resolution: {integrity: sha512-trnsAYxU3xnS1gPHPyU961coFyLkh4gAD/0zQ5mymY4yOZ+CYvsPqUbOFSw0aDM4y0tV7tiFxL/1XfXPNC6IPg==}
 
+  '@introspection-sdk/http@0.12.0':
+    resolution: {integrity: sha512-nnlF0D2jGxNIu6UjO/jVZwJI9BxYdKpWktRoedRhi7a58GuLa3IibTqiEJRDldc9ceALeaPZh4I1qZHZHW62hA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      apache-arrow: ^21.0.0
+    peerDependenciesMeta:
+      apache-arrow:
+        optional: true
+
+  '@introspection-sdk/introspection-node@0.12.0':
+    resolution: {integrity: sha512-daJ6emI4wjK5mpMIwcYIbQy8uyg0XtbCG/c4fiD7PzIUWYS58Lhhr0YRfpe7wBcF+BaZ3fXPx505LclCTFGITQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@anthropic-ai/claude-agent-sdk': '>=0.2.0'
+      '@earendil-works/pi-agent-core': '>=0.75.0'
+      '@earendil-works/pi-ai': '>=0.75.0'
+      '@langchain/core': '>=0.3.0'
+      '@mastra/core': '>=1.0.0'
+      '@mastra/observability': '>=1.0.0'
+      '@openai/agents': '>=0.0.1'
+      '@opentelemetry/api-logs': '>=0.50.0'
+      '@opentelemetry/context-async-hooks': '>=1.20.0 || >=2.0.0'
+      '@opentelemetry/core': '>=1.20.0 || >=2.0.0'
+      '@opentelemetry/exporter-logs-otlp-proto': '>=0.50.0'
+      '@opentelemetry/exporter-trace-otlp-proto': '>=0.50.0'
+      '@opentelemetry/resources': '>=1.20.0 || >=2.0.0'
+      '@opentelemetry/sdk-logs': '>=0.50.0'
+      '@opentelemetry/sdk-trace-base': '>=1.20.0 || >=2.0.0'
+      '@opentelemetry/sdk-trace-node': '>=1.20.0 || >=2.0.0'
+      '@opentelemetry/semantic-conventions': '>=1.20.0'
+      ai: '>=4.0.0'
+    peerDependenciesMeta:
+      '@anthropic-ai/claude-agent-sdk':
+        optional: true
+      '@earendil-works/pi-agent-core':
+        optional: true
+      '@earendil-works/pi-ai':
+        optional: true
+      '@langchain/core':
+        optional: true
+      '@mastra/core':
+        optional: true
+      '@mastra/observability':
+        optional: true
+      '@openai/agents':
+        optional: true
+      '@opentelemetry/api-logs':
+        optional: true
+      '@opentelemetry/context-async-hooks':
+        optional: true
+      '@opentelemetry/core':
+        optional: true
+      '@opentelemetry/exporter-logs-otlp-proto':
+        optional: true
+      '@opentelemetry/exporter-trace-otlp-proto':
+        optional: true
+      '@opentelemetry/resources':
+        optional: true
+      '@opentelemetry/sdk-logs':
+        optional: true
+      '@opentelemetry/sdk-trace-base':
+        optional: true
+      '@opentelemetry/sdk-trace-node':
+        optional: true
+      '@opentelemetry/semantic-conventions':
+        optional: true
+      ai:
+        optional: true
+
+  '@introspection-sdk/introspection-pi@0.12.0':
+    resolution: {integrity: sha512-wEGxqOoMOq5hDmTzGRQ4Io1bYqPxbFwkL90rvtACifBknMVPHHJoRtOLbBndNx13qZLMzqipE5WMIF/9mI+Z1A==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@earendil-works/pi-agent-core': '>=0.75.0'
+      '@earendil-works/pi-ai': '>=0.75.0'
+    peerDependenciesMeta:
+      '@earendil-works/pi-agent-core':
+        optional: true
+      '@earendil-works/pi-ai':
+        optional: true
+
+  '@introspection-sdk/introspection-proxy@0.12.0':
+    resolution: {integrity: sha512-J+/ut3tvUuuqVAsxeMfIpzaRh4b5i4+6MrIkbecCtkP2mSWjUIdeUG0lkhts0nMJFJ4S59XjYbFsgpk8UuvrNg==}
+    engines: {node: '>=22.19.0'}
+
+  '@introspection-sdk/types@0.12.0':
+    resolution: {integrity: sha512-HrodwEpI2yHp7mywDHcjDef9cWpUMqKvivR09LP7no8SzLeCUX27s+TVlXeZ9lqUa7qFVyk9zeD3tjsGG2nyeg==}
+    engines: {node: '>=22'}
+
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
 
@@ -513,6 +605,10 @@ packages:
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
+    engines: {node: '>=8.0.0'}
+
+  '@opentelemetry/api@1.9.1':
+    resolution: {integrity: sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q==}
     engines: {node: '>=8.0.0'}
 
   '@opentelemetry/semantic-conventions@1.41.1':
@@ -1484,6 +1580,10 @@ packages:
     resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
     engines: {node: '>= 0.10'}
 
+  proxy-from-env@2.1.0:
+    resolution: {integrity: sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==}
+    engines: {node: '>=10'}
+
   qs@6.15.3:
     resolution: {integrity: sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==}
     engines: {node: '>=0.6'}
@@ -1653,6 +1753,10 @@ packages:
 
   undici@8.5.0:
     resolution: {integrity: sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==}
+    engines: {node: '>=22.19.0'}
+
+  undici@8.9.0:
+    resolution: {integrity: sha512-aWZpUj7XoGonMClx4gdDRfgBjqeA+F473aDmROQQbM9n6PRfK/u1q/a0X4wMTgcHfT8H6fpbt98PFuDUwFg2YA==}
     engines: {node: '>=22.19.0'}
 
   unpipe@1.0.0:
@@ -2241,6 +2345,45 @@ snapshots:
 
   '@iarna/toml@2.2.5': {}
 
+  '@introspection-sdk/http@0.12.0':
+    dependencies:
+      '@ag-ui/core': 0.0.57
+      '@introspection-sdk/types': 0.12.0
+
+  '@introspection-sdk/introspection-node@0.12.0(@earendil-works/pi-agent-core@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@opentelemetry/semantic-conventions@1.41.1)':
+    dependencies:
+      '@introspection-sdk/http': 0.12.0
+      '@introspection-sdk/introspection-pi': 0.12.0(@earendil-works/pi-agent-core@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))
+      '@introspection-sdk/introspection-proxy': 0.12.0
+      '@introspection-sdk/types': 0.12.0
+      '@opentelemetry/api': 1.9.1
+      https-proxy-agent: 7.0.6
+      proxy-from-env: 2.1.0
+    optionalDependencies:
+      '@earendil-works/pi-agent-core': 0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@opentelemetry/semantic-conventions': 1.41.1
+    transitivePeerDependencies:
+      - apache-arrow
+      - supports-color
+
+  '@introspection-sdk/introspection-pi@0.12.0(@earendil-works/pi-agent-core@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))':
+    dependencies:
+      '@introspection-sdk/types': 0.12.0
+      '@opentelemetry/api': 1.9.1
+    optionalDependencies:
+      '@earendil-works/pi-agent-core': 0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+
+  '@introspection-sdk/introspection-proxy@0.12.0':
+    dependencies:
+      '@opentelemetry/api': 1.9.1
+      undici: 8.9.0
+
+  '@introspection-sdk/types@0.12.0':
+    dependencies:
+      '@ag-ui/core': 0.0.57
+
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
   '@mariozechner/clipboard-darwin-arm64@0.3.9':
@@ -2338,6 +2481,8 @@ snapshots:
   '@nodable/entities@2.2.0': {}
 
   '@opentelemetry/api@1.9.0': {}
+
+  '@opentelemetry/api@1.9.1': {}
 
   '@opentelemetry/semantic-conventions@1.41.1': {}
 
@@ -3208,6 +3353,8 @@ snapshots:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
 
+  proxy-from-env@2.1.0: {}
+
   qs@6.15.3:
     dependencies:
       es-define-property: 1.0.1
@@ -3411,6 +3558,8 @@ snapshots:
   undici-types@6.21.0: {}
 
   undici@8.5.0: {}
+
+  undici@8.9.0: {}
 
   unpipe@1.0.0: {}
 
