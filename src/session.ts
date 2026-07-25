@@ -27,12 +27,15 @@ import {
   type McpLocalConfig,
   type ScopedMcpToolSelection,
 } from "./mcp.js";
+import { expectedProviderEnvVars } from "./provider-env.js";
 import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
 import {
   applyRecipeAgentModelConfigToModel,
   applyRecipeAgentModelConfigToSession,
 } from "./recipe-model.js";
 import { resolveRecipe, type ResolvedRecipe } from "./recipe/resolve.js";
+
+export { expectedProviderEnvVars } from "./provider-env.js";
 
 /**
  * Everything between "resolved recipe" and "live Pi session", done once:
@@ -123,29 +126,6 @@ export class RecipeModelError extends Error {
   }
 }
 
-const PROVIDER_ENV_HINTS: Record<string, readonly string[]> = {
-  anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"],
-  openai: ["OPENAI_API_KEY"],
-  google: ["GEMINI_API_KEY"],
-  gemini: ["GEMINI_API_KEY"],
-  openrouter: ["OPENROUTER_API_KEY"],
-  groq: ["GROQ_API_KEY"],
-  xai: ["XAI_API_KEY"],
-  mistral: ["MISTRAL_API_KEY"],
-  deepseek: ["DEEPSEEK_API_KEY"],
-  cerebras: ["CEREBRAS_API_KEY"],
-  together: ["TOGETHER_API_KEY"],
-  fireworks: ["FIREWORKS_API_KEY"],
-};
-
-export function expectedProviderEnvVars(provider: string): readonly string[] {
-  return (
-    PROVIDER_ENV_HINTS[provider] ?? [
-      `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`,
-    ]
-  );
-}
-
 function parseModelSpec(spec: string): {
   provider: string;
   modelId: string;
@@ -218,6 +198,56 @@ function scopedMcpSelections(recipe: ResolvedRecipe): ScopedMcpToolSelection[] {
 
 interface MaterializedSessionMcp {
   materialized: boolean;
+}
+
+/**
+ * Everything `createRecipeSession` fail-closes on, without creating a
+ * session or starting MCP: recipe resolution, model lookup, credentials.
+ * Hosts with a boot phase (the serve layer) run this once to fail fast.
+ */
+export async function preflightRecipeSession(
+  opts: CreateRecipeSessionOptions
+): Promise<ResolvedRecipe> {
+  const recipe = resolveRecipe({
+    recipeDir: opts.recipeDir,
+    ...(opts.agentName ? { agentName: opts.agentName } : {}),
+  });
+  const modelSpec = opts.model ?? recipe.modelSpec;
+  const { lookupProvider, modelId } = parseModelSpec(modelSpec);
+  const credentials = await resolveCredentialStore(lookupProvider, opts);
+  const modelRuntime = await ModelRuntime.create({
+    credentials,
+    modelsPath: null,
+  });
+  const model =
+    modelRuntime.getModel(lookupProvider, modelId) ??
+    (getModel(lookupProvider as never, modelId as never) as
+      | Model<any>
+      | undefined);
+  if (!model) {
+    throw new RecipeModelError(modelSpec);
+  }
+  return recipe;
+}
+
+/**
+ * Materialize the session MCP runtime for a recipe scope into `env` at
+ * `cwd`. Exposed for hosts that materialize once per process (the serve
+ * layer) and create their sessions with `mcpMode: "inherit"`.
+ */
+export async function materializeRecipeSessionMcp(
+  recipe: ResolvedRecipe,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  opts: Pick<
+    CreateRecipeSessionOptions,
+    "mcpBindings" | "mcpBindingsPath" | "mcpMode"
+  > = {}
+): Promise<{ materialized: boolean }> {
+  return configureSessionMcp(recipe, cwd, env, {
+    recipeDir: recipe.recipeDir,
+    ...opts,
+  });
 }
 
 async function configureSessionMcp(

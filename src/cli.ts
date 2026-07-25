@@ -60,6 +60,11 @@ interface ParsedArgs {
   checkProfile?: RecipeCheckProfile;
   suite?: string;
   datasetPath?: string;
+  agent?: string;
+  port?: number;
+  host?: string;
+  token?: string;
+  workspace?: string;
   local: boolean;
   noSetup: boolean;
   force: boolean;
@@ -83,6 +88,8 @@ function usage(commandName = "recipes"): string {
     "  path <recipe|path>  Print the resolved recipe directory",
     "  check <target>     Check a recipe directory or installed recipe",
     "  doctor <target>    Alias for check",
+    "  inspect [target]   Print what a recipe requires (agents, providers, env, MCP)",
+    "  serve [target]     Serve a recipe as a standalone Tasks API service",
     "  evals              Manage Harbor offline eval suites for a recipe",
     "  publish <target>   Publish a recipe to a GitHub repository",
     "",
@@ -99,6 +106,11 @@ function usage(commandName = "recipes"): string {
     "                     Required with --github; controls GitHub repository visibility",
     "  --profile <local|ci|publish>",
     "                     Validation profile for check/doctor",
+    "  --agent <name>     Default agent for serve",
+    "  --port <port>      Serve port (default 8888)",
+    "  --host <host>      Serve bind host (default 127.0.0.1)",
+    "  --token <bearer>   Serve inbound bearer (default env RECIPES_SERVE_TOKEN)",
+    "  --workspace <dir>  Serve workspace root (default a temp dir)",
     "  --suite <name>     Run one Harbor eval suite",
     "  --dataset-path <dir>",
     "                     Run a local Harbor dataset directory instead of pinned suites",
@@ -175,6 +187,11 @@ function parseArgs(argv: string[]): ParsedArgs {
   let checkProfile: RecipeCheckProfile | undefined;
   let suite: string | undefined;
   let datasetPath: string | undefined;
+  let agent: string | undefined;
+  let port: number | undefined;
+  let host: string | undefined;
+  let token: string | undefined;
+  let workspace: string | undefined;
   let local = false;
   let noSetup = false;
   let force = false;
@@ -238,6 +255,28 @@ function parseArgs(argv: string[]): ParsedArgs {
       const value = argv[++index];
       if (!value) throw new Error("--dataset-path requires a directory");
       datasetPath = value;
+    } else if (arg === "--agent") {
+      const value = argv[++index];
+      if (!value) throw new Error("--agent requires a name");
+      agent = value;
+    } else if (arg === "--port") {
+      const value = Number(argv[++index]);
+      if (!Number.isInteger(value) || value < 0 || value > 65535) {
+        throw new Error("--port requires a port number");
+      }
+      port = value;
+    } else if (arg === "--host") {
+      const value = argv[++index];
+      if (!value) throw new Error("--host requires a hostname");
+      host = value;
+    } else if (arg === "--token") {
+      const value = argv[++index];
+      if (!value) throw new Error("--token requires a value");
+      token = value;
+    } else if (arg === "--workspace") {
+      const value = argv[++index];
+      if (!value) throw new Error("--workspace requires a directory");
+      workspace = value;
     } else if (arg === "--local" || arg === "-l") {
       local = true;
     } else if (arg === "--no-setup") {
@@ -268,6 +307,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     checkProfile,
     suite,
     datasetPath,
+    agent,
+    port,
+    host,
+    token,
+    workspace,
     local,
     noSetup,
     force,
@@ -646,6 +690,60 @@ export async function main(argv: string[]): Promise<number> {
     const path = resolveRecipeDirectory(identifier, opts);
     if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
     return await runRecipeCheck(path, { json: args.json, profile: args.checkProfile });
+  }
+
+  if (args.command === "inspect") {
+    const identifier = args.values[0] ?? ".";
+    const path = resolveRecipeDirectory(identifier, opts);
+    if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
+    const { inspectRecipe } = await import("./inspect.js");
+    const inspection = inspectRecipe(path);
+    if (args.json) {
+      printJson(inspection);
+    } else {
+      process.stdout.write(`${inspection.name}@${inspection.version}\n`);
+      process.stdout.write(`  agents: ${inspection.agents.join(", ") || "-"}\n`);
+      process.stdout.write(`  providers: ${inspection.providers.join(", ") || "-"}\n`);
+      process.stdout.write(`  credential env: ${inspection.credential_env.join(", ") || "-"}\n`);
+      process.stdout.write(`  mcp required: ${inspection.mcp.required.join(", ") || "-"}\n`);
+      process.stdout.write(`  mcp optional: ${inspection.mcp.optional.join(", ") || "-"}\n`);
+      process.stdout.write(`  mcp env: ${inspection.mcp_env.join(", ") || "-"}\n`);
+      const counts = inspection.resources;
+      process.stdout.write(
+        `  resources: ${counts.agents} agent(s), ${counts.skills} skill(s), ${counts.extensions} extension(s), ${counts.prompts} prompt(s)\n`
+      );
+    }
+    return 0;
+  }
+
+  if (args.command === "serve") {
+    const identifier = args.values[0] ?? ".";
+    const path = resolveRecipeDirectory(identifier, opts);
+    if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
+    const { serveRecipe } = await import("./serve.js");
+    const server = serveRecipe({
+      recipeDir: path,
+      ...(args.agent ? { agentName: args.agent } : {}),
+      ...(args.token ? { token: args.token } : {}),
+      ...(args.workspace ? { workspace: args.workspace } : {}),
+    });
+    const port = args.port ?? 8888;
+    const hostname = args.host ?? "127.0.0.1";
+    // Fail-fast is the deploy story: a construction error must crash the
+    // process, not serve 500s. listen() awaits the boot preflight.
+    await server.listen({ port, hostname });
+    process.stdout.write(`Serving recipe at http://${hostname}:${port}\n`);
+    await new Promise<void>((resolveShutdown) => {
+      let shuttingDown = false;
+      const shutdown = () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        void server.close().finally(() => resolveShutdown());
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+    });
+    return 0;
   }
 
   if (args.command === "evals") {

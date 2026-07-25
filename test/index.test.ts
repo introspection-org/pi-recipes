@@ -89,7 +89,13 @@ describe("recipe package manifest", () => {
         "created",
         "created",
         "created",
+        "created",
       ]);
+      const scaffoldedDockerfile = readFileSync(
+        join(result.recipeDir, "Dockerfile"),
+        "utf8"
+      );
+      expect(scaffoldedDockerfile).toContain("recipes\", \"serve\"");
       expect(readPiPackageManifest(result.recipeDir).name).toBe("my-recipe");
       expect(loadRecipeAgentDefinitions(result.recipeDir).get("agent")).toMatchObject({
         name: "agent",
@@ -2960,10 +2966,15 @@ describe("package boundary", () => {
       "/internal/",
       "DPClient",
     ];
+    // serve.ts speaks the *public Tasks API wire shape* standalone — that is
+    // its compatibility promise, not a platform dependency — so the /v1/
+    // route-path token is expected there (and only there).
+    const allowed = new Map([[join(root, "serve.ts"), new Set(["/v1/"])]]);
 
     for (const file of files) {
       const content = await readFile(file, "utf8");
       for (const token of forbidden) {
+        if (allowed.get(file)?.has(token)) continue;
         expect(content, `${file} contains ${token}`).not.toContain(token);
       }
     }

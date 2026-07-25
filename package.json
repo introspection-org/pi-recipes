@@ -67,6 +67,14 @@
 		"./test-utils": {
 			"types": "./dist/test-utils.d.ts",
 			"import": "./dist/test-utils.js"
+		},
+		"./serve": {
+			"types": "./dist/serve.d.ts",
+			"import": "./dist/serve.js"
+		},
+		"./agui": {
+			"types": "./dist/agui/index.d.ts",
+			"import": "./dist/agui/index.js"
 		}
 	},
 	"pi": {
@@ -86,6 +94,9 @@
 		"clean": "rm -rf dist .turbo node_modules target vendor/recipe-check vendor/mcp-client"
 	},
 	"dependencies": {
+		"@ag-ui/core": "0.0.57",
+		"@hono/node-server": "^2.0.11",
+		"hono": "^4.12.32",
 		"mcporter": "0.12.3",
 		"yaml": "^2.9.0"
 	},
