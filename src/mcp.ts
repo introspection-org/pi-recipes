@@ -18,6 +18,7 @@ import {
   type RecipePackageMcpConfig,
   type RecipeMcpToolSelection,
 } from "./recipe-package.js";
+import { generatedBindingEnvVars } from "./recipe-mcp-config.js";
 
 export interface McpToolCatalogEntry {
   name: string;
@@ -42,7 +43,7 @@ export interface McpSessionConfig {
   servers: McpSessionServer[];
 }
 
-interface LocalMcpServer {
+export interface LocalMcpServer {
   id?: string;
   name?: string;
   transport?: string;
@@ -57,6 +58,14 @@ interface LocalMcpServer {
   oauthRedirectUrl?: string;
   oauthScope?: string;
   httpFetch?: "default" | "node-http1";
+}
+
+/**
+ * The `.pi/mcp.local.json` shape, usable inline by hosts that synthesize
+ * endpoint bindings instead of reading them from disk.
+ */
+export interface McpLocalConfig {
+  servers: LocalMcpServer[];
 }
 
 interface LocalMcpOAuthSettings {
@@ -98,6 +107,33 @@ export interface MaterializeMcpSessionOptions {
   /** MCP selections for the active agent and its visible subagents. */
   agentMcp?: readonly ScopedMcpToolSelection[];
   env?: NodeJS.ProcessEnv;
+  /**
+   * Inline endpoint bindings. When provided, the local config file
+   * (`.pi/mcp.local.json`) is not consulted.
+   */
+  localConfig?: McpLocalConfig;
+}
+
+/**
+ * A `required: true` package MCP server has no endpoint binding. Thrown by
+ * `materializeMcpSession` before any server is materialized (fail-closed).
+ */
+export class McpBindingError extends Error {
+  override readonly name = "McpBindingError";
+
+  constructor(
+    /** Missing required server ids, in manifest order. */
+    readonly servers: readonly string[],
+    /** The `${VAR}` names a generated binding for those servers would use. */
+    readonly expectedEnvVars: readonly string[]
+  ) {
+    super(
+      `Required MCP server binding(s) missing: ${servers.join(", ")}` +
+        (expectedEnvVars.length > 0
+          ? ` (bind via .pi/mcp.local.json or env: ${expectedEnvVars.join(", ")})`
+          : "")
+    );
+  }
 }
 
 export interface MaterializedMcpSession extends McpSessionConfig {
@@ -315,7 +351,14 @@ function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8")) as unknown;
 }
 
-function readLocalMcpServers(env: NodeJS.ProcessEnv, cwd: string): LocalMcpServer[] {
+function readLocalMcpServers(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  localConfig?: McpLocalConfig
+): LocalMcpServer[] {
+  if (localConfig) {
+    return Array.isArray(localConfig.servers) ? localConfig.servers : [];
+  }
   const path = localMcpConfigPath(env, cwd);
   if (!existsSync(path)) return [];
   try {
@@ -326,8 +369,12 @@ function readLocalMcpServers(env: NodeJS.ProcessEnv, cwd: string): LocalMcpServe
   }
 }
 
-function localBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[] {
-  return readLocalMcpServers(env, cwd).flatMap((server) => {
+function localBindings(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  localConfig?: McpLocalConfig
+): McpEndpointBinding[] {
+  return readLocalMcpServers(env, cwd, localConfig).flatMap((server) => {
     if (server.transport && server.transport !== "streamable_http") return [];
     const baseUrl = server.url ? interpolateEnv(server.url, env) : "";
     if (!baseUrl) return [];
@@ -363,8 +410,12 @@ function localBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[
   });
 }
 
-function endpointBindings(env: NodeJS.ProcessEnv, cwd: string): McpEndpointBinding[] {
-  const candidates = localBindings(env, cwd);
+function endpointBindings(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  localConfig?: McpLocalConfig
+): McpEndpointBinding[] {
+  const candidates = localBindings(env, cwd, localConfig);
   const seen = new Set<string>();
   const bindings: McpEndpointBinding[] = [];
   for (const binding of candidates) {
@@ -639,7 +690,7 @@ export async function materializeMcpSession(
 ): Promise<MaterializedMcpSession> {
   const env = opts.env ?? process.env;
   const agentSelections = opts.agentMcp ?? [];
-  const endpointBindingList = endpointBindings(env, opts.cwd);
+  const endpointBindingList = endpointBindings(env, opts.cwd, opts.localConfig);
   const bindings = new Map(
     endpointBindingList.map((binding) => [binding.id, binding])
   );
@@ -655,8 +706,9 @@ export async function materializeMcpSession(
     (serverId) => !available.has(serverId)
   );
   if (missingRequired.length > 0) {
-    throw new Error(
-      `Required MCP server binding(s) missing: ${missingRequired.join(", ")}`
+    throw new McpBindingError(
+      missingRequired,
+      missingRequired.flatMap((serverId) => generatedBindingEnvVars(serverId))
     );
   }
 
