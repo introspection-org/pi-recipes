@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   serveRecipe,
   type RecipeServer,
+  type RestorableTask,
   type ServeLogEvent,
 } from "../src/serve.js";
 import type { RecipeSessionHandle } from "../src/session.js";
@@ -187,6 +188,7 @@ describe("serveRecipe", () => {
     maxTasks?: number;
     fixture?: Parameters<typeof writeFixtureRecipe>[0];
     sessionManager?: (taskId: string) => SessionManager | undefined;
+    restoreTasks?: () => RestorableTask[] | Promise<RestorableTask[]>;
     logs?: ServeLogEvent[];
   }): { server: RecipeServer; recipeDir: string } {
     const fixture = writeFixtureRecipe(options?.fixture);
@@ -204,6 +206,7 @@ describe("serveRecipe", () => {
       ...(options?.sessionManager
         ? { sessionManager: options.sessionManager }
         : {}),
+      ...(options?.restoreTasks ? { restoreTasks: options.restoreTasks } : {}),
     });
     cleanups.push(() => server.close());
     return { server, recipeDir: fixture.recipeDir };
@@ -619,6 +622,84 @@ describe("serveRecipe", () => {
     // in whatever directory the host chose to back it with.
     const files = readdirSync(sessionDir);
     expect(files.some((name) => name.includes(task.id))).toBe(true);
+  });
+
+  it("dedupes a retried create through Idempotency-Key", async () => {
+    const logs: ServeLogEvent[] = [];
+    const { server } = makeServer({ logs });
+
+    const first = await request(server, "POST", "/v1/tasks", {
+      body: { title: "from a webhook" },
+      headers: { "idempotency-key": "delivery-1" },
+    });
+    const retry = await request(server, "POST", "/v1/tasks", {
+      body: { title: "from a webhook" },
+      headers: { "idempotency-key": "delivery-1" },
+    });
+
+    const a = (await first.json()) as { task: { id: string } };
+    const b = (await retry.json()) as { task: { id: string } };
+    expect(b.task.id).toBe(a.task.id);
+    expect(logs.some((event) => event.event === "task.create_deduped")).toBe(
+      true
+    );
+
+    // A different key is a different task.
+    const other = await request(server, "POST", "/v1/tasks", {
+      body: {},
+      headers: { "idempotency-key": "delivery-2" },
+    });
+    const c = (await other.json()) as { task: { id: string } };
+    expect(c.task.id).not.toBe(a.task.id);
+
+    const listed = (await (
+      await request(server, "GET", "/v1/tasks")
+    ).json()) as { total_count: number };
+    expect(listed.total_count).toBe(2);
+  });
+
+  it("restores the task index at boot and reopens a session on use", async () => {
+    // Stand in for a previous process: write the transcript the way the
+    // server would, without paying to boot a second recipe. Pi only flushes
+    // a session once an assistant message exists, so both are needed.
+    const sessionDir = mkdtempSync(join(tmpdir(), "recipes-restore-"));
+    const taskId = "restored-task";
+    const previous = SessionManager.create(sessionDir, sessionDir, {
+      id: taskId,
+    });
+    previous.appendMessage({
+      role: "user",
+      content: "before the restart",
+      timestamp: Date.now(),
+    });
+    previous.appendMessage(assistantMessage("acknowledged"));
+    const sessionFile = previous.getSessionFile()!;
+
+    const reopened: string[] = [];
+    const { server } = makeServer({
+      restoreTasks: () => [
+        { taskId, open: () => SessionManager.open(sessionFile, sessionDir) },
+      ],
+      onTask: (id, handle) => {
+        reopened.push(id);
+        scriptReply(handle, "after restart");
+      },
+    });
+
+    // The index survives the restart...
+    const listed = (await (
+      await request(server, "GET", "/v1/tasks")
+    ).json()) as { records: Array<{ id: string }>; total_count: number };
+    expect(listed.records.map((entry) => entry.id)).toEqual([taskId]);
+    // ...without paying for a live session until the task is used.
+    expect(reopened).toEqual([]);
+
+    // Running it reopens the persisted transcript rather than starting over.
+    const next = await request(server, "POST", `/v1/tasks/${taskId}/runs`, {
+      body: { prompt: { text: "still there?" } },
+    });
+    expect(next.status).toBe(200);
+    expect(reopened).toEqual([taskId]);
   });
 
   it("logs task and run lifecycle with correlatable ids", async () => {

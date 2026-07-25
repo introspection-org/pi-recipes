@@ -10,6 +10,7 @@ import {
   createRecipeScaffold,
 } from "./recipe-dev.js";
 import { isDirectEntry } from "./direct-cli.js";
+import type { RestorableTask } from "./serve.js";
 import { runRecipeCheck, type RecipeCheckProfile } from "./recipe-check.js";
 import {
   publishRecipe,
@@ -738,12 +739,27 @@ export async function main(argv: string[]): Promise<number> {
     let sessionManagerFor:
       | ((taskId: string) => SessionManager | undefined)
       | undefined;
+    let restoreTasks: (() => Promise<RestorableTask[]>) | undefined;
     if (args.sessionDir) {
       const sessionDir = resolve(args.sessionDir);
       mkdirSync(sessionDir, { recursive: true });
       const { SessionManager } = await import("@earendil-works/pi-coding-agent");
       sessionManagerFor = (taskId) =>
         SessionManager.create(sessionDir, sessionDir, { id: taskId });
+      // The index is rebuilt from the same directory the transcripts live
+      // in, so a restart lists the tasks it had before. Each entry reopens
+      // lazily: booting with 500 persisted tasks costs 500 file headers,
+      // not 500 live Pi sessions.
+      restoreTasks = async () => {
+        const sessions = await SessionManager.list(sessionDir, sessionDir);
+        return sessions.map((session) => ({
+          taskId: session.id,
+          createdAt: session.created.toISOString(),
+          updatedAt: session.modified.toISOString(),
+          title: session.name ?? null,
+          open: () => SessionManager.open(session.path, sessionDir),
+        }));
+      };
     }
     const server = serveRecipe({
       recipeDir: path,
@@ -751,6 +767,7 @@ export async function main(argv: string[]): Promise<number> {
       ...(args.token ? { token: args.token } : {}),
       ...(args.workspace ? { workspace: args.workspace } : {}),
       ...(sessionManagerFor ? { sessionManager: sessionManagerFor } : {}),
+      ...(restoreTasks ? { restoreTasks } : {}),
     });
     const port = args.port ?? 8888;
     const hostname = args.host ?? "127.0.0.1";

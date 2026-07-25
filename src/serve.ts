@@ -56,10 +56,33 @@ export interface ServeRecipeOptions {
    */
   sessionManager?: (taskId: string) => SessionManager | undefined;
   /**
+   * Rebuild the task index at boot from tasks a previous process persisted.
+   * Without it a restart loses the server's knowledge of tasks even when
+   * `sessionManager` kept their transcripts — the files survive but nothing
+   * lists them.
+   *
+   * Discovery belongs to whoever owns the storage, so this returns metadata
+   * plus a thunk; the Pi session itself is opened lazily, on the first run
+   * against that task, not for every task at boot.
+   */
+  restoreTasks?: () => RestorableTask[] | Promise<RestorableTask[]>;
+  /**
    * Structured log sink. Default: JSON lines on stderr. Pass a no-op to
    * silence the server; the host owns shipping, sampling, and redaction.
    */
   logger?: ServeLogger;
+}
+
+/** A task recovered from a previous process, not yet opened. */
+export interface RestorableTask {
+  taskId: string;
+  /** Opened on first use. */
+  open: () => SessionManager | Promise<SessionManager>;
+  agentName?: string;
+  title?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /** A structured server log record. `event` is a stable dotted name. */
@@ -143,7 +166,14 @@ interface TaskEntry {
   updatedAt: string;
   isArchived: boolean;
   workspaceDir: string;
-  handle: RecipeSessionHandle;
+  /**
+   * The live Pi session, or null for a task restored from storage that has
+   * not been used since. Restored tasks hold an index entry and a
+   * transcript; they cost a session only when someone runs them.
+   */
+  handle: RecipeSessionHandle | null;
+  /** Reopens the persisted transcript when a restored task is first used. */
+  restore: (() => SessionManager | Promise<SessionManager>) | null;
   runs: Map<string, RunEntry>;
   currentRunId: string | null;
   lastRunId: string | null;
@@ -250,6 +280,10 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
   const log = options.logger ?? defaultServeLogger;
 
   const tasks = new Map<string, TaskEntry>();
+  // Idempotency-Key → task id, so a channel's retry (Slack redelivery, a
+  // queue's at-least-once delivery) resolves to the task it already made
+  // instead of a second one. Dropped with the task.
+  const idempotentTasks = new Map<string, string>();
   let readiness: Readiness = { state: "booting" };
   let recipe: ResolvedRecipe | null = null;
   let inspection: RecipeInspection | null = null;
@@ -282,6 +316,38 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       process.env
     );
     mcpMaterialized = result.materialized;
+
+    // Rebuild the index before serving: a task that existed when the last
+    // process died must be listable by the new one.
+    if (options.restoreTasks) {
+      const restored = await options.restoreTasks();
+      for (const entry of restored) {
+        if (tasks.has(entry.taskId)) continue;
+        const stamp = entry.createdAt ?? now();
+        tasks.set(entry.taskId, {
+          id: entry.taskId,
+          agentName: entry.agentName ?? recipe.agentName,
+          title: entry.title ?? null,
+          metadata: entry.metadata ?? null,
+          createdAt: stamp,
+          updatedAt: entry.updatedAt ?? stamp,
+          isArchived: false,
+          workspaceDir: join(workspaceRoot, entry.taskId),
+          handle: null,
+          restore: entry.open,
+          runs: new Map(),
+          currentRunId: null,
+          lastRunId: null,
+          disposed: false,
+        });
+      }
+      log({
+        level: "info",
+        event: "tasks.restored",
+        count: restored.length,
+      });
+    }
+
     readiness = { state: "ready" };
     log({
       level: "info",
@@ -312,6 +378,44 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     );
   }
 
+  /** Live sessions, which is what `maxTasks` caps — a restored task that
+   * nobody has run holds an index entry, not a session. */
+  function liveSessionCount(): number {
+    let count = 0;
+    for (const task of tasks.values()) if (task.handle) count += 1;
+    return count;
+  }
+
+  /**
+   * Open a restored task's session on first use. Reopening the persisted
+   * transcript is what makes the conversation continue rather than restart.
+   */
+  async function ensureHandle(task: TaskEntry): Promise<RecipeSessionHandle> {
+    if (task.handle) return task.handle;
+    const sessionManager = task.restore
+      ? await task.restore()
+      : options.sessionManager?.(task.id);
+    mkdirSync(task.workspaceDir, { recursive: true });
+    const handle = await createRecipeSession({
+      recipeDir,
+      ...(task.agentName ? { agentName: task.agentName } : {}),
+      cwd: task.workspaceDir,
+      mcpMode: "inherit",
+      tracing: { conversationId: task.id },
+      ...(sessionManager ? { sessionManager } : {}),
+    });
+    task.handle = handle;
+    task.restore = null;
+    options.onTask?.(task.id, handle);
+    log({
+      level: "info",
+      event: "task.reopened",
+      task_id: task.id,
+      messages: handle.session.messages.length,
+    });
+    return handle;
+  }
+
   function pushFrame(run: RunEntry, event: AgUiEvent): void {
     const data = JSON.stringify(event);
     const frame: BufferedFrame = {
@@ -339,7 +443,8 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
   async function executeRun(
     task: TaskEntry,
     run: RunEntry,
-    prompt: string
+    prompt: string,
+    handle: RecipeSessionHandle
   ): Promise<void> {
     const translator = new AgUiRunTranslator(task.id, run.id);
     const sessionLike = {
@@ -354,18 +459,18 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       for (const event of events) pushFrame(run, event);
     };
     emit(translator.runStarted());
-    const unsubscribe = task.handle.session.subscribe((event) => {
+    const unsubscribe = handle.session.subscribe((event) => {
       const mapped = adaptSessionEvent(event);
       if (mapped) emit(translator.handleSessionEvent(mapped, sessionLike));
     });
     try {
-      await task.handle.session.prompt(prompt);
+      await handle.session.prompt(prompt);
     } catch (err) {
       run.error = err instanceof Error ? err.message : String(err);
     } finally {
       unsubscribe();
     }
-    run.error ??= lastAssistantError(task.handle.session.messages);
+    run.error ??= lastAssistantError(handle.session.messages);
     emit(translator.handleSessionEvent({ type: "session_settled" }, sessionLike));
     run.status = run.cancelRequested
       ? "cancelled"
@@ -409,7 +514,11 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     return run;
   }
 
-  function startRun(task: TaskEntry, prompt: string): RunEntry {
+  function startRun(
+    task: TaskEntry,
+    prompt: string,
+    handle: RecipeSessionHandle
+  ): RunEntry {
     const run = createRun(task, "running");
     task.currentRunId = run.id;
     task.updatedAt = now();
@@ -419,7 +528,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       task_id: task.id,
       run_id: run.id,
     });
-    void executeRun(task, run, prompt);
+    void executeRun(task, run, prompt, handle);
     return run;
   }
 
@@ -428,7 +537,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     if (run.status !== "running") return;
     run.cancelRequested = true;
     run.updatedAt = now();
-    void task.handle.session.abort().catch(() => {});
+    void task.handle?.session.abort().catch(() => {});
   }
 
   async function disposeTask(task: TaskEntry): Promise<void> {
@@ -438,11 +547,14 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       ? task.runs.get(task.currentRunId)
       : undefined;
     if (current) cancelRun(task, current);
-    await task.handle.dispose().catch(() => {});
+    await task.handle?.dispose().catch(() => {});
     for (const run of task.runs.values()) {
       if (!run.closed) closeRunStreams(run);
     }
     tasks.delete(task.id);
+    for (const [key, id] of idempotentTasks) {
+      if (id === task.id) idempotentTasks.delete(key);
+    }
   }
 
   function streamResponse(run: RunEntry, cursor: number | null): Response {
@@ -623,7 +735,34 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       agent_name?: string;
       metadata?: Record<string, unknown>;
     };
-    if (tasks.size >= maxTasks) {
+    // A retry of a create that already succeeded returns the same task
+    // rather than a second one — the property every at-least-once channel
+    // (Slack redelivery, a queue, a webhook) needs to be correct.
+    const idempotencyKey = c.req.header("idempotency-key");
+    if (idempotencyKey) {
+      const existingId = idempotentTasks.get(idempotencyKey);
+      const existing = existingId ? tasks.get(existingId) : undefined;
+      if (existing) {
+        const lastRun = existing.lastRunId
+          ? existing.runs.get(existing.lastRunId)
+          : undefined;
+        log({
+          level: "info",
+          event: "task.create_deduped",
+          request_id: c.get("requestId"),
+          task_id: existing.id,
+        });
+        return c.json(
+          {
+            task: taskView(existing, instance),
+            ...(lastRun ? { run: runView(lastRun) } : {}),
+          },
+          200
+        );
+      }
+    }
+
+    if (liveSessionCount() >= maxTasks) {
       return c.json(
         { detail: `Task capacity reached (max_tasks=${maxTasks})` },
         409
@@ -668,12 +807,14 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       isArchived: false,
       workspaceDir,
       handle,
+      restore: null,
       runs: new Map(),
       currentRunId: null,
       lastRunId: null,
       disposed: false,
     };
     tasks.set(taskId, task);
+    if (idempotencyKey) idempotentTasks.set(idempotencyKey, taskId);
     options.onTask?.(taskId, handle);
     log({
       level: "info",
@@ -682,12 +823,12 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       task_id: taskId,
       agent_name: task.agentName,
       persisted: sessionManager !== undefined,
-      live_tasks: tasks.size,
+      live_tasks: liveSessionCount(),
     });
 
     const run =
       body.prompt !== undefined && body.prompt.trim() !== ""
-        ? startRun(task, body.prompt)
+        ? startRun(task, body.prompt, handle)
         : createRun(task, "idle");
     return c.json({ task: taskView(task, instance), run: runView(run) }, 200);
   });
@@ -775,7 +916,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
           activeRun ? 400 : 409
         );
       }
-      await task.handle.session.steer(message);
+      await (await ensureHandle(task)).session.steer(message);
       activeRun.updatedAt = now();
       return c.json({ run: runView(activeRun) });
     }
@@ -790,7 +931,21 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
         409
       );
     }
-    const run = startRun(task, text);
+    let handle: RecipeSessionHandle;
+    try {
+      handle = await ensureHandle(task);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      log({
+        level: "warn",
+        event: "task.reopen_failed",
+        request_id: c.get("requestId"),
+        task_id: task.id,
+        detail,
+      });
+      return c.json({ detail }, 422);
+    }
+    const run = startRun(task, text, handle);
     return c.json({ run: runView(run) });
   });
 

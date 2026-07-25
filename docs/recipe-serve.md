@@ -438,12 +438,52 @@ whatever the host builds on it: a mounted volume, or rows projected out of
 `SessionManager.open`. Recipes does not ship a store, and does not need to
 — the transcript is observable on the way out and restorable on the way in.
 
-Two properties worth knowing:
+Persisting transcripts is only half of surviving a restart: the new
+process must also know those tasks exist. `restoreTasks` rebuilds the
+index at boot, and `--session-dir` wires it to the same directory it
+writes to, so `GET /v1/tasks` after a restart lists what was there before.
+
+Restoration is lazy by construction. `restoreTasks` returns metadata plus
+a thunk; the Pi session is opened on the task's next run, not at boot. A
+process starting with 10,000 persisted tasks pays for 10,000 index
+entries, not 10,000 live sessions — and `maxTasks` caps *live sessions*,
+so a large restored index never blocks new work.
+
+Four properties worth knowing:
 
 - Pi flushes a session file only once an assistant message exists, so a
   task that never completes a turn deliberately leaves nothing on disk.
 - `onEvent` is a tap, not a write-ahead log: a crash between an event and
-  your write loses that delta. Turn boundaries are the durable unit.
+  your write loses that delta. Turn boundaries are the durable unit, and
+  an interrupted turn replays rather than resumes.
+- Restored tasks reopen their transcript, so the conversation continues
+  instead of starting over.
+- One writer per task. These seams assume a single process owns a task's
+  session; see [scaling](#scaling) below.
+
+See [`examples/persistence/`](../examples/persistence/) for the same
+contract wired to Postgres instead of a disk.
+
+### Idempotent task creation
+
+`POST /v1/tasks` honors an `Idempotency-Key` header: a repeat with the
+same key returns the task the first call created rather than a second
+one. Every at-least-once delivery path needs this — a Slack redelivery, a
+webhook retry, a queue's duplicate — and getting it right is identical for
+all of them, so it belongs in the wire contract rather than in each
+caller's ingress. Keys live as long as their task.
+
+### Scaling
+
+The server holds tasks, run buffers, and stream subscribers in process.
+That means **one instance owns a task**: two replicas behind a plain load
+balancer will not find each other's tasks, and a stream request routed to
+the wrong replica gets a 404.
+
+Deploy it as a single instance, or route with session affinity keyed on
+task id. Multi-replica fan-out needs a shared event bus, which is a
+runtime concern and deliberately outside this package — if you need it,
+own it in your host or use a framework that ships one.
 
 ## Configuration
 
