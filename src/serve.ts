@@ -21,7 +21,7 @@ import {
   flushRecipeTelemetry,
   initRecipeTelemetry,
   type RecipeTelemetry,
-} from "./telemetry.js";
+} from "./tracing.js";
 
 /**
  * A standalone Tasks API server for a recipe: CRUD over tasks, runs within a
@@ -222,9 +222,9 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     });
     inspection = inspectRecipe(recipeDir);
     // Trace export out of the server, env-gated (OTEL_EXPORTER_OTLP_* or
-    // the ingest pair in telemetry.ts); null when unconfigured or when the
-    // host already initialized a provider — the handle is ownership.
-    telemetry = initRecipeTelemetry({ serviceName: inspection.name });
+    // the ingest pair in tracing.ts); null when unconfigured or when the
+    // host already owns a provider — the handle is ownership.
+    telemetry = await initRecipeTelemetry({ serviceName: inspection.name });
     workspaceRoot =
       options.workspace !== undefined
         ? resolve(options.workspace)

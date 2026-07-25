@@ -72,9 +72,9 @@
 			"types": "./dist/serve.d.ts",
 			"import": "./dist/serve.js"
 		},
-		"./telemetry": {
-			"types": "./dist/telemetry.d.ts",
-			"import": "./dist/telemetry.js"
+		"./tracing": {
+			"types": "./dist/tracing.d.ts",
+			"import": "./dist/tracing.js"
 		},
 		"./agui": {
 			"types": "./dist/agui/index.d.ts",

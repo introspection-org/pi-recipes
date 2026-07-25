@@ -12,14 +12,7 @@ import {
   type Context,
   type Tracer,
 } from "@opentelemetry/api";
-import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
-import { resourceFromAttributes } from "@opentelemetry/resources";
-import {
-  BasicTracerProvider,
-  BatchSpanProcessor,
-  type SpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+import type { SpanProcessor } from "@opentelemetry/sdk-trace-base";
 
 export type { AgentMeta } from "@introspection-sdk/introspection-pi";
 
@@ -41,6 +34,13 @@ export type { AgentMeta } from "@introspection-sdk/introspection-pi";
  *     managed runtime uses, so pointing a standalone deploy at the product
  *     is one env var.
  *
+ * This module is deliberately light — its runtime imports are only the OTel
+ * API and the instrumentation package — so the engine can depend on it from
+ * every embedding rung without paying for the export stack. The provider
+ * bootstrap (SDK trace provider, OTLP exporters, protobuf encoding) lives in
+ * `tracing-bootstrap.ts` and is loaded lazily, only when
+ * `initRecipeTelemetry` is actually called.
+ *
  * Once initialized, `createRecipeSession` attaches the instrumentation to
  * every session it builds (subagent sessions included). Hosts that already
  * own an OTel provider skip `initRecipeTelemetry` and call
@@ -56,7 +56,12 @@ export interface InitRecipeTelemetryOptions {
    * test / embedding seam. When set, env export config is ignored.
    */
   spanProcessors?: SpanProcessor[];
-  /** Export configuration source. Default: `process.env`. */
+  /**
+   * Source for the ingest pair (`INTROSPECTION_TOKEN`,
+   * `INTROSPECTION_BASE_OTEL_URL`) and `OTEL_SERVICE_NAME`. Default:
+   * `process.env`. The standard `OTEL_EXPORTER_OTLP_*` target always reads
+   * the process env — the exporter resolves that contract itself.
+   */
   env?: NodeJS.ProcessEnv;
 }
 
@@ -73,77 +78,49 @@ export interface RecipeTelemetry {
 /** Instrumentation scope of the tracer that produces the gen_ai spans. */
 export const RECIPE_TRACER_NAME = "pi-recipes";
 
-const DEFAULT_INTROSPECTION_OTEL_URL = "https://otel.introspection.dev";
-
-let provider: BasicTracerProvider | null = null;
-
-function envSpanProcessors(env: NodeJS.ProcessEnv): SpanProcessor[] {
-  const processors: SpanProcessor[] = [];
-  if (
-    env.OTEL_EXPORTER_OTLP_ENDPOINT ||
-    env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-  ) {
-    // The exporter reads the OTEL_EXPORTER_OTLP_* contract from env itself.
-    processors.push(new BatchSpanProcessor(new OTLPTraceExporter()));
-  }
-  if (env.INTROSPECTION_TOKEN) {
-    const base = (
-      env.INTROSPECTION_BASE_OTEL_URL ?? DEFAULT_INTROSPECTION_OTEL_URL
-    ).replace(/\/$/, "");
-    processors.push(
-      new BatchSpanProcessor(
-        new OTLPTraceExporter({
-          url: base.endsWith("/v1/traces") ? base : `${base}/v1/traces`,
-          headers: { authorization: `Bearer ${env.INTROSPECTION_TOKEN}` },
-        })
-      )
-    );
-  }
-  return processors;
+/** The provider surface this module needs; the SDK provider satisfies it. */
+export interface RecipeTraceProvider {
+  forceFlush(): Promise<void>;
+  shutdown(): Promise<void>;
 }
+
+let provider: RecipeTraceProvider | null = null;
+let ownsContextManager = false;
+let initializing: Promise<RecipeTelemetry | null> | null = null;
 
 /**
  * Initialize the recipe trace provider. Returns a handle when this call
  * created it — holding the handle is owning `shutdown()` — and null when no
- * export target is configured or a provider already exists (the earlier
- * owner keeps its handle).
+ * export target is configured, a provider already exists (the earlier owner
+ * keeps its handle), or the host's own global OTel provider is already
+ * registered (the host wins; nothing is overwritten).
  */
 export function initRecipeTelemetry(
   options: InitRecipeTelemetryOptions = {}
-): RecipeTelemetry | null {
-  if (provider) return null;
-  const env = options.env ?? process.env;
-  const spanProcessors = options.spanProcessors ?? envSpanProcessors(env);
-  if (spanProcessors.length === 0) return null;
-
-  otelContext.setGlobalContextManager(
-    new AsyncLocalStorageContextManager().enable()
-  );
-  const serviceName =
-    env.OTEL_SERVICE_NAME ?? options.serviceName ?? "pi-recipes";
-  provider = new BasicTracerProvider({
-    resource: resourceFromAttributes({
-      "service.name": serviceName,
-      ...options.resourceAttributes,
-    }),
-    spanProcessors,
-  });
-  trace.setGlobalTracerProvider(provider);
-  if (!options.spanProcessors) {
-    const targets = [
-      env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? env.OTEL_EXPORTER_OTLP_ENDPOINT,
-      env.INTROSPECTION_TOKEN
-        ? (env.INTROSPECTION_BASE_OTEL_URL ?? DEFAULT_INTROSPECTION_OTEL_URL)
-        : undefined,
-    ].filter(Boolean);
-    console.error(
-      `[telemetry] trace export enabled (service=${serviceName}) -> ${targets.join(", ")}`
-    );
+): Promise<RecipeTelemetry | null> {
+  if (provider || initializing) {
+    // Whoever got here first owns the provider; later callers get null once
+    // any in-flight init settles.
+    return (initializing ?? Promise.resolve(null)).then(() => null);
   }
-  return {
-    flush: flushRecipeTelemetry,
-    shutdown: shutdownRecipeTelemetry,
-  };
+  initializing = (async () => {
+    try {
+      const { bootstrapRecipeTracing } = await import(
+        "./tracing-bootstrap.js"
+      );
+      const created = await bootstrapRecipeTracing(options);
+      if (!created) return null;
+      provider = created.provider;
+      ownsContextManager = created.ownsContextManager;
+      return {
+        flush: flushRecipeTelemetry,
+        shutdown: shutdownRecipeTelemetry,
+      };
+    } finally {
+      initializing = null;
+    }
+  })();
+  return initializing;
 }
 
 /** The recipe tracer, or undefined while telemetry is uninitialized. */
@@ -161,13 +138,18 @@ export async function flushRecipeTelemetry(): Promise<void> {
 export async function shutdownRecipeTelemetry(): Promise<void> {
   if (!provider) return;
   const active = provider;
+  const ownedContextManager = ownsContextManager;
   provider = null;
+  ownsContextManager = false;
   try {
     await active.forceFlush();
     await active.shutdown();
   } finally {
+    // The global tracer provider is ours whenever `provider` was set — init
+    // only records it after winning the registration. The context manager
+    // may have been the host's; only disable what this module registered.
     trace.disable();
-    otelContext.disable();
+    if (ownedContextManager) otelContext.disable();
   }
 }
 

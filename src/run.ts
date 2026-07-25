@@ -4,6 +4,7 @@ import {
   createRecipeSession,
   type CreateRecipeSessionOptions,
 } from "./session.js";
+import { flushRecipeTelemetry } from "./tracing.js";
 
 /**
  * One turn, no server: create session → single prompt → await settle →
@@ -109,5 +110,8 @@ export async function runRecipe(
     if (timer !== undefined) clearTimeout(timer);
     signal?.removeEventListener("abort", onAbort);
     await handle.dispose();
+    // One-shot embeds are the most likely to exit before the batch export
+    // timer fires; a no-op when telemetry is uninitialized.
+    await flushRecipeTelemetry().catch(() => {});
   }
 }

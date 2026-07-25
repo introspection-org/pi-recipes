@@ -35,7 +35,7 @@ import {
   applyRecipeAgentModelConfigToSession,
 } from "./recipe-model.js";
 import { resolveRecipe, type ResolvedRecipe } from "./recipe/resolve.js";
-import { instrumentRecipeSession } from "./telemetry.js";
+import { instrumentRecipeSession } from "./tracing.js";
 
 export { expectedProviderEnvVars } from "./provider-env.js";
 
