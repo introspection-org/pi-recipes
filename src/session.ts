@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { InMemoryCredentialStore, type CredentialStore } from "@earendil-works/pi-ai";
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -34,6 +35,7 @@ import {
   applyRecipeAgentModelConfigToSession,
 } from "./recipe-model.js";
 import { resolveRecipe, type ResolvedRecipe } from "./recipe/resolve.js";
+import { instrumentRecipeSession } from "./telemetry.js";
 
 export { expectedProviderEnvVars } from "./provider-env.js";
 
@@ -90,6 +92,12 @@ export interface CreateRecipeSessionOptions {
   systemPrompt?: (resolved: string) => string;
   /** Tap on `session.subscribe`, detached at dispose. */
   onEvent?: (event: AgentSessionEvent) => void;
+  /**
+   * Span identity when recipe telemetry is initialized (see
+   * `initRecipeTelemetry`): `conversation_id` groups this session's gen_ai
+   * spans. Default: a fresh UUID per session.
+   */
+  telemetry?: { conversationId?: string };
 }
 
 export interface RecipeSessionHandle {
@@ -386,6 +394,16 @@ export async function createRecipeSession(
 
   const unsubscribe = opts.onEvent ? session.subscribe(opts.onEvent) : undefined;
 
+  // GenAI-semconv spans when the host initialized recipe telemetry (or its
+  // own global provider is registered through instrumentRecipeSession).
+  const detachTelemetry = instrumentRecipeSession(session, {
+    meta: {
+      conversationId: opts.telemetry?.conversationId ?? randomUUID(),
+      agentId: `${recipe.manifest.name}/${recipe.agentName}`,
+      agentName: recipe.agentName,
+    },
+  });
+
   let disposed = false;
   return {
     session,
@@ -411,6 +429,7 @@ export async function createRecipeSession(
         // An idle session has nothing to abort.
       }
       session.dispose();
+      detachTelemetry?.();
       if (mcp.materialized) {
         clearMcpCatalogPreload(env);
         await stopMcpDaemon(env);

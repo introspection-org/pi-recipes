@@ -19,7 +19,8 @@ Configuration is environment-only:
 | the `${VAR}`s from `.pi/mcp.local.json` | MCP endpoint bindings (`recipes inspect --json` → `mcp_env`) |
 | `RECIPES_SERVE_TOKEN` | Inbound bearer; unset → auth disabled |
 | `PI_ASK_USER_AUTO_APPROVE` | Headless ask resolution |
-| `OTEL_EXPORTER_OTLP_*` | Optional run telemetry |
+| `OTEL_EXPORTER_OTLP_*` | Optional: export run traces (OTel GenAI semconv) to any OTLP backend |
+| `INTROSPECTION_TOKEN` | Optional: export the same traces to Introspection (`INTROSPECTION_BASE_OTEL_URL` overrides the ingest URL) |
 
 | Template | Notes |
 | --- | --- |

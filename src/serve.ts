@@ -17,6 +17,11 @@ import {
   type RecipeSessionHandle,
 } from "./session.js";
 import type { ResolvedRecipe } from "./recipe/resolve.js";
+import {
+  flushRecipeTelemetry,
+  initRecipeTelemetry,
+  shutdownRecipeTelemetry,
+} from "./telemetry.js";
 
 /**
  * A standalone Tasks API server for a recipe: CRUD over tasks, runs within a
@@ -204,6 +209,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
   let inspection: RecipeInspection | null = null;
   let workspaceRoot: string | null = null;
   let mcpMaterialized = false;
+  let telemetryOwned = false;
   let httpServer: ServerType | null = null;
   let closed = false;
 
@@ -215,6 +221,10 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       ...(options.agentName ? { agentName: options.agentName } : {}),
     });
     inspection = inspectRecipe(recipeDir);
+    // Trace export out of the server, env-gated (OTEL_EXPORTER_OTLP_* or
+    // the ingest pair in telemetry.ts); a no-op when unconfigured or when
+    // the host already initialized a provider.
+    telemetryOwned = initRecipeTelemetry({ serviceName: inspection.name });
     workspaceRoot =
       options.workspace !== undefined
         ? resolve(options.workspace)
@@ -307,6 +317,8 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     task.currentRunId = null;
     task.updatedAt = now();
     closeRunStreams(run);
+    // Settled runs flush eagerly so short-lived deploys don't lose spans.
+    void flushRecipeTelemetry().catch(() => {});
   }
 
   function createRun(task: TaskEntry, status: RunStatus): RunEntry {
@@ -494,6 +506,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
         ...(agentName ? { agentName } : {}),
         cwd: workspaceDir,
         mcpMode: "inherit",
+        telemetry: { conversationId: taskId },
       });
     } catch (err) {
       return c.json(
@@ -690,6 +703,9 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       if (mcpMaterialized) {
         clearMcpCatalogPreload(process.env);
         await stopMcpDaemon(process.env).catch(() => {});
+      }
+      if (telemetryOwned) {
+        await shutdownRecipeTelemetry().catch(() => {});
       }
       if (httpServer) {
         await new Promise<void>((resolvePromise, rejectPromise) => {

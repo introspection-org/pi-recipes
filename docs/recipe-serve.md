@@ -385,41 +385,46 @@ unbuffered response streaming.
 | MCP bindings | the `${VAR}`s referenced by `.pi/mcp.local.json` | Existing portable shape; unresolved placeholders are printed at boot, `required` servers fail closed |
 | Inbound auth | `RECIPES_SERVE_TOKEN` | Unset → auth disabled |
 | Interactions | `PI_ASK_USER_AUTO_APPROVE` | Headless ask resolution ([interactions](interactions.md)) |
-| Telemetry | standard `OTEL_EXPORTER_OTLP_*` (CLI auto-instrumentation) | Optional; nothing is emitted by default |
+| Telemetry | standard `OTEL_EXPORTER_OTLP_*`, or `INTROSPECTION_TOKEN` (+ `INTROSPECTION_BASE_OTEL_URL`) | Optional; nothing is emitted by default |
 
 ## Instrumentation
 
-The library ships no telemetry: zero OpenTelemetry dependencies, nothing
-emitted by default. Instrumentation layers on at three levels, all
-opt-in:
+Nothing is emitted by default. When an export target is configured, the
+package attaches the same **GenAI semantic-convention** instrumentation
+the managed runtime uses and exports the traces out of the host — three
+layers, all opt-in:
 
-1. **The seam (library).** `serveRecipe`'s `onTask(taskId, handle)` fires
+1. **Built-in OTel export (env-gated).** `serveRecipe` (and any host that
+   calls `initRecipeTelemetry` from `./telemetry`) builds a trace
+   provider when an OTLP target is configured, and every session the
+   engine creates — subagents included — is instrumented: one
+   `invoke_agent` span per run, `chat {model}` spans with token usage,
+   `execute_tool` spans per tool call, the task id as
+   `gen_ai.conversation.id`. Two env-driven targets, either or both:
+
+   - `OTEL_EXPORTER_OTLP_ENDPOINT` (+ `_HEADERS`, …) — the standard OTLP
+     contract; any collector or vendor backend renders it.
+   - `INTROSPECTION_TOKEN` (+ `INTROSPECTION_BASE_OTEL_URL`) — plain OTLP
+     with a bearer header to the Introspection ingest, the same pair the
+     managed runtime uses, so conversations from a recipe served anywhere
+     appear in the product.
+
+   The instrumentation itself is
+   [`@introspection-sdk/introspection-pi`](https://www.npmjs.com/package/@introspection-sdk/introspection-pi)
+   — a standalone OTel-semconv package (no platform client). Spans carry
+   full conversation content; keep the export target under the same data
+   policy as the provider keys.
+
+2. **The seam (library).** `serveRecipe`'s `onTask(taskId, handle)` fires
    as each task's session is created, handing the live session to
    whatever the host wants to attach — an instrumentation wrapper, a
    logger via `handle.session.subscribe`, metrics. Rungs 2–3 need no tap:
    they return the session/handle directly.
 
-2. **Standard OTel (CLI, env-gated).** When the conventional
-   `OTEL_EXPORTER_OTLP_*` env vars are set, `recipes serve` registers the
-   Node OpenTelemetry SDK and instruments Pi with **GenAI semantic
-   conventions**: a span per run, `gen_ai.*` model-call spans with token
-   usage, tool-execution spans, task/run ids as attributes. Any OTLP
-   backend renders it. Unset → nothing is registered.
-
-3. **Vendor instrumentation (composition).** A deployer who wants a
-   specific observability product installs that vendor's Pi
-   instrumentation in the recipe's own `node_modules` and sets its env;
-   the CLI detects it and prefers it over the plain OTLP default. The
-   reference composition is the Introspection SDK: its `introspection-pi`
-   package wraps the session (via `onTask` /
-   `instrumentAgent(handle.session)`) and emits the GenAI-semconv spans
-   the Introspection platform ingests, and its standalone OTel exporter
-   (`createIntrospectionExporter({ baseUrl, token })`, defaults from
-   `INTROSPECTION_BASE_OTEL_URL` / `INTROSPECTION_TOKEN`) carries them to
-   the product — so conversations from a recipe served anywhere appear
-   there, through the same instrumentation stack the managed runtime
-   uses. The toolchain itself never takes the dependency — opting into a
-   vendor is the recipe's `package.json` decision, not the package's.
+3. **Host-owned providers (composition).** A host that already runs its
+   own OTel setup skips `initRecipeTelemetry` and calls
+   `instrumentRecipeSession(session, { tracer, meta })` with its own
+   tracer; the built-in init is a no-op whenever a provider exists.
 
 Catalog telemetry opt-outs (`DO_NOT_TRACK`, `PI_RECIPES_NO_TELEMETRY`)
 are unrelated to run instrumentation and unchanged by this document.
