@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { execFile, spawn } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   createRecipeScaffold,
 } from "./recipe-dev.js";
@@ -65,6 +66,7 @@ interface ParsedArgs {
   host?: string;
   token?: string;
   workspace?: string;
+  sessionDir?: string;
   local: boolean;
   noSetup: boolean;
   force: boolean;
@@ -111,6 +113,7 @@ function usage(commandName = "recipes"): string {
     "  --host <host>      Serve bind host (default 127.0.0.1)",
     "  --token <bearer>   Serve inbound bearer (default env RECIPES_SERVE_TOKEN)",
     "  --workspace <dir>  Serve workspace root (default a temp dir)",
+    "  --session-dir <dir> Persist serve task transcripts here (default in-memory)",
     "  --suite <name>     Run one Harbor eval suite",
     "  --dataset-path <dir>",
     "                     Run a local Harbor dataset directory instead of pinned suites",
@@ -192,6 +195,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let host: string | undefined;
   let token: string | undefined;
   let workspace: string | undefined;
+  let sessionDir: string | undefined;
   let local = false;
   let noSetup = false;
   let force = false;
@@ -273,6 +277,10 @@ function parseArgs(argv: string[]): ParsedArgs {
       const value = argv[++index];
       if (!value) throw new Error("--token requires a value");
       token = value;
+    } else if (arg === "--session-dir") {
+      const value = argv[++index];
+      if (!value) throw new Error("--session-dir requires a directory");
+      sessionDir = value;
     } else if (arg === "--workspace") {
       const value = argv[++index];
       if (!value) throw new Error("--workspace requires a directory");
@@ -312,6 +320,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     host,
     token,
     workspace,
+    sessionDir,
     local,
     noSetup,
     force,
@@ -721,11 +730,27 @@ export async function main(argv: string[]): Promise<number> {
     const path = resolveRecipeDirectory(identifier, opts);
     if (!existsSync(path)) throw new Error(`Recipe not found: ${identifier}`);
     const { serveRecipe } = await import("./serve.js");
+    // `--session-dir` is the file-backed default of the sessionManager seam:
+    // one Pi session file per task, keyed by task id, under a directory the
+    // deploy is expected to back with a volume. Any other durability story
+    // (rows projected out of `onEvent`, an object store) is the host's, built
+    // on the same seam through the library API.
+    let sessionManagerFor:
+      | ((taskId: string) => SessionManager | undefined)
+      | undefined;
+    if (args.sessionDir) {
+      const sessionDir = resolve(args.sessionDir);
+      mkdirSync(sessionDir, { recursive: true });
+      const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+      sessionManagerFor = (taskId) =>
+        SessionManager.create(sessionDir, sessionDir, { id: taskId });
+    }
     const server = serveRecipe({
       recipeDir: path,
       ...(args.agent ? { agentName: args.agent } : {}),
       ...(args.token ? { token: args.token } : {}),
       ...(args.workspace ? { workspace: args.workspace } : {}),
+      ...(sessionManagerFor ? { sessionManager: sessionManagerFor } : {}),
     });
     const port = args.port ?? 8888;
     const hostname = args.host ?? "127.0.0.1";

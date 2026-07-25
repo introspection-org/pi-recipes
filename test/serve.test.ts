@@ -3,8 +3,16 @@ import {
   type AssistantMessage,
   type AssistantMessageEvent,
 } from "@earendil-works/pi-ai/compat";
+import { mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
-import { serveRecipe, type RecipeServer } from "../src/serve.js";
+import {
+  serveRecipe,
+  type RecipeServer,
+  type ServeLogEvent,
+} from "../src/serve.js";
 import type { RecipeSessionHandle } from "../src/session.js";
 import { writeFixtureRecipe } from "../src/test-utils.js";
 
@@ -178,17 +186,24 @@ describe("serveRecipe", () => {
     onTask?: (taskId: string, handle: RecipeSessionHandle) => void;
     maxTasks?: number;
     fixture?: Parameters<typeof writeFixtureRecipe>[0];
+    sessionManager?: (taskId: string) => SessionManager | undefined;
+    logs?: ServeLogEvent[];
   }): { server: RecipeServer; recipeDir: string } {
     const fixture = writeFixtureRecipe(options?.fixture);
     cleanups.push(fixture.cleanup);
+    const logs = options?.logs;
     const server = serveRecipe({
       recipeDir: fixture.recipeDir,
       token: TOKEN,
       workspace: fixture.workspaceDir,
+      logger: logs ? (event) => logs.push(event) : () => {},
       ...(options?.maxTasks !== undefined
         ? { maxTasks: options.maxTasks }
         : {}),
       ...(options?.onTask ? { onTask: options.onTask } : {}),
+      ...(options?.sessionManager
+        ? { sessionManager: options.sessionManager }
+        : {}),
     });
     cleanups.push(() => server.close());
     return { server, recipeDir: fixture.recipeDir };
@@ -499,5 +514,130 @@ describe("serveRecipe", () => {
     const { server } = makeServer();
     const conversations = await request(server, "GET", "/v1/conversations");
     expect(conversations.status).toBe(404);
+  });
+
+  it("reports readiness without auth, separately from liveness", async () => {
+    const { server } = makeServer();
+    // Probe routes never wait on boot — that is the point of readiness, so
+    // a still-booting instance answers "booting" instead of hanging.
+    const booting = await request(server, "GET", "/ready", { token: null });
+    expect(booting.status).toBe(503);
+    expect(await booting.json()).toEqual({ status: "booting" });
+
+    // Any authenticated route awaits boot; afterwards readiness flips.
+    await request(server, "GET", "/config");
+    const ready = await request(server, "GET", "/ready", { token: null });
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toEqual({ status: "ready" });
+  });
+
+  it("reports a failed boot as unready instead of dying", async () => {
+    const fixture = writeFixtureRecipe();
+    cleanups.push(fixture.cleanup);
+    const server = serveRecipe({
+      recipeDir: join(fixture.recipeDir, "does-not-exist"),
+      token: TOKEN,
+      workspace: fixture.workspaceDir,
+      logger: () => {},
+    });
+    cleanups.push(() => server.close());
+
+    // Liveness stays 200: the process is up and must not be restart-looped
+    // for a misconfiguration a restart cannot fix.
+    const health = await request(server, "GET", "/health", { token: null });
+    expect(health.status).toBe(200);
+
+    const ready = await request(server, "GET", "/ready", { token: null });
+    expect(ready.status).toBe(503);
+    const body = (await ready.json()) as { status: string; detail?: string };
+    expect(body.status).toBe("failed");
+    expect(body.detail).toBeTruthy();
+  });
+
+  it("echoes an inbound request id and generates one otherwise", async () => {
+    const { server } = makeServer();
+    const echoed = await request(server, "GET", "/config", {
+      headers: { "x-request-id": "req-from-caller" },
+    });
+    expect(echoed.headers.get("x-request-id")).toBe("req-from-caller");
+
+    const generated = await request(server, "GET", "/config");
+    expect(generated.headers.get("x-request-id")).toMatch(
+      /^[0-9a-f-]{36}$/
+    );
+  });
+
+  it("turns an unhandled error into a logged 500 carrying the request id", async () => {
+    const logs: ServeLogEvent[] = [];
+    const { server } = makeServer({
+      logs,
+      onTask: () => {
+        throw new Error("tap exploded");
+      },
+    });
+
+    const response = await request(server, "POST", "/v1/tasks", {
+      body: {},
+      headers: { "x-request-id": "req-boom" },
+    });
+    expect(response.status).toBe(500);
+    // The cause is logged, never returned.
+    expect(await response.json()).toEqual({
+      detail: "Internal Server Error",
+      request_id: "req-boom",
+    });
+    const logged = logs.find((event) => event.event === "unhandled_error");
+    expect(logged?.request_id).toBe("req-boom");
+    expect(logged?.detail).toBe("tap exploded");
+  });
+
+  it("persists task transcripts through the session-manager seam", async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), "recipes-sessions-"));
+    const { server } = makeServer({
+      sessionManager: (taskId) =>
+        SessionManager.create(sessionDir, sessionDir, { id: taskId }),
+      onTask: (_taskId, handle) => scriptReply(handle, "persisted hello"),
+    });
+
+    const created = await request(server, "POST", "/v1/tasks", {
+      body: { prompt: "hello" },
+    });
+    expect(created.status).toBe(200);
+    const { task, run } = (await created.json()) as {
+      task: { id: string };
+      run: { id: string };
+    };
+
+    // Pi flushes a session file only once an assistant message exists, so a
+    // task with no completed turn deliberately leaves nothing on disk.
+    await readSse(
+      await request(server, "GET", `/v1/tasks/${task.id}/runs/${run.id}/stream`),
+      { until: (all) => aguiTypes(all).includes("RUN_FINISHED") }
+    );
+
+    // The seam's contract: one session file per task, named by task id,
+    // in whatever directory the host chose to back it with.
+    const files = readdirSync(sessionDir);
+    expect(files.some((name) => name.includes(task.id))).toBe(true);
+  });
+
+  it("logs task and run lifecycle with correlatable ids", async () => {
+    const logs: ServeLogEvent[] = [];
+    const { server } = makeServer({ logs });
+    const created = await request(server, "POST", "/v1/tasks", {
+      body: { prompt: "hello" },
+    });
+    const { task, run } = (await created.json()) as {
+      task: { id: string };
+      run: { id: string };
+    };
+
+    const taskCreated = logs.find((event) => event.event === "task.created");
+    expect(taskCreated?.task_id).toBe(task.id);
+    expect(taskCreated?.persisted).toBe(false);
+
+    const started = logs.find((event) => event.event === "run.started");
+    expect(started?.run_id).toBe(run.id);
+    expect(started?.task_id).toBe(task.id);
   });
 });

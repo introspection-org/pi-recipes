@@ -331,6 +331,7 @@ describe("recipe telemetry", () => {
     const server = serveRecipe({
       recipeDir: fixture.recipeDir,
       workspace: fixture.workspaceDir,
+      logger: () => {},
       onTask: (_taskId, handle: RecipeSessionHandle) => {
         // Replacing the stream function post-creation drops the chat-span
         // wrapper for this scripted session; run/tool spans still flow from

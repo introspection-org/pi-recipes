@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Hono, type Context } from "hono";
 import { serve as honoServe, type ServerType } from "@hono/node-server";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import { AgUiRunTranslator } from "./agui/translator.js";
 import type { AgUiEvent } from "./agui/events.js";
 import type { RuntimeEvent } from "./agui/session-events.js";
@@ -46,7 +47,38 @@ export interface ServeRecipeOptions {
   maxTasks?: number;
   /** Lifecycle tap, called as each task's session is created. */
   onTask?: (taskId: string, handle: RecipeSessionHandle) => void;
+  /**
+   * Session persistence, per task. Return the manager backing that task's
+   * transcript; `undefined` keeps the in-memory default. This is the seam,
+   * not a store: durability is whatever the host builds on it — a session
+   * directory on a mounted volume, or rows projected out of `onEvent` and
+   * rehydrated through `SessionManager.open`.
+   */
+  sessionManager?: (taskId: string) => SessionManager | undefined;
+  /**
+   * Structured log sink. Default: JSON lines on stderr. Pass a no-op to
+   * silence the server; the host owns shipping, sampling, and redaction.
+   */
+  logger?: ServeLogger;
 }
+
+/** A structured server log record. `event` is a stable dotted name. */
+export interface ServeLogEvent {
+  level: "info" | "warn" | "error";
+  event: string;
+  request_id?: string;
+  [key: string]: unknown;
+}
+
+export type ServeLogger = (event: ServeLogEvent) => void;
+
+/**
+ * JSON lines on stderr — the lowest-common-denominator sink every log
+ * collector already understands, and stdout stays free for the CLI.
+ */
+export const defaultServeLogger: ServeLogger = (event) => {
+  process.stderr.write(`${JSON.stringify({ time: now(), ...event })}\n`);
+};
 
 export interface RecipeServer {
   /** Fetch-native entry, default-exportable on fetch runtimes. */
@@ -161,6 +193,18 @@ interface InstanceIdentity {
 }
 
 /**
+ * Liveness and readiness are different questions: the process is alive from
+ * the first tick, but it cannot serve a task until the boot preflight has
+ * resolved the recipe, checked credentials, and materialized MCP. Reporting
+ * ready too early makes an orchestrator route traffic that then blocks on
+ * `boot` instead of going to an instance that can answer.
+ */
+type Readiness =
+  | { state: "booting" }
+  | { state: "ready" }
+  | { state: "failed"; detail: string };
+
+/**
  * Map a Pi session event onto the translator's structural event union.
  * Settlement is fed explicitly after the prompt resolves (never from the
  * subscription) so terminal status is computed before RUN_FINISHED/RUN_ERROR.
@@ -203,8 +247,10 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
   const maxTasks = options.maxTasks ?? DEFAULT_MAX_TASKS;
   const token = options.token ?? process.env.RECIPES_SERVE_TOKEN;
   const instance: InstanceIdentity = { orgId: uuidv7(), projectId: uuidv7() };
+  const log = options.logger ?? defaultServeLogger;
 
   const tasks = new Map<string, TaskEntry>();
+  let readiness: Readiness = { state: "booting" };
   let recipe: ResolvedRecipe | null = null;
   let inspection: RecipeInspection | null = null;
   let workspaceRoot: string | null = null;
@@ -236,9 +282,22 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
       process.env
     );
     mcpMaterialized = result.materialized;
+    readiness = { state: "ready" };
+    log({
+      level: "info",
+      event: "boot.ready",
+      recipe: inspection.name,
+      agent_name: recipe.agentName,
+      max_tasks: maxTasks,
+      mcp_materialized: mcpMaterialized,
+    });
   })();
   // Surfaced on first fetch()/listen(); never an unhandled rejection.
-  boot.catch(() => {});
+  boot.catch((err: unknown) => {
+    const detail = err instanceof Error ? err.message : String(err);
+    readiness = { state: "failed", detail };
+    log({ level: "error", event: "boot.failed", detail });
+  });
 
   function authorized(c: Context): boolean {
     if (token === undefined) return true;
@@ -317,6 +376,15 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     task.currentRunId = null;
     task.updatedAt = now();
     closeRunStreams(run);
+    log({
+      level: run.status === "failed" ? "error" : "info",
+      event: "run.settled",
+      task_id: task.id,
+      run_id: run.id,
+      status: run.status,
+      duration_ms: Date.parse(run.updatedAt) - Date.parse(run.createdAt),
+      ...(run.error ? { detail: run.error } : {}),
+    });
     // Settled runs flush eagerly so short-lived deploys don't lose spans.
     void flushRecipeTracing().catch(() => {});
   }
@@ -345,6 +413,12 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     const run = createRun(task, "running");
     task.currentRunId = run.id;
     task.updatedAt = now();
+    log({
+      level: "info",
+      event: "run.started",
+      task_id: task.id,
+      run_id: run.id,
+    });
     void executeRun(task, run, prompt);
     return run;
   }
@@ -459,17 +533,78 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     });
   }
 
-  const app = new Hono();
+  const app = new Hono<{ Variables: { requestId: string } }>();
 
+  // Probe routes answer before auth: an orchestrator has no bearer, and a
+  // health check that 404s is indistinguishable from a dead process.
+  //
+  // Liveness: the process is up. Never gated on boot — a failed boot must
+  // still answer so the platform reports "started but not ready" instead of
+  // restart-looping a container whose recipe or credentials are misconfigured.
   app.get("/health", (c) => c.json({ status: "ok" }));
+
+  // Readiness: this instance can serve a task.
+  app.get("/ready", (c) =>
+    readiness.state === "ready"
+      ? c.json({ status: "ready" })
+      : c.json(
+          readiness.state === "failed"
+            ? { status: "failed", detail: readiness.detail }
+            : { status: "booting" },
+          503
+        )
+  );
+
+  // Correlation id first, so every later log line and the error boundary can
+  // carry it. Honor an inbound id when the caller already has one.
+  app.use("*", async (c, next) => {
+    const inbound = c.req.header("x-request-id");
+    const requestId = inbound && inbound.length <= 200 ? inbound : uuidv7();
+    c.set("requestId", requestId);
+    c.header("x-request-id", requestId);
+    const startedAt = Date.now();
+    await next();
+    log({
+      level: c.res.status >= 500 ? "error" : "info",
+      event: "request",
+      request_id: requestId,
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      duration_ms: Date.now() - startedAt,
+    });
+  });
 
   // One bearer for the whole server; unauthorized is indistinguishable from
   // nonexistent so the API is not an oracle for probing ids.
   app.use("*", async (c, next) => {
-    if (c.req.path === "/health") return next();
+    if (c.req.path === "/health" || c.req.path === "/ready") return next();
     if (!authorized(c)) return notFound(c);
     await boot;
     return next();
+  });
+
+  // Without this an unhandled throw becomes a bare 500 with no body and no
+  // record. The detail stays generic; the cause goes to the log with the
+  // request id that the client also received.
+  app.onError((err, c) => {
+    const requestId = c.get("requestId") as string | undefined;
+    log({
+      level: "error",
+      event: "unhandled_error",
+      ...(requestId ? { request_id: requestId } : {}),
+      method: c.req.method,
+      path: c.req.path,
+      detail: err instanceof Error ? err.message : String(err),
+      ...(err instanceof Error && err.stack ? { stack: err.stack } : {}),
+    });
+    return c.json(
+      {
+        detail: "Internal Server Error",
+        ...(requestId ? { request_id: requestId } : {}),
+      },
+      500
+    );
   });
 
   app.get("/config", (c) =>
@@ -499,6 +634,8 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     const workspaceDir = join(workspaceRoot!, taskId);
     mkdirSync(workspaceDir, { recursive: true });
 
+    const sessionManager = options.sessionManager?.(taskId);
+
     let handle: RecipeSessionHandle;
     try {
       handle = await createRecipeSession({
@@ -507,12 +644,18 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
         cwd: workspaceDir,
         mcpMode: "inherit",
         tracing: { conversationId: taskId },
+        ...(sessionManager ? { sessionManager } : {}),
       });
     } catch (err) {
-      return c.json(
-        { detail: err instanceof Error ? err.message : String(err) },
-        422
-      );
+      const detail = err instanceof Error ? err.message : String(err);
+      log({
+        level: "warn",
+        event: "task.create_failed",
+        request_id: c.get("requestId"),
+        task_id: taskId,
+        detail,
+      });
+      return c.json({ detail }, 422);
     }
 
     const task: TaskEntry = {
@@ -532,6 +675,15 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     };
     tasks.set(taskId, task);
     options.onTask?.(taskId, handle);
+    log({
+      level: "info",
+      event: "task.created",
+      request_id: c.get("requestId"),
+      task_id: taskId,
+      agent_name: task.agentName,
+      persisted: sessionManager !== undefined,
+      live_tasks: tasks.size,
+    });
 
     const run =
       body.prompt !== undefined && body.prompt.trim() !== ""
@@ -673,9 +825,11 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
 
   return {
     async fetch(request: Request): Promise<Response> {
-      // /health stays live during (and despite) boot; every other route
-      // surfaces a boot failure to the host rather than serving 500s.
-      if (new URL(request.url).pathname !== "/health") await boot;
+      // Probe routes stay live during (and despite) boot — that is the whole
+      // point of readiness. Every other route surfaces a boot failure to the
+      // host rather than serving 500s.
+      const { pathname } = new URL(request.url);
+      if (pathname !== "/health" && pathname !== "/ready") await boot;
       return app.fetch(request);
     },
     async listen(listenOptions?: {

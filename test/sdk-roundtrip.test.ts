@@ -125,6 +125,7 @@ describe("SDK task client round-trip", () => {
       recipeDir: fixture.recipeDir,
       token: TOKEN,
       workspace: fixture.workspaceDir,
+      logger: () => {},
       onTask: (_taskId, handle) => scriptSession(handle),
     });
     await server.listen({ port: PORT, hostname: "127.0.0.1" });

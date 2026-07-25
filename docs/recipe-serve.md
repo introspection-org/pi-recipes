@@ -1,6 +1,6 @@
 # Recipe serve
 
-**Status:** Proposal.
+**Status:** Implemented (`./session`, `./run`, `./serve`, `recipes serve`).
 
 Run a recipe as a long-lived service — in a container, on a VM, or on any
 sandbox cloud (Docker, Modal, Daytona, Fly, Vercel Sandbox, Cloud Run) —
@@ -317,7 +317,7 @@ as small adapters without reworking the server:
 
 ```
 recipes serve [recipe-dir] [--agent <name>] [--port 8888] [--host 127.0.0.1]
-              [--token <bearer>] [--workspace <dir>]
+              [--token <bearer>] [--workspace <dir>] [--session-dir <dir>]
 ```
 
 A thin wrapper over `serveRecipe().listen()`; flags mirror the options
@@ -376,6 +376,74 @@ target's own idiom hosting the same server:
 Every template README states the target requirements: Node ≥ 24, writable
 filesystem, outbound HTTPS to model providers and any bound MCP endpoints,
 unbuffered response streaming.
+
+## Operating the server
+
+The server owns what happens inside the agent boundary. Everything around
+it — delivery, scheduling, scaling, storage, log shipping — is the host's,
+reached through a seam with a working default.
+
+### Liveness and readiness
+
+Two probe routes, both unauthenticated (an orchestrator has no bearer, and
+a health check that `404`s is indistinguishable from a dead process):
+
+| Route | Meaning |
+| --- | --- |
+| `GET /health` | The process is up. Answers from the first tick and **never** gates on boot. |
+| `GET /ready` | This instance can serve a task: `200 {"status":"ready"}`, else `503` with `booting` or `failed` + `detail`. |
+
+Point container and Kubernetes readiness probes at `/ready`, liveness at
+`/health`.
+
+What a *failed* boot does depends on the entry point, and both behaviors
+are deliberate:
+
+- **`listen()` / `recipes serve`** — fail-fast. The boot error is logged as
+  `boot.failed` and the process exits non-zero. A long-lived container that
+  cannot serve its recipe must crash so the platform surfaces the
+  misconfiguration, rather than accept traffic it can only `500`.
+- **`fetch()`** on a serverless or edge host — there is no process to
+  crash, so `/ready` reports `failed` with the detail and every other route
+  surfaces the boot error.
+
+Readiness therefore covers the boot *window* on a container (the seconds
+before the recipe resolves, credentials check, and MCP materializes) and
+the terminal state on a fetch runtime.
+
+### Logs
+
+Structured records on stderr as JSON lines by default; pass `logger` to
+send them anywhere, or a no-op to silence them. Events: `boot.ready`,
+`boot.failed`, `request`, `task.created`, `task.create_failed`,
+`run.started`, `run.settled`, `unhandled_error`.
+
+Every request carries a correlation id — an inbound `x-request-id` is
+honored, otherwise one is generated — echoed on the response and attached
+to that request's log lines. An unhandled error returns a generic
+`500 {"detail":"Internal Server Error","request_id":…}` while the cause and
+stack go to the log, so a user's report is a lookup rather than an
+investigation.
+
+### Session persistence
+
+Sessions are in-memory unless you say otherwise. `--session-dir <dir>`
+writes one Pi session file per task, named by task id, into a directory the
+deploy is expected to back with a volume.
+
+That flag is only the file-backed default of a seam. `serveRecipe` takes
+`sessionManager: (taskId) => SessionManager | undefined`, so durability is
+whatever the host builds on it: a mounted volume, or rows projected out of
+`createRecipeSession`'s `onEvent` tap and rehydrated through
+`SessionManager.open`. Recipes does not ship a store, and does not need to
+— the transcript is observable on the way out and restorable on the way in.
+
+Two properties worth knowing:
+
+- Pi flushes a session file only once an assistant message exists, so a
+  task that never completes a turn deliberately leaves nothing on disk.
+- `onEvent` is a tap, not a write-ahead log: a crash between an event and
+  your write loses that delta. Turn boundaries are the durable unit.
 
 ## Configuration
 
