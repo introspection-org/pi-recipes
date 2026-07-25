@@ -144,11 +144,12 @@ filesystem, environment, and network authority. Hosts accepting third-party
 Recipes must provide their own review, sandbox, and tenant-isolation boundary
 before session construction.
 
-Default MCP materialization leases the supplied `env` object until the handle
-is disposed and restores its prior MCP/PATH state afterward. Concurrent
-materialized sessions must receive separate environment objects. A host that
-materializes MCP once for a process passes `mcpMode: "inherit"` to each
-session.
+In CLI mode, default MCP provisioning leases the supplied `env` object until
+the handle is disposed and restores its prior MCP/PATH state afterward.
+Concurrent CLI sessions must receive separate environment objects. Tools mode
+uses an isolated session environment and does not expose its MCP runtime to
+shell tools. A host that provisions MCP separately passes
+`mcpProvisioning: "host"` to each session.
 
 ## `runRecipe`
 

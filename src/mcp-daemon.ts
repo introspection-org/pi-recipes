@@ -14,12 +14,14 @@ import {
 import { discoverMcpCatalogs, executeMcpCommand } from "./mcp-cli-core.js";
 import {
   MCP_DAEMON_FINGERPRINT_ENV,
+  MCP_DAEMON_MAX_FRAME_BYTES,
   MCP_DAEMON_PARENT_PID_ENV,
   MCP_DAEMON_SOCKET_ENV,
   MCP_DAEMON_TOKEN_ENV,
   type McpCatalogServer,
   type McpDaemonEnvelope,
   type McpDaemonRequest,
+  serializeMcpDaemonEnvelope,
 } from "./mcp-daemon-protocol.js";
 
 const configuredSocketPath = process.env[MCP_DAEMON_SOCKET_ENV];
@@ -87,8 +89,11 @@ function preloadCatalogs(
       try {
         latest = await discoverMcpCatalogs(await runtime(), timeoutMs);
         latestError = undefined;
+        // Preserve the last generation even when optional servers failed.
+        // Healthy tools from this snapshot must remain callable without
+        // rediscovering every server on the call's deadline.
+        catalogPreloadResult = latest;
         if (catalogHealthy(latest)) {
-          catalogPreloadResult = latest;
           return latest;
         }
       } catch (error) {
@@ -127,7 +132,17 @@ async function joinCatalogPreload(): Promise<void> {
 
 function send(socket: Socket, envelope: McpDaemonEnvelope): void {
   if (!socket.destroyed && !socket.writableEnded) {
-    socket.write(`${JSON.stringify(envelope)}\n`, () => {});
+    try {
+      socket.write(serializeMcpDaemonEnvelope(envelope), () => {});
+    } catch {
+      socket.write(
+        `${JSON.stringify({
+          id: envelope.id,
+          error: "response_too_large",
+        })}\n`,
+        () => {}
+      );
+    }
   }
 }
 
@@ -253,6 +268,67 @@ async function execute(request: Extract<McpDaemonRequest, { type: "execute" }>, 
   }
 }
 
+async function callTool(
+  request: Extract<McpDaemonRequest, { type: "call" }>,
+  socket: Socket
+): Promise<void> {
+  const controller = new AbortController();
+  let dispatched = false;
+  active.set(request.id, controller);
+  socket.once("close", () => controller.abort());
+  try {
+    const cachedCatalog = catalogPreloadResult?.find(
+      (server) =>
+        server.id === request.server &&
+        !server.error &&
+        server.tools.some((tool) => tool.name === request.tool)
+    );
+    const catalogs = cachedCatalog
+      ? catalogPreloadResult!
+      : await preloadCatalogs(request.timeoutMs);
+    const catalog =
+      cachedCatalog ??
+      catalogs.find((server) => server.id === request.server);
+    const allowed = catalog?.tools.some((tool) => tool.name === request.tool);
+    if (!catalog || catalog.error || !allowed) {
+      throw new Error(
+        `MCP tool '${request.server}.${request.tool}' is not authorized in this daemon generation.`
+      );
+    }
+    if (controller.signal.aborted) {
+      throw new Error(
+        `MCP tool call '${request.server}.${request.tool}' was cancelled before execution.`
+      );
+    }
+    const result = await runtime().then((value) => {
+      dispatched = true;
+      return value.callTool(request.server, request.tool, {
+        args: request.arguments,
+        timeoutMs: request.timeoutMs,
+        disableOAuth: true,
+      });
+    });
+    if (controller.signal.aborted) {
+      throw new Error(
+        `MCP tool call '${request.server}.${request.tool}' was cancelled; remote outcome is unknown.`
+      );
+    }
+    send(socket, { id: request.id, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    send(socket, {
+      id: request.id,
+      error:
+        dispatched && !message.includes("do not retry automatically")
+          ? `${message}; remote outcome is unknown; do not retry automatically.`
+          : message,
+    });
+  } finally {
+    active.delete(request.id);
+    socket.end();
+  }
+}
+
 async function shutdown(): Promise<void> {
   if (stopping) return;
   stopping = true;
@@ -288,6 +364,14 @@ function handle(request: McpDaemonRequest, socket: Socket): void {
     socket.end();
     return;
   }
+  if (
+    (request.type === "execute" || request.type === "call") &&
+    active.has(request.id)
+  ) {
+    send(socket, { id: request.id, error: "duplicate_request_id" });
+    socket.end();
+    return;
+  }
   if (request.type === "cancel") {
     active.get(request.requestId)?.abort();
     send(socket, { id: request.id, exitCode: 0 });
@@ -317,6 +401,10 @@ function handle(request: McpDaemonRequest, socket: Socket): void {
       .finally(() => socket.end());
     return;
   }
+  if (request.type === "call") {
+    void callTool(request, socket);
+    return;
+  }
   void execute(request, socket);
 }
 
@@ -330,9 +418,22 @@ const server = createServer((socket) => {
   socket.on("data", (chunk) => {
     buffer += chunk;
     const newline = buffer.indexOf("\n");
+    if (
+      newline < 0 &&
+      Buffer.byteLength(buffer, "utf8") > MCP_DAEMON_MAX_FRAME_BYTES
+    ) {
+      send(socket, { id: "unknown", error: "request_too_large" });
+      socket.end();
+      return;
+    }
     if (newline < 0) return;
     const line = buffer.slice(0, newline);
     buffer = buffer.slice(newline + 1);
+    if (Buffer.byteLength(line, "utf8") > MCP_DAEMON_MAX_FRAME_BYTES) {
+      send(socket, { id: "unknown", error: "request_too_large" });
+      socket.end();
+      return;
+    }
     try {
       handle(JSON.parse(line) as McpDaemonRequest, socket);
     } catch {

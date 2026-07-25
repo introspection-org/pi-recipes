@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer as createNetServer } from "node:net";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -23,6 +24,7 @@ import {
   searchMcpTools,
 } from "../src/mcp-cli.js";
 import { preloadMcpCatalogs } from "../src/mcp-catalog.js";
+import { callMcpDaemonTool } from "../src/mcp-daemon-client.js";
 import {
   buildMcporterConfig,
   clearMcpSession,
@@ -287,6 +289,29 @@ function startStubMcpServer(options: { failListAttempts?: number } = {}): Promis
 }
 
 describe("static MCP session materialization", () => {
+  it("settles daemon shutdown when the socket closes without an end event", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-stop-"));
+    const socketPath = join(root, "daemon.sock");
+    const server = createNetServer((socket) => {
+      socket.once("data", () => socket.destroy());
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socketPath, resolve);
+      });
+      await expect(
+        stopMcpDaemon({
+          PI_RECIPES_MCP_DAEMON_SOCKET: socketPath,
+          PI_RECIPES_MCP_DAEMON_TOKEN: "token",
+        })
+      ).resolves.toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("writes policy and credential references without network discovery", async () => {
     const root = mkdtempSync(join(tmpdir(), "recipes-mcp-static-"));
     try {
@@ -819,6 +844,76 @@ describe("lazy MCP CLI discovery", () => {
       expect(right.code).toBe(0);
       expect(stub.stats.list).toBe(1);
     } finally {
+      stub.server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("calls a healthy tool from a partial catalog without rediscovering failed optional servers", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-partial-call-"));
+    const stub = await startStubMcpServer();
+    const env: NodeJS.ProcessEnv = {};
+    try {
+      const cwd = join(root, "workspace");
+      const recipeDir = join(root, "recipe");
+      mkdirSync(recipeDir, { recursive: true });
+      const local = writeLocalConfig(cwd, [
+        {
+          id: "stub",
+          transport: "streamable_http",
+          url: stub.url,
+          headers: { Authorization: "Bearer ${STUB_TOKEN}" },
+        },
+        {
+          id: "offline",
+          transport: "streamable_http",
+          url: "http://127.0.0.1:9/mcp",
+        },
+      ]);
+      Object.assign(env, {
+        PI_RECIPES_MCP_LOCAL_CONFIG: local,
+        STUB_TOKEN: "test-token",
+      });
+      await materializeMcpSession({
+        cwd,
+        env,
+        manifest: recipeManifest(recipeDir, [
+          { id: "stub", required: true, include: ["search_profiles"] },
+          { id: "offline", include: ["*"] },
+        ]),
+        agentMcp: [
+          { serverId: "stub", tools: { include: ["search_profiles"] } },
+          { serverId: "offline", tools: { include: ["*"] } },
+        ],
+      });
+
+      const catalogs = await preloadMcpCatalogs({
+        env,
+        allowPartial: true,
+        timeoutMs: 250,
+      });
+      expect(catalogs.find((server) => server.id === "stub")?.error).toBeFalsy();
+      expect(catalogs.find((server) => server.id === "offline")?.error).toBeTruthy();
+      const listAttempts = stub.stats.list;
+
+      const result = await callMcpDaemonTool(
+        "stub",
+        "search_profiles",
+        { query: "Ada" },
+        { env, timeoutMs: 1_000 }
+      );
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          structuredContent: {
+            tool: "search_profiles",
+            arguments: { query: "Ada" },
+          },
+        })
+      );
+      expect(stub.stats.list).toBe(listAttempts);
+    } finally {
+      await stopMcpDaemon(env).catch(() => {});
       stub.server.close();
       rmSync(root, { recursive: true, force: true });
     }

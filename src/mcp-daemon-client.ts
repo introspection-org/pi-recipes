@@ -16,6 +16,7 @@ import {
 } from "./mcp-daemon-protocol.js";
 
 const START_TIMEOUT_MS = 20_000;
+const MAX_DAEMON_FRAME_BYTES = 10 * 1024 * 1024;
 
 function daemonPath(): string {
   const adjacent = fileURLToPath(new URL("./mcp-daemon.js", import.meta.url));
@@ -50,10 +51,23 @@ export function exchangeMcpDaemon(
     socket.once("connect", () => socket.write(`${JSON.stringify(request)}\n`));
     socket.on("data", (chunk) => {
       buffer += chunk;
+      if (
+        buffer.indexOf("\n") < 0 &&
+        Buffer.byteLength(buffer, "utf8") > MAX_DAEMON_FRAME_BYTES
+      ) {
+        socket.destroy();
+        reject(new Error("MCP daemon response exceeded the frame limit."));
+        return;
+      }
       let newline = buffer.indexOf("\n");
       while (newline >= 0) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
+        if (Buffer.byteLength(line, "utf8") > MAX_DAEMON_FRAME_BYTES) {
+          socket.destroy();
+          reject(new Error("MCP daemon response exceeded the frame limit."));
+          return;
+        }
         if (line) onEnvelope(JSON.parse(line) as McpDaemonEnvelope, socket);
         newline = buffer.indexOf("\n");
       }
@@ -133,4 +147,110 @@ export async function ensureMcpDaemon(
   }
   if (lock) await rm(lockPath, { force: true });
   throw new Error("MCP daemon did not become ready before the startup deadline.");
+}
+
+export async function callMcpDaemonTool(
+  server: string,
+  tool: string,
+  args: Record<string, unknown>,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  } = {}
+): Promise<unknown> {
+  const env = options.env ?? process.env;
+  const signal = options.signal;
+  if (signal?.aborted) {
+    throw new Error(
+      `MCP tool call '${server}.${tool}' was cancelled before execution.`
+    );
+  }
+  await ensureMcpDaemon(env);
+  const { token, fingerprint } = mcpDaemonEnvironment(env);
+  const id = randomUUID();
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  let result: unknown;
+  let hasResult = false;
+  let daemonError: string | undefined;
+  let aborted = false;
+  let timedOut = false;
+  let resolveAbort: (() => void) | undefined;
+  const abortPromise = new Promise<void>((resolve) => {
+    resolveAbort = resolve;
+  });
+  const sendCancel = () => {
+    let cancelToken: string;
+    try {
+      ({ token: cancelToken } = mcpDaemonEnvironment(env));
+    } catch {
+      return;
+    }
+    void exchangeMcpDaemon(
+      {
+        type: "cancel",
+        id: randomUUID(),
+        token: cancelToken,
+        requestId: id,
+      },
+      () => {},
+      env
+    ).catch(() => {});
+  };
+  const onAbort = () => {
+    aborted = true;
+    resolveAbort?.();
+    sendCancel();
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const hardTimeout = setTimeout(() => {
+    timedOut = true;
+    aborted = true;
+    resolveAbort?.();
+    sendCancel();
+  }, timeoutMs + 1_000);
+  hardTimeout.unref?.();
+  const exchange = exchangeMcpDaemon(
+    {
+      type: "call",
+      id,
+      token,
+      fingerprint,
+      server,
+      tool,
+      arguments: args,
+      timeoutMs,
+    },
+    (envelope, socket) => {
+      if ("result" in envelope) {
+        result = envelope.result;
+        hasResult = true;
+        socket.end();
+      } else if ("error" in envelope) {
+        daemonError = envelope.error;
+        socket.end();
+      }
+    },
+    env
+  );
+  try {
+    await Promise.race([exchange, abortPromise]);
+  } finally {
+    clearTimeout(hardTimeout);
+    signal?.removeEventListener("abort", onAbort);
+  }
+  if (aborted) {
+    // The remote request may already have crossed the transport boundary.
+    // Cancellation is best-effort, so detach the exchange while retaining an
+    // error handler and report the outcome as unknown immediately.
+    void exchange.catch(() => {});
+    throw new Error(
+      `MCP tool call '${server}.${tool}' ${
+        timedOut ? "timed out" : "was cancelled"
+      }; remote outcome is unknown; do not retry automatically.`
+    );
+  }
+  if (daemonError) throw new Error(`MCP daemon: ${daemonError}`);
+  if (!hasResult) throw new Error("MCP daemon returned no tool result.");
+  return result;
 }

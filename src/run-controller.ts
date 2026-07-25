@@ -130,9 +130,6 @@ export function createInProcessRunController(
                 },
               }
             : {}),
-          // The parent materialized the MCP session for itself and its
-          // visible subagents; children reuse that runtime.
-          mcpMode: "inherit",
           // Delegation is one level deep by the Recipe format contract.
           runController: null,
           onEvent: (event) => {

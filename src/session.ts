@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { InMemoryCredentialStore, type CredentialStore } from "@earendil-works/pi-ai";
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -27,10 +28,12 @@ import {
   preloadMcpCatalogs,
 } from "./mcp-catalog.js";
 import {
+  createIsolatedMcpEnvironment,
   configureMcpLocalConfigPath,
   isolateMcpEnvironment,
   materializeMcpSession,
   materializeSessionMcpCli,
+  readMcpSessionConfig,
   restoreMcpEnvironment,
   resolveAgentMcpSelections,
   snapshotMcpEnvironment,
@@ -38,6 +41,7 @@ import {
   type McpLocalConfig,
   type ScopedMcpToolSelection,
 } from "./mcp.js";
+import { createMcpToolSet } from "./mcp-tools.js";
 import { expectedProviderEnvVars } from "./provider-env.js";
 import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
 import {
@@ -83,12 +87,11 @@ export interface CreateAgentSessionFromRecipeOptions {
   /** Inline MCP bindings, for hosts that synthesize them instead of reading a file. */
   mcpBindings?: McpLocalConfig;
   /**
-   * MCP materialization mode. "materialize" (default) resolves bindings and
-   * prepares the session MCP runtime in `env`; "inherit" trusts that the host
-   * process already materialized a session covering this agent's servers
-   * (subagent sessions run this way).
+   * MCP provisioning owner. "session" (default) resolves bindings and
+   * prepares the session MCP runtime in `env`; "host" trusts that the host
+   * already materialized a runtime covering exactly this agent's policy.
    */
-  mcpMode?: "materialize" | "inherit";
+  mcpProvisioning?: "session" | "host";
   /** `${VAR}` resolution source and MCP runtime environment. Default: `process.env`. */
   env?: NodeJS.ProcessEnv;
   /** Default: `SessionManager.inMemory(cwd)`. */
@@ -333,13 +336,14 @@ async function resolveCredentialStore(
 }
 
 function scopedMcpSelections(recipe: ResolvedRecipeAgent): ScopedMcpToolSelection[] {
-  return [recipe.definition, ...recipe.subagents.values()].flatMap((agent) =>
-    resolveAgentMcpSelections(agent.mcp)
-  );
+  return resolveAgentMcpSelections(recipe.mcp);
 }
 
 interface MaterializedSessionMcp {
   materialized: boolean;
+  tools?: ToolDefinition[];
+  initialActiveToolNames?: string[];
+  searchToolName?: string;
   release?: () => Promise<void>;
 }
 
@@ -350,7 +354,7 @@ export class RecipeMcpEnvironmentInUseError extends Error {
 
   constructor() {
     super(
-      "This environment already belongs to a live materialized Recipe MCP session; use a separate env object per concurrent session or let the host materialize MCP once and pass mcpMode: \"inherit\""
+      "This environment already belongs to a live materialized Recipe MCP session; use a separate env object per concurrent session or let the host materialize MCP once and pass mcpProvisioning: \"host\""
     );
   }
 }
@@ -390,7 +394,7 @@ export async function preflightRecipeSession(
 /**
  * Materialize the session MCP runtime for a recipe scope into `env` at
  * `cwd`. Exposed for hosts that materialize once per process and create their
- * sessions with `mcpMode: "inherit"`.
+ * sessions with `mcpProvisioning: "host"`.
  */
 export async function materializeRecipeSessionMcp(
   recipe: ResolvedRecipeAgent,
@@ -398,13 +402,27 @@ export async function materializeRecipeSessionMcp(
   env: NodeJS.ProcessEnv,
   opts: Pick<
     CreateAgentSessionFromRecipeOptions,
-    "mcpBindings" | "mcpBindingsPath" | "mcpMode"
+    "mcpBindings" | "mcpBindingsPath"
   > = {}
 ): Promise<{ materialized: boolean }> {
-  return configureSessionMcp(recipe, cwd, env, {
-    recipeDir: recipe.recipeDir,
-    ...opts,
-  }, false);
+  const selections = scopedMcpSelections(recipe);
+  if (selections.length === 0) return { materialized: false };
+  if (opts.mcpBindingsPath) {
+    env.PI_RECIPES_MCP_LOCAL_CONFIG = opts.mcpBindingsPath;
+  } else if (!opts.mcpBindings) {
+    configureMcpLocalConfigPath({ cwd, recipeDir: recipe.recipeDir, env });
+  }
+  if (recipe.mcp?.mode === "cli") {
+    await materializeSessionMcpCli({ cwd, env });
+  }
+  await materializeMcpSession({
+    cwd,
+    manifest: recipe.manifest,
+    agentMcp: selections,
+    env,
+    ...(opts.mcpBindings ? { localConfig: opts.mcpBindings } : {}),
+  });
+  return { materialized: true };
 }
 
 async function configureSessionMcp(
@@ -412,14 +430,24 @@ async function configureSessionMcp(
   cwd: string,
   env: NodeJS.ProcessEnv,
   opts: CreateAgentSessionFromRecipeOptions,
-  leaseEnvironment: boolean
+  activation: {
+    getActiveTools(): string[];
+    setActiveTools(names: string[]): void;
+  }
 ): Promise<MaterializedSessionMcp> {
   const selections = scopedMcpSelections(recipe);
-  if (opts.mcpMode === "inherit") return { materialized: false };
   if (selections.length === 0) return { materialized: false };
+  const mode = recipe.mcp?.mode ?? "cli";
+  const hostProvisioned = opts.mcpProvisioning === "host";
+  const snapshot =
+    !hostProvisioned && mode === "cli"
+      ? snapshotMcpEnvironment(env)
+      : undefined;
+  let runtimeEnv = env;
+  let privateDirectory: string | undefined;
+  let privateMcporterConfigPath: string | undefined;
 
-  const snapshot = leaseEnvironment ? snapshotMcpEnvironment(env) : undefined;
-  if (leaseEnvironment) {
+  if (snapshot) {
     if (leasedMcpEnvironments.has(env)) {
       throw new RecipeMcpEnvironmentInUseError();
     }
@@ -428,42 +456,87 @@ async function configureSessionMcp(
   }
 
   const release = async () => {
-    if (!snapshot) return;
-    try {
-      clearMcpCatalogPreload(env);
-      await stopMcpDaemon(env);
-    } finally {
+    if (hostProvisioned) return;
+    clearMcpCatalogPreload(runtimeEnv);
+    await stopMcpDaemon(runtimeEnv);
+    if (privateDirectory) {
+      await rm(privateDirectory, { recursive: true, force: true });
+    }
+    if (snapshot) {
       restoreMcpEnvironment(env, snapshot);
       leasedMcpEnvironments.delete(env);
     }
   };
 
   try {
-    if (opts.mcpBindingsPath) {
-      env.PI_RECIPES_MCP_LOCAL_CONFIG = opts.mcpBindingsPath;
-    } else if (!opts.mcpBindings) {
-      configureMcpLocalConfigPath({ cwd, recipeDir: recipe.recipeDir, env });
+    if (!hostProvisioned && mode === "tools") {
+      const isolated = await createIsolatedMcpEnvironment(env);
+      runtimeEnv = isolated.env;
+      privateDirectory = isolated.directory;
+      privateMcporterConfigPath = isolated.mcporterConfigPath;
     }
-    const [cliResult, sessionResult] = await Promise.allSettled([
-      materializeSessionMcpCli({ cwd, env }),
-      materializeMcpSession({
+
+    let session;
+    if (hostProvisioned) {
+      session = readMcpSessionConfig(cwd, runtimeEnv);
+    } else {
+      if (opts.mcpBindingsPath) {
+        runtimeEnv.PI_RECIPES_MCP_LOCAL_CONFIG = opts.mcpBindingsPath;
+      } else if (!opts.mcpBindings) {
+        configureMcpLocalConfigPath({
+          cwd,
+          recipeDir: recipe.recipeDir,
+          env: runtimeEnv,
+        });
+      }
+      if (mode === "cli") {
+        await materializeSessionMcpCli({ cwd, env: runtimeEnv });
+      }
+      session = await materializeMcpSession({
         cwd,
         manifest: recipe.manifest,
         agentMcp: selections,
-        env,
+        env: runtimeEnv,
         ...(opts.mcpBindings ? { localConfig: opts.mcpBindings } : {}),
-      }),
-    ]);
-    if (cliResult.status === "rejected") throw cliResult.reason;
-    if (sessionResult.status === "rejected") throw sessionResult.reason;
-    const session = sessionResult.value;
+        ...(privateMcporterConfigPath
+          ? { mcporterConfigPath: privateMcporterConfigPath }
+          : {}),
+      });
+    }
+
+    if (mode === "tools") {
+      const catalogs =
+        session.servers.length > 0
+          ? await preloadMcpCatalogs({
+              env: runtimeEnv,
+              allowPartial: true,
+            })
+          : [];
+      const materialized = createMcpToolSet({
+        session,
+        catalogs,
+        mcp: recipe.mcp!,
+        env: runtimeEnv,
+        activation,
+      });
+      return {
+        materialized: !hostProvisioned,
+        tools: materialized.tools,
+        initialActiveToolNames: materialized.initialActiveToolNames,
+        ...(materialized.searchToolName
+          ? { searchToolName: materialized.searchToolName }
+          : {}),
+        release,
+      };
+    }
+
     if (session.servers.length > 0) {
       // Warm tool catalogs in the background; sessions work without the warmup.
-      void preloadMcpCatalogs({ env }).catch(() => {});
+      void preloadMcpCatalogs({ env: runtimeEnv }).catch(() => {});
     }
     return {
-      materialized: true,
-      ...(snapshot ? { release } : {}),
+      materialized: !hostProvisioned,
+      release,
     };
   } catch (error) {
     await release();
@@ -505,11 +578,14 @@ async function createSessionForAgent(
   }
   applyRecipeAgentModelConfigToModel(model, recipe.modelConfig);
 
-  const mcp = await configureSessionMcp(recipe, cwd, env, opts, true);
   let session: AgentSession | undefined;
   let runs: AgentRunController | undefined;
   let unsubscribe: (() => void) | undefined;
   let detachInstrumentation: (() => void) | undefined;
+  const mcp = await configureSessionMcp(recipe, cwd, env, opts, {
+    getActiveTools: () => session?.getActiveToolNames() ?? [],
+    setActiveTools: (names) => session?.setActiveToolsByName(names),
+  });
 
   const cleanup = async (): Promise<void> => {
     try {
@@ -605,11 +681,27 @@ async function createSessionForAgent(
     const tools = wantsSubagents
       ? recipe.tools
       : recipe.tools.filter((tool) => tool !== "agent");
+    const mcpToolNames = mcp.tools?.map((tool) => tool.name) ?? [];
+    const occupiedToolNames = new Set([
+      ...tools,
+      ...(opts.customTools ?? []).map((tool) => tool.name),
+      ...(wantsSubagents ? ["agent"] : []),
+    ]);
+    const collisions = mcpToolNames.filter((name) =>
+      occupiedToolNames.has(name)
+    );
+    if (collisions.length > 0) {
+      throw new Error(
+        `Recipe MCP tool name collision: ${collisions.join(", ")}`
+      );
+    }
+    const selectedToolNames = [...tools, ...mcpToolNames];
     const customTools = [
       ...(opts.customTools ?? []),
       ...(wantsSubagents
         ? [createAgentTool(runs, recipe.subagents, opts.agentToolOptions)]
         : []),
+      ...(mcp.tools ?? []),
     ];
 
     const created = await createAgentSessionFromServices({
@@ -619,13 +711,39 @@ async function createSessionForAgent(
       ...(opts.thinkingLevel ?? recipe.thinkingLevel
         ? { thinkingLevel: (opts.thinkingLevel ?? recipe.thinkingLevel)! }
         : {}),
-      tools,
+      tools: selectedToolNames,
       customTools,
     });
     session = created.session;
     normalizeSessionToolsForModel(session, model);
     applyRecipeAgentModelConfigToSession(session, recipe.modelConfig);
     await session.bindExtensions({});
+    if (mcp.tools) {
+      const registered = new Set(
+        session.getAllTools().map((tool) => tool.name)
+      );
+      const missingRegistered = mcpToolNames.filter(
+        (name) => !registered.has(name)
+      );
+      if (missingRegistered.length > 0) {
+        throw new Error(
+          `Pi did not register Recipe MCP tool(s): ${missingRegistered.join(", ")}`
+        );
+      }
+      const activeTools = [
+        ...tools,
+        ...(mcp.initialActiveToolNames ?? []),
+        ...(mcp.searchToolName ? [mcp.searchToolName] : []),
+      ];
+      session.setActiveToolsByName(activeTools);
+      const applied = new Set(session.getActiveToolNames());
+      const missing = activeTools.filter((name) => !applied.has(name));
+      if (missing.length > 0) {
+        throw new Error(
+          `Pi did not activate Recipe tool(s): ${missing.join(", ")}`
+        );
+      }
+    }
 
     unsubscribe = opts.onEvent ? session.subscribe(opts.onEvent) : undefined;
     detachInstrumentation = otel

@@ -14,6 +14,9 @@ importers:
       '@opentelemetry/api':
         specifier: ^1.9.1
         version: 1.9.1
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       mcporter:
         specifier: 0.12.3
         version: 0.12.3

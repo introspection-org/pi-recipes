@@ -772,7 +772,7 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
-  it("includes visible child-agent MCP refs in the session manifest", async () => {
+  it("does not grant the root session a visible child's MCP policy", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-child-mcp-"));
     try {
       const recipeDir = writeRecipe(root);
@@ -851,16 +851,10 @@ describe("Recipes extension for Pi", () => {
         ctx
       );
 
-      expect(env.PI_RECIPES_MCP_BIN_DIR).toBe(join(projectDir, ".pi", "bin"));
-      expect(env.PI_RECIPES_MCP_SESSION).toBe(
-        join(projectDir, ".pi", "mcp-session.json")
-      );
-      const materialized = JSON.parse(readFileSync(env.PI_RECIPES_MCP_SESSION!, "utf8"));
-      expect(materialized.servers[0].catalog.map((tool: { name: string }) => tool.name)).toEqual([
-        "get_value",
-      ]);
-      expect(notify).toHaveBeenCalledWith(
-        "Recipe MCP: 1 server(s) configured; runtime warming in background",
+      expect(env.PI_RECIPES_MCP_BIN_DIR).toBeUndefined();
+      expect(env.PI_RECIPES_MCP_SESSION).toBeUndefined();
+      expect(notify).not.toHaveBeenCalledWith(
+        expect.stringContaining("server(s) configured"),
         "info"
       );
     } finally {
