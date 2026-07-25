@@ -84,9 +84,15 @@ interface CreateRecipeSessionOptions {
   model?: string;                // override the recipe's model spec
   thinkingLevel?: ThinkingLevel;
   mcpBindingsPath?: string;      // default: <recipeDir>/.pi/mcp.local.json
+  mcpBindings?: McpLocalConfig;  // inline alternative, for hosts that
+                                 // synthesize bindings instead of reading a file
   env?: Record<string, string>;  // ${VAR} resolution source; default process.env
   sessionManager?: SessionManager;        // default SessionManager.inMemory(cwd)
+  settingsManager?: SettingsManager;      // host-owned settings (compaction, retry)
   extensionFactories?: ExtensionFactory[]; // appended after recipe extensions
+  runController?: AgentRunController;     // replace the in-process subagent controller
+  additionalSkillPaths?: string[];        // extra skill roots beyond the recipe's
+  systemPrompt?: (resolved: string) => string; // post-resolution override hook
   onEvent?: (event: AgentSessionEvent) => void; // tap on session.subscribe
 }
 
@@ -117,6 +123,17 @@ Specified behavior:
   [`PI_ASK_USER_AUTO_APPROVE`](interactions.md).
 - No HTTP, no lifecycle policy, no persistence opinion — those belong to
   the rungs above, or to the caller via `sessionManager`.
+
+The host-injection options (`credentials`, `mcpBindings`,
+`extensionFactories`, `runController`, `settingsManager`,
+`additionalSkillPaths`, `systemPrompt`) exist so that *any* host — the
+serve layer here, and equally a managed runtime — can adopt this rung as
+its recipe engine without forking it: platform-specific credential
+brokers, synthesized MCP bindings, cross-process subagent controllers,
+and prompt/settings policy all inject through options rather than through
+a copied implementation. One engine, many hosts: the Pi CLI hosts it via
+[`./pi-extension`](pi-extension.md), `serveRecipe` hosts it per task, and
+a hosted runtime can wrap it in its own lifecycle and identity layer.
 
 ## Rung 2: `runRecipe` — export `./run`
 
@@ -349,14 +366,18 @@ opt-in:
 
 3. **Vendor instrumentation (composition).** A deployer who wants a
    specific observability product installs that vendor's Pi
-   instrumentation in the recipe's own `node_modules` (e.g. the
-   Introspection SDK's `introspection-pi` package, which emits what the
-   Introspection platform ingests — making conversations from a recipe
-   served anywhere appear in that product) and sets its env. The CLI
-   detects an installed instrumentation and prefers it over the plain
-   OTLP default; the toolchain itself never takes the dependency — opting
-   into a vendor is the recipe's `package.json` decision, not the
-   package's.
+   instrumentation in the recipe's own `node_modules` and sets its env;
+   the CLI detects it and prefers it over the plain OTLP default. The
+   reference composition is the Introspection SDK: its `introspection-pi`
+   package wraps the session (via `onTask` /
+   `instrumentAgent(handle.session)`) and emits the GenAI-semconv spans
+   the Introspection platform ingests, and its standalone OTel exporter
+   (`createIntrospectionExporter({ baseUrl, token })`, defaults from
+   `INTROSPECTION_BASE_OTEL_URL` / `INTROSPECTION_TOKEN`) carries them to
+   the product — so conversations from a recipe served anywhere appear
+   there, through the same instrumentation stack the managed runtime
+   uses. The toolchain itself never takes the dependency — opting into a
+   vendor is the recipe's `package.json` decision, not the package's.
 
 Catalog telemetry opt-outs (`DO_NOT_TRACK`, `PI_RECIPES_NO_TELEMETRY`)
 are unrelated to run instrumentation and unchanged by this document.
