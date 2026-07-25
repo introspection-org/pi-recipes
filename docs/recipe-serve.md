@@ -118,7 +118,10 @@ Specified behavior:
   sessions through this same rung (bounded concurrency and depth; child
   events surface through `onEvent`). A host wanting cross-process or
   sandboxed subagents supplies its own controller by dropping to
-  `createAgentTool(runs, recipe.subagents)`.
+  `createAgentTool(runs, recipe.subagents)`. Recovery edge every
+  controller must honor: if a pending child's agent profile no longer
+  exists (the recipe changed), the parent's `agent` tool call resolves as
+  an error — it must never wedge the parent turn.
 - **Interactions** use the headless channel; asks resolve per
   [`PI_ASK_USER_AUTO_APPROVE`](interactions.md).
 - No HTTP, no lifecycle policy, no persistence opinion — those belong to
@@ -134,6 +137,13 @@ and prompt/settings policy all inject through options rather than through
 a copied implementation. One engine, many hosts: the Pi CLI hosts it via
 [`./pi-extension`](pi-extension.md), `serveRecipe` hosts it per task, and
 a hosted runtime can wrap it in its own lifecycle and identity layer.
+
+A **host conformance suite** ships with the engine (`test-utils`):
+acceptance tests a host runs in its own CI against its injected pieces —
+credential store resolution, binding synthesis, run-controller lifecycle
+(including the recovery edges below). Passing the suite is what
+"supported host" means; the first-party hosts run it themselves, so the
+engine's contract cannot drift from its consumers silently.
 
 ## Rung 2: `runRecipe` — export `./run`
 
@@ -215,6 +225,7 @@ interface RecipeServer {
 | `POST` | `/v1/tasks/{task_id}/cancel` | Abort the task's in-flight run | bearer |
 | `POST` | `/v1/tasks/{task_id}/runs` | Submit a turn (prompt or steer) → run view | bearer |
 | `GET` | `/v1/tasks/{task_id}/runs/{run_id}/stream` | AG-UI event stream (SSE) for the run | bearer |
+| `GET` | `/config` | Instance bootstrap document: recipe name/version, agents, capabilities (the `recipes inspect` derivation served over HTTP) | bearer |
 | `GET` | `/health` | Liveness probe (non-normative) | none |
 
 Shapes follow the platform's public Tasks API: CRUD-only routes plus the
@@ -235,8 +246,16 @@ Binding semantics:
 - **State is in-process.** The task registry and transcripts live with
   their sessions; a restart is a fresh server (see non-goals). Durable
   conversation state is the platform's product, not this server's.
+- **Cancel is a settlement with defined races.** A cancel that loses the
+  race to a finished run settles as `completed` (finished wins); a crash
+  or disconnect mid-cancel settles the run as `cancelled`, never retried.
+  Cancellation is asynchronous; the terminal state is observable on the
+  stream and the task view.
 - Auth is a timing-safe byte compare against the configured token; there
   is one bearer for the whole server (no tenancy — see non-goals).
+  **Unauthorized is indistinguishable from nonexistent:** a wrong or
+  missing bearer on a task route returns the same `404` as an unknown
+  task id, so the API is not an oracle for probing ids.
 
 ### Run streams (AG-UI)
 
@@ -253,6 +272,17 @@ shared. Responses set `Cache-Control: no-cache, no-transform` and
 AG-UI consumer (`@ag-ui/client`, CopilotKit components, a plain SSE
 reader) can render a run's stream as-is.
 
+**Reconnection contract.** Every event on a run's stream carries a
+sequential `event_index` (the SSE `id:`). A client that reconnects sends
+its last index (`Last-Event-ID` header or `?last_event_index=`); the
+server opens the stream with one meta-event declaring what follows —
+`catch_up` (run still live: buffered events replay, then live events),
+`replay` (run finished: buffered events replay to the terminal event), or
+`subscribed` (nothing missed: live from here) — then delivers events with
+their original indexes. The per-run buffer is bounded; an index older
+than the retained window yields a `gap` meta-event so the client refetches
+task state rather than trusting a silently incomplete replay.
+
 ### Compatibility promise
 
 The acceptance test for this surface is client reuse: a task client built
@@ -262,14 +292,70 @@ base URL with its bearer — round-trips unchanged. Resources this server
 does not implement (conversations, files, events, metrics, shares) return
 `404`; clients that need them need the platform.
 
-### Future surfaces
+### Roadmap (deliberately not in v1)
 
 The internal seam is adapter-shaped — a surface takes the task registry /
-`RecipeSessionHandle`s and returns a fetch sub-app — so additional
-protocol facades (a bare single-session AG-UI endpoint, A2A for
-agent-to-agent delegation and discovery, MCP for recipe-as-tool) can be
-added later as small adapters without reworking the server. None ship in
-v1.
+`RecipeSessionHandle`s and returns a fetch sub-app — so these add later
+as small adapters without reworking the server:
+
+- **Human-in-the-loop pause/continue.** Today serve runs headless
+  (`PI_ASK_USER_AUTO_APPROVE`). v2: a tool ask surfaces as task status
+  `paused` with the pending tool calls, and
+  `POST /v1/tasks/{id}/continue` carries per-tool-call `confirmed`
+  flags. The taxonomy to build toward: user confirmation vs
+  organizational approval vs audit-only.
+- **Browser→instance control plane.** With `/config` plus a CORS
+  allowlist option, a hosted UI can talk directly from the operator's
+  browser to a served instance — dashboard UX with zero vendor data
+  custody.
+- **Protocol facades:** a bare single-session AG-UI endpoint, A2A
+  (agent card + delegation), and MCP recipe-as-tool exposing the full
+  lifecycle (`run` / `get` / `continue` / `cancel`) with a
+  `result_mode: trimmed | full` knob for caller context budgets.
+
+## Channels and composition
+
+A served recipe is complete as **recipe + Tasks API + thin channel
+adapters**; everything else stays outside by construction, because the
+only way anything talks to the agent is through the same API.
+
+```
+Slack / GitHub / WhatsApp
+        │  webhook
+        ▼
+  channel adapter            ← translator, no agent logic
+        │  POST /v1/tasks, POST …/runs, read stream
+        ▼
+  Tasks API (serveRecipe) ── engine ── Pi session
+
+  schedules, memory, evals, UIs — all external Tasks API clients
+```
+
+A channel adapter does four things and nothing else: verify the
+provider's webhook signature; map the conversation via a stable
+**bidirectional conversation key** (e.g. `team/channel/thread` ↔ the task
+carrying that key in metadata, recoverable for outbound replies —
+conversation keys are identifiers, never authorization capabilities);
+translate inbound messages to `POST …/runs`; and post results back with
+the application's own provider client and token. Adapters mount beside
+the serve handler in one process (`app.route("/channels/slack", …)`) or
+run separately against the serve URL — they cannot tell the difference.
+
+Rules that keep it clean:
+
+1. **Channels translate; they never think.** No prompt construction, no
+   agent logic, no state beyond the key→task map and delivery dedup.
+2. **The recipe stays ignorant of channels.** Nothing channel-related
+   enters the recipe format; channel wiring is deployment config. The
+   same recipe serves a web UI, a Slack workspace, and a CI job at once.
+3. **Ownership is fixed:** signature verification and typed payloads
+   belong to the adapter; routes to the serve app; outbound clients,
+   OAuth tokens, and delivery deduplication to the application.
+
+v1 ships one worked example (`examples/channels/slack/`) with these rules
+in its README; first-party adapter packages are a later call, justified
+by usage — provider webhook quirks are a maintenance treadmill to enter
+deliberately, not by default.
 
 ## CLI: `recipes serve`
 
@@ -382,6 +468,18 @@ opt-in:
 Catalog telemetry opt-outs (`DO_NOT_TRACK`, `PI_RECIPES_NO_TELEMETRY`)
 are unrelated to run instrumentation and unchanged by this document.
 
+## Naming (decision pending)
+
+Recommendation: rename the package to `@introspection-ai/recipes` as part
+of phase 1 — the CLI is already `recipes`, the format is positioned as a
+portable agent-system package rather than a Pi-only artifact, and the
+blast radius only grows once `./serve` ships. Scope: package identity
+only — the `recipes` bin, `PI_RECIPE_DIR`/`PI_RECIPES_*` env vars, and
+the pi.recipes domain are unchanged; the old name publishes as a
+deprecated alias re-exporting the new package; repo renames may trail.
+"Pi Recipes" remains the long-form project name where the harness
+matters.
+
 ## Non-goals (v1)
 
 - **Durability and tenancy.** The task registry is in-process: a restart
@@ -401,9 +499,9 @@ are unrelated to run instrumentation and unchanged by this document.
 
 | Phase | Deliverable |
 | --- | --- |
-| 1 | `./session` + `./run`, Pi `^0.82` / `ModelRuntime` migration, tests against a scripted model |
-| 2 | `./serve` + `recipes serve` + Dockerfile scaffold; acceptance = an Introspection SDK task client round-trips (create → run → stream → cancel) against the served base URL |
-| 3 | `recipes inspect` + `examples/deploy/*` templates |
+| 1 | `./session` + `./run`, Pi `^0.82` / `ModelRuntime` migration, host conformance suite (`test-utils`), package rename if approved; tests against a scripted model |
+| 2 | `./serve` (incl. `/config`, resume contract, cancel settlement) + `recipes serve` + Dockerfile scaffold; acceptance = an Introspection SDK task client round-trips (create → run → stream → cancel) against the served base URL |
+| 3 | `recipes inspect` + `examples/deploy/*` templates + `examples/channels/slack/` |
 
 ## Open questions
 
@@ -414,7 +512,7 @@ are unrelated to run instrumentation and unchanged by this document.
    preserve process memory, so live tasks survive there by construction; a
    `sessionManager`-backed persistence option would extend the registry to
    cold restarts. Deferred until a template needs it.
-4. **`maxTasks` default.** 8 is a guess; validate against real recipe
+3. **`maxTasks` default.** 8 is a guess; validate against real recipe
    memory footprints (a Pi session + MCP daemon per task).
-3. **`recipes run` CLI.** `pi --mode json -p` already covers one-shot CLI;
+4. **`recipes run` CLI.** `pi --mode json -p` already covers one-shot CLI;
    add a `recipes run` alias only if CI users ask.
