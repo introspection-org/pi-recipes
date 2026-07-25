@@ -175,7 +175,9 @@ interface ServeRecipeOptions {
                         // unset → auth disabled (trusted-network deploys)
   workspace?: string;   // workspace root; each task gets <root>/<task_id>/
   maxTasks?: number;    // live-session cap; default 8; excess → 409
-  onEvent?: (taskId: string, event: AgentSessionEvent) => void; // observability tap
+  onTask?: (taskId: string, handle: RecipeSessionHandle) => void;
+                        // lifecycle tap: called as each task's session is
+                        // created — the instrumentation/logging seam
 }
 
 interface RecipeServer {
@@ -324,14 +326,40 @@ unbuffered response streaming.
 | MCP bindings | the `${VAR}`s referenced by `.pi/mcp.local.json` | Existing portable shape; unresolved placeholders are printed at boot, `required` servers fail closed |
 | Inbound auth | `RECIPES_SERVE_TOKEN` | Unset → auth disabled |
 | Interactions | `PI_ASK_USER_AUTO_APPROVE` | Headless ask resolution ([interactions](interactions.md)) |
-| Telemetry | standard `OTEL_EXPORTER_OTLP_*`, or any `onEvent` consumer | Optional; nothing is emitted by default |
+| Telemetry | standard `OTEL_EXPORTER_OTLP_*` (CLI auto-instrumentation) | Optional; nothing is emitted by default |
 
-## Observability
+## Instrumentation
 
-`onEvent` is the seam: it receives every session event and is where any
-OpenTelemetry instrumentation (or a plain logger) attaches. The package
-itself emits nothing and depends on no telemetry SDK; hosts that want
-traces wire an instrumentation of their choice into the tap.
+The library ships no telemetry: zero OpenTelemetry dependencies, nothing
+emitted by default. Instrumentation layers on at three levels, all
+opt-in:
+
+1. **The seam (library).** `serveRecipe`'s `onTask(taskId, handle)` fires
+   as each task's session is created, handing the live session to
+   whatever the host wants to attach — an instrumentation wrapper, a
+   logger via `handle.session.subscribe`, metrics. Rungs 2–3 need no tap:
+   they return the session/handle directly.
+
+2. **Standard OTel (CLI, env-gated).** When the conventional
+   `OTEL_EXPORTER_OTLP_*` env vars are set, `recipes serve` registers the
+   Node OpenTelemetry SDK and instruments Pi with **GenAI semantic
+   conventions**: a span per run, `gen_ai.*` model-call spans with token
+   usage, tool-execution spans, task/run ids as attributes. Any OTLP
+   backend renders it. Unset → nothing is registered.
+
+3. **Vendor instrumentation (composition).** A deployer who wants a
+   specific observability product installs that vendor's Pi
+   instrumentation in the recipe's own `node_modules` (e.g. the
+   Introspection SDK's `introspection-pi` package, which emits what the
+   Introspection platform ingests — making conversations from a recipe
+   served anywhere appear in that product) and sets its env. The CLI
+   detects an installed instrumentation and prefers it over the plain
+   OTLP default; the toolchain itself never takes the dependency — opting
+   into a vendor is the recipe's `package.json` decision, not the
+   package's.
+
+Catalog telemetry opt-outs (`DO_NOT_TRACK`, `PI_RECIPES_NO_TELEMETRY`)
+are unrelated to run instrumentation and unchanged by this document.
 
 ## Non-goals (v1)
 
