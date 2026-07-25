@@ -1,6 +1,6 @@
 /**
  * The heavy half of recipe tracing: provider construction and the OTLP
- * export pipelines. Loaded lazily from `initRecipeTracing` so hosts that
+ * export pipeline. Loaded lazily from `initRecipeTracing` so hosts that
  * never export (and every embedding rung below serve) don't pay for the
  * exporter stack at module-eval time.
  */
@@ -18,40 +18,30 @@ import type {
   RecipeTraceProvider,
 } from "./tracing.js";
 
-const DEFAULT_INTROSPECTION_OTEL_URL = "https://otel.introspection.dev";
-
 export interface RecipeTracingBootstrap {
   provider: RecipeTraceProvider;
   /** True when this bootstrap registered the global context manager. */
   ownsContextManager: boolean;
 }
 
-function envSpanProcessors(env: NodeJS.ProcessEnv): SpanProcessor[] {
-  const processors: SpanProcessor[] = [];
-  // The exporter reads the OTEL_EXPORTER_OTLP_* contract (endpoint, headers,
-  // timeout, protocol, certs) from the process env itself, so this target is
-  // gated on the process env too; the `env` option scopes only the ingest
-  // pair below.
+/**
+ * The export target is the standard OTLP env contract, nothing else:
+ * `OTEL_EXPORTER_OTLP_ENDPOINT` (or `..._TRACES_ENDPOINT`) plus the usual
+ * `_HEADERS` / `_TIMEOUT` / `_COMPRESSION` / cert companions, all read by
+ * the exporter itself. Any collector or vendor backend is configured the
+ * same way — including a hosted one behind a bearer token:
+ *
+ *   OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com
+ *   OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <token>
+ */
+function envSpanProcessors(): SpanProcessor[] {
   if (
-    process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
-    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    !process.env.OTEL_EXPORTER_OTLP_ENDPOINT &&
+    !process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
   ) {
-    processors.push(new BatchSpanProcessor(new OTLPTraceExporter()));
+    return [];
   }
-  if (env.INTROSPECTION_TOKEN) {
-    const base = (
-      env.INTROSPECTION_BASE_OTEL_URL ?? DEFAULT_INTROSPECTION_OTEL_URL
-    ).replace(/\/$/, "");
-    processors.push(
-      new BatchSpanProcessor(
-        new OTLPTraceExporter({
-          url: base.endsWith("/v1/traces") ? base : `${base}/v1/traces`,
-          headers: { authorization: `Bearer ${env.INTROSPECTION_TOKEN}` },
-        })
-      )
-    );
-  }
-  return processors;
+  return [new BatchSpanProcessor(new OTLPTraceExporter())];
 }
 
 /**
@@ -62,12 +52,11 @@ function envSpanProcessors(env: NodeJS.ProcessEnv): SpanProcessor[] {
 export async function bootstrapRecipeTracing(
   options: InitRecipeTracingOptions
 ): Promise<RecipeTracingBootstrap | null> {
-  const env = options.env ?? process.env;
-  const spanProcessors = options.spanProcessors ?? envSpanProcessors(env);
+  const spanProcessors = options.spanProcessors ?? envSpanProcessors();
   if (spanProcessors.length === 0) return null;
 
   const serviceName =
-    env.OTEL_SERVICE_NAME ?? options.serviceName ?? "pi-recipes";
+    process.env.OTEL_SERVICE_NAME ?? options.serviceName ?? "pi-recipes";
   const provider = new BasicTracerProvider({
     resource: resourceFromAttributes({
       "service.name": serviceName,
@@ -88,15 +77,11 @@ export async function bootstrapRecipeTracing(
   );
 
   if (!options.spanProcessors) {
-    const targets = [
-      process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
-        process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
-      env.INTROSPECTION_TOKEN
-        ? (env.INTROSPECTION_BASE_OTEL_URL ?? DEFAULT_INTROSPECTION_OTEL_URL)
-        : undefined,
-    ].filter(Boolean);
     console.error(
-      `[tracing] trace export enabled (service=${serviceName}) -> ${targets.join(", ")}`
+      `[tracing] trace export enabled (service=${serviceName}) -> ${
+        process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
+        process.env.OTEL_EXPORTER_OTLP_ENDPOINT
+      }`
     );
   }
   return { provider, ownsContextManager };

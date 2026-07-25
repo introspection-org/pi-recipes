@@ -104,7 +104,9 @@ describe("recipe telemetry", () => {
   });
 
   it("stays inert when no export target is configured", async () => {
-    await expect(initRecipeTracing({ env: {} })).resolves.toBeNull();
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+    await expect(initRecipeTracing()).resolves.toBeNull();
     expect(getRecipeTracer()).toBeUndefined();
 
     const streamFunction = scriptedStreamFn();
@@ -250,7 +252,7 @@ describe("recipe telemetry", () => {
     );
   });
 
-  it("exports to the Introspection ingest with a bearer, from env alone", async () => {
+  it("exports over the standard OTLP env contract, bearer included", async () => {
     const requests: { url: string; auth: string | undefined }[] = [];
     const receiver = createServer((req, res) => {
       requests.push({
@@ -267,12 +269,12 @@ describe("recipe telemetry", () => {
     const port = (receiver.address() as AddressInfo).port;
 
     try {
-      const handle = await initRecipeTracing({
-        env: {
-          INTROSPECTION_TOKEN: "ingest-token",
-          INTROSPECTION_BASE_OTEL_URL: `http://127.0.0.1:${port}`,
-        },
-      });
+      // A hosted backend behind a token is configured exactly like any
+      // other OTLP endpoint — no vendor-specific env var.
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://127.0.0.1:${port}`;
+      process.env.OTEL_EXPORTER_OTLP_HEADERS =
+        "authorization=Bearer ingest-token";
+      const handle = await initRecipeTracing();
       expect(handle).not.toBeNull();
 
       const fakeSession = {
@@ -310,6 +312,8 @@ describe("recipe telemetry", () => {
       expect(requests[0]!.url).toBe("/v1/traces");
       expect(requests[0]!.auth).toBe("Bearer ingest-token");
     } finally {
+      delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+      delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
       receiver.close();
     }
   }, 20_000);

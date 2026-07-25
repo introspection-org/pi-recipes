@@ -385,7 +385,7 @@ unbuffered response streaming.
 | MCP bindings | the `${VAR}`s referenced by `.pi/mcp.local.json` | Existing portable shape; unresolved placeholders are printed at boot, `required` servers fail closed |
 | Inbound auth | `RECIPES_SERVE_TOKEN` | Unset → auth disabled |
 | Interactions | `PI_ASK_USER_AUTO_APPROVE` | Headless ask resolution ([interactions](interactions.md)) |
-| Telemetry | standard `OTEL_EXPORTER_OTLP_*`, or `INTROSPECTION_TOKEN` (+ `INTROSPECTION_BASE_OTEL_URL`) | Optional; nothing is emitted by default |
+| Tracing | standard `OTEL_EXPORTER_OTLP_*` (`_ENDPOINT`, `_HEADERS`, …) | Optional; nothing is emitted by default |
 
 ## Instrumentation
 
@@ -400,14 +400,17 @@ layers, all opt-in:
    engine creates — subagents included — is instrumented: one
    `invoke_agent` span per run, `chat {model}` spans with token usage,
    `execute_tool` spans per tool call, the task id as
-   `gen_ai.conversation.id`. Two env-driven targets, either or both:
+   `gen_ai.conversation.id`.
 
-   - `OTEL_EXPORTER_OTLP_ENDPOINT` (+ `_HEADERS`, …) — the standard OTLP
-     contract; any collector or vendor backend renders it.
-   - `INTROSPECTION_TOKEN` (+ `INTROSPECTION_BASE_OTEL_URL`) — plain OTLP
-     with a bearer header to the Introspection ingest, the same pair the
-     managed runtime uses, so conversations from a recipe served anywhere
-     appear in the product.
+   The target is the standard OTLP env contract and nothing else —
+   `OTEL_EXPORTER_OTLP_ENDPOINT` (or `..._TRACES_ENDPOINT`) plus the usual
+   `_HEADERS` / `_TIMEOUT` / `_COMPRESSION` companions. No vendor is
+   special-cased: a hosted backend behind a bearer token is just
+
+   ```sh
+   OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com
+   OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer $TOKEN
+   ```
 
    The instrumentation itself is
    [`@introspection-sdk/introspection-pi`](https://www.npmjs.com/package/@introspection-sdk/introspection-pi)

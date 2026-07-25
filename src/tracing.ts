@@ -24,15 +24,12 @@ export type { AgentMeta } from "@introspection-sdk/introspection-pi";
  * OTLP backend.
  *
  * Nothing is emitted by default. `initRecipeTracing` builds a provider only
- * when an export target is configured, from either or both of:
- *
- *   - `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
- *     (+ `_HEADERS`, `_TIMEOUT`, ...): the standard OTLP env contract, read
- *     by the exporter itself.
- *   - `INTROSPECTION_TOKEN` (+ `INTROSPECTION_BASE_OTEL_URL`): plain OTLP to
- *     the Introspection ingest with a bearer header — the same pair the
- *     managed runtime uses, so pointing a standalone deploy at the product
- *     is one env var.
+ * when the standard OTLP env contract names a target —
+ * `OTEL_EXPORTER_OTLP_ENDPOINT` (or `..._TRACES_ENDPOINT`) plus the usual
+ * `_HEADERS` / `_TIMEOUT` / `_COMPRESSION` companions, read by the exporter
+ * itself. No vendor is special-cased: a hosted backend behind a bearer
+ * token is `OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <token>`, the
+ * same as any other.
  *
  * This module is deliberately light — its runtime imports are only the OTel
  * API and the instrumentation package — so the engine can depend on it from
@@ -52,17 +49,10 @@ export interface InitRecipeTracingOptions {
   /** Extra resource attributes stamped on all spans. */
   resourceAttributes?: Record<string, string>;
   /**
-   * Explicit processors instead of the env-derived OTLP pipelines — the
+   * Explicit processors instead of the env-derived OTLP pipeline — the
    * test / embedding seam. When set, env export config is ignored.
    */
   spanProcessors?: SpanProcessor[];
-  /**
-   * Source for the ingest pair (`INTROSPECTION_TOKEN`,
-   * `INTROSPECTION_BASE_OTEL_URL`) and `OTEL_SERVICE_NAME`. Default:
-   * `process.env`. The standard `OTEL_EXPORTER_OTLP_*` target always reads
-   * the process env — the exporter resolves that contract itself.
-   */
-  env?: NodeJS.ProcessEnv;
 }
 
 /**

@@ -2970,19 +2970,14 @@ describe("package boundary", () => {
     // its compatibility promise, not a platform dependency — so the /v1/
     // route-path token is expected there (and only there).
     //
-    // tracing.ts owns trace export *out of* a recipe host. Its GenAI
-    // instrumentation is the standalone OTel-semconv package
-    // @introspection-sdk/introspection-pi (no platform client). In
-    // tracing-bootstrap.ts (the lazy-loaded export pipeline) the
-    // INTROSPECTION_* env pair is one opt-in OTLP target among any —
-    // "/v1/traces" is the OTLP path convention, not a platform route.
+    // tracing.ts owns trace export *out of* a recipe host. Its only
+    // exception is the instrumentation package itself
+    // (@introspection-sdk/introspection-pi: OTel GenAI semconv, no platform
+    // client). The export target is the standard OTLP env contract with no
+    // vendor special-cased, so no endpoint, token, or route token appears.
     const allowed = new Map([
       [join(root, "serve.ts"), new Set(["/v1/"])],
-      [join(root, "tracing.ts"), new Set(["@introspection-sdk/", "INTROSPECTION_"])],
-      [
-        join(root, "tracing-bootstrap.ts"),
-        new Set(["INTROSPECTION_", "/v1/"]),
-      ],
+      [join(root, "tracing.ts"), new Set(["@introspection-sdk/"])],
     ]);
 
     for (const file of files) {
