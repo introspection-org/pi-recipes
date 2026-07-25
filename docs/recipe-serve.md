@@ -26,7 +26,7 @@ every rung is public: convenience at the top, control by peeling a layer,
 never by configuring one.
 
 ```
-serveRecipe()                  ./serve     HTTP service: runs, streaming, lifecycle
+serveRecipe()                  ./serve     AG-UI service: turns, streaming, lifecycle
   └─ runRecipe()               ./run       one-shot: prompt in → result out
        └─ createRecipeSession() ./session  a live Pi session you drive
             └─ resolveRecipe()  ./recipe   interpretation only (exists today)
@@ -154,8 +154,12 @@ caller mistakes (bad options, unreadable recipe) throw.
 
 ## Rung 1: `serveRecipe` — export `./serve`
 
-A fetch-native app implementing the HTTP contract below, plus a Node
-listener.
+An **AG-UI server** for the recipe: a fetch-native app speaking the
+[AG-UI protocol](https://docs.ag-ui.com/) — the open agent↔user
+interaction standard — plus a Node listener. Serving a recipe therefore
+requires no custom client: any AG-UI consumer (`@ag-ui/client`'s
+`HttpAgent`, CopilotKit UI components, or a plain SSE reader) talks to it
+as-is.
 
 ```ts
 interface ServeRecipeOptions {
@@ -180,46 +184,56 @@ run, reused across turns. Scale-out is the deploy target's job — one
 container per conversation, which is also what makes snapshot/pause-resume
 clouds (Daytona, Vercel Sandbox) work naturally.
 
-### HTTP contract
+### Wire contract (AG-UI)
 
 | Method | Path | Purpose | Auth |
 | --- | --- | --- | --- |
-| `GET` | `/` | Liveness: `{ "status": "ok" }` | none |
-| `GET` | `/status` | `{ status, is_streaming, idle_seconds }` | none |
-| `POST` | `/v1/runs` | Submit a turn | bearer |
-| `GET` | `/v1/runs/{run_id}` | Snapshot run state | bearer |
-| `POST` | `/v1/runs/{run_id}/cancel` | Best-effort cancel | bearer |
-| `GET` | `/v1/runs/{run_id}/stream` | SSE stream of run events | bearer |
+| `POST` | `/` | Run one turn: `RunAgentInput` in, AG-UI event stream (SSE) out | bearer |
+| `GET` | `/health` | Liveness for orchestrator probes: `{ "status": "ok" }` (non-normative) | none |
 
-`POST /v1/runs` body:
+The request body, event vocabulary, and stream encoding are AG-UI's, not
+ours: `RunAgentInput` (`threadId`, `runId`, `messages`, `state`, `tools`,
+`forwardedProps`) in; `RUN_STARTED`, `TEXT_MESSAGE_START/CONTENT/END`,
+`TOOL_CALL_START/ARGS/END`, `TOOL_CALL_RESULT`,
+`STATE_SNAPSHOT`/`MESSAGES_SNAPSHOT`, `RUN_FINISHED` / `RUN_ERROR` out.
+This spec defines only how a recipe session binds to that protocol:
 
-```json
-{ "prompt": { "text": "…" }, "run_id": "optional-caller-id", "kind": "prompt" }
-```
-
-- `kind: "prompt"` starts a fresh turn; `409 Conflict` if one is in
-  flight. `kind: "steer"` injects into the in-flight turn (falls back to a
-  fresh turn when idle). Omitted `kind` classifies by busy-state.
-- Response `201`: `{ "id", "status": "running", "created_at", "updated_at" }`.
-  Run ids are minted as UUIDv7 when not supplied.
-- Errors use `{ "error": "reason" }` with conventional status codes.
+- **The session is the thread.** The process holds one Pi session; every
+  run belongs to it. A `threadId` is accepted and echoed but does not
+  select among sessions (there is only one — see non-goals).
+- **Server-side history is authoritative.** AG-UI clients conventionally
+  send the full message list each run; this server consumes only the
+  newest user message and ignores the rest of the incoming transcript.
+  Stateless or reconnecting clients rehydrate from `MESSAGES_SNAPSHOT`,
+  which the server emits at run start when the incoming history has
+  diverged from the session's.
+- **One run at a time.** A `POST` while a run is in flight is rejected
+  with `409 Conflict` and `{ "error": "…" }`; aborting is closing the
+  request/stream (AG-UI's cancellation model), which aborts the turn.
+- **Event mapping is the translator's job.** Pi session events map onto
+  AG-UI events (`message_*` deltas → `TEXT_MESSAGE_*`,
+  `tool_execution_*` → `TOOL_CALL_*`/`TOOL_CALL_RESULT`, turn settle →
+  `RUN_FINISHED`, session error → `RUN_ERROR`) under AG-UI's strict
+  start/content/end id discipline. This translator already exists,
+  battle-tested, in the first-party managed runtime; adopting this spec
+  includes extracting it here so it is written once and shared.
+- **Streaming hygiene:** responses set
+  `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no` so
+  intermediaries don't buffer; SSE comment lines keep idle connections
+  alive.
 - Auth is a timing-safe byte compare against the configured token.
 
-**Stream framing.** SSE, where each `data:` payload is one event from
-**Pi's documented JSON event schema** — the same events `pi --mode json`
-emits (`agent_start`, `turn_*`, `message_*` with `text_delta` /
-`thinking_delta`, `tool_execution_*`, `auto_retry_*`, `agent_end`) —
-prefixed by a `session` header event on connect, with a `heartbeat` every
-15 s and a final `done` sentinel after the turn settles. Reusing Pi's
-schema means anything that can consume `pi --mode json` output can consume
-this stream, and the serve layer adds no translation layer of its own.
-Content events carry monotonically increasing SSE `id:`s; clients may
-resume after a disconnect via `Last-Event-ID` against a bounded in-memory
-replay buffer. Responses set `Cache-Control: no-cache, no-transform` and
-`X-Accel-Buffering: no` so intermediaries don't buffer the stream.
+Protocol versioning is AG-UI's concern, not this package's; clients must
+ignore event types they don't know, per the AG-UI spec.
 
-Versioning: `/v1/` is the version. New optional request fields and new
-event types are additive; clients must ignore what they don't know.
+### Future surfaces
+
+`serveRecipe` binds the session to exactly one protocol today. The
+internal seam is adapter-shaped — a surface takes a `RecipeSessionHandle`
+and returns a fetch sub-app — so additional protocol facades (A2A for
+agent-to-agent delegation and discovery, MCP for recipe-as-tool) can be
+added later as small adapters without reworking the server. They are
+deliberately not part of v1.
 
 ## CLI: `recipes serve`
 
@@ -323,15 +337,12 @@ traces wire an instrumentation of their choice into the tap.
 
 ## Open questions
 
-1. **Steer ergonomics.** Is busy-state classification enough, or do
-   template users need explicit queueing (`followUp`) exposed as a third
-   `kind`?
-2. **Subagent bounds.** Proposed defaults for the in-process controller:
+1. **Subagent bounds.** Proposed defaults for the in-process controller:
    concurrency 4, depth 2 — to validate against recipes shipping subagents
    today.
-3. **Session persistence across restarts.** Snapshot/pause-resume clouds
+2. **Session persistence across restarts.** Snapshot/pause-resume clouds
    preserve process memory, so resume works there by construction; a
    `sessionManager`-backed persistence option would extend it to cold
    restarts. Deferred until a template needs it.
-4. **`recipes run` CLI.** `pi --mode json -p` already covers one-shot CLI;
+3. **`recipes run` CLI.** `pi --mode json -p` already covers one-shot CLI;
    add a `recipes run` alias only if CI users ask.
