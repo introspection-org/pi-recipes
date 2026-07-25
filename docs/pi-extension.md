@@ -15,6 +15,29 @@ node --version
 pi --version
 ```
 
+### Supported Pi versions
+
+`peerDependencies` in `package.json` declares the Pi range this extension is
+built and tested against. It is the single source of truth for that pairing, and
+it is deliberately a range: Pi ships patches often, and pinning one version would
+strand users on a known-bad patch and force a republish here for every fix.
+
+npm cannot enforce it. Pi is installed globally while its extensions live in
+Pi's own tree (`~/.pi/agent/npm/`), so Pi is never a parent of this package and
+peer resolution never sees the pairing. The range is therefore a declaration for
+tools to *read* — `introspection init` and `introspection upgrade` resolve it
+from the registry and install the newest matching Pi, rather than guessing at
+`@latest`.
+
+Read it with:
+
+```bash
+npm view @introspection-ai/pi-recipes peerDependencies
+```
+
+Widening it is a deliberate act: verify the extension against the newer Pi first,
+then raise the upper bound here.
+
 Install the recipe tooling:
 
 ```bash

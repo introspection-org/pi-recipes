@@ -78,10 +78,10 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
+    "@earendil-works/pi-agent-core": ">=0.80.6 <0.81.0",
+    "@earendil-works/pi-ai": ">=0.80.6 <0.81.0",
+    "@earendil-works/pi-coding-agent": ">=0.80.6 <0.81.0",
+    "@earendil-works/pi-tui": ">=0.80.6 <0.81.0",
     "typebox": "*"
   },
   "devDependencies": {
