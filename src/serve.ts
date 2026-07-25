@@ -20,7 +20,7 @@ import type { ResolvedRecipe } from "./recipe/resolve.js";
 import {
   flushRecipeTelemetry,
   initRecipeTelemetry,
-  shutdownRecipeTelemetry,
+  type RecipeTelemetry,
 } from "./telemetry.js";
 
 /**
@@ -209,7 +209,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
   let inspection: RecipeInspection | null = null;
   let workspaceRoot: string | null = null;
   let mcpMaterialized = false;
-  let telemetryOwned = false;
+  let telemetry: RecipeTelemetry | null = null;
   let httpServer: ServerType | null = null;
   let closed = false;
 
@@ -222,9 +222,9 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
     });
     inspection = inspectRecipe(recipeDir);
     // Trace export out of the server, env-gated (OTEL_EXPORTER_OTLP_* or
-    // the ingest pair in telemetry.ts); a no-op when unconfigured or when
-    // the host already initialized a provider.
-    telemetryOwned = initRecipeTelemetry({ serviceName: inspection.name });
+    // the ingest pair in telemetry.ts); null when unconfigured or when the
+    // host already initialized a provider — the handle is ownership.
+    telemetry = initRecipeTelemetry({ serviceName: inspection.name });
     workspaceRoot =
       options.workspace !== undefined
         ? resolve(options.workspace)
@@ -704,9 +704,7 @@ export function serveRecipe(options: ServeRecipeOptions): RecipeServer {
         clearMcpCatalogPreload(process.env);
         await stopMcpDaemon(process.env).catch(() => {});
       }
-      if (telemetryOwned) {
-        await shutdownRecipeTelemetry().catch(() => {});
-      }
+      await telemetry?.shutdown().catch(() => {});
       if (httpServer) {
         await new Promise<void>((resolvePromise, rejectPromise) => {
           httpServer!.close((err) =>

@@ -2,9 +2,16 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
   instrumentAgent,
   instrumentStream,
+  type AbortTerminationReason,
   type AgentMeta,
 } from "@introspection-sdk/introspection-pi";
-import { context as otelContext, trace, type Tracer } from "@opentelemetry/api";
+import {
+  context as otelContext,
+  trace,
+  type Attributes,
+  type Context,
+  type Tracer,
+} from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { resourceFromAttributes } from "@opentelemetry/resources";
@@ -53,6 +60,16 @@ export interface InitRecipeTelemetryOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/**
+ * Handle to a provider created by `initRecipeTelemetry`: ownership of
+ * shutdown is holding the handle. `flush` after a run settles on
+ * short-lived hosts; `shutdown` once on host close.
+ */
+export interface RecipeTelemetry {
+  flush(): Promise<void>;
+  shutdown(): Promise<void>;
+}
+
 /** Instrumentation scope of the tracer that produces the gen_ai spans. */
 export const RECIPE_TRACER_NAME = "pi-recipes";
 
@@ -86,17 +103,18 @@ function envSpanProcessors(env: NodeJS.ProcessEnv): SpanProcessor[] {
 }
 
 /**
- * Initialize the recipe trace provider. Returns true when this call created
- * it — the caller then owns `shutdownRecipeTelemetry()` — and false when no
- * export target is configured or a provider already exists.
+ * Initialize the recipe trace provider. Returns a handle when this call
+ * created it — holding the handle is owning `shutdown()` — and null when no
+ * export target is configured or a provider already exists (the earlier
+ * owner keeps its handle).
  */
 export function initRecipeTelemetry(
   options: InitRecipeTelemetryOptions = {}
-): boolean {
-  if (provider) return false;
+): RecipeTelemetry | null {
+  if (provider) return null;
   const env = options.env ?? process.env;
   const spanProcessors = options.spanProcessors ?? envSpanProcessors(env);
-  if (spanProcessors.length === 0) return false;
+  if (spanProcessors.length === 0) return null;
 
   otelContext.setGlobalContextManager(
     new AsyncLocalStorageContextManager().enable()
@@ -122,7 +140,10 @@ export function initRecipeTelemetry(
       `[telemetry] trace export enabled (service=${serviceName}) -> ${targets.join(", ")}`
     );
   }
-  return true;
+  return {
+    flush: flushRecipeTelemetry,
+    shutdown: shutdownRecipeTelemetry,
+  };
 }
 
 /** The recipe tracer, or undefined while telemetry is uninitialized. */
@@ -155,6 +176,25 @@ export interface InstrumentRecipeSessionOptions {
   meta: AgentMeta;
   /** Default: the recipe tracer (when `initRecipeTelemetry` ran). */
   tracer?: Tracer;
+  /**
+   * Emit one `invoke_agent` span per run and nest chat/tool spans under it.
+   * Hosts that create their own turn/run spans set false and supply
+   * `getParentContext` instead. Default: true.
+   */
+  runSpans?: boolean;
+  /**
+   * Parent context for chat and tool spans. Default: the active run span
+   * (when `runSpans` is on), else the active OTel context.
+   */
+  getParentContext?: () => Context | null | undefined;
+  /**
+   * Classify a chat stream that ended via the caller's AbortSignal:
+   * `"cancelled"` / `"awaiting_user"` end the span cleanly, `null` keeps
+   * the abort classified as an error. Default: aborts are `"cancelled"`.
+   */
+  abortTerminationReason?: () => AbortTerminationReason | null;
+  /** Host attributes (tenant labels, correlation ids) added to every span. */
+  extraAttributes?: () => Attributes;
 }
 
 interface SessionEntryLike {
@@ -165,9 +205,11 @@ interface SessionEntryLike {
 /**
  * Attach the GenAI instrumentation to a live session: one `invoke_agent`
  * span per run, `chat {model}` spans nested under it via the wrapped stream
- * function, `execute_tool` spans per tool call. Returns a detach that
- * restores the stream function and finalizes open spans, or undefined when
- * no tracer is available.
+ * function, `execute_tool` spans per tool call. Hosts that own their span
+ * topology pass `runSpans: false` + `getParentContext` (and optionally
+ * `abortTerminationReason` / `extraAttributes`) to parent everything onto
+ * their own turn spans. Returns a detach that restores the stream function
+ * and finalizes open spans, or undefined when no tracer is available.
  */
 export function instrumentRecipeSession(
   session: AgentSession,
@@ -178,15 +220,25 @@ export function instrumentRecipeSession(
 
   const agent = session.agent;
   const original = agent.streamFunction;
+  const extraAttributes = options.extraAttributes;
   const instrumentation = instrumentAgent(agent, {
     tracer,
     meta: options.meta,
-    runSpans: true,
+    runSpans: options.runSpans ?? true,
+    ...(options.getParentContext
+      ? { getParentContext: options.getParentContext }
+      : {}),
+    ...(extraAttributes ? { extraAttributes: () => extraAttributes() } : {}),
   });
   agent.streamFunction = instrumentStream(original, {
     tracer,
     meta: options.meta,
-    getParentContext: () => instrumentation.getRunContext(),
+    getParentContext:
+      options.getParentContext ?? (() => instrumentation.getRunContext()),
+    ...(options.abortTerminationReason
+      ? { abortTerminationReason: options.abortTerminationReason }
+      : {}),
+    ...(extraAttributes ? { extraAttributes: () => extraAttributes() } : {}),
     // Structural compaction detection from the session tree, so telemetry
     // emits compaction parts regardless of pi's prose wrapper.
     getCompactionSummaries: () =>

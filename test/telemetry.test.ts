@@ -11,6 +11,7 @@ import {
   type AssistantMessageEvent,
 } from "@earendil-works/pi-ai/compat";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { context as otelContext, trace } from "@opentelemetry/api";
 import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
@@ -102,7 +103,7 @@ describe("recipe telemetry", () => {
   });
 
   it("stays inert when no export target is configured", () => {
-    expect(initRecipeTelemetry({ env: {} })).toBe(false);
+    expect(initRecipeTelemetry({ env: {} })).toBeNull();
     expect(getRecipeTracer()).toBeUndefined();
 
     const streamFunction = scriptedStreamFn();
@@ -124,7 +125,7 @@ describe("recipe telemetry", () => {
       initRecipeTelemetry({
         spanProcessors: [new SimpleSpanProcessor(exporter)],
       })
-    ).toBe(true);
+    ).not.toBeNull();
 
     const original = scriptedStreamFn();
     const fakeSession = {
@@ -171,6 +172,61 @@ describe("recipe telemetry", () => {
     expect(fakeSession.agent.streamFunction).toBe(original);
   });
 
+  it("hosts that own their span topology parent chat spans themselves", async () => {
+    const exporter = new InMemorySpanExporter();
+    initRecipeTelemetry({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    const tracer = getRecipeTracer()!;
+
+    const original = scriptedStreamFn();
+    const fakeSession = {
+      agent: { streamFunction: original, subscribe: () => () => {} },
+      sessionManager: { getEntries: () => [] },
+    } as unknown as AgentSession;
+
+    // The host's own turn span stands in for runtime-agent's turn context.
+    const turnSpan = tracer.startSpan("host_turn");
+    const turnContext = trace.setSpan(otelContext.active(), turnSpan);
+    instrumentRecipeSession(fakeSession, {
+      meta: { conversationId: "conv-3", agentId: "a", agentName: "agent" },
+      runSpans: false,
+      getParentContext: () => turnContext,
+      abortTerminationReason: () => "cancelled",
+      extraAttributes: () => ({ "host.tenant": "org-1" }),
+    });
+
+    const proxy = (
+      fakeSession.agent.streamFunction as unknown as (
+        model: unknown,
+        context: unknown,
+        options?: unknown
+      ) => AsyncIterable<{ type: string }>
+    )(
+      {
+        id: "mock-model",
+        provider: "anthropic",
+        api: "anthropic-messages",
+        baseUrl: "https://example.invalid",
+      },
+      { messages: [], tools: [] },
+      {}
+    );
+    for await (const _event of proxy) {
+      // drain
+    }
+    turnSpan.end();
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.find((s) => s.name.startsWith("invoke_agent"))).toBeUndefined();
+    const chat = spans.find((s) => s.name === "chat mock-model");
+    expect(chat).toBeDefined();
+    expect(chat!.attributes["host.tenant"]).toBe("org-1");
+    expect(chat!.parentSpanContext?.spanId).toBe(
+      turnSpan.spanContext().spanId
+    );
+  });
+
   it("exports to the Introspection ingest with a bearer, from env alone", async () => {
     const requests: { url: string; auth: string | undefined }[] = [];
     const receiver = createServer((req, res) => {
@@ -188,14 +244,13 @@ describe("recipe telemetry", () => {
     const port = (receiver.address() as AddressInfo).port;
 
     try {
-      expect(
-        initRecipeTelemetry({
-          env: {
-            INTROSPECTION_TOKEN: "ingest-token",
-            INTROSPECTION_BASE_OTEL_URL: `http://127.0.0.1:${port}`,
-          },
-        })
-      ).toBe(true);
+      const handle = initRecipeTelemetry({
+        env: {
+          INTROSPECTION_TOKEN: "ingest-token",
+          INTROSPECTION_BASE_OTEL_URL: `http://127.0.0.1:${port}`,
+        },
+      });
+      expect(handle).not.toBeNull();
 
       const fakeSession = {
         agent: {
@@ -227,7 +282,7 @@ describe("recipe telemetry", () => {
         // drain
       }
 
-      await shutdownRecipeTelemetry();
+      await handle!.shutdown();
       expect(requests.length).toBeGreaterThan(0);
       expect(requests[0]!.url).toBe("/v1/traces");
       expect(requests[0]!.auth).toBe("Bearer ingest-token");

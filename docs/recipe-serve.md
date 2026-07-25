@@ -422,9 +422,15 @@ layers, all opt-in:
    they return the session/handle directly.
 
 3. **Host-owned providers (composition).** A host that already runs its
-   own OTel setup skips `initRecipeTelemetry` and calls
-   `instrumentRecipeSession(session, { tracer, meta })` with its own
-   tracer; the built-in init is a no-op whenever a provider exists.
+   own OTel setup skips `initRecipeTelemetry` (which returns a
+   `RecipeTelemetry` handle — flush/shutdown ownership — only to the
+   caller that created the provider, and `null` whenever one exists) and
+   calls `instrumentRecipeSession(session, { tracer, meta })` with its
+   own tracer. Hosts that also own the span topology — their own
+   turn/run spans — pass `runSpans: false` plus `getParentContext`, and
+   optionally `abortTerminationReason` (classify user-requested stops)
+   and `extraAttributes` (tenant labels), so chat and tool spans nest
+   under the host's spans instead of a package-created run span.
 
 Catalog telemetry opt-outs (`DO_NOT_TRACK`, `PI_RECIPES_NO_TELEMETRY`)
 are unrelated to run instrumentation and unchanged by this document.
