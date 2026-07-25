@@ -313,50 +313,6 @@ as small adapters without reworking the server:
   lifecycle (`run` / `get` / `continue` / `cancel`) with a
   `result_mode: trimmed | full` knob for caller context budgets.
 
-## Channels and composition
-
-A served recipe is complete as **recipe + Tasks API + thin channel
-adapters**; everything else stays outside by construction, because the
-only way anything talks to the agent is through the same API.
-
-```
-Slack / GitHub / WhatsApp
-        │  webhook
-        ▼
-  channel adapter            ← translator, no agent logic
-        │  POST /v1/tasks, POST …/runs, read stream
-        ▼
-  Tasks API (serveRecipe) ── engine ── Pi session
-
-  schedules, memory, evals, UIs — all external Tasks API clients
-```
-
-A channel adapter does four things and nothing else: verify the
-provider's webhook signature; map the conversation via a stable
-**bidirectional conversation key** (e.g. `team/channel/thread` ↔ the task
-carrying that key in metadata, recoverable for outbound replies —
-conversation keys are identifiers, never authorization capabilities);
-translate inbound messages to `POST …/runs`; and post results back with
-the application's own provider client and token. Adapters mount beside
-the serve handler in one process (`app.route("/channels/slack", …)`) or
-run separately against the serve URL — they cannot tell the difference.
-
-Rules that keep it clean:
-
-1. **Channels translate; they never think.** No prompt construction, no
-   agent logic, no state beyond the key→task map and delivery dedup.
-2. **The recipe stays ignorant of channels.** Nothing channel-related
-   enters the recipe format; channel wiring is deployment config. The
-   same recipe serves a web UI, a Slack workspace, and a CI job at once.
-3. **Ownership is fixed:** signature verification and typed payloads
-   belong to the adapter; routes to the serve app; outbound clients,
-   OAuth tokens, and delivery deduplication to the application.
-
-v1 ships one worked example (`examples/channels/slack/`) with these rules
-in its README; first-party adapter packages are a later call, justified
-by usage — provider webhook quirks are a maintenance treadmill to enter
-deliberately, not by default.
-
 ## CLI: `recipes serve`
 
 ```
@@ -501,7 +457,7 @@ matters.
 | --- | --- |
 | 1 | `./session` + `./run`, Pi `^0.82` / `ModelRuntime` migration, host conformance suite (`test-utils`), package rename if approved; tests against a scripted model |
 | 2 | `./serve` (incl. `/config`, resume contract, cancel settlement) + `recipes serve` + Dockerfile scaffold; acceptance = an Introspection SDK task client round-trips (create → run → stream → cancel) against the served base URL |
-| 3 | `recipes inspect` + `examples/deploy/*` templates + `examples/channels/slack/` |
+| 3 | `recipes inspect` + `examples/deploy/*` templates |
 
 ## Open questions
 
