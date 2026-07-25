@@ -4,10 +4,10 @@ How a recipe declares what its tasks need from the platform that runs them —
 compute resources and scratch disk — and what an implementing platform does
 with those declarations.
 
-This spec is defined here, in pi-recipes, because it describes *recipe
+This spec is defined here, in Recipes, because it describes *Recipe
 intent*: portable, platform-neutral declarations that any host can honor.
 The validation grammar lives in `pi_recipe_check::resources`
-(`validate_resources`) so every host — the recipes CLI, a
+(`validate_resources`) so every host — the Introspection CLI, a
 platform's manifest validator, wasm/Python bindings — applies identical
 rules with stable diagnostic codes. Platform-specific enforcement (floors,
 caps, billing) is the implementer's job, not part of the grammar.

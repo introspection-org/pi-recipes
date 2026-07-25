@@ -10,8 +10,11 @@ import {
   SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
+  type AgentSessionRuntimeDiagnostic,
+  type EventBus,
   type ExtensionFactory,
   type InlineExtension,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { createAgentTool, type AgentRunController } from "./agent-tool.js";
 import {
@@ -58,6 +61,11 @@ export interface CreateRecipeSessionOptions {
   credentials?: CredentialStore;
   /** Override the recipe's `<provider>/<model_id>` spec. */
   model?: string;
+  /**
+   * Host-constructed model transport. The recipe still owns its model
+   * configuration; this replaces only catalog lookup and transport wiring.
+   */
+  modelOverride?: Model<any>;
   thinkingLevel?: ThinkingLevel;
   /** Explicit local MCP binding file. Default: `<cwd|recipeDir>/.pi/mcp.local.json`. */
   mcpBindingsPath?: string;
@@ -78,18 +86,30 @@ export interface CreateRecipeSessionOptions {
   settingsManager?: SettingsManager;
   /** Host extensions appended after the recipe's own extensions. */
   extensionFactories?: ExtensionFactory[];
+  /** Host event bus shared with the surrounding runtime. */
+  eventBus?: EventBus;
+  /** Host-owned tools. Recipe tool selection still decides which names are live. */
+  customTools?: ToolDefinition[];
   /**
    * Subagent run controller. Default: an in-process controller spawning
    * children through this same rung. Pass `null` to disable the `agent` tool
    * even when the recipe declares subagents.
    */
   runController?: AgentRunController | null;
+  /** Host hooks for the shared `agent` tool UI contract. */
+  agentToolOptions?: {
+    acknowledgeCompletions?(ids: readonly string[]): void;
+  };
   /** Bounds for the default in-process subagent controller. */
   subagentLimits?: { concurrency?: number; depth?: number };
   /** Extra skill roots beyond the recipe's. */
   additionalSkillPaths?: string[];
+  /** Replace the recipe's resolved skill roots with host-materialized roots. */
+  skillPaths?: string[];
   /** Post-resolution system prompt hook. */
   systemPrompt?: (resolved: string) => string;
+  /** Observe Pi resource diagnostics during construction. */
+  onDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
   /** Tap on `session.subscribe`, detached at dispose. */
   onEvent?: (event: AgentSessionEvent) => void;
   /**
@@ -222,12 +242,14 @@ export async function preflightRecipeSession(
   });
   const modelSpec = opts.model ?? recipe.modelSpec;
   const { lookupProvider, modelId } = parseModelSpec(modelSpec);
-  const credentials = await resolveCredentialStore(lookupProvider, opts);
+  const credentialProvider = opts.modelOverride?.provider ?? lookupProvider;
+  const credentials = await resolveCredentialStore(credentialProvider, opts);
   const modelRuntime = await ModelRuntime.create({
     credentials,
     modelsPath: null,
   });
   const model =
+    opts.modelOverride ??
     modelRuntime.getModel(lookupProvider, modelId) ??
     (getModel(lookupProvider as never, modelId as never) as
       | Model<any>
@@ -306,9 +328,11 @@ export async function createRecipeSession(
   // Model + credentials, fail-closed before any MCP runtime starts.
   const modelSpec = opts.model ?? recipe.modelSpec;
   const { lookupProvider, modelId } = parseModelSpec(modelSpec);
-  const credentials = await resolveCredentialStore(lookupProvider, opts);
+  const credentialProvider = opts.modelOverride?.provider ?? lookupProvider;
+  const credentials = await resolveCredentialStore(credentialProvider, opts);
   const modelRuntime = await ModelRuntime.create({ credentials, modelsPath: null });
   const model: Model<any> | undefined =
+    opts.modelOverride ??
     modelRuntime.getModel(lookupProvider, modelId) ??
     (getModel(lookupProvider as never, modelId as never) as Model<any> | undefined);
   if (!model) {
@@ -335,9 +359,10 @@ export async function createRecipeSession(
     settingsManager:
       opts.settingsManager ?? SettingsManager.create(cwd, recipe.recipeDir),
     resourceLoaderOptions: {
+      eventBus: opts.eventBus,
       noSkills: true,
       additionalSkillPaths: [
-        ...recipe.skillPaths,
+        ...(opts.skillPaths ?? recipe.skillPaths),
         ...(opts.additionalSkillPaths ?? []),
       ],
       additionalPromptTemplatePaths: recipe.promptPaths,
@@ -348,6 +373,7 @@ export async function createRecipeSession(
       },
     },
   });
+  opts.onDiagnostics?.(services.diagnostics);
 
   // Subagents: the shared `agent` tool against an injected or in-process
   // controller. `runController: null` disables delegation outright.
@@ -374,9 +400,12 @@ export async function createRecipeSession(
   const tools = wantsSubagents
     ? recipe.tools
     : recipe.tools.filter((tool) => tool !== "agent");
-  const customTools = wantsSubagents
-    ? [createAgentTool(runs, recipe.subagents)]
-    : [];
+  const customTools = [
+    ...(opts.customTools ?? []),
+    ...(wantsSubagents
+      ? [createAgentTool(runs, recipe.subagents, opts.agentToolOptions)]
+      : []),
+  ];
 
   const created = await createAgentSessionFromServices({
     services,

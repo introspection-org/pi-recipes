@@ -182,7 +182,7 @@ export type AskUserOutcome =
   /** No interaction channel — the model should ask in plain chat. */
   | { type: "unavailable" };
 
-/** The pi-recipes interrupt request stored in Pi's arbitrary details field. */
+/** The Recipes interrupt request stored in Pi's arbitrary details field. */
 export interface AskUserInterrupt {
   reason: string;
   message: string;
@@ -209,9 +209,10 @@ export interface AskUserResult {
 }
 
 // Recipe extensions and their host may resolve separate physical copies of
-// pi-recipes (for example, one under the recipe and one under runtime-worker).
+// Recipes (for example, one under the recipe and one under runtime-worker).
 // Keep the async context process-global so either copy can establish the child
-// boundary and every current copy observes it.
+// boundary and every current copy observes it. Retain the pre-rename symbol
+// key so old and new package versions interoperate in the same process.
 const INTERACTION_AUTO_RESOLUTION_KEY = Symbol.for(
   "@introspection-ai/pi-recipes/interaction-auto-resolution"
 );

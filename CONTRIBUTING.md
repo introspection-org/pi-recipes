@@ -1,4 +1,4 @@
-# Contributing to Pi Recipes
+# Contributing to Recipes
 
 Contributions are welcome — bug reports, docs improvements, new checks for the
 validator, and recipe tooling features alike.
@@ -84,4 +84,4 @@ disabled so it cannot accidentally introduce filesystem access.
 
 Open a GitHub issue with a descriptive title, reproduction steps (recipe
 layout and the command you ran), the expected and actual behaviour, and any
-relevant output from `recipes check --json`.
+relevant output from `introspection check`.

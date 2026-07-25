@@ -30,7 +30,7 @@ system_instructions:
 
 When a recipe has no `SYSTEM.md`, Pi's normal base prompt is the starting
 prompt. When `SYSTEM.md` exists, it becomes the recipe-wide starting prompt.
-Pi Recipes then applies the selected agent's `system_instructions` mode.
+Recipes then applies the selected agent's `system_instructions` mode.
 
 ## Derive Agents With `from:`
 
@@ -167,7 +167,7 @@ workspace. Use sandboxing and external authorization for security boundaries.
 ## Root Agents and Subagents
 
 An agent selected with `--agent` is a root agent. If its effective `subagents`
-list is non-empty, Pi Recipes enables the `agent` tool and exposes only those
+list is non-empty, Recipes enables the `agent` tool and exposes only those
 named agents.
 
 A delegated subagent resolves its own complete effective definition:
@@ -192,5 +192,5 @@ tool while running as a delegated child.
 - Use `from:` for real variants, not merely to avoid a few repeated lines.
 - Declare narrow tool, extension, MCP, and subagent lists at the point where a
   role's capability boundary changes.
-- Run `recipes check .` after changing inheritance, then prove each important
+- Run `introspection check` after changing inheritance, then prove each important
   root agent and delegated path in a fresh Pi session.

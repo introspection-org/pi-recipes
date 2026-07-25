@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   EventStream,
+  getModel,
   type AssistantMessage,
   type AssistantMessageEvent,
 } from "@earendil-works/pi-ai/compat";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpBindingError } from "../src/mcp.js";
 import { runRecipe } from "../src/run.js";
 import { createInProcessRunController } from "../src/run-controller.js";
@@ -156,6 +157,29 @@ describe("createRecipeSession", () => {
     expect(handle.session.model?.id).toBe("claude-sonnet-4-5");
     expect(handle.session.systemPrompt).toContain("conformance fixture");
     expect(handle.session.systemPrompt).toContain("Conformance agent");
+  });
+
+  it("accepts host model wiring and reports construction diagnostics", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const base = getModel("anthropic", "claude-sonnet-4-5");
+    expect(base).toBeDefined();
+    const modelOverride = {
+      ...base!,
+      baseUrl: "https://managed-gateway.example/v1",
+    };
+    const onDiagnostics = vi.fn();
+
+    const handle = await open({
+      recipeDir,
+      cwd: workspaceDir,
+      modelOverride,
+      onDiagnostics,
+    });
+
+    expect(handle.session.model?.baseUrl).toBe(
+      "https://managed-gateway.example/v1"
+    );
+    expect(onDiagnostics).toHaveBeenCalledOnce();
   });
 
   it("resolves credentials from provider env keys when no store is given", async () => {

@@ -11,33 +11,6 @@
       "exclude-paths": [
         "bindings/python"
       ],
-      "extra-files": [
-        {
-          "type": "json",
-          "path": "packages/recipe-check-darwin-arm64/package.json",
-          "jsonpath": "$.version"
-        },
-        {
-          "type": "json",
-          "path": "packages/recipe-check-darwin-x64/package.json",
-          "jsonpath": "$.version"
-        },
-        {
-          "type": "json",
-          "path": "packages/recipe-check-linux-arm64/package.json",
-          "jsonpath": "$.version"
-        },
-        {
-          "type": "json",
-          "path": "packages/recipe-check-linux-x64/package.json",
-          "jsonpath": "$.version"
-        },
-        {
-          "type": "json",
-          "path": "packages/recipe-check-win32-x64/package.json",
-          "jsonpath": "$.version"
-        }
-      ],
       "bump-minor-pre-major": true
     }
   },

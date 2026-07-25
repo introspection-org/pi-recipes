@@ -45,17 +45,19 @@ import {
   resolveRecipe,
   type ResolvedRecipe,
 } from "./recipe/resolve.js";
-import { resolveRecipeDirectory } from "./recipe-store.js";
 import {
   createAgentTool,
   type AgentRunController,
   type AgentRunSummary,
 } from "./agent-tool.js";
 
-export interface PiRecipesExtensionOptions {
+export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
   createChildAgentRunner?: CreateRecipeChildAgentRunner;
 }
+
+/** @deprecated Use `RecipesExtensionOptions`. */
+export type PiRecipesExtensionOptions = RecipesExtensionOptions;
 
 interface RecipeChildAgentRunner {
   start(): Promise<void>;
@@ -112,24 +114,10 @@ function stringFlag(value: boolean | string | undefined): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function isPathLikeRecipeInput(input: string): boolean {
-  return (
-    input.startsWith("/") ||
-    input.startsWith(".") ||
-    input.startsWith("~") ||
-    input.includes("/")
-  );
-}
-
 function recipeNotFoundMessage(input: string, resolvedPath: string): string {
   const lines = [`Recipe "${input}" was not found.`];
-  if (isPathLikeRecipeInput(input)) {
-    lines.push(`Resolved path: ${resolvedPath}`);
-    lines.push("Make sure that directory exists and contains package.json with a pi block.");
-  } else {
-    lines.push(`No installed recipe matched "${input}", and no local directory exists at: ${resolvedPath}`);
-    lines.push("Run `recipes list` to see installed recipes, or `recipes install <source>` first.");
-  }
+  lines.push(`Resolved path: ${resolvedPath}`);
+  lines.push("Pass a local Recipe directory containing package.json with a pi block.");
   lines.push("Then launch again with `pi --recipe <recipe>`.");
   return lines.join("\n");
 }
@@ -138,7 +126,7 @@ function recipeLoadErrorMessage(input: string, reason: string): string {
   return [
     `Recipe "${input}" could not be loaded.`,
     reason,
-    "Run `recipes check <recipe>` for a validation report.",
+    "Run `introspection check` from the repository for a validation report.",
   ].join("\n");
 }
 
@@ -417,8 +405,8 @@ function applyChildToolEvent(run: ChildRun, event: RecipeChildToolEvent): void {
   if (event.isError) call.error = text || "Tool failed";
 }
 
-export function createPiRecipesExtension(
-  opts: PiRecipesExtensionOptions = {}
+export function createRecipesExtension(
+  opts: RecipesExtensionOptions = {}
 ): ExtensionFactory {
   const env = opts.env ?? process.env;
   const createChildAgentRunner =
@@ -617,7 +605,7 @@ export function createPiRecipesExtension(
     const flag = recipeFlag(pi);
     if (!flag) return null;
 
-    const recipeDir = resolveRecipeDirectory(flag, { cwd, env });
+    const recipeDir = resolve(cwd, flag);
     if (!existsSync(recipeDir)) {
       throw new RecipeLaunchError(recipeNotFoundMessage(flag, recipeDir));
     }
@@ -1120,4 +1108,7 @@ export function createPiRecipesExtension(
   };
 }
 
-export default createPiRecipesExtension();
+/** @deprecated Use `createRecipesExtension`. */
+export const createPiRecipesExtension = createRecipesExtension;
+
+export default createRecipesExtension();

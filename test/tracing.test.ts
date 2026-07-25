@@ -1,7 +1,7 @@
 /**
  * Trace export out of a recipe host: the GenAI instrumentation attaches to
- * engine sessions when telemetry is initialized, serve stamps the task id as
- * the conversation id, and everything stays inert when unconfigured.
+ * engine sessions when tracing is initialized, and everything stays inert
+ * when unconfigured.
  */
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -18,8 +18,6 @@ import {
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { afterEach, describe, expect, it } from "vitest";
-import { serveRecipe } from "../src/serve.js";
-import type { RecipeSessionHandle } from "../src/session.js";
 import {
   getRecipeTracer,
   initRecipeTracing,
@@ -27,7 +25,6 @@ import {
   flushRecipeTracing,
   shutdownRecipeTracing,
 } from "../src/tracing.js";
-import { writeFixtureRecipe } from "../src/test-utils.js";
 
 class MockAssistantStream extends EventStream<
   AssistantMessageEvent,
@@ -318,61 +315,4 @@ describe("recipe telemetry", () => {
     }
   }, 20_000);
 
-  it("serve groups a task's spans under the task id", async () => {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      process.env.ANTHROPIC_API_KEY = "telemetry-test-key";
-    }
-    const exporter = new InMemorySpanExporter();
-    await initRecipeTracing({
-      spanProcessors: [new SimpleSpanProcessor(exporter)],
-    });
-
-    const fixture = writeFixtureRecipe();
-    const server = serveRecipe({
-      recipeDir: fixture.recipeDir,
-      workspace: fixture.workspaceDir,
-      logger: () => {},
-      onTask: (_taskId, handle: RecipeSessionHandle) => {
-        // Replacing the stream function post-creation drops the chat-span
-        // wrapper for this scripted session; run/tool spans still flow from
-        // the agent subscription, which is what this test asserts on.
-        (handle.session.agent as { streamFunction: unknown }).streamFunction =
-          scriptedStreamFn();
-      },
-    });
-    try {
-      const created = (await (
-        await server.fetch(
-          new Request("http://serve.local/v1/tasks", {
-            method: "POST",
-            body: JSON.stringify({ prompt: "ping" }),
-          })
-        )
-      ).json()) as { task: { id: string }; run: { id: string } };
-
-      for (let i = 0; i < 200; i += 1) {
-        const view = (await (
-          await server.fetch(
-            new Request(
-              `http://serve.local/v1/tasks/${created.task.id}/runs/${created.run.id}`
-            )
-          )
-        ).json()) as { status: string };
-        if (view.status !== "running") {
-          expect(view.status).toBe("completed");
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 25));
-      }
-
-      await flushRecipeTracing();
-      const spans = exporter.getFinishedSpans();
-      const run = spans.find((span) => span.name.startsWith("invoke_agent"));
-      expect(run).toBeDefined();
-      expect(run!.attributes["gen_ai.conversation.id"]).toBe(created.task.id);
-    } finally {
-      await server.close();
-      fixture.cleanup();
-    }
-  }, 30_000);
 });

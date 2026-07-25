@@ -28,9 +28,9 @@ assert!(!report.valid);
 
 The default `fs` feature adds `check_recipe(dir, profile)`, a front-end that
 walks a recipe directory into a snapshot (following file/directory symlinks
-one level, never recursively), and the `cli` feature builds the `recipe-check`
-binary that ships inside the `@introspection-ai/pi-recipes` npm package.
-Build with `--no-default-features` to get only the pure core.
+one level, never recursively), and the `cli` feature builds the standalone
+`recipe-check` binary. The Recipes runtime npm package does not bundle the
+validator. Build with `--no-default-features` to get only the pure core.
 
 A standalone `resources` module validates Kubernetes-style compute
 overrides (`requests`/`limits` with `cpu`/`memory` quantities such as `500m`

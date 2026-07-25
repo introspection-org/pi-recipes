@@ -50,7 +50,7 @@ cannot initiate authentication.
 ## Hosted bindings
 
 Hosted runtimes adapt their endpoint and credential systems into the same
-`.pi/mcp.local.json` shape before starting Pi Recipes. Header values remain
+`.pi/mcp.local.json` shape before starting Recipes. Header values remain
 environment references, so credentials are resolved at runtime rather than
 written into the recipe workspace. Deployment-specific bootstrap, token, and
 egress behavior belongs to the hosting adapter, not this package.

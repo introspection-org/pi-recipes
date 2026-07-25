@@ -224,7 +224,7 @@ export function nativeMcpClientPath(
 ): string | undefined {
   const executable = platform === "win32" ? "mcp-client.exe" : "mcp-client";
   const packageEntrypoint = fileURLToPath(
-    import.meta.resolve("@introspection-ai/pi-recipes")
+    import.meta.resolve("@introspection-ai/recipes")
   );
   const candidate = resolve(
     dirname(packageEntrypoint),

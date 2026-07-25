@@ -20,8 +20,8 @@ export type { AgentMeta } from "@introspection-sdk/introspection-pi";
  * Trace export for recipe sessions: the OTel **GenAI semantic-convention**
  * instrumentation (`invoke_agent` run spans, `chat {model}` model-call spans
  * with token usage, `execute_tool` spans) wired to env-configured OTLP
- * export, so a recipe served or embedded anywhere ships its traces to any
- * OTLP backend.
+ * export, so a Recipe embedded in any host can ship its traces to any OTLP
+ * backend.
  *
  * Nothing is emitted by default. `initRecipeTracing` builds a provider only
  * when the standard OTLP env contract names a target —
@@ -44,7 +44,7 @@ export type { AgentMeta } from "@introspection-sdk/introspection-pi";
  * `instrumentRecipeSession` with their own tracer instead.
  */
 export interface InitRecipeTracingOptions {
-  /** Fallback service name; `OTEL_SERVICE_NAME` wins. Default: "pi-recipes". */
+  /** Fallback service name; `OTEL_SERVICE_NAME` wins. Default: "recipes". */
   serviceName?: string;
   /** Extra resource attributes stamped on all spans. */
   resourceAttributes?: Record<string, string>;
@@ -66,7 +66,7 @@ export interface RecipeTracing {
 }
 
 /** Instrumentation scope of the tracer that produces the gen_ai spans. */
-export const RECIPE_TRACER_NAME = "pi-recipes";
+export const RECIPE_TRACER_NAME = "@introspection-ai/recipes";
 
 /** The provider surface this module needs; the SDK provider satisfies it. */
 export interface RecipeTraceProvider {

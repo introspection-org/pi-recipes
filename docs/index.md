@@ -1,72 +1,49 @@
-# Pi Recipes documentation
+# Recipes documentation
 
-A **recipe** is a portable agent-system package. **Pi Recipes** is the open
-format and toolchain for creating, validating, running, and distributing those
-packages. **Introspection** is the first-party managed cloud for operating and
-improving them.
+**Recipes is the open package format for complete, portable Pi agents.**
 
-## Choose a path
+A Recipe keeps the agent-owned layer together as inspectable source. Pi runs
+the agent; a compatible host supplies credentials, isolation, persistence,
+task lifecycle, protocols, and deployment.
 
-| Goal | Start here |
+## Start here
+
+| Goal | Document |
 | --- | --- |
-| Create, install, customize, or publish | [Recipe flow](recipe-flow.md) |
-| Use the `recipes` CLI | [Recipe CLI](recipe-cli.md) |
-| Build agents with shared and specialized behavior | [Agent composition](agent-composition.md) |
-| Declare and bind MCP capabilities | [MCP configuration](mcp-configuration.md) |
-| Understand what the Pi extension loads | [Pi Recipes extension](pi-extension.md) |
-| Package authored quality criteria | [Recipe judges](recipe-judges.md) |
-| Pin an offline Harbor suite | [Recipe evals](recipe-evals.md) |
-| Ask for user input or approval across hosts | [Recipe interactions](interactions.md) |
-| Declare portable runtime resource intent | [Deployment configuration](deployment-configuration.md) |
-| Run a recipe as a service on any cloud | [Recipe serve](recipe-serve.md) (proposal) |
+| Understand the portable artifact contract | [Recipe Format](recipe-format.md) |
+| Embed a Recipe in a host | [Runtime library](runtime-library.md) |
+| Run a Recipe in Pi | [Pi extension](pi-extension.md) |
+| Compose agents and subagents | [Agent composition](agent-composition.md) |
+| Ask for user input across hosts | [Interactions](interactions.md) |
+| Declare capability policy and bindings | [MCP configuration](mcp-configuration.md) |
+| Declare portable resource intent | [Deployment configuration](deployment-configuration.md) |
+| Package quality definitions | [Recipe judges](recipe-judges.md) |
+| Declare offline evaluation suites | [Recipe evals](recipe-evals.md) |
+| Move from the previous package | [Migration](migration.md) |
 
-## Package anatomy
+## Boundary
 
 ```text
-my-recipe/
-├── package.json          # package metadata and pi resource declarations
-├── SYSTEM.md             # shared instructions for every selected agent
-├── agents/*.yaml         # specialized profiles, inheritance, and capabilities
-├── skills/**/SKILL.md    # reusable workflows and domain procedure
-├── extensions/*.ts       # optional Pi extensions owned by the recipe
-├── judges/*.yaml         # optional portable quality definitions
-└── .pi/mcp.local.example.json # optional distributable binding template
+Recipe source
+    │
+    ▼
+resolveRecipe()          format interpretation
+    │
+    ▼
+createRecipeSession()    complete live Pi agent
+    │
+    ├── runRecipe()      one-turn convenience
+    │
+    └── host             tasks, persistence, auth, protocols, deployment
 ```
 
-The package owns portable behavior, capability policy, and any portable endpoint
-or catalog declarations. The environment owns credentials and may override
-endpoints; the host owns isolation, persistence, and execution lifecycle.
+Recipes stops at the live session boundary. It does not ship a generic server,
+task store, scheduler, sandbox, or provider-specific deployment adapter.
 
-## Identity and distribution
+The first-party hosts are:
 
-- `name` is the package identity. Installed recipes can also resolve by source,
-  normalized scoped identity, or an unambiguous short-name alias; local recipes
-  can be launched by path.
-- `description` is human-facing package metadata.
-- `version` is optional package/display metadata; missing versions resolve as
-  `0.0.0` for compatibility.
-- `license` is optional distribution metadata. When a publishable recipe declares
-  a license other than `UNLICENSED`, include the matching root license file (or
-  use a valid `SEE LICENSE IN ...` reference).
-- A reproducible release is a Git source pinned to a commit SHA, or to a tag
-  protected by an immutable-release policy.
-  The public catalog records that source; it does not become the owner of the
-  artifact.
+- the Pi terminal harness through the Recipes extension;
+- Introspection's managed `runtime-agent`.
 
-## Portability boundary
-
-Pi Recipes is sufficient to author, check, distribute, run, and serve a
-recipe. The embedding ladder is public at every rung — `resolveRecipe`
-(interpretation), `createRecipeSession` (a live session), `runRecipe`
-(one-shot), and `serveRecipe` / `recipes serve` (a standalone Tasks API
-service) — so you can embed any rung in your own host without redefining
-package semantics. Pi Recipes does not provide provider-specific deployment
-adapters; the [serve layer](recipe-serve.md) keeps that boundary by shipping
-one portable HTTP host plus per-target deploy templates
-(`examples/deploy/`).
-For the first-party managed cloud—with isolated runtimes, production evidence,
-and controlled improvement loops—see [Introspection documentation](https://docs.introspection.dev).
-For guided coding-agent workflows around this toolchain (create, migrate,
-improve, deploy), install the
-[Introspection plugin](https://github.com/introspection-org/introspection-plugin)
-in Claude Code or Codex.
+Other hosts implement the same session contract and can run the host
+conformance suite.

@@ -1,7 +1,7 @@
 {
-	"name": "@introspection-ai/pi-recipes",
+	"name": "@introspection-ai/recipes",
 	"version": "0.12.0",
-	"description": "Local session tooling for package-based workflows.",
+	"description": "The open package format for complete, portable Pi agents.",
 	"license": "Apache-2.0",
 	"type": "module",
 	"packageManager": "pnpm@10.33.0",
@@ -10,15 +10,11 @@
 	},
 	"files": [
 		"dist",
-		"harbor/pi_recipe_agent.py",
 		"vendor/mcp-client",
 		"docs",
 		"README.md",
 		"package.json"
 	],
-	"bin": {
-		"recipes": "dist/cli.js"
-	},
 	"repository": {
 		"type": "git",
 		"url": "git+ssh://git@github.com/introspection-org/pi-recipes.git"
@@ -52,10 +48,6 @@
 			"types": "./dist/recipe/resolve.d.ts",
 			"import": "./dist/recipe/resolve.js"
 		},
-		"./recipe-store": {
-			"types": "./dist/recipe-store.d.ts",
-			"import": "./dist/recipe-store.js"
-		},
 		"./session": {
 			"types": "./dist/session.d.ts",
 			"import": "./dist/session.js"
@@ -68,17 +60,13 @@
 			"types": "./dist/test-utils.d.ts",
 			"import": "./dist/test-utils.js"
 		},
-		"./serve": {
-			"types": "./dist/serve.d.ts",
-			"import": "./dist/serve.js"
+		"./inspect": {
+			"types": "./dist/inspect.d.ts",
+			"import": "./dist/inspect.js"
 		},
 		"./tracing": {
 			"types": "./dist/tracing.d.ts",
 			"import": "./dist/tracing.js"
-		},
-		"./agui": {
-			"types": "./dist/agui/index.d.ts",
-			"import": "./dist/agui/index.js"
 		}
 	},
 	"pi": {
@@ -88,25 +76,22 @@
 	},
 	"scripts": {
 		"build": "pnpm build:ts && pnpm build:native",
-		"build:ts": "rm -rf dist && tsc && node scripts/build-mcp-daemon.mjs && chmod +x dist/cli.js",
-		"build:native": "cargo build --release -p pi-recipe-check -p pi-mcp-client && node scripts/package-recipe-check.mjs && node scripts/package-mcp-client.mjs",
+		"build:ts": "rm -rf dist && tsc && node scripts/build-mcp-daemon.mjs",
+		"build:native": "cargo build --release -p pi-mcp-client && node scripts/package-mcp-client.mjs",
 		"bench:mcp-client": "pnpm build:ts && cargo build --release -p pi-mcp-client && node scripts/benchmark-mcp-client.mjs",
 		"prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-		"test": "pnpm build:ts && cargo test -p pi-mcp-client && cargo build -p pi-mcp-client -p pi-recipe-check && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
-		"pack:check": "pnpm pack --dry-run --json | node scripts/check-npm-pack.mjs && node scripts/check-packed-recipe-check-versions.mjs",
-		"clean": "rm -rf dist .turbo node_modules target vendor/recipe-check vendor/mcp-client"
+		"test": "pnpm build:ts && cargo test -p pi-mcp-client -p pi-recipe-check && cargo build -p pi-mcp-client && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
+		"pack:check": "pnpm pack --dry-run --json | node scripts/check-npm-pack.mjs",
+		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client"
 	},
 	"dependencies": {
-		"@ag-ui/core": "0.0.57",
-		"@hono/node-server": "^2.0.11",
 		"@introspection-sdk/introspection-pi": "^0.12.0",
 		"@opentelemetry/api": "^1.9.1",
 		"@opentelemetry/context-async-hooks": "^2.10.0",
 		"@opentelemetry/exporter-trace-otlp-proto": "^0.213.0",
 		"@opentelemetry/resources": "^2.10.0",
 		"@opentelemetry/sdk-trace-base": "^2.10.0",
-		"hono": "^4.12.32",
 		"mcporter": "0.12.3",
 		"yaml": "^2.9.0"
 	},
@@ -122,18 +107,10 @@
 		"@earendil-works/pi-ai": "0.82.0",
 		"@earendil-works/pi-coding-agent": "0.82.0",
 		"@earendil-works/pi-tui": "0.82.0",
-		"@introspection-sdk/introspection-node": "^0.12.0",
 		"@types/node": "^22.10.0",
 		"esbuild": "^0.28.1",
 		"typebox": "^1.0.56",
 		"typescript": "^5.7.3",
 		"vitest": "^4.0.18"
-	},
-	"optionalDependencies": {
-		"@introspection-ai/recipe-check-darwin-arm64": "workspace:*",
-		"@introspection-ai/recipe-check-darwin-x64": "workspace:*",
-		"@introspection-ai/recipe-check-linux-arm64": "workspace:*",
-		"@introspection-ai/recipe-check-linux-x64": "workspace:*",
-		"@introspection-ai/recipe-check-win32-x64": "workspace:*"
 	}
 }

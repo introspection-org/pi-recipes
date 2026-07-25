@@ -15,9 +15,8 @@ import { expectedProviderEnvVars } from "./provider-env.js";
 
 /**
  * What a recipe requires before it can run, derived entirely from the
- * package's existing declarations — no new manifest keys. Serves
- * `recipes inspect --json`, `serveRecipe`'s `/config` descriptor, and
- * catalog metadata generation.
+ * package's existing declarations — no new manifest keys. Hosts and adapters
+ * can use this for preflight checks and configuration UIs.
  */
 export interface RecipeInspection {
   name: string;

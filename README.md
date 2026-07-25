@@ -3,191 +3,181 @@
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset=".github/images/logo-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset=".github/images/logo-light.svg">
-      <img alt="Pi Recipes" src=".github/images/logo-light.svg" width="165">
+      <img alt="Recipes" src=".github/images/logo-light.svg" width="165">
     </picture>
   </a>
 </div>
 
-<h4 align="center">Portable agent systems, built on Pi.</h4>
+<h4 align="center">The open package format for complete, portable Pi agents.</h4>
 
 <div align="center">
   <a href="https://pi.recipes"><img src="https://img.shields.io/badge/website-pi.recipes-blue" alt="Website"></a>
   <a href="https://github.com/introspection-org/pi-recipes/actions/workflows/ci.yml"><img src="https://github.com/introspection-org/pi-recipes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://www.npmjs.com/package/@introspection-ai/pi-recipes"><img src="https://img.shields.io/npm/v/@introspection-ai/pi-recipes?label=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/@introspection-ai/recipes"><img src="https://img.shields.io/npm/v/@introspection-ai/recipes?label=npm" alt="npm version"></a>
   <a href="https://crates.io/crates/pi-recipe-check"><img src="https://img.shields.io/crates/v/pi-recipe-check?label=crates.io" alt="crates.io version"></a>
   <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
 </div>
 
 <br>
 
-A **recipe** is a portable agent-system package. **Pi Recipes** is the open
-format and toolchain for creating, validating, running, and distributing those
-packages. It keeps instructions, agents, skills, extensions, capability policy,
-and quality definitions together as source you can inspect, fork, and own.
+**Everything that makes your agent yours, in one portable package.**
 
-## Overview
+A Recipe keeps a complete Pi agent—its instructions, models, tools, skills,
+extensions, subagents, capability policy, and quality definitions—together as
+ordinary source you can inspect, fork, validate, and own.
 
-Recipes are Pi packages: folders with a `package.json` manifest containing a
-`pi` block, plus agent YAML files, prompts, skills, optional judge YAML, and
-optional TypeScript runtime extensions. The `recipes` CLI installs or registers
-recipes in a local store and ensures the Pi extension is installed before
-recipes are run. The Pi extension resolves an installed recipe into a local
-directory and wires those recipe files into the live Pi session at launch time.
+Run the same Recipe locally, on Introspection, or in another compatible Pi
+host. The Recipe is portable; credentials, isolation, persistence, scheduling,
+and deployment remain the host's responsibility.
 
-`package.json` is both the package manifest and the recipe entry point. `name`
-is the package identity, `description` explains the package, and the optional
-`version` is useful display/package metadata. The `pi` block declares resources
-and policies. A reproducible distributed release is identified by its Git
-source plus a commit SHA, or a tag protected by an immutable-release policy—not
-by the mutable manifest alone.
+## What Recipes is
 
-Recipes remain ordinary Git-backed packages. Pi Recipes supplies the open
-format, validator, CLI, resolver, and catalog; it does not require a registry
-or a particular cloud. Run a recipe locally or embed it in your own compatible
-Pi host, then deploy that host wherever its runtime requirements are supported.
-Pi Recipes does not supply provider-specific Fly.io or Vercel deployment adapters.
-[Introspection](https://docs.introspection.dev) is the first-party managed cloud
-for operating and improving them, with isolated runtimes and production
-improvement loops around the same portable artifact. For guided coding-agent
-workflows around this toolchain — create, migrate, improve, and deploy a recipe
-from Claude Code or Codex — install the
-[Introspection plugin](https://github.com/introspection-org/introspection-plugin).
+Recipes has two deliberately small surfaces:
+
+1. **The Recipe Format** is the open, Git-native package contract.
+2. **The Recipes runtime library** resolves that package into a live Pi session
+   without imposing a server, queue, database, or deployment platform.
+
+[Pi](https://pi.dev/docs/latest) is the minimal agent harness. A Recipe packages
+the complete configured agent built on that harness. It is more than a prompt
+template or a collection of Pi resources, but it is not a hosting framework.
+
+## Package anatomy
+
+```text
+my-recipe/
+├── package.json          # identity and Pi resource declarations
+├── SYSTEM.md             # optional shared instructions
+├── agents/*.yaml         # models, tools, skills, subagents, policy
+├── skills/**/SKILL.md    # reusable domain workflows
+├── extensions/*.ts       # optional Recipe-owned Pi extensions
+├── judges/*.yaml         # optional portable quality definitions
+└── .pi/mcp.local.example.json # optional binding template
+```
+
+The normative contract is documented in [Recipe Format](docs/recipe-format.md).
+
+## Use a Recipe
+
+The [`introspection`](https://github.com/introspection-org/introspection-cli)
+CLI owns the end-to-end local workflow:
+
+```bash
+npm install -g @introspection-ai/cli
+introspection init
+introspection check
+introspection local
+```
+
+`introspection init` installs a compatible Pi and Recipes extension when they
+are missing. `introspection local` launches the selected local Recipe directly
+with Pi. It does not require an Introspection login or managed runtime.
+
+To install the extension without the Introspection CLI:
+
+```bash
+pi install npm:@introspection-ai/recipes
+pi --recipe ./path/to/recipe --agent agent
+```
+
+## Embed the runtime
+
+Install the library in a Pi host:
+
+```bash
+npm install @introspection-ai/recipes
+```
+
+Choose the lowest useful layer:
+
+```ts
+import { resolveRecipe } from "@introspection-ai/recipes/recipe";
+
+const recipe = resolveRecipe({
+  recipeDir: "./my-recipe",
+  agentName: "agent",
+});
+```
+
+```ts
+import { createRecipeSession } from "@introspection-ai/recipes/session";
+
+const handle = await createRecipeSession({
+  recipeDir: "./my-recipe",
+  cwd: "./workspace",
+  agentName: "agent",
+  credentials,
+  mcpBindings,
+  sessionManager,
+});
+
+await handle.session.prompt("Start the task");
+await handle.dispose();
+```
+
+```ts
+import { runRecipe } from "@introspection-ai/recipes/run";
+
+const result = await runRecipe({
+  recipeDir: "./my-recipe",
+  cwd: "./workspace",
+  prompt: "Produce the report",
+});
+```
+
+`createRecipeSession` is the primary host boundary. It owns Recipe semantics
+and Pi session construction. The host still owns task lifecycle, durable state,
+auth, networking, isolation, protocol translation, and deployment.
+
+See [Runtime library](docs/runtime-library.md) for the complete API boundary and
+[host conformance](docs/runtime-library.md#host-conformance) for compatibility
+tests.
+
+## Public exports
+
+- `@introspection-ai/recipes` — core Recipe types and runtime helpers
+- `@introspection-ai/recipes/recipe` — resolve a Recipe into session inputs
+- `@introspection-ai/recipes/session` — create a live Pi Recipe session
+- `@introspection-ai/recipes/run` — execute one Recipe turn
+- `@introspection-ai/recipes/pi-extension` — Pi extension entrypoint
+- `@introspection-ai/recipes/pi` — shared subagent tool and controller types
+- `@introspection-ai/recipes/interactions` — portable user-input and approval contract
+- `@introspection-ai/recipes/inspect` — derive host requirements
+- `@introspection-ai/recipes/tracing` — optional OpenTelemetry instrumentation
+- `@introspection-ai/recipes/test-utils` — host conformance cases
+
+The package intentionally has no `recipes` executable and no generic HTTP
+server. The `introspection` CLI owns authoring and local operation. Hosting
+adapters and deployment cookbooks belong outside this runtime package.
+
+## Validation
+
+The format validator is independently reusable:
+
+- [`pi-recipe-check`](https://crates.io/crates/pi-recipe-check) — Rust crate and
+  standalone validator
+- [`pi-recipe-check`](https://pypi.org/project/pi-recipe-check/) — Python
+  bindings for validating in-memory Recipe snapshots
+
+The Introspection CLI embeds the same validation engine used by managed
+deployments.
 
 ## Documentation
 
-- [Documentation index](docs/index.md): choose the shortest path for creating, composing, validating, running, or distributing a recipe.
-- [Recipe Flow](docs/recipe-flow.md): quick user-facing guide to installing, customizing, creating, and publishing recipes.
-- [Recipe CLI](docs/recipe-cli.md): creating, installing, resolving, publishing, and removing recipes.
-- [Agent Composition](docs/agent-composition.md): shared `SYSTEM.md`, specialized agent instructions, `from:` inheritance, capabilities, and subagents.
-- [MCP Configuration](docs/mcp-configuration.md): package policy, per-agent selection, and package- or environment-supplied endpoints.
-- [Recipe Judges](docs/recipe-judges.md): portable authored judge YAML, static validation, and the runtime ownership boundary.
-- [Pi Recipe Extension](docs/pi-extension.md): installing the Pi extension, launching recipes, agent selection, resources, subagents, and recipe extension loading.
-- [Recipe Evals](docs/recipe-evals.md): declaring and running Harbor offline eval suites with exact pins.
-- [Recipe Interactions](docs/interactions.md): asking for user input or approval across local, RPC, and pause/resume hosts.
-- [Deployment Configuration](docs/deployment-configuration.md): portable resource intent and the host enforcement boundary.
-
-## Package Exports
-
-- `@introspection-ai/pi-recipes`: extension factory and recipe-loading helpers.
-- `@introspection-ai/pi-recipes/interactions`: cross-host user-question and approval helpers for recipe tools.
-- `@introspection-ai/pi-recipes/pi-extension`: Pi extension entrypoint.
-- `@introspection-ai/pi-recipes/recipe`: recipe parsing and resolved session inputs.
-- `@introspection-ai/pi-recipes/pi`: the shared `agent` tool and controller types.
-- `@introspection-ai/pi-recipes/recipe-store`: recipe install and resolution helpers.
-- [`pi-recipe-check`](https://crates.io/crates/pi-recipe-check) (Rust crate,
-  [`crates/pi-recipe-check`](crates/pi-recipe-check)): the pure recipe
-  validation engine behind the vendored `recipe-check` binary, embeddable by
-  other hosts such as `introspection-cli`.
-- [`pi-recipe-check`](https://pypi.org/project/pi-recipe-check/) (Python package,
-  [`bindings/python`](bindings/python)): typed native bindings for validating
-  an in-memory recipe snapshot without filesystem I/O.
-
-## Quick Start
-
-Install [Pi](https://pi.dev/docs/latest/quickstart) first and confirm `pi` is on
-`PATH`. Pi Recipes extends Pi; it does not install the harness itself.
-
-Pi Recipes currently requires Node.js 24 or later, matching its MCP runtime
-dependency.
-
-Install the recipe tooling:
-
-```bash
-npm install -g @introspection-ai/pi-recipes
-```
-
-The first `recipes install ...` run automatically installs the companion Pi
-extension with `pi install npm:@introspection-ai/pi-recipes`.
-
-Create a local recipe:
-
-```bash
-recipes create ./my-recipe
-recipes check ./my-recipe
-recipes setup
-```
-
-Launch it with Pi:
-
-```bash
-pi --recipe ./my-recipe --agent agent
-```
-
-Hosts that embed Pi can resolve the same recipe semantics without adopting a
-second recipe abstraction. The following is integration pseudocode: the host
-implements `AgentRunController` and owns session construction and lifecycle.
-
-```ts
-import { resolveRecipe } from "@introspection-ai/pi-recipes/recipe";
-import { createAgentTool, type AgentRunController } from "@introspection-ai/pi-recipes/pi";
-
-const recipe = resolveRecipe({ recipeDir, agentName });
-const runs: AgentRunController = host.createRunController(recipe.subagents);
-
-host.registerTool(createAgentTool(runs, recipe.subagents));
-```
-
-The host remains responsible for model credentials, session persistence,
-telemetry, and lifecycle. The resolver owns recipe interpretation; the shared
-tool delegates run execution to the host controller. Pass the resolved model,
-tools, prompts, skills, and extensions to Pi's normal session constructors.
-
-`recipes create` writes a starter `package.json`, shared `SYSTEM.md`,
-`agents/agent.yaml`, and recipe README. Put package-wide instructions in
-`SYSTEM.md` and role-specific instructions in agent YAML. Named variants are
-agents too:
-
-```yaml
-name: agent-opus
-from: agent
-model:
-  name: openrouter/anthropic/claude-opus-4.8
-```
-
-See [Agent Composition](docs/agent-composition.md) for the complete inheritance
-and prompt-layering rules.
-
-## Install Recipes
-
-Install public GitHub recipes:
-
-```bash
-recipes install github:owner/repo
-recipes install github:owner/repo/path/to/recipe
-recipes install github:owner/repo#v1.0.0
-```
-
-Install private recipes with normal Git authentication:
-
-```bash
-recipes install git@github.com:owner/private-recipe.git
-GITHUB_TOKEN=... recipes install github:owner/private-recipe
-```
-
-No recipe registry is required. Publishing a recipe creates or updates a GitHub
-repository and pushes the local recipe:
-
-```bash
-recipes publish ./my-recipe --github owner/my-recipe --visibility private
-```
-
-Use `--visibility public` to submit the recipe's public GitHub metadata to the
-marketplace catalog after a successful push. Catalog submissions are
-best-effort; private publishes are not listed.
-
-Customize an installed recipe into an owned editable path:
-
-```bash
-recipes customize pi-codex --output ./my-agent
-recipes check ./my-agent
-pi --recipe ./my-agent
-```
+- [Recipe Format](docs/recipe-format.md)
+- [Runtime library](docs/runtime-library.md)
+- [Pi extension](docs/pi-extension.md)
+- [Agent composition](docs/agent-composition.md)
+- [Interactions](docs/interactions.md)
+- [MCP configuration](docs/mcp-configuration.md)
+- [Deployment configuration](docs/deployment-configuration.md)
+- [Recipe judges](docs/recipe-judges.md)
+- [Recipe eval declarations](docs/recipe-evals.md)
+- [Migration from `@introspection-ai/pi-recipes`](docs/migration.md)
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
-development setup (TypeScript and the Rust validator), commit conventions,
-and the release process.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

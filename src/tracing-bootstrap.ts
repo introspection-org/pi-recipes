@@ -56,7 +56,7 @@ export async function bootstrapRecipeTracing(
   if (spanProcessors.length === 0) return null;
 
   const serviceName =
-    process.env.OTEL_SERVICE_NAME ?? options.serviceName ?? "pi-recipes";
+    process.env.OTEL_SERVICE_NAME ?? options.serviceName ?? "recipes";
   const provider = new BasicTracerProvider({
     resource: resourceFromAttributes({
       "service.name": serviceName,

@@ -10,7 +10,7 @@
  * on failure. In vitest:
  *
  * ```ts
- * import { hostConformanceCases } from "@introspection-ai/pi-recipes/test-utils";
+ * import { hostConformanceCases } from "@introspection-ai/recipes/test-utils";
  * for (const c of hostConformanceCases(myHostAdapter)) it(c.name, c.run);
  * ```
  */

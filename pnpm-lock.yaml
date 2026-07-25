@@ -8,12 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@ag-ui/core':
-        specifier: 0.0.57
-        version: 0.0.57
-      '@hono/node-server':
-        specifier: ^2.0.11
-        version: 2.0.11(hono@4.12.32)
       '@introspection-sdk/introspection-pi':
         specifier: ^0.12.0
         version: 0.12.0(@earendil-works/pi-agent-core@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))
@@ -32,9 +26,6 @@ importers:
       '@opentelemetry/sdk-trace-base':
         specifier: ^2.10.0
         version: 2.10.0(@opentelemetry/api@1.9.1)
-      hono:
-        specifier: ^4.12.32
-        version: 4.12.32
       mcporter:
         specifier: 0.12.3
         version: 0.12.3
@@ -54,9 +45,6 @@ importers:
       '@earendil-works/pi-tui':
         specifier: 0.82.0
         version: 0.82.0
-      '@introspection-sdk/introspection-node':
-        specifier: ^0.12.0
-        version: 0.12.0(@earendil-works/pi-agent-core@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@opentelemetry/api-logs@0.213.0)(@opentelemetry/context-async-hooks@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-proto@0.213.0(@opentelemetry/api@1.9.1))(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.213.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.21
@@ -72,32 +60,6 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@22.19.21)(vite@8.0.16(@types/node@22.19.21)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))
-    optionalDependencies:
-      '@introspection-ai/recipe-check-darwin-arm64':
-        specifier: workspace:*
-        version: link:packages/recipe-check-darwin-arm64
-      '@introspection-ai/recipe-check-darwin-x64':
-        specifier: workspace:*
-        version: link:packages/recipe-check-darwin-x64
-      '@introspection-ai/recipe-check-linux-arm64':
-        specifier: workspace:*
-        version: link:packages/recipe-check-linux-arm64
-      '@introspection-ai/recipe-check-linux-x64':
-        specifier: workspace:*
-        version: link:packages/recipe-check-linux-x64
-      '@introspection-ai/recipe-check-win32-x64':
-        specifier: workspace:*
-        version: link:packages/recipe-check-win32-x64
-
-  packages/recipe-check-darwin-arm64: {}
-
-  packages/recipe-check-darwin-x64: {}
-
-  packages/recipe-check-linux-arm64: {}
-
-  packages/recipe-check-linux-x64: {}
-
-  packages/recipe-check-win32-x64: {}
 
 packages:
 
@@ -425,83 +387,8 @@ packages:
     peerDependencies:
       hono: ^4
 
-  '@hono/node-server@2.0.11':
-    resolution: {integrity: sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      hono: ^4
-
   '@iarna/toml@2.2.5':
     resolution: {integrity: sha512-trnsAYxU3xnS1gPHPyU961coFyLkh4gAD/0zQ5mymY4yOZ+CYvsPqUbOFSw0aDM4y0tV7tiFxL/1XfXPNC6IPg==}
-
-  '@introspection-sdk/http@0.12.0':
-    resolution: {integrity: sha512-nnlF0D2jGxNIu6UjO/jVZwJI9BxYdKpWktRoedRhi7a58GuLa3IibTqiEJRDldc9ceALeaPZh4I1qZHZHW62hA==}
-    engines: {node: '>=22'}
-    peerDependencies:
-      apache-arrow: ^21.0.0
-    peerDependenciesMeta:
-      apache-arrow:
-        optional: true
-
-  '@introspection-sdk/introspection-node@0.12.0':
-    resolution: {integrity: sha512-daJ6emI4wjK5mpMIwcYIbQy8uyg0XtbCG/c4fiD7PzIUWYS58Lhhr0YRfpe7wBcF+BaZ3fXPx505LclCTFGITQ==}
-    engines: {node: '>=22'}
-    peerDependencies:
-      '@anthropic-ai/claude-agent-sdk': '>=0.2.0'
-      '@earendil-works/pi-agent-core': '>=0.75.0'
-      '@earendil-works/pi-ai': '>=0.75.0'
-      '@langchain/core': '>=0.3.0'
-      '@mastra/core': '>=1.0.0'
-      '@mastra/observability': '>=1.0.0'
-      '@openai/agents': '>=0.0.1'
-      '@opentelemetry/api-logs': '>=0.50.0'
-      '@opentelemetry/context-async-hooks': '>=1.20.0 || >=2.0.0'
-      '@opentelemetry/core': '>=1.20.0 || >=2.0.0'
-      '@opentelemetry/exporter-logs-otlp-proto': '>=0.50.0'
-      '@opentelemetry/exporter-trace-otlp-proto': '>=0.50.0'
-      '@opentelemetry/resources': '>=1.20.0 || >=2.0.0'
-      '@opentelemetry/sdk-logs': '>=0.50.0'
-      '@opentelemetry/sdk-trace-base': '>=1.20.0 || >=2.0.0'
-      '@opentelemetry/sdk-trace-node': '>=1.20.0 || >=2.0.0'
-      '@opentelemetry/semantic-conventions': '>=1.20.0'
-      ai: '>=4.0.0'
-    peerDependenciesMeta:
-      '@anthropic-ai/claude-agent-sdk':
-        optional: true
-      '@earendil-works/pi-agent-core':
-        optional: true
-      '@earendil-works/pi-ai':
-        optional: true
-      '@langchain/core':
-        optional: true
-      '@mastra/core':
-        optional: true
-      '@mastra/observability':
-        optional: true
-      '@openai/agents':
-        optional: true
-      '@opentelemetry/api-logs':
-        optional: true
-      '@opentelemetry/context-async-hooks':
-        optional: true
-      '@opentelemetry/core':
-        optional: true
-      '@opentelemetry/exporter-logs-otlp-proto':
-        optional: true
-      '@opentelemetry/exporter-trace-otlp-proto':
-        optional: true
-      '@opentelemetry/resources':
-        optional: true
-      '@opentelemetry/sdk-logs':
-        optional: true
-      '@opentelemetry/sdk-trace-base':
-        optional: true
-      '@opentelemetry/sdk-trace-node':
-        optional: true
-      '@opentelemetry/semantic-conventions':
-        optional: true
-      ai:
-        optional: true
 
   '@introspection-sdk/introspection-pi@0.12.0':
     resolution: {integrity: sha512-wEGxqOoMOq5hDmTzGRQ4Io1bYqPxbFwkL90rvtACifBknMVPHHJoRtOLbBndNx13qZLMzqipE5WMIF/9mI+Z1A==}
@@ -514,10 +401,6 @@ packages:
         optional: true
       '@earendil-works/pi-ai':
         optional: true
-
-  '@introspection-sdk/introspection-proxy@0.12.0':
-    resolution: {integrity: sha512-J+/ut3tvUuuqVAsxeMfIpzaRh4b5i4+6MrIkbecCtkP2mSWjUIdeUG0lkhts0nMJFJ4S59XjYbFsgpk8UuvrNg==}
-    engines: {node: '>=22.19.0'}
 
   '@introspection-sdk/types@0.12.0':
     resolution: {integrity: sha512-HrodwEpI2yHp7mywDHcjDef9cWpUMqKvivR09LP7no8SzLeCUX27s+TVlXeZ9lqUa7qFVyk9zeD3tjsGG2nyeg==}
@@ -1680,10 +1563,6 @@ packages:
     resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
     engines: {node: '>= 0.10'}
 
-  proxy-from-env@2.1.0:
-    resolution: {integrity: sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==}
-    engines: {node: '>=10'}
-
   qs@6.15.3:
     resolution: {integrity: sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==}
     engines: {node: '>=0.6'}
@@ -1853,10 +1732,6 @@ packages:
 
   undici@8.5.0:
     resolution: {integrity: sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==}
-    engines: {node: '>=22.19.0'}
-
-  undici@8.9.0:
-    resolution: {integrity: sha512-aWZpUj7XoGonMClx4gdDRfgBjqeA+F473aDmROQQbM9n6PRfK/u1q/a0X4wMTgcHfT8H6fpbt98PFuDUwFg2YA==}
     engines: {node: '>=22.19.0'}
 
   unpipe@1.0.0:
@@ -2439,40 +2314,7 @@ snapshots:
     dependencies:
       hono: 4.12.32
 
-  '@hono/node-server@2.0.11(hono@4.12.32)':
-    dependencies:
-      hono: 4.12.32
-
   '@iarna/toml@2.2.5': {}
-
-  '@introspection-sdk/http@0.12.0':
-    dependencies:
-      '@ag-ui/core': 0.0.57
-      '@introspection-sdk/types': 0.12.0
-
-  '@introspection-sdk/introspection-node@0.12.0(@earendil-works/pi-agent-core@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@opentelemetry/api-logs@0.213.0)(@opentelemetry/context-async-hooks@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-proto@0.213.0(@opentelemetry/api@1.9.1))(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.213.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)':
-    dependencies:
-      '@introspection-sdk/http': 0.12.0
-      '@introspection-sdk/introspection-pi': 0.12.0(@earendil-works/pi-agent-core@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))
-      '@introspection-sdk/introspection-proxy': 0.12.0
-      '@introspection-sdk/types': 0.12.0
-      '@opentelemetry/api': 1.9.1
-      https-proxy-agent: 7.0.6
-      proxy-from-env: 2.1.0
-    optionalDependencies:
-      '@earendil-works/pi-agent-core': 0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
-      '@earendil-works/pi-ai': 0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
-      '@opentelemetry/api-logs': 0.213.0
-      '@opentelemetry/context-async-hooks': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/exporter-trace-otlp-proto': 0.213.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/sdk-logs': 0.213.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/sdk-trace-base': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
-    transitivePeerDependencies:
-      - apache-arrow
-      - supports-color
 
   '@introspection-sdk/introspection-pi@0.12.0(@earendil-works/pi-agent-core@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))(@earendil-works/pi-ai@0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3))':
     dependencies:
@@ -2481,11 +2323,6 @@ snapshots:
     optionalDependencies:
       '@earendil-works/pi-agent-core': 0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-ai': 0.82.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
-
-  '@introspection-sdk/introspection-proxy@0.12.0':
-    dependencies:
-      '@opentelemetry/api': 1.9.1
-      undici: 8.9.0
 
   '@introspection-sdk/types@0.12.0':
     dependencies:
@@ -3552,8 +3389,6 @@ snapshots:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
 
-  proxy-from-env@2.1.0: {}
-
   qs@6.15.3:
     dependencies:
       es-define-property: 1.0.1
@@ -3757,8 +3592,6 @@ snapshots:
   undici-types@6.21.0: {}
 
   undici@8.5.0: {}
-
-  undici@8.9.0: {}
 
   unpipe@1.0.0: {}
 
