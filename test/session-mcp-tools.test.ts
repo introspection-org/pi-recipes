@@ -58,7 +58,7 @@ describe("canonical Recipe session MCP tools mode", () => {
         "  servers:",
         "    contacts:",
         '      include: ["search_contacts", "get_contact"]',
-        "  initial_tools: {}",
+        '      defer: ["*"]',
       ],
     });
     cleanups.push(fixture.cleanup);

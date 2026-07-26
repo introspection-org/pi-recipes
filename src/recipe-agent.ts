@@ -34,6 +34,10 @@ export interface RecipeAgentMcpServer {
   include?: string[];
   /** Exact tool names removed after inclusion. */
   exclude?: string[];
+  /** Authorized tools hidden from the model until activated. */
+  defer?: string[];
+  /** Deferred tools made visible at session start. */
+  eager?: string[];
 }
 
 export type RecipeAgentMcpMode = "cli" | "tools";
@@ -43,19 +47,12 @@ export interface RecipeAgentMcp {
   mode?: RecipeAgentMcpMode;
   /** Authorization selection, still upper-bounded by package.json#pi.mcp. */
   servers: Record<string, RecipeAgentMcpServer>;
-  /**
-   * Initially active tools in tools mode. Omission means all authorized tools;
-   * an explicitly empty map means all authorized tools start deferred.
-   */
-  initialTools?: Record<string, string[]>;
 }
 
 const INVALID_AGENT_MCP = Symbol("invalidAgentMcp");
-const INITIAL_TOOLS_AGENT_MCP_DECLARED = Symbol("initialToolsAgentMcpDeclared");
 
 type ParsedRecipeAgentMcp = RecipeAgentMcp & {
   [INVALID_AGENT_MCP]?: true;
-  [INITIAL_TOOLS_AGENT_MCP_DECLARED]?: true;
 };
 
 export interface RecipeAgentDefinition {
@@ -203,6 +200,18 @@ function hasNormalizedMcpServerCollision(values: readonly string[]): boolean {
   return false;
 }
 
+function validActivationSelectors(selectors: string[] | undefined): boolean {
+  if (selectors === undefined) return true;
+  return (
+    selectors.every(
+      (selector) =>
+        Boolean(selector.trim()) &&
+        (!selector.includes("*") || selector === "*")
+    ) &&
+    (!selectors.includes("*") || selectors.length === 1)
+  );
+}
+
 function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
   if (!Object.hasOwn(data, "mcp")) return undefined;
   const value = data.mcp;
@@ -210,26 +219,33 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
   const raw = asRecord(value);
   const modeValue = raw.mode;
   const structured =
-    Object.hasOwn(raw, "mode") &&
-    (modeValue === null ||
-      typeof modeValue !== "object" ||
-      Array.isArray(modeValue));
+    Object.hasOwn(raw, "servers") ||
+    (Object.hasOwn(raw, "mode") &&
+      (modeValue === null ||
+        typeof modeValue !== "object" ||
+        Array.isArray(modeValue)));
   const rawServers = structured ? asRecord(raw.servers) : raw;
   const servers: Record<string, RecipeAgentMcpServer> = {};
   for (const [serverId, serverValue] of Object.entries(rawServers)) {
-    servers[normalizedMcpServerId(serverId)] =
-      parseRecipeMcpToolSelection(serverValue);
+    const serverRaw = asRecord(serverValue);
+    servers[normalizedMcpServerId(serverId)] = {
+      ...parseRecipeMcpToolSelection(serverValue),
+      ...(Object.hasOwn(serverRaw, "defer")
+        ? {
+            defer: stringArray(serverRaw.defer).map((selector) =>
+              selector.trim()
+            ),
+          }
+        : {}),
+      ...(Object.hasOwn(serverRaw, "eager")
+        ? {
+            eager: stringArray(serverRaw.eager).map((selector) =>
+              selector.trim()
+            ),
+          }
+        : {}),
+    };
   }
-  const initialToolsDeclared = structured && Object.hasOwn(raw, "initial_tools");
-  const rawInitialTools = initialToolsDeclared ? asRecord(raw.initial_tools) : {};
-  const initialTools = initialToolsDeclared
-    ? Object.fromEntries(
-        Object.entries(rawInitialTools).map(([serverId, selectors]) => [
-          normalizedMcpServerId(serverId),
-          stringArray(selectors).map((selector) => selector.trim()),
-        ])
-      )
-    : undefined;
   const mode =
     raw.mode === "cli" || raw.mode === "tools"
       ? raw.mode as RecipeAgentMcpMode
@@ -237,38 +253,52 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
   const mcp: ParsedRecipeAgentMcp = {
     ...(mode ? { mode } : {}),
     servers,
-    ...(initialToolsDeclared ? { initialTools } : {}),
   };
+  const malformedServers = Object.entries(rawServers).some(
+    ([, serverValue]) => {
+      const server = asRecord(serverValue);
+      return (
+        !serverValue ||
+        typeof serverValue !== "object" ||
+        Array.isArray(serverValue) ||
+        ["defer", "eager"].some(
+          (key) =>
+            Object.hasOwn(server, key) &&
+            (!Array.isArray(server[key]) ||
+              (server[key] as unknown[]).some(
+                (selector) => typeof selector !== "string"
+              ))
+        ) ||
+        !validActivationSelectors(
+          Object.hasOwn(server, "defer")
+            ? stringArray(server.defer).map((selector) => selector.trim())
+            : undefined
+        ) ||
+        !validActivationSelectors(
+          Object.hasOwn(server, "eager")
+            ? stringArray(server.eager).map((selector) => selector.trim())
+            : undefined
+        ) ||
+        ((!structured || mode === "cli") &&
+          (Object.hasOwn(server, "defer") || Object.hasOwn(server, "eager")))
+      );
+    }
+  );
   const malformedStructured =
-    structured &&
-    (
-      (raw.mode !== "cli" && raw.mode !== "tools") ||
-      Object.keys(rawServers).some((serverId) => !serverId.trim()) ||
-      hasNormalizedMcpServerCollision(Object.keys(rawServers)) ||
-      (Object.hasOwn(raw, "servers") &&
-        (!raw.servers ||
-          typeof raw.servers !== "object" ||
-          Array.isArray(raw.servers))) ||
-      (initialToolsDeclared &&
-        (!raw.initial_tools ||
-          typeof raw.initial_tools !== "object" ||
-          Array.isArray(raw.initial_tools) ||
-          Object.keys(rawInitialTools).some((serverId) => !serverId.trim()) ||
-          hasNormalizedMcpServerCollision(Object.keys(rawInitialTools)) ||
-          Object.values(rawInitialTools).some(
-            (selectors) =>
-              !Array.isArray(selectors) ||
-              selectors.some((selector) => typeof selector !== "string")
-          ))) ||
-      (mode === "cli" && initialToolsDeclared));
+    malformedServers ||
+    (structured &&
+      ((Object.hasOwn(raw, "mode") &&
+        raw.mode !== "cli" &&
+        raw.mode !== "tools") ||
+        Object.keys(rawServers).some((serverId) => !serverId.trim()) ||
+        hasNormalizedMcpServerCollision(Object.keys(rawServers)) ||
+        (Object.hasOwn(raw, "servers") &&
+          (!raw.servers ||
+            typeof raw.servers !== "object" ||
+            Array.isArray(raw.servers))) ||
+        Object.hasOwn(raw, "initial_tools")));
   if (!validObject || malformedStructured) {
     Object.defineProperty(mcp, INVALID_AGENT_MCP, {
-      value: true,
-      enumerable: false,
-    });
-  }
-  if (initialToolsDeclared) {
-    Object.defineProperty(mcp, INITIAL_TOOLS_AGENT_MCP_DECLARED, {
       value: true,
       enumerable: false,
     });
@@ -290,37 +320,34 @@ function mergeMcp(
     mergedServers[serverId] = {
       ...(baseServer?.include !== undefined ? { include: baseServer.include } : {}),
       ...(baseServer?.exclude !== undefined ? { exclude: baseServer.exclude } : {}),
+      ...(baseServer?.defer !== undefined ? { defer: baseServer.defer } : {}),
+      ...(baseServer?.eager !== undefined ? { eager: baseServer.eager } : {}),
       ...(childServer.include !== undefined ? { include: childServer.include } : {}),
       ...(childServer.exclude !== undefined ? { exclude: childServer.exclude } : {}),
+      ...(childServer.defer !== undefined ? { defer: childServer.defer } : {}),
+      ...(childServer.eager !== undefined ? { eager: childServer.eager } : {}),
     };
   }
-  const childInitialToolsDeclared =
-    (child as ParsedRecipeAgentMcp)[INITIAL_TOOLS_AGENT_MCP_DECLARED] === true;
+  const mode = child.mode ?? base.mode;
   const merged: ParsedRecipeAgentMcp = {
-    ...(child.mode ?? base.mode ? { mode: child.mode ?? base.mode } : {}),
-    servers: mergedServers,
-    ...((child.mode ?? base.mode) === "cli"
-      ? {}
-      : childInitialToolsDeclared
-        ? { initialTools: child.initialTools ?? {} }
-        : base.initialTools !== undefined
-          ? { initialTools: base.initialTools }
-          : {}),
+    ...(mode ? { mode } : {}),
+    servers:
+      mode === "cli"
+        ? Object.fromEntries(
+            Object.entries(mergedServers).map(([serverId, server]) => [
+              serverId,
+              {
+                ...(server.include !== undefined
+                  ? { include: server.include }
+                  : {}),
+                ...(server.exclude !== undefined
+                  ? { exclude: server.exclude }
+                  : {}),
+              },
+            ])
+          )
+        : mergedServers,
   };
-  if (childInitialToolsDeclared && merged.mode !== "cli") {
-    Object.defineProperty(merged, INITIAL_TOOLS_AGENT_MCP_DECLARED, {
-      value: true,
-      enumerable: false,
-    });
-  } else if (
-    (base as ParsedRecipeAgentMcp)[INITIAL_TOOLS_AGENT_MCP_DECLARED] === true &&
-    merged.mode !== "cli"
-  ) {
-    Object.defineProperty(merged, INITIAL_TOOLS_AGENT_MCP_DECLARED, {
-      value: true,
-      enumerable: false,
-    });
-  }
   return merged;
 }
 
@@ -723,27 +750,17 @@ function validateResolvedRecipeAgentSource(
         return value !== "*" && !mcpSelectionAllowsTool(packageSelection, value);
       });
     }) ||
-    Object.entries(mcp?.initialTools ?? {}).some(([serverId, selectors]) => {
-      if (!serverId.trim() || selectors.length === 0) return false;
-      if (
-        selectors.some(
+    Object.values(mcp?.servers ?? {}).some(
+      (selection) =>
+        (mcp?.mode !== "tools" &&
+          (selection.defer !== undefined || selection.eager !== undefined)) ||
+        !validActivationSelectors(selection.defer) ||
+        !validActivationSelectors(selection.eager) ||
+        [...(selection.defer ?? []), ...(selection.eager ?? [])].some(
           (selector) =>
-            !selector.trim() ||
-            (selector.includes("*") && selector !== "*")
-        ) ||
-        (selectors.includes("*") && selectors.length !== 1)
-      ) {
-        return true;
-      }
-      const selected = mcp?.servers[serverId];
-      return (
-        !selected ||
-        selectors.some(
-          (selector) =>
-            selector !== "*" && !mcpSelectionAllowsTool(selected, selector)
+            selector !== "*" && !mcpSelectionAllowsTool(selection, selector)
         )
-      );
-    });
+    );
   if (invalidMcpPolicy) {
     findings.push({
       agentName,

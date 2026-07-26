@@ -95,7 +95,7 @@ Omission means "inherit" for a derived agent. Declaring a field means
 | `skills` | Child array replaces the inherited selection; `[]` clears it |
 | `subagents` | Child array replaces inherited visibility; `[]` clears it |
 | `extensions` | `include` and `exclude` inherit independently; a declared child list replaces that list |
-| `mcp` | `mode` inherits; servers merge by id; each server's `include` and `exclude` inherit independently; declared `initial_tools` replaces the whole inherited activation map |
+| `mcp` | `mode` inherits; servers merge by id; each server's `include`, `exclude`, `defer`, and `eager` inherit independently |
 | `system_instructions` | The whole child block replaces the inherited block; omission inherits it |
 
 Agent instruction blocks are not concatenated along a `from:` chain. If a
@@ -108,12 +108,14 @@ Arrays never merge item by item. This makes capability boundaries reviewable:
 a derived agent that declares `tools: [read]` receives only `read`, not the
 base agent's other tools.
 
-For structured MCP configuration, repeat `mode: tools` when a child declares
-`initial_tools`. `initial_tools: {}` clears the inherited initial set so every
-authorized MCP tool is deferred. Switching an inherited configuration to
-`mode: cli` clears inherited activation because CLI mode has no
-initial/deferred tool set. Each resolved root or child agent may select its own
-mode; each live session receives only that selected agent's MCP policy.
+For structured MCP configuration, a child can override any server selector
+independently. For example, a base can declare `defer: ["*"]` and a child can
+declare only `eager: [search_contacts]`; the child inherits the deferred set
+and exposes that one exception initially. Switching an inherited configuration
+to `mode: cli` clears inherited `defer` and `eager` selectors because CLI mode
+does not expose MCP tools directly. Each resolved root or child agent may
+select its own mode; each live session receives only that selected agent's MCP
+policy.
 
 ## Model Configuration
 

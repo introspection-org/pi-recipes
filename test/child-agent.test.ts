@@ -157,8 +157,8 @@ describe("Recipe child agent runner", () => {
       "  servers:",
       "    contacts:",
       '      include: ["search_contacts"]',
-      "  initial_tools:",
-      '    contacts: [" search_contacts "]',
+      '      defer: ["*"]',
+      '      eager: [" search_contacts "]',
     ]);
     const resolved = resolveRecipe({ recipeDir }).selectAgent("worker");
     mockHandle();
@@ -173,8 +173,9 @@ describe("Recipe child agent runner", () => {
     await runner.start();
 
     expect(resolved.mcp?.mode).toBe("tools");
-    expect(resolved.mcp?.initialTools).toEqual({
-      contacts: ["search_contacts"],
+    expect(resolved.mcp?.servers.contacts).toMatchObject({
+      defer: ["*"],
+      eager: ["search_contacts"],
     });
     expect(mocks.createAgentSession.mock.calls[0]?.[0]).toBe(resolved);
     expect(mocks.createAgentSession.mock.calls[0]?.[1]).not.toHaveProperty(

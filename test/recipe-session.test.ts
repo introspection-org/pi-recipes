@@ -203,6 +203,88 @@ describe("resolveRecipeAgent", () => {
     });
   });
 
+  it("inherits deferred MCP policy and overrides eager tools per server", () => {
+    const recipeDir = makeRecipe();
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "fixture-recipe",
+        version: "1.0.0",
+        pi: {
+          agents: ["agents"],
+          mcp: {
+            servers: [{ id: "contacts", tools: { include: ["*"] } }],
+          },
+        },
+      })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "base.yaml"),
+      [
+        "name: base",
+        "model:",
+        "  name: openai/gpt-5",
+        "tools: []",
+        "mcp:",
+        "  mode: tools",
+        "  servers:",
+        "    contacts:",
+        '      include: ["*"]',
+        '      defer: ["*"]',
+        "system_instructions:",
+        "  content: Base",
+      ].join("\n")
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: researcher",
+        "from: base",
+        "mcp:",
+        "  servers:",
+        "    contacts:",
+        "      eager: [search_contacts]",
+      ].join("\n")
+    );
+
+    const resolved = resolveRecipeAgent({ recipeDir });
+
+    expect(resolved.mcp).toEqual({
+      mode: "tools",
+      servers: {
+        contacts: {
+          include: ["*"],
+          defer: ["*"],
+          eager: ["search_contacts"],
+        },
+      },
+    });
+  });
+
+  it("rejects defer and eager selectors outside tools mode", () => {
+    const recipeDir = makeRecipe();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: openai/gpt-5",
+        "tools: []",
+        "mcp:",
+        "  mode: cli",
+        "  servers:",
+        "    contacts:",
+        '      defer: ["*"]',
+        "system_instructions:",
+        "  content: Test",
+      ].join("\n")
+    );
+
+    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
+      "has an invalid MCP policy"
+    );
+  });
+
   it("fails before returning a partial session configuration", () => {
     const recipeDir = makeRecipe();
     expect(() =>

@@ -136,6 +136,8 @@ struct RawAgent {
 struct McpToolSelectors {
     include: Option<BTreeSet<String>>,
     exclude: Option<BTreeSet<String>>,
+    defer: Option<BTreeSet<String>>,
+    eager: Option<BTreeSet<String>>,
 }
 
 type McpToolPolicy = BTreeMap<String, McpToolSelectors>;
@@ -150,7 +152,6 @@ enum AgentMcpMode {
 struct AgentMcpConfig {
     mode: Option<AgentMcpMode>,
     servers: BTreeMap<String, McpToolSelectors>,
-    initial_tools: Option<BTreeMap<String, BTreeSet<String>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1063,7 +1064,8 @@ fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Opti
         );
         return Some(AgentMcpConfig::default());
     };
-    let structured = mcp.get("mode").is_some_and(|value| !value.is_object());
+    let structured =
+        mcp.contains_key("servers") || mcp.get("mode").is_some_and(|value| !value.is_object());
     let mode = if structured {
         match mcp.get("mode") {
             Some(JsonValue::String(value)) if value == "cli" => Some(AgentMcpMode::Cli),
@@ -1125,10 +1127,21 @@ fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Opti
             continue;
         };
         let mut selectors = McpToolSelectors::default();
-        for key in ["include", "exclude"] {
+        for key in ["include", "exclude", "defer", "eager"] {
             let Some(value) = server.get(key) else {
                 continue;
             };
+            if matches!(key, "defer" | "eager") && (!structured || mode == Some(AgentMcpMode::Cli))
+            {
+                ctx.error(
+                    "agent.mcp_activation_invalid",
+                    path,
+                    format!(
+                        "Agent mcp server '{server_id}' {key} is only valid when mcp.mode is tools"
+                    ),
+                    Some("remove the activation selector or set mcp.mode to tools"),
+                );
+            }
             if let Err(message) = string_array(value) {
                 ctx.error(
                     "agent.mcp_invalid",
@@ -1148,10 +1161,11 @@ fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Opti
                 .map(str::to_owned)
                 .collect::<BTreeSet<_>>();
             for selector in &values {
-                let valid = if key == "include" {
-                    !selector.is_empty() && (selector == "*" || !selector.contains('*'))
-                } else {
-                    !selector.is_empty() && !selector.contains('*')
+                let valid = match key {
+                    "include" | "defer" | "eager" => {
+                        !selector.is_empty() && (selector == "*" || !selector.contains('*'))
+                    }
+                    _ => !selector.is_empty() && !selector.contains('*'),
                 };
                 if !valid {
                     ctx.error(
@@ -1159,7 +1173,7 @@ fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Opti
                         path,
                         format!(
                             "Agent mcp server '{server_id}' {key} entry '{selector}' must be {}",
-                            if key == "include" {
+                            if matches!(key, "include" | "defer" | "eager") {
                                 "an exact tool name or '*'"
                             } else {
                                 "an exact tool name"
@@ -1169,10 +1183,20 @@ fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Opti
                     );
                 }
             }
-            if key == "include" {
-                selectors.include = Some(values);
-            } else {
-                selectors.exclude = Some(values);
+            if matches!(key, "defer" | "eager") && values.contains("*") && items.len() != 1 {
+                ctx.error(
+                    "agent.mcp_activation_selector_invalid",
+                    path,
+                    format!("Agent mcp server '{server_id}' {key} must use '*' by itself"),
+                    None::<String>,
+                );
+            }
+            match key {
+                "include" => selectors.include = Some(values),
+                "exclude" => selectors.exclude = Some(values),
+                "defer" => selectors.defer = Some(values),
+                "eager" => selectors.eager = Some(values),
+                _ => unreachable!(),
             }
         }
         let normalized_server_id = safe_mcp_server_id(server_id);
@@ -1189,83 +1213,17 @@ fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Opti
         }
         parsed.insert(normalized_server_id, selectors);
     }
-    let initial_tools = if structured && mcp.contains_key("initial_tools") {
-        let Some(initial_tools) = mcp.get("initial_tools").and_then(JsonValue::as_object) else {
-            ctx.error(
-                "agent.mcp_initial_tools_invalid",
-                path,
-                "Agent mcp.initial_tools must be an object of server ids to exact tool-name lists",
-                Some("use initial_tools: {} or initial_tools: { server: [tool] }"),
-            );
-            return Some(AgentMcpConfig {
-                mode,
-                servers: parsed,
-                initial_tools: Some(BTreeMap::new()),
-            });
-        };
-        if mode == Some(AgentMcpMode::Cli) {
-            ctx.error(
-                "agent.mcp_initial_tools_invalid",
-                path,
-                "Agent mcp.initial_tools is only valid when mcp.mode is tools",
-                Some("remove initial_tools or set mcp.mode to tools"),
-            );
-        }
-        let mut parsed_initial_tools = BTreeMap::new();
-        for (server_id, value) in initial_tools {
-            if let Err(message) = string_array(value) {
-                ctx.error(
-                    "agent.mcp_initial_tools_invalid",
-                    path,
-                    format!("mcp.initial_tools.{server_id}: {message}"),
-                    Some("use exact tool names, or a sole '*' selector"),
-                );
-                continue;
-            }
-            let values = value
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(JsonValue::as_str)
-                .map(str::trim)
-                .map(str::to_owned)
-                .collect::<BTreeSet<_>>();
-            if values
-                .iter()
-                .any(|selector| selector.is_empty() || (selector.contains('*') && selector != "*"))
-                || (values.contains("*") && values.len() != 1)
-            {
-                ctx.error(
-                    "agent.mcp_initial_tools_selector_invalid",
-                    path,
-                    format!(
-                        "Agent mcp.initial_tools server '{server_id}' must contain exact tool names or '*' by itself"
-                    ),
-                    None::<String>,
-                );
-            }
-            let normalized_server_id = safe_mcp_server_id(server_id);
-            if parsed_initial_tools.contains_key(&normalized_server_id) {
-                ctx.error(
-                    "agent.mcp_initial_tools_collision",
-                    path,
-                    format!(
-                        "Agent mcp.initial_tools server '{server_id}' collides with another server after id normalization"
-                    ),
-                    Some("use server ids that remain unique after normalization"),
-                );
-                continue;
-            }
-            parsed_initial_tools.insert(normalized_server_id, values);
-        }
-        Some(parsed_initial_tools)
-    } else {
-        None
-    };
+    if structured && mcp.contains_key("initial_tools") {
+        ctx.error(
+            "agent.mcp_initial_tools_removed",
+            path,
+            "Agent mcp.initial_tools has been removed",
+            Some("declare defer and eager inside each mcp.servers entry"),
+        );
+    }
     Some(AgentMcpConfig {
         mode,
         servers: parsed,
-        initial_tools,
     })
 }
 
@@ -1488,10 +1446,7 @@ fn resolved_agent_mcp(
     stack.pop();
 
     let Some(child) = &agent.mcp else {
-        return (!merged.servers.is_empty()
-            || merged.mode.is_some()
-            || merged.initial_tools.is_some())
-        .then_some(merged);
+        return (!merged.servers.is_empty() || merged.mode.is_some()).then_some(merged);
     };
     for (server_id, child_tools) in &child.servers {
         let base_tools = merged.servers.get(server_id);
@@ -1506,17 +1461,25 @@ fn resolved_agent_mcp(
                     .exclude
                     .clone()
                     .or_else(|| base_tools.and_then(|tools| tools.exclude.clone())),
+                defer: child_tools
+                    .defer
+                    .clone()
+                    .or_else(|| base_tools.and_then(|tools| tools.defer.clone())),
+                eager: child_tools
+                    .eager
+                    .clone()
+                    .or_else(|| base_tools.and_then(|tools| tools.eager.clone())),
             },
         );
     }
     if child.mode.is_some() {
         merged.mode = child.mode;
     }
-    if child.initial_tools.is_some() {
-        merged.initial_tools = child.initial_tools.clone();
-    }
     if merged.mode == Some(AgentMcpMode::Cli) {
-        merged.initial_tools = None;
+        for selection in merged.servers.values_mut() {
+            selection.defer = None;
+            selection.eager = None;
+        }
     }
     Some(merged)
 }
@@ -1535,6 +1498,22 @@ fn validate_resolved_agent_mcp(
         .get(&resolve_agent_name(name, raw_by_name, aliases))
         .map(|agent| agent.path.clone())
         .unwrap_or_default();
+
+    if mcp.mode != Some(AgentMcpMode::Tools)
+        && mcp
+            .servers
+            .values()
+            .any(|selection| selection.defer.is_some() || selection.eager.is_some())
+    {
+        ctx.error(
+            "agent.mcp_activation_invalid",
+            path.clone(),
+            format!(
+                "Recipe agent '{name}' may use defer and eager only when its resolved mcp.mode is tools"
+            ),
+            Some("set mcp.mode to tools or remove defer and eager"),
+        );
+    }
 
     for (server_id, selection) in &mcp.servers {
         let Some(include) = &selection.include else {
@@ -1563,17 +1542,12 @@ fn validate_resolved_agent_mcp(
             );
         }
     }
-    if let Some(initial_tools) = &mcp.initial_tools {
-        for (server_id, selectors) in initial_tools {
-            let Some(selection) = mcp.servers.get(server_id) else {
-                ctx.error(
-                    "agent.mcp_initial_tools_server_unauthorized",
-                    path.clone(),
-                    format!(
-                        "Recipe agent '{name}' activates MCP server '{server_id}' without authorizing it in mcp.servers"
-                    ),
-                    Some("add the server selection under mcp.servers or remove it from initial_tools"),
-                );
+    for (server_id, selection) in &mcp.servers {
+        for (kind, selectors) in [
+            ("defer", selection.defer.as_ref()),
+            ("eager", selection.eager.as_ref()),
+        ] {
+            let Some(selectors) = selectors else {
                 continue;
             };
             for tool in selectors.iter().filter(|tool| tool.as_str() != "*") {
@@ -1581,12 +1555,14 @@ fn validate_resolved_agent_mcp(
                     continue;
                 }
                 ctx.error(
-                    "agent.mcp_initial_tools_tool_unauthorized",
+                    "agent.mcp_activation_tool_unauthorized",
                     path.clone(),
                     format!(
-                        "Recipe agent '{name}' activates MCP tool '{server_id}/{tool}' outside its mcp.servers authorization"
+                        "Recipe agent '{name}' {kind} selector '{server_id}/{tool}' is outside its mcp.servers authorization"
                     ),
-                    Some("authorize the tool under mcp.servers or remove it from initial_tools"),
+                    Some(format!(
+                        "authorize the tool under mcp.servers or remove it from {kind}"
+                    )),
                 );
             }
         }
@@ -1816,6 +1792,8 @@ fn mcp_tool_policy(value: Option<&JsonValue>) -> Option<McpToolPolicy> {
             McpToolSelectors {
                 include,
                 exclude: exclude.and_then(json_string_set),
+                defer: None,
+                eager: None,
             },
         );
     }
@@ -2356,7 +2334,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_structured_tools_mode_with_authorized_initial_tools() {
+    fn accepts_structured_tools_mode_with_authorized_activation() {
         let input = selector_recipe(
             json!({ "include": ["search_profiles", "get_profile"] }),
             concat!(
@@ -2366,9 +2344,10 @@ mod tests {
                 "      include:\n",
                 "        - search_profiles\n",
                 "        - get_profile\n",
-                "  initial_tools:\n",
-                "    salesforce:\n",
-                "      - search_profiles\n",
+                "      defer:\n",
+                "        - '*'\n",
+                "      eager:\n",
+                "        - search_profiles\n",
             ),
             true,
         );
@@ -2379,7 +2358,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_structured_mcp_mode_and_initial_tools_shape() {
+    fn rejects_invalid_structured_mcp_mode_and_removed_initial_tools() {
         let input = selector_recipe(
             json!({ "include": ["search_profiles"] }),
             concat!(
@@ -2397,7 +2376,7 @@ mod tests {
         let report = check_recipe_files(&input, CheckProfile::Ci);
 
         assert!(!report.valid);
-        for code in ["agent.mcp_mode_invalid", "agent.mcp_initial_tools_invalid"] {
+        for code in ["agent.mcp_mode_invalid", "agent.mcp_initial_tools_removed"] {
             assert!(
                 report
                     .diagnostics
@@ -2410,7 +2389,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_initial_tools_outside_agent_authorization() {
+    fn rejects_activation_outside_agent_authorization() {
         let input = selector_recipe(
             json!({ "include": ["search_profiles", "delete_profile"] }),
             concat!(
@@ -2419,9 +2398,8 @@ mod tests {
                 "    salesforce:\n",
                 "      include:\n",
                 "        - search_profiles\n",
-                "  initial_tools:\n",
-                "    salesforce:\n",
-                "      - delete_profile\n",
+                "      eager:\n",
+                "        - delete_profile\n",
             ),
             true,
         );
@@ -2430,7 +2408,7 @@ mod tests {
 
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "agent.mcp_initial_tools_tool_unauthorized"
+            diagnostic.code == "agent.mcp_activation_tool_unauthorized"
                 && diagnostic.message.contains("salesforce/delete_profile")
         }));
     }

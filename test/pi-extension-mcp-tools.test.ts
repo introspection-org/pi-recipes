@@ -33,7 +33,7 @@ describe("Pi extension MCP tools mode", () => {
     }
   });
 
-  it("registers authorized tools, exposes only initial tools, and keeps CLI env private", async () => {
+  it("registers authorized tools, exposes only eager tools, and keeps CLI env private", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-mcp-tools-"));
     roots.push(root);
     const recipeDir = join(root, "recipe");
@@ -91,9 +91,9 @@ describe("Pi extension MCP tools mode", () => {
         "  servers:",
         "    contacts:",
         "      include: [\"*\"]",
-        "  initial_tools:",
-        "    contacts:",
-        "      - get_contact",
+        "      defer: [\"*\"]",
+        "      eager:",
+        "        - get_contact",
         "system_instructions:",
         "  mode: append",
         "  content: Test agent",

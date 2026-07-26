@@ -78,8 +78,9 @@ mcp:
     include: ["*"]
 ```
 
-`mode: tools` registers every authorized MCP tool with Pi. `initial_tools`
-controls which registered tools are initially exposed to the model:
+`mode: tools` registers every authorized MCP tool with Pi. Server-local
+`defer` selectors control which authorized tools start hidden from the model;
+`eager` subtracts exceptions from that deferred set:
 
 ```yaml
 mcp:
@@ -87,24 +88,27 @@ mcp:
   servers:
     contacts:
       include: ["*"]
-  initial_tools:
-    contacts:
-      - search_contacts
+      defer: ["*"]
+      eager:
+        - search_contacts
 ```
 
-Omit `initial_tools` to expose every authorized tool immediately. Use
-`initial_tools: {}` to defer all of them, omit one server from `initial_tools`
-to defer that server, or use a sole `["*"]` to expose all authorized tools for
-a server initially. Deferred tools remain authorized and discoverable. When
-they exist, Recipes registers `mcp_search`; calling it searches only the
-authorized deferred catalog and adds matches to Pi's current active tool set
-for the next model request. It never grants access beyond `servers`.
+Omit `defer` to expose every authorized tool immediately. Use `defer: ["*"]`
+to hide all authorized tools for a server, then optionally list exact tools in
+`eager` to expose those tools at startup. Both fields accept exact tool names
+or a sole `"*"` selector. `eager` wins when a tool matches both fields, but
+neither field can authorize a tool excluded by `include`/`exclude`.
 
-`initial_tools` is invalid in CLI mode. `mode` is the discriminator for the structured
-form and must be repeated on an inheriting child that overrides `initial_tools`. A
-child may inherit server authorization while replacing `initial_tools`;
-explicitly switching an inherited configuration to `mode: cli` clears
-inherited activation. Every resolved agent owns its mode independently.
+Deferred tools remain authorized and discoverable. When at least one exists,
+Recipes registers `mcp_search`; calling it searches only the authorized
+deferred catalog and adds matches to Pi's current active tool set for the next
+model request. It never grants access beyond `servers`.
+
+`defer` and `eager` are invalid in CLI mode. They inherit independently per
+server, so a child can inherit `defer: ["*"]` and declare only
+`eager: [search_contacts]`. Explicitly switching an inherited configuration to
+`mode: cli` clears inherited activation. Every resolved agent owns its mode
+independently.
 
 ## 3. Supply endpoint configuration
 

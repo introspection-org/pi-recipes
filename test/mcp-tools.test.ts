@@ -128,11 +128,16 @@ describe("MCP tools mode", () => {
     );
   });
 
-  it("keeps tools outside initial_tools deferred and activates search matches additively", async () => {
+  it("keeps deferred tools hidden and activates search matches additively", async () => {
     const state = createTools({
       mode: "tools",
-      servers: { nextplay: { include: ["*"] } },
-      initialTools: { nextplay: ["get_profiles"] },
+      servers: {
+        nextplay: {
+          include: ["*"],
+          defer: ["*"],
+          eager: ["get_profiles"],
+        },
+      },
     });
     const { materialized } = state;
     const search = materialized.tools.find(
@@ -249,8 +254,9 @@ describe("MCP tools mode", () => {
         catalogs: referencedCatalogs,
         mcp: {
           mode: "tools",
-          servers: { nextplay: { include: ["*"] } },
-          initialTools: { nextplay: ["*"] },
+          servers: {
+            nextplay: { include: ["*"], defer: ["*"], eager: ["*"] },
+          },
         },
         env: {},
         activation: {
@@ -265,8 +271,13 @@ describe("MCP tools mode", () => {
       catalogs: referencedCatalogs,
       mcp: {
         mode: "tools",
-        servers: { nextplay: { include: ["search_talent"] } },
-        initialTools: { nextplay: ["search_talent"] },
+        servers: {
+          nextplay: {
+            include: ["search_talent"],
+            defer: ["*"],
+            eager: ["search_talent"],
+          },
+        },
       },
       env: {},
       activation: {
@@ -374,9 +385,8 @@ describe("MCP tools mode", () => {
           mode: "tools",
           servers: {
             nextplay: { include: ["*"] },
-            optional: { include: ["*"] },
+            optional: { include: ["*"], defer: ["*"], eager: ["*"] },
           },
-          initialTools: { optional: ["*"] },
         },
         env: {},
         activation: {

@@ -431,17 +431,16 @@ function activeCanonicalNames(
   mcp: RecipeAgentMcp,
   usable: readonly UsableMcpTool[]
 ): Set<string> {
-  if (mcp.initialTools === undefined) {
-    return new Set(usable.map((tool) => tool.canonicalName));
-  }
   const result = new Set<string>();
-  for (const [serverId, selectors] of Object.entries(mcp.initialTools)) {
-    const serverTools = usable.filter((tool) => tool.serverId === serverId);
-    if (selectors.includes("*")) {
-      for (const tool of serverTools) result.add(tool.canonicalName);
-      continue;
-    }
-    for (const selector of selectors) result.add(`${serverId}.${selector}`);
+  for (const tool of usable) {
+    const policy = mcp.servers[tool.serverId];
+    const deferred =
+      policy.defer?.includes("*") === true ||
+      policy.defer?.includes(tool.catalog.name) === true;
+    const eager =
+      policy.eager?.includes("*") === true ||
+      policy.eager?.includes(tool.catalog.name) === true;
+    if (!deferred || eager) result.add(tool.canonicalName);
   }
   return result;
 }
@@ -552,27 +551,22 @@ export function createMcpToolSet(options: {
   }
   const { usable, unusable } = compileUsableTools(session, catalogs);
   const activeCanonical = activeCanonicalNames(options.mcp, usable);
-  const requestedActive =
-    options.mcp.initialTools === undefined
-      ? new Set<string>()
-      : new Set(
-          Object.entries(options.mcp.initialTools).flatMap(
-            ([serverId, selectors]) =>
-              selectors.includes("*")
-                ? usable
-                    .filter((tool) => tool.serverId === serverId)
-                    .map((tool) => tool.canonicalName)
-                : selectors.map((tool) => `${serverId}.${tool}`)
-          )
-        );
-  for (const [serverId, selectors] of Object.entries(
-    options.mcp.initialTools ?? {}
-  )) {
+  const requestedEager = new Set(
+    Object.entries(options.mcp.servers).flatMap(([serverId, policy]) =>
+      (policy.eager ?? []).includes("*")
+        ? usable
+            .filter((tool) => tool.serverId === serverId)
+            .map((tool) => tool.canonicalName)
+        : (policy.eager ?? []).map((tool) => `${serverId}.${tool}`)
+    )
+  );
+  for (const [serverId, policy] of Object.entries(options.mcp.servers)) {
+    const selectors = policy.eager ?? [];
     if (!selectors.includes("*")) continue;
     const catalog = catalogs.find((entry) => entry.id === serverId);
     if (!catalog || catalog.error) {
       throw new Error(
-        `Initial MCP wildcard for '${serverId}' requires a healthy catalog${
+        `Eager MCP wildcard for '${serverId}' requires a healthy catalog${
           catalog?.error ? `: ${catalog.error}` : "."
         }`
       );
@@ -582,7 +576,7 @@ export function createMcpToolSet(options: {
     );
     if (unusableActive) {
       throw new Error(
-        `Initial MCP wildcard for '${serverId}' includes unusable tool '${unusableActive[0]}': ${unusableActive[1]}`
+        `Eager MCP wildcard for '${serverId}' includes unusable tool '${unusableActive[0]}': ${unusableActive[1]}`
       );
     }
   }
@@ -591,15 +585,15 @@ export function createMcpToolSet(options: {
       server.tools.map((tool) => `${server.id}.${tool.name}`)
     )
   );
-  for (const name of requestedActive) {
+  for (const name of requestedEager) {
     if (unusable.has(name)) {
       throw new Error(
-        `Initial MCP tool '${name}' is unusable: ${unusable.get(name)}`
+        `Eager MCP tool '${name}' is unusable: ${unusable.get(name)}`
       );
     }
     if (!knownCanonical.has(name) || !activeCanonical.has(name)) {
       throw new Error(
-        `Initial MCP tool '${name}' is not authorized and available in the current catalog.`
+        `Eager MCP tool '${name}' is not authorized and available in the current catalog.`
       );
     }
   }
