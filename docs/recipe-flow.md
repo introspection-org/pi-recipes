@@ -16,7 +16,8 @@ introspection local
 `introspection init` scaffolds a Recipe and ensures compatible versions of Pi
 and the Recipes extension are present. `introspection check` runs the Recipe
 Format validator. `introspection local` resolves the repository's project
-manifest and launches Pi with the Recipe path.
+manifest and launches Pi with the Recipe path. Pi automatically runs the same
+validator with its local profile whenever `--recipe` is present.
 
 The local path requires no login or Introspection cloud service.
 

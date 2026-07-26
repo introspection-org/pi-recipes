@@ -9,7 +9,8 @@ pi --recipe ./path/to/recipe --agent agent
 
 Pi is the harness. The extension resolves the selected Recipe, configures its
 model and tools, loads its skills and extensions, materializes its declared
-capabilities, and registers its subagents.
+capabilities, and registers its subagents. Every launch with `--recipe`
+validates the authored package first.
 
 ## Installation
 
@@ -78,15 +79,18 @@ Recipe extensions can import shared APIs from `@introspection-ai/recipes`.
 
 ## Validation
 
-Run:
+Every `pi --recipe` launch automatically runs the shared Recipe Format
+validator with its local profile. Errors are rendered in Pi and stop the
+session before any model call; warnings are rendered and launch continues.
+
+For an explicit manual or CI check, run:
 
 ```bash
 introspection check
 ```
 
-Session construction also performs the minimum validation required to fail safely before
-constructing a session. Static authoring diagnostics remain the CLI validator's
-job.
+Both paths use the same Rust validation core. The binary embedded in the npm
+package is an internal bridge for Pi startup, not a second user-facing CLI.
 
 ## Host parity
 

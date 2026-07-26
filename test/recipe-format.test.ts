@@ -125,9 +125,11 @@ describe("npm package boundary", () => {
     expect(pkg.exports).toHaveProperty("./test-utils");
     expect(existsSync(join(root, "src", "cli.ts"))).toBe(false);
     expect(existsSync(join(root, "src", "serve.ts"))).toBe(false);
+    // Internal snapshot bridge used by `pi --recipe`; it is not exposed in
+    // package.json#bin and therefore does not restore a Recipes CLI.
     expect(
       existsSync(join(root, "crates", "pi-recipe-check", "src", "main.rs"))
-    ).toBe(false);
+    ).toBe(true);
     expect(existsSync(join(root, "bindings"))).toBe(false);
     expect(existsSync(join(root, "harbor"))).toBe(false);
     expect(existsSync(join(root, "docs", "recipe-evals.md"))).toBe(false);

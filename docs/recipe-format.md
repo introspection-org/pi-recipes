@@ -168,7 +168,8 @@ There are two conformance layers:
 2. `@introspection-ai/recipes/test-utils` verifies that a host constructs and
    disposes Recipe sessions with the required semantics.
 
-A host SHOULD run both layers in CI.
+Pi also runs the same validator automatically with the local profile whenever
+it launches with `--recipe`. Other hosts SHOULD run both layers in CI.
 
 ## Evolution
 

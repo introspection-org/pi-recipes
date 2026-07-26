@@ -42,6 +42,10 @@ import {
 import { type RecipeAgentDefinition } from "./recipe-agent.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
+  checkRecipeAtLoad,
+  formatRecipeDiagnostics,
+} from "./recipe-check.js";
+import {
   resolveRecipe,
   type ResolvedRecipeAgent,
   type ResolvedRecipe,
@@ -646,18 +650,34 @@ export function createRecipesExtension(
   function safeLoadState(
     pi: Parameters<ExtensionFactory>[0],
     cwd: string,
-    ctx?: Pick<ExtensionContext, "ui">
+    ctx?: Pick<ExtensionContext, "ui" | "mode">
   ): RecipeLaunchState | null {
     try {
       return loadState(pi, cwd);
     } catch (err) {
       if (!(err instanceof RecipeLaunchError)) throw err;
       const key = [cwd, recipeFlag(pi) ?? "", err.message].join("\0");
-      if (ctx && lastLaunchErrorKey !== key) {
-        ctx.ui.notify(err.message, "warning");
+      if (lastLaunchErrorKey !== key) {
+        failRecipeSession(pi, err.message, ctx);
         lastLaunchErrorKey = key;
+      } else {
+        sessionConfigurationError = err.message;
+        pi.setActiveTools([]);
       }
       return null;
+    }
+  }
+
+  function failRecipeSession(
+    pi: Parameters<ExtensionFactory>[0],
+    message: string,
+    ctx?: Pick<ExtensionContext, "ui" | "mode">
+  ): void {
+    sessionConfigurationError = message;
+    pi.setActiveTools([]);
+    ctx?.ui.notify(`Recipe session cannot start: ${message}`, "warning");
+    if (ctx?.mode === "json" || ctx?.mode === "print") {
+      process.exitCode = 1;
     }
   }
 
@@ -1027,6 +1047,34 @@ export function createRecipesExtension(
     pi.on("session_start", async (_event, ctx) => {
       sessionCtx = ctx;
       localAgentContext = ctx;
+      const selectedRecipe = recipeFlag(pi);
+      if (selectedRecipe) {
+        const recipeDir = resolve(ctx.cwd, selectedRecipe);
+        if (existsSync(recipeDir)) {
+          try {
+            const report = await checkRecipeAtLoad(recipeDir, env);
+            const warnings = report.diagnostics.filter(
+              (diagnostic) => diagnostic.severity === "warning"
+            );
+            if (!report.valid) {
+              const message = formatRecipeDiagnostics(report.diagnostics);
+              failRecipeSession(pi, `validation failed\n${message}`, ctx);
+              return;
+            }
+            if (warnings.length > 0) {
+              ctx.ui.notify(
+                `Recipe validation warnings:\n${formatRecipeDiagnostics(warnings)}`,
+                "warning"
+              );
+            }
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            failRecipeSession(pi, `validation failed\n${message}`, ctx);
+            return;
+          }
+        }
+      }
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return;
       visibleAgentDefinitions.clear();
@@ -1050,12 +1098,7 @@ export function createRecipesExtension(
         // A recipe's declared model is part of its behavior contract. Continuing
         // with Pi's previously active model can produce plausible but invalid
         // results, so stop the session instead of silently falling back.
-        sessionConfigurationError = message;
-        pi.setActiveTools([]);
-        ctx.ui.notify(`Recipe session cannot start: ${message}`, "warning");
-        if (ctx.mode === "json" || ctx.mode === "print") {
-          process.exitCode = 1;
-        }
+        failRecipeSession(pi, message, ctx);
         return;
       }
       // Restore run snapshots persisted by a previous Pi process so run ids

@@ -49,13 +49,22 @@ jobs:
         with:
           node-version: 24
 
-      - run: cargo test -p pi-mcp-client
+      - run: cargo test -p pi-mcp-client -p pi-recipe-check
 
       - run: cargo build --release -p pi-mcp-client
+
+      - run: cargo build --release -p pi-recipe-check --bin recipe-check
 
       - run: node scripts/package-mcp-client.mjs
         env:
           MCP_CLIENT_PLATFORM: linux
           MCP_CLIENT_ARCH: arm64
 
+      - run: node scripts/package-recipe-check.mjs
+        env:
+          RECIPE_CHECK_PLATFORM: linux
+          RECIPE_CHECK_ARCH: arm64
+
       - run: test -x vendor/mcp-client/linux-arm64/mcp-client
+
+      - run: test -x vendor/recipe-check/linux-arm64/recipe-check

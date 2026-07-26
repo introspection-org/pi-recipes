@@ -159,9 +159,11 @@ adapters and deployment cookbooks belong outside this package.
 introspection check
 ```
 
-Session construction also fails closed on the minimum checks required to run
-safely. It is not a replacement for the authoring diagnostics in
-`introspection check`.
+Every `pi --recipe` launch automatically runs the same Recipe Format validator
+with the local profile before constructing a session. Errors stop Pi rather
+than falling back to an unconfigured agent; warnings are shown and launch
+continues. `introspection check` remains the explicit command for manual and CI
+validation.
 
 ## Documentation
 

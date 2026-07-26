@@ -84,15 +84,24 @@ jobs:
 
       - run: cargo build --release -p pi-mcp-client
 
+      - run: cargo build --release -p pi-recipe-check --bin recipe-check
+
       - run: node scripts/package-mcp-client.mjs
         env:
           MCP_CLIENT_PLATFORM: ${{ matrix.platform }}
           MCP_CLIENT_ARCH: ${{ matrix.arch }}
 
+      - run: node scripts/package-recipe-check.mjs
+        env:
+          RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
+          RECIPE_CHECK_ARCH: ${{ matrix.arch }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: native-tools-${{ matrix.platform }}-${{ matrix.arch }}
-          path: vendor/mcp-client/${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            vendor/mcp-client/${{ matrix.platform }}-${{ matrix.arch }}
+            vendor/recipe-check/${{ matrix.platform }}-${{ matrix.arch }}
           if-no-files-found: error
 
   publish:
@@ -136,16 +145,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf vendor/mcp-client
-          mkdir -p vendor/mcp-client
+          rm -rf vendor/mcp-client vendor/recipe-check
+          mkdir -p vendor/mcp-client vendor/recipe-check
           for artifact in native-tool-artifacts/native-tools-*; do
             platform_id="${artifact##*/native-tools-}"
             mkdir -p "vendor/mcp-client/${platform_id}"
+            mkdir -p "vendor/recipe-check/${platform_id}"
             find "$artifact" -type f -name 'mcp-client*' -exec cp {} "vendor/mcp-client/${platform_id}/" \;
+            find "$artifact" -type f -name 'recipe-check*' -exec cp {} "vendor/recipe-check/${platform_id}/" \;
           done
           find vendor/mcp-client -type f -name 'mcp-client*' \
             | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
+          find vendor/recipe-check -type f -name 'recipe-check*' \
+            | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
           find vendor/mcp-client -maxdepth 2 -type f -print
+          find vendor/recipe-check -maxdepth 2 -type f -print
 
       - run: pnpm pack:check
 

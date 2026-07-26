@@ -27,6 +27,14 @@ process.stdin.on("end", () => {
     process.exitCode = 1;
   }
 
+  const recipeValidator = `vendor/recipe-check/${process.platform}-${process.arch}/${
+    process.platform === "win32" ? "recipe-check.exe" : "recipe-check"
+  }`;
+  if (!files.includes(recipeValidator)) {
+    console.error(`npm package is missing the Pi startup validator: ${recipeValidator}`);
+    process.exitCode = 1;
+  }
+
   const brokenImports = missingRelativeImports(files);
   if (brokenImports.length > 0) {
     console.error(

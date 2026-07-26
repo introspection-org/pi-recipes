@@ -10,6 +10,10 @@ readme = "README.md"
 keywords = ["pi", "recipes", "validation", "lint", "agents"]
 categories = ["development-tools"]
 
+[[bin]]
+name = "recipe-check"
+path = "src/main.rs"
+
 [features]
 default = []
 schema = ["dep:schemars"]

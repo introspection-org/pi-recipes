@@ -24,8 +24,11 @@ let report = check_recipe_files(&input, CheckProfile::Ci);
 assert!(!report.valid);
 ```
 
-This crate is an implementation dependency of the Introspection CLI. It does
-not provide a standalone command or filesystem walker.
+This crate is shared by the Introspection CLI and the Recipes extension. Its
+core remains I/O-free. The crate's `recipe-check` binary is a private
+snapshot-in/snapshot-out bridge embedded in the npm package so `pi --recipe`
+can run the same validator at startup; it is not a user-facing Recipes CLI and
+does not walk the filesystem.
 
 The crate also exposes a standalone `resources` module for validating
 Kubernetes-style compute overrides in host manifests. That utility is not part
