@@ -114,22 +114,30 @@ async function modelRuntimeForChildAgent(
     // Resolve the child's API key up front: prefer the host registry (so a
     // key configured inside Pi flows to children), then provider env keys.
     let apiKey: string | undefined;
+    let credentialEnv: Record<string, string> | undefined;
     if (opts.modelRegistry) {
       const auth = await opts.modelRegistry.getApiKeyAndHeaders(model);
-      if (auth.ok) apiKey = auth.apiKey;
+      if (auth.ok) {
+        apiKey = auth.apiKey;
+        credentialEnv = auth.env;
+        if (auth.headers) {
+          model.headers = { ...(model.headers ?? {}), ...auth.headers };
+        }
+      }
     }
     const env = opts.env ?? process.env;
     apiKey ??=
       getEnvApiKey(model.provider) ??
       env[`${model.provider.toUpperCase()}_API_KEY`];
-    if (!apiKey) {
+    if (!apiKey && Object.keys(model.headers ?? {}).length === 0) {
       throw new Error(
         `${model.provider.toUpperCase()}_API_KEY is required when the background agent is not running inside Pi`
       );
     }
     await credentials.modify(model.provider, async () => ({
       type: "api_key",
-      key: apiKey,
+      ...(apiKey ? { key: apiKey } : {}),
+      ...(credentialEnv ? { env: credentialEnv } : {}),
     }));
   }
 

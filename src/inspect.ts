@@ -52,14 +52,13 @@ export function inspectRecipe(recipeDir: string): RecipeInspection {
   ];
   const credentialEnv = [
     ...new Set(
-      providers.map(
-        (provider) =>
-          expectedProviderEnvVars(
-            provider === "gemini" ? "google" : provider
-          )[0]!
+      providers.flatMap((provider) =>
+        expectedProviderEnvVars(
+          provider === "gemini" ? "google" : provider
+        )
       )
     ),
-  ];
+  ].sort();
 
   const required = manifest.mcp.servers
     .filter((server) => server.required)
@@ -76,7 +75,21 @@ export function inspectRecipe(recipeDir: string): RecipeInspection {
     recipeMcpLocalExamplePath(dir),
   ].find((path) => existsSync(path));
   if (bindingSource) {
-    mcpEnv = placeholderEnvVars(readFileSync(bindingSource, "utf8"));
+    const content = readFileSync(bindingSource, "utf8");
+    const parsed = JSON.parse(content) as {
+      servers?: Array<{ oauthClientSecretEnv?: unknown }>;
+    };
+    mcpEnv = [
+      ...new Set([
+        ...placeholderEnvVars(content),
+        ...(parsed.servers ?? []).flatMap((server) =>
+          typeof server.oauthClientSecretEnv === "string" &&
+          server.oauthClientSecretEnv
+            ? [server.oauthClientSecretEnv]
+            : []
+        ),
+      ]),
+    ].sort();
   } else {
     mcpEnv = [
       ...new Set(

@@ -112,6 +112,7 @@ export function createInProcessRunController(
   async function executePrompt(run: ChildRun, prompt: string): Promise<void> {
     await acquireSlot();
     try {
+      if (run.summary.status !== "running") return;
       if (!run.handle) {
         const sessionFactory =
           opts.sessionFactory ??
@@ -151,10 +152,15 @@ export function createInProcessRunController(
               touch(run, { current_tool: String(record.toolName ?? "") });
             }
             if (record.type === "tool_execution_end") {
-              touch(run, {});
+              touch(run, { current_tool: undefined });
             }
           },
         });
+        if (run.summary.status !== "running") {
+          await run.handle.dispose().catch(() => {});
+          run.handle = null;
+          return;
+        }
       }
       // Children never own the root interaction lifecycle: their asks resolve
       // internally so a child cannot strand the parent waiting on a user.
@@ -162,7 +168,10 @@ export function createInProcessRunController(
       const output = promptResultText({
         messages: [...run.handle.session.messages],
       });
-      const interrupted = run.summary.status === "interrupted";
+      // The prompt await can race an external interrupt even though the run
+      // was "running" before it began.
+      const interrupted =
+        (run.summary.status as AgentRunStatus) === "interrupted";
       touch(run, {
         status: interrupted ? "interrupted" : "completed",
         output,
@@ -214,14 +223,22 @@ export function createInProcessRunController(
     async wait(id: string, signal?: AbortSignal): Promise<AgentRunSummary> {
       const run = requireRun(id);
       if (run.summary.status !== "running") return run.summary;
+      if (signal?.aborted) {
+        throw signal.reason ?? new Error("wait aborted");
+      }
       await new Promise<void>((resolve, reject) => {
         const wake = () => {
           signal?.removeEventListener("abort", onAbort);
           resolve();
         };
-        const onAbort = () => reject(signal?.reason ?? new Error("wait aborted"));
+        const onAbort = () => {
+          const index = run.waiters.indexOf(wake);
+          if (index >= 0) run.waiters.splice(index, 1);
+          reject(signal?.reason ?? new Error("wait aborted"));
+        };
         run.waiters.push(wake);
         signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
       });
       return run.summary;
     },
@@ -231,6 +248,9 @@ export function createInProcessRunController(
       if (run.summary.status === "closed") {
         throw new Error(`Agent run is closed: ${id}`);
       }
+      if (run.summary.status === "running" && !run.handle) {
+        await run.settled;
+      }
       if (run.summary.status === "running" && run.handle) {
         await run.handle.session.steer(message);
         touch(run, {});
@@ -238,7 +258,14 @@ export function createInProcessRunController(
       }
       // A terminal (completed/failed/interrupted) child accepts a follow-up
       // turn on its existing session.
-      touch(run, { status: "running" satisfies AgentRunStatus });
+      touch(run, {
+        status: "running" satisfies AgentRunStatus,
+        completed_at: undefined,
+        error: undefined,
+        output: undefined,
+        output_preview: undefined,
+        current_tool: undefined,
+      });
       run.settled = executePrompt(run, message);
       return run.summary;
     },

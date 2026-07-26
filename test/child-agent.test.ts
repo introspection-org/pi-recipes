@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   createAgentSessionFromServices: vi.fn(),
   createAgentSessionServices: vi.fn(),
+  modelRuntimeCreate: vi.fn(async (_options: unknown) => ({
+    kind: "mock-model-runtime",
+  })),
 }));
 
 vi.mock("@earendil-works/pi-ai/compat", () => ({
@@ -15,7 +18,7 @@ vi.mock("@earendil-works/pi-ai/compat", () => ({
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   ModelRuntime: {
-    create: vi.fn(async () => ({ kind: "mock-model-runtime" })),
+    create: mocks.modelRuntimeCreate,
   },
   createAgentSessionFromServices: mocks.createAgentSessionFromServices,
   createAgentSessionServices: mocks.createAgentSessionServices,
@@ -35,6 +38,7 @@ describe("recipe child agent tools", () => {
   afterEach(() => {
     mocks.createAgentSessionFromServices.mockReset();
     mocks.createAgentSessionServices.mockReset();
+    mocks.modelRuntimeCreate.mockClear();
     for (const root of roots.splice(0)) {
       rmSync(root, { recursive: true, force: true });
     }
@@ -224,6 +228,88 @@ describe("recipe child agent tools", () => {
     expect(mocks.createAgentSessionFromServices).toHaveBeenCalledWith(
       expect.objectContaining({ tools: ["shell"] })
     );
+    await runner.shutdown();
+  });
+
+  it("preserves registry-resolved headers and provider environment", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-child-auth-"));
+    roots.push(root);
+    const recipeDir = join(root, "recipe");
+    const workspaceDir = join(root, "workspace");
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(workspaceDir, { recursive: true });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "child-auth-test",
+        version: "0.1.0",
+        pi: { agents: ["agents/*.yaml"] },
+      })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "worker.yaml"),
+      [
+        "name: worker",
+        "model:",
+        "  name: openai/test-model",
+        "tools: []",
+        "subagents: []",
+        "system_instructions:",
+        "  mode: append",
+        "  content: Test worker",
+        "",
+      ].join("\n")
+    );
+
+    const model = {
+      provider: "openai",
+      id: "test-model",
+      headers: { "x-base": "base" },
+    };
+    const modelRegistry = {
+      find: vi.fn(() => model),
+      getApiKeyAndHeaders: vi.fn(async () => ({
+        ok: true as const,
+        apiKey: "resolved-access-token",
+        headers: {
+          Authorization: "Bearer resolved-access-token",
+          "x-organization": "org-1",
+        },
+        env: { OPENAI_ACCOUNT_ID: "account-1" },
+      })),
+    };
+    const session = {
+      agent: {},
+      bindExtensions: vi.fn(async () => undefined),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    mocks.createAgentSessionServices.mockResolvedValue({});
+    mocks.createAgentSessionFromServices.mockResolvedValue({ session });
+
+    const runner = createRecipeChildAgentRunner({
+      recipeDir,
+      workspaceDir,
+      agentName: "worker",
+      env: {},
+      modelRegistry: modelRegistry as never,
+    });
+    await runner.start();
+
+    expect(model.headers).toEqual({
+      "x-base": "base",
+      Authorization: "Bearer resolved-access-token",
+      "x-organization": "org-1",
+    });
+    const runtimeOptions = mocks.modelRuntimeCreate.mock.calls[0]![0] as {
+      credentials: { read(provider: string): Promise<unknown> };
+    };
+    const credentials = runtimeOptions.credentials;
+    await expect(credentials.read("openai")).resolves.toEqual({
+      type: "api_key",
+      key: "resolved-access-token",
+      env: { OPENAI_ACCOUNT_ID: "account-1" },
+    });
     await runner.shutdown();
   });
 });

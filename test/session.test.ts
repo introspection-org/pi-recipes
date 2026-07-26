@@ -15,6 +15,7 @@ import { createInProcessRunController } from "../src/run-controller.js";
 import {
   createRecipeSession,
   RecipeCredentialError,
+  RecipeMcpEnvironmentInUseError,
   RecipeModelError,
   type RecipeSessionHandle,
 } from "../src/session.js";
@@ -127,6 +128,16 @@ async function credentialStore(): Promise<InMemoryCredentialStore> {
     key: "test-key",
   }));
   return store;
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("createRecipeSession", () => {
@@ -272,6 +283,116 @@ describe("createRecipeSession", () => {
     await handle.dispose();
   });
 
+  it("does not clobber host MCP state when a Recipe selects no MCP servers", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const env = {
+      ...cleanEnv(),
+      PI_RECIPES_MCP_SESSION: "/host/session.json",
+      MCPORTER_CONFIG: "/host/mcporter.json",
+    };
+    const handle = await open({ recipeDir, cwd: workspaceDir, env });
+
+    expect(env.PI_RECIPES_MCP_SESSION).toBe("/host/session.json");
+    expect(env.MCPORTER_CONFIG).toBe("/host/mcporter.json");
+    await handle.dispose();
+    expect(env.PI_RECIPES_MCP_SESSION).toBe("/host/session.json");
+    expect(env.MCPORTER_CONFIG).toBe("/host/mcporter.json");
+  });
+
+  it("leases and restores a host environment for materialized MCP", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      manifestPi: {
+        mcp: {
+          servers: [
+            { id: "linear", required: true, tools: { include: ["*"] } },
+          ],
+        },
+      },
+      agentExtras: ["mcp:", "  linear:", '    include: ["*"]'],
+    });
+    const hostSession = join(workspaceDir, "host-session.json");
+    const hostMcporter = join(workspaceDir, "host-mcporter.json");
+    const env = {
+      ...cleanEnv(),
+      PI_RECIPES_MCP_SESSION: hostSession,
+      MCPORTER_CONFIG: hostMcporter,
+    };
+    const options = {
+      recipeDir,
+      cwd: workspaceDir,
+      env,
+      mcpBindings: {
+        servers: [
+          {
+            id: "linear",
+            transport: "streamable_http",
+            url: "http://127.0.0.1:9/mcp",
+          },
+        ],
+      },
+    };
+    const first = await open(options);
+
+    await expect(open(options)).rejects.toBeInstanceOf(
+      RecipeMcpEnvironmentInUseError
+    );
+    expect(env.PI_RECIPES_MCP_SESSION).not.toBe(hostSession);
+
+    await first.dispose();
+    expect(env.PI_RECIPES_MCP_SESSION).toBe(hostSession);
+    expect(env.MCPORTER_CONFIG).toBe(hostMcporter);
+  });
+
+  it("rolls back materialized MCP when session construction fails", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      manifestPi: {
+        mcp: {
+          servers: [
+            { id: "linear", required: true, tools: { include: ["*"] } },
+          ],
+        },
+      },
+      agentExtras: ["mcp:", "  linear:", '    include: ["*"]'],
+    });
+    const hostSession = join(workspaceDir, "host-session.json");
+    const hostMcporter = join(workspaceDir, "host-mcporter.json");
+    const env = {
+      ...cleanEnv(),
+      PI_RECIPES_MCP_SESSION: hostSession,
+      MCPORTER_CONFIG: hostMcporter,
+    };
+    const baseOptions = {
+      recipeDir,
+      cwd: workspaceDir,
+      env,
+      credentials: await credentialStore(),
+      mcpBindings: {
+        servers: [
+          {
+            id: "linear",
+            transport: "streamable_http",
+            url: "http://127.0.0.1:9/mcp",
+          },
+        ],
+      },
+    };
+
+    await expect(
+      createRecipeSession({
+        ...baseOptions,
+        systemPrompt: () => {
+          throw new Error("prompt construction failed");
+        },
+      })
+    ).rejects.toThrow("prompt construction failed");
+    expect(env.PI_RECIPES_MCP_SESSION).toBe(hostSession);
+    expect(env.MCPORTER_CONFIG).toBe(hostMcporter);
+
+    const recovered = await createRecipeSession(baseOptions);
+    handles.push(recovered);
+    await recovered.dispose();
+  });
+
   it("prompts through a scripted model and surfaces the reply", async () => {
     const { recipeDir, workspaceDir } = fixture();
     const handle = await open({ recipeDir, cwd: workspaceDir });
@@ -294,6 +415,41 @@ describe("createRecipeSession", () => {
     await handle.session.prompt("hi");
     expect(events).toContain("agent_start");
     expect(events).toContain("agent_end");
+  });
+
+  it("closes completed child sessions when the parent disposes", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const child = {
+      agent_run_id: "child-1",
+      invocation_name: "helper",
+      agent_name: "helper",
+      label: "helper",
+      prompt: "help",
+      status: "completed" as const,
+      started_at: 1,
+      last_activity_at: 2,
+    };
+    const close = vi.fn(async () => ({
+      ...child,
+      status: "closed" as const,
+    }));
+    const runController = {
+      list: () => [child],
+      get: () => null,
+      start: vi.fn(),
+      wait: vi.fn(),
+      message: vi.fn(),
+      interrupt: vi.fn(),
+      close,
+    };
+    const handle = await open({
+      recipeDir,
+      cwd: workspaceDir,
+      runController,
+    });
+
+    await handle.dispose();
+    expect(close).toHaveBeenCalledWith("child-1");
   });
 
   it("attaches a host-owned OTel tracer and detaches it on dispose", async () => {
@@ -423,6 +579,27 @@ describe("runRecipe", () => {
     });
     expect(result.status).toBe("cancelled");
   });
+
+  it("returns cancelled when the signal aborts during session construction", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const controller = new AbortController();
+    const result = await runRecipe({
+      recipeDir,
+      cwd: workspaceDir,
+      credentials: await credentialStore(),
+      env: cleanEnv(),
+      prompt: "hi",
+      signal: controller.signal,
+      sessionFactory: async (options) => {
+        const handle = await createRecipeSession(options);
+        controller.abort();
+        return handle;
+      },
+    });
+
+    expect(result.status).toBe("cancelled");
+    expect(result.messages).toEqual([]);
+  });
 });
 
 describe("in-process run controller", () => {
@@ -530,5 +707,132 @@ describe("in-process run controller", () => {
     expect(peak).toBe(1);
     await controller.close(first.agent_run_id);
     await controller.close(second.agent_run_id);
+  });
+
+  it("serializes a message sent while the child session is starting", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const factoryGate = deferred();
+    let factoryCalls = 0;
+    const controller = createInProcessRunController({
+      recipeDir,
+      cwd: workspaceDir,
+      env: cleanEnv(),
+      sessionFactory: async (options) => {
+        factoryCalls += 1;
+        await factoryGate.promise;
+        const handle = await createRecipeSession({
+          ...options,
+          credentials: await credentialStore(),
+        });
+        scriptReply(handle, "done");
+        return handle;
+      },
+    });
+
+    const run = await controller.start({ name: "helper", prompt: "first" });
+    const followUp = controller.message(run.agent_run_id, "second");
+    factoryGate.resolve();
+    await followUp;
+    await controller.wait(run.agent_run_id);
+
+    expect(factoryCalls).toBe(1);
+    await controller.close(run.agent_run_id);
+  });
+
+  it("does not prompt a child interrupted while its session is starting", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const factoryGate = deferred();
+    const constructed = deferred();
+    const prompt = vi.fn(async () => {});
+    const dispose = vi.fn(async () => {});
+    const controller = createInProcessRunController({
+      recipeDir,
+      cwd: workspaceDir,
+      env: cleanEnv(),
+      sessionFactory: async () => {
+        await factoryGate.promise;
+        constructed.resolve();
+        return {
+          session: {
+            prompt,
+            messages: [],
+          },
+          dispose,
+        } as unknown as RecipeSessionHandle;
+      },
+    });
+
+    const run = await controller.start({ name: "helper", prompt: "first" });
+    await controller.interrupt(run.agent_run_id);
+    factoryGate.resolve();
+    await constructed.promise;
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("rejects an already-aborted child wait immediately", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const factoryGate = deferred();
+    const controller = createInProcessRunController({
+      recipeDir,
+      cwd: workspaceDir,
+      env: cleanEnv(),
+      sessionFactory: async () => {
+        await factoryGate.promise;
+        throw new Error("not reached");
+      },
+    });
+    const run = await controller.start({ name: "helper", prompt: "first" });
+    const signal = new AbortController();
+    signal.abort(new Error("stop waiting"));
+
+    await expect(
+      controller.wait(run.agent_run_id, signal.signal)
+    ).rejects.toThrow("stop waiting");
+    await controller.interrupt(run.agent_run_id);
+    factoryGate.resolve();
+  });
+
+  it("clears terminal output and tool state before a follow-up", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    let onEvent:
+      | ((event: {
+          type: string;
+          toolName?: string;
+        }) => void)
+      | undefined;
+    const controller = createInProcessRunController({
+      recipeDir,
+      cwd: workspaceDir,
+      env: cleanEnv(),
+      sessionFactory: async (options) => {
+        onEvent = options.onEvent as typeof onEvent;
+        return {
+          session: {
+            messages: [{ role: "assistant", content: "done" }],
+            prompt: vi.fn(async () => {
+              onEvent?.({ type: "tool_execution_start", toolName: "search" });
+              onEvent?.({ type: "tool_execution_end", toolName: "search" });
+            }),
+            steer: vi.fn(async () => {}),
+            abort: vi.fn(async () => {}),
+          },
+          dispose: vi.fn(async () => {}),
+        } as unknown as RecipeSessionHandle;
+      },
+    });
+    const run = await controller.start({ name: "helper", prompt: "first" });
+    const completed = await controller.wait(run.agent_run_id);
+    expect(completed.output).toBeTruthy();
+    expect(completed.current_tool).toBeUndefined();
+
+    const resumed = await controller.message(run.agent_run_id, "second");
+    expect(resumed.status).toBe("running");
+    expect(resumed.completed_at).toBeUndefined();
+    expect(resumed.output).toBeUndefined();
+    expect(resumed.error).toBeUndefined();
+    await controller.wait(run.agent_run_id);
+    await controller.close(run.agent_run_id);
   });
 });

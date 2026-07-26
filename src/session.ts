@@ -27,11 +27,13 @@ import {
   preloadMcpCatalogs,
 } from "./mcp-catalog.js";
 import {
-  clearMcpSession,
   configureMcpLocalConfigPath,
+  isolateMcpEnvironment,
   materializeMcpSession,
   materializeSessionMcpCli,
+  restoreMcpEnvironment,
   resolveAgentMcpSelections,
+  snapshotMcpEnvironment,
   stopMcpDaemon,
   type McpLocalConfig,
   type ScopedMcpToolSelection,
@@ -239,6 +241,19 @@ function scopedMcpSelections(recipe: ResolvedRecipe): ScopedMcpToolSelection[] {
 
 interface MaterializedSessionMcp {
   materialized: boolean;
+  release?: () => Promise<void>;
+}
+
+const leasedMcpEnvironments = new WeakSet<NodeJS.ProcessEnv>();
+
+export class RecipeMcpEnvironmentInUseError extends Error {
+  override readonly name = "RecipeMcpEnvironmentInUseError";
+
+  constructor() {
+    super(
+      "This environment already belongs to a live materialized Recipe MCP session; use a separate env object per concurrent session or let the host materialize MCP once and pass mcpMode: \"inherit\""
+    );
+  }
 }
 
 /**
@@ -290,42 +305,71 @@ export async function materializeRecipeSessionMcp(
   return configureSessionMcp(recipe, cwd, env, {
     recipeDir: recipe.recipeDir,
     ...opts,
-  });
+  }, false);
 }
 
 async function configureSessionMcp(
   recipe: ResolvedRecipe,
   cwd: string,
   env: NodeJS.ProcessEnv,
-  opts: CreateRecipeSessionOptions
+  opts: CreateRecipeSessionOptions,
+  leaseEnvironment: boolean
 ): Promise<MaterializedSessionMcp> {
   const selections = scopedMcpSelections(recipe);
   if (opts.mcpMode === "inherit") return { materialized: false };
-  if (selections.length === 0) {
-    await clearMcpSession(env, cwd);
-    return { materialized: false };
+  if (selections.length === 0) return { materialized: false };
+
+  const snapshot = leaseEnvironment ? snapshotMcpEnvironment(env) : undefined;
+  if (leaseEnvironment) {
+    if (leasedMcpEnvironments.has(env)) {
+      throw new RecipeMcpEnvironmentInUseError();
+    }
+    leasedMcpEnvironments.add(env);
+    isolateMcpEnvironment(env);
   }
 
-  if (opts.mcpBindingsPath) {
-    env.PI_RECIPES_MCP_LOCAL_CONFIG = opts.mcpBindingsPath;
-  } else if (!opts.mcpBindings) {
-    configureMcpLocalConfigPath({ cwd, recipeDir: recipe.recipeDir, env });
+  const release = async () => {
+    if (!snapshot) return;
+    try {
+      clearMcpCatalogPreload(env);
+      await stopMcpDaemon(env);
+    } finally {
+      restoreMcpEnvironment(env, snapshot);
+      leasedMcpEnvironments.delete(env);
+    }
+  };
+
+  try {
+    if (opts.mcpBindingsPath) {
+      env.PI_RECIPES_MCP_LOCAL_CONFIG = opts.mcpBindingsPath;
+    } else if (!opts.mcpBindings) {
+      configureMcpLocalConfigPath({ cwd, recipeDir: recipe.recipeDir, env });
+    }
+    const [cliResult, sessionResult] = await Promise.allSettled([
+      materializeSessionMcpCli({ cwd, env }),
+      materializeMcpSession({
+        cwd,
+        manifest: recipe.manifest,
+        agentMcp: selections,
+        env,
+        ...(opts.mcpBindings ? { localConfig: opts.mcpBindings } : {}),
+      }),
+    ]);
+    if (cliResult.status === "rejected") throw cliResult.reason;
+    if (sessionResult.status === "rejected") throw sessionResult.reason;
+    const session = sessionResult.value;
+    if (session.servers.length > 0) {
+      // Warm tool catalogs in the background; sessions work without the warmup.
+      void preloadMcpCatalogs({ env }).catch(() => {});
+    }
+    return {
+      materialized: true,
+      ...(snapshot ? { release } : {}),
+    };
+  } catch (error) {
+    await release();
+    throw error;
   }
-  const [, session] = await Promise.all([
-    materializeSessionMcpCli({ cwd, env }),
-    materializeMcpSession({
-      cwd,
-      manifest: recipe.manifest,
-      agentMcp: selections,
-      env,
-      ...(opts.mcpBindings ? { localConfig: opts.mcpBindings } : {}),
-    }),
-  ]);
-  if (session.servers.length > 0) {
-    // Warm tool catalogs in the background; sessions work without the warmup.
-    void preloadMcpCatalogs({ env }).catch(() => {});
-  }
-  return { materialized: true };
 }
 
 export async function createRecipeSession(
@@ -365,124 +409,152 @@ export async function createRecipeSession(
   }
   applyRecipeAgentModelConfigToModel(model, recipe.modelConfig);
 
-  const mcp = await configureSessionMcp(recipe, cwd, env, opts);
+  const mcp = await configureSessionMcp(recipe, cwd, env, opts, true);
+  let session: AgentSession | undefined;
+  let runs: AgentRunController | undefined;
+  let unsubscribe: (() => void) | undefined;
+  let detachInstrumentation: (() => void) | undefined;
 
-  // Recipe extensions load through the shared jiti loader; host extensions
-  // append after them, matching the Pi extension host's ordering.
-  const inlineExtensions: InlineExtension[] = [];
-  for (const extensionPath of recipe.extensionPaths) {
-    inlineExtensions.push(
-      await loadRecipeExtensionFactory(recipe.recipeDir, extensionPath)
-    );
-  }
-  inlineExtensions.push(...(opts.extensionFactories ?? []));
-
-  const services = await createAgentSessionServices({
-    cwd,
-    agentDir: recipe.recipeDir,
-    modelRuntime,
-    settingsManager:
-      opts.settingsManager ?? SettingsManager.create(cwd, recipe.recipeDir),
-    resourceLoaderOptions: {
-      eventBus: opts.eventBus,
-      noSkills: true,
-      additionalSkillPaths: [
-        ...(opts.skillPaths ?? recipe.skillPaths),
-        ...(opts.additionalSkillPaths ?? []),
-      ],
-      additionalPromptTemplatePaths: recipe.promptPaths,
-      extensionFactories: inlineExtensions,
-      systemPromptOverride: (base) => {
-        const resolved = recipe.systemPromptOverride(base);
-        return opts.systemPrompt ? opts.systemPrompt(resolved ?? "") : resolved;
-      },
-    },
-  });
-  opts.onDiagnostics?.(services.diagnostics);
-
-  // Subagents: the shared `agent` tool against an injected or in-process
-  // controller. `runController: null` disables delegation outright.
-  const wantsSubagents =
-    recipe.subagents.size > 0 && opts.runController !== null;
-  let runs: AgentRunController;
-  if (opts.runController) {
-    runs = opts.runController;
-  } else {
-    const { createInProcessRunController, inertRunController } = await import(
-      "./run-controller.js"
-    );
-    runs = wantsSubagents
-      ? createInProcessRunController({
-          recipeDir: recipe.recipeDir,
-          cwd,
-          env,
-          ...(opts.credentials ? { credentials: opts.credentials } : {}),
-          concurrency: opts.subagentLimits?.concurrency,
-          depth: opts.subagentLimits?.depth,
-          ...(otel ? { otel } : {}),
-        })
-      : inertRunController();
-  }
-  const tools = wantsSubagents
-    ? recipe.tools
-    : recipe.tools.filter((tool) => tool !== "agent");
-  const customTools = [
-    ...(opts.customTools ?? []),
-    ...(wantsSubagents
-      ? [createAgentTool(runs, recipe.subagents, opts.agentToolOptions)]
-      : []),
-  ];
-
-  const created = await createAgentSessionFromServices({
-    services,
-    sessionManager: opts.sessionManager ?? SessionManager.inMemory(cwd),
-    model,
-    ...(opts.thinkingLevel ?? recipe.thinkingLevel
-      ? { thinkingLevel: (opts.thinkingLevel ?? recipe.thinkingLevel)! }
-      : {}),
-    tools,
-    customTools,
-  });
-  const session = created.session;
-  applyRecipeAgentModelConfigToSession(session, recipe.modelConfig);
-  await session.bindExtensions({});
-
-  const unsubscribe = opts.onEvent ? session.subscribe(opts.onEvent) : undefined;
-
-  const instrumentation = otel
-    ? instrumentSession(session, otel)
-    : undefined;
-
-  let disposed = false;
-  return {
-    session,
-    recipe,
-    runs,
-    async dispose(): Promise<void> {
-      if (disposed) return;
-      disposed = true;
+  const cleanup = async (): Promise<void> => {
+    try {
       unsubscribe?.();
+    } catch {
+      // Continue releasing the remaining session-owned resources.
+    }
+    unsubscribe = undefined;
+    if (runs) {
       try {
-        await runs.list().reduce(async (prev, run) => {
-          await prev;
-          if (run.status === "running") {
+        for (const run of runs.list()) {
+          if (run.status !== "closed") {
             await runs.close(run.agent_run_id).catch(() => {});
           }
-        }, Promise.resolve());
+        }
       } catch {
         // Child teardown is best-effort; the session still disposes.
       }
+    }
+    if (session) {
       try {
         await session.abort();
       } catch {
         // An idle session has nothing to abort.
       }
-      session.dispose();
-      instrumentation?.detach();
-      if (mcp.materialized) {
-        clearMcpCatalogPreload(env);
-        await stopMcpDaemon(env);
+      try {
+        session.dispose();
+      } catch {
+        // Continue releasing instrumentation and MCP state.
       }
-    },
+      session = undefined;
+    }
+    try {
+      detachInstrumentation?.();
+    } catch {
+      // Continue releasing MCP state.
+    }
+    detachInstrumentation = undefined;
+    await mcp.release?.();
   };
+
+  try {
+    // Recipe extensions load through the shared jiti loader; host extensions
+    // append after them, matching the Pi extension host's ordering.
+    const inlineExtensions: InlineExtension[] = [];
+    for (const extensionPath of recipe.extensionPaths) {
+      inlineExtensions.push(
+        await loadRecipeExtensionFactory(recipe.recipeDir, extensionPath)
+      );
+    }
+    inlineExtensions.push(...(opts.extensionFactories ?? []));
+
+    const services = await createAgentSessionServices({
+      cwd,
+      agentDir: recipe.recipeDir,
+      modelRuntime,
+      settingsManager:
+        opts.settingsManager ?? SettingsManager.create(cwd, recipe.recipeDir),
+      resourceLoaderOptions: {
+        eventBus: opts.eventBus,
+        noSkills: true,
+        additionalSkillPaths: [
+          ...(opts.skillPaths ?? recipe.skillPaths),
+          ...(opts.additionalSkillPaths ?? []),
+        ],
+        additionalPromptTemplatePaths: recipe.promptPaths,
+        extensionFactories: inlineExtensions,
+        systemPromptOverride: (base) => {
+          const resolved = recipe.systemPromptOverride(base);
+          return opts.systemPrompt ? opts.systemPrompt(resolved ?? "") : resolved;
+        },
+      },
+    });
+    opts.onDiagnostics?.(services.diagnostics);
+
+    // Subagents: the shared `agent` tool against an injected or in-process
+    // controller. `runController: null` disables delegation outright.
+    const wantsSubagents =
+      recipe.subagents.size > 0 && opts.runController !== null;
+    if (opts.runController) {
+      runs = opts.runController;
+    } else {
+      const { createInProcessRunController, inertRunController } = await import(
+        "./run-controller.js"
+      );
+      runs = wantsSubagents
+        ? createInProcessRunController({
+            recipeDir: recipe.recipeDir,
+            cwd,
+            env,
+            ...(opts.credentials ? { credentials: opts.credentials } : {}),
+            concurrency: opts.subagentLimits?.concurrency,
+            depth: opts.subagentLimits?.depth,
+            ...(otel ? { otel } : {}),
+          })
+        : inertRunController();
+    }
+    const tools = wantsSubagents
+      ? recipe.tools
+      : recipe.tools.filter((tool) => tool !== "agent");
+    const customTools = [
+      ...(opts.customTools ?? []),
+      ...(wantsSubagents
+        ? [createAgentTool(runs, recipe.subagents, opts.agentToolOptions)]
+        : []),
+    ];
+
+    const created = await createAgentSessionFromServices({
+      services,
+      sessionManager: opts.sessionManager ?? SessionManager.inMemory(cwd),
+      model,
+      ...(opts.thinkingLevel ?? recipe.thinkingLevel
+        ? { thinkingLevel: (opts.thinkingLevel ?? recipe.thinkingLevel)! }
+        : {}),
+      tools,
+      customTools,
+    });
+    session = created.session;
+    applyRecipeAgentModelConfigToSession(session, recipe.modelConfig);
+    await session.bindExtensions({});
+
+    unsubscribe = opts.onEvent ? session.subscribe(opts.onEvent) : undefined;
+    detachInstrumentation = otel
+      ? instrumentSession(session, otel).detach
+      : undefined;
+
+    const liveSession = session;
+    const liveRuns = runs;
+    let disposed = false;
+    return {
+      session: liveSession,
+      recipe,
+      runs: liveRuns,
+      async dispose(): Promise<void> {
+        if (disposed) return;
+        disposed = true;
+        await cleanup();
+      },
+    };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
 }

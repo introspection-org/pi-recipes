@@ -148,6 +148,61 @@ const MCPORTER_CONFIG_ENV = "MCPORTER_CONFIG";
 const MCP_LOCAL_CONFIG_ENV = `${RECIPE_ENV_PREFIX}MCP_LOCAL_CONFIG`;
 const MCP_BIN_DIR_ENV = `${RECIPE_ENV_PREFIX}MCP_BIN_DIR`;
 
+const MCP_RUNTIME_ENV_KEYS = [
+  MCP_SESSION_ENV,
+  MCPORTER_CONFIG_ENV,
+  MCP_LOCAL_CONFIG_ENV,
+  MCP_BIN_DIR_ENV,
+  MCP_DAEMON_FINGERPRINT_ENV,
+  MCP_DAEMON_PARENT_PID_ENV,
+  MCP_DAEMON_SOCKET_ENV,
+  MCP_DAEMON_TOKEN_ENV,
+  MCP_SESSION_ROOT_ENV,
+] as const;
+
+export interface McpEnvironmentSnapshot {
+  pathKey: string;
+  values: Record<string, string | undefined>;
+}
+
+/** Capture every environment entry Recipes may mutate while materializing MCP. */
+export function snapshotMcpEnvironment(
+  env: NodeJS.ProcessEnv
+): McpEnvironmentSnapshot {
+  const currentPathKey = pathKey(env);
+  return {
+    pathKey: currentPathKey,
+    values: Object.fromEntries(
+      [...MCP_RUNTIME_ENV_KEYS, currentPathKey].map((key) => [key, env[key]])
+    ),
+  };
+}
+
+/** Restore a previously captured MCP environment exactly. */
+export function restoreMcpEnvironment(
+  env: NodeJS.ProcessEnv,
+  snapshot: McpEnvironmentSnapshot
+): void {
+  for (const [key, value] of Object.entries(snapshot.values)) {
+    if (value === undefined) {
+      delete env[key];
+    } else {
+      env[key] = value;
+    }
+  }
+}
+
+/**
+ * Hide host-owned runtime state before materializing a leased session. The
+ * local binding selector remains visible by design; session files, daemon
+ * coordinates, and generated CLI state do not.
+ */
+export function isolateMcpEnvironment(env: NodeJS.ProcessEnv): void {
+  for (const key of MCP_RUNTIME_ENV_KEYS) {
+    if (key !== MCP_LOCAL_CONFIG_ENV) delete env[key];
+  }
+}
+
 export function defaultMcpSessionPath(cwd: string): string {
   return join(cwd, ".pi", "mcp-session.json");
 }

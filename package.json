@@ -76,7 +76,7 @@
 		"build:native": "cargo build --release -p pi-mcp-client && node scripts/package-mcp-client.mjs",
 		"bench:mcp-client": "pnpm build:ts && cargo build --release -p pi-mcp-client && node scripts/benchmark-mcp-client.mjs",
 		"prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
-		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+		"typecheck": "node scripts/check-recipe-check-versions.mjs && tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
 		"test": "pnpm build:ts && cargo test -p pi-mcp-client -p pi-recipe-check && cargo build -p pi-mcp-client && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
 		"pack:check": "pnpm pack --dry-run --json | node scripts/check-npm-pack.mjs",
 		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client"

@@ -89,6 +89,12 @@ gateway-decorated model without reimplementing Recipe semantics. The Recipe
 continues to own model configuration and tool selection; host seams replace
 transport and materialized resources, not the portable definition.
 
+Default MCP materialization leases the supplied `env` object until the handle
+is disposed and restores its prior MCP/PATH state afterward. Concurrent
+materialized sessions must receive separate environment objects. A host that
+materializes one process-wide MCP runtime instead passes `mcpMode: "inherit"`
+to its sessions, as runtime-agent does.
+
 ## `runRecipe`
 
 ```ts

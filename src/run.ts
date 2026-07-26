@@ -81,6 +81,17 @@ export async function runRecipe(
       }, timeoutMs);
     }
     signal?.addEventListener("abort", onAbort, { once: true });
+    // The signal may have fired while the asynchronous session factory was
+    // resolving, before the listener existed.
+    if (signal?.aborted) {
+      aborted = true;
+      await handle.session.abort().catch(() => {});
+      return {
+        status: "cancelled",
+        text: "",
+        messages: [...handle.session.messages],
+      };
+    }
 
     let promptError: string | undefined;
     try {
