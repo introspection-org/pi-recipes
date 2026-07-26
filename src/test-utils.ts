@@ -147,7 +147,7 @@ export function hostConformanceCases(
             env: { ...cleanEnv() },
           });
           try {
-            assert(handle.recipe.agentName === "agent", "agentName resolves");
+            assert(handle.agent.agentName === "agent", "agentName resolves");
             assert(
               handle.session.systemPrompt.includes("conformance fixture"),
               "SYSTEM.md reaches the system prompt"

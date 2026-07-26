@@ -44,7 +44,7 @@ import {
   applyRecipeAgentModelConfigToModel,
   applyRecipeAgentModelConfigToSession,
 } from "./recipe-model.js";
-import { resolveRecipe, type ResolvedRecipe } from "./recipe/resolve.js";
+import { resolveRecipeAgent, type ResolvedRecipeAgent } from "./recipe/resolve.js";
 
 export { expectedProviderEnvVars } from "./provider-env.js";
 
@@ -138,7 +138,8 @@ export interface RecipeSessionOtelOptions
 export interface RecipeSessionHandle {
   /** The live Pi session: prompt / steer / followUp / abort / subscribe. */
   session: AgentSession;
-  recipe: ResolvedRecipe;
+  /** The selected executable agent plan used to create this session. */
+  agent: ResolvedRecipeAgent;
   /** The subagent run controller serving this session's `agent` tool. */
   runs: AgentRunController;
   /** Abort any in-flight turn, dispose the session, stop session MCP. */
@@ -148,12 +149,12 @@ export interface RecipeSessionHandle {
 /**
  * Host injections for an already-resolved Recipe.
  *
- * Use this with `createRecipeSessionFromResolved()` when a host must inspect
+ * Use this with `createAgentSession()` when a host must inspect
  * the portable definition before materializing credentials, endpoints, or
  * other host resources. The exact inspected definition is then used for
  * construction without resolving the package a second time.
  */
-export type ResolvedRecipeSessionOptions = Omit<
+export type ResolvedAgentSessionOptions = Omit<
   CreateRecipeSessionOptions,
   "recipeDir" | "agentName"
 >;
@@ -281,7 +282,7 @@ async function resolveCredentialStore(
   return store;
 }
 
-function scopedMcpSelections(recipe: ResolvedRecipe): ScopedMcpToolSelection[] {
+function scopedMcpSelections(recipe: ResolvedRecipeAgent): ScopedMcpToolSelection[] {
   return [recipe.agent, ...recipe.subagents.values()].flatMap((agent) =>
     resolveAgentMcpSelections(agent.mcp)
   );
@@ -311,8 +312,8 @@ export class RecipeMcpEnvironmentInUseError extends Error {
  */
 export async function preflightRecipeSession(
   opts: CreateRecipeSessionOptions
-): Promise<ResolvedRecipe> {
-  const recipe = resolveRecipe({
+): Promise<ResolvedRecipeAgent> {
+  const recipe = resolveRecipeAgent({
     recipeDir: opts.recipeDir,
     ...(opts.agentName ? { agentName: opts.agentName } : {}),
   });
@@ -342,7 +343,7 @@ export async function preflightRecipeSession(
  * sessions with `mcpMode: "inherit"`.
  */
 export async function materializeRecipeSessionMcp(
-  recipe: ResolvedRecipe,
+  recipe: ResolvedRecipeAgent,
   cwd: string,
   env: NodeJS.ProcessEnv,
   opts: Pick<
@@ -357,7 +358,7 @@ export async function materializeRecipeSessionMcp(
 }
 
 async function configureSessionMcp(
-  recipe: ResolvedRecipe,
+  recipe: ResolvedRecipeAgent,
   cwd: string,
   env: NodeJS.ProcessEnv,
   opts: CreateRecipeSessionOptions,
@@ -420,8 +421,8 @@ async function configureSessionMcp(
   }
 }
 
-async function createResolvedRecipeSession(
-  recipe: ResolvedRecipe,
+async function createSessionForAgent(
+  recipe: ResolvedRecipeAgent,
   opts: CreateRecipeSessionOptions
 ): Promise<RecipeSessionHandle> {
   const cwd = opts.cwd ?? process.cwd();
@@ -590,7 +591,7 @@ async function createResolvedRecipeSession(
     let disposed = false;
     return {
       session: liveSession,
-      recipe,
+      agent: recipe,
       runs: liveRuns,
       async dispose(): Promise<void> {
         if (disposed) return;
@@ -607,20 +608,20 @@ async function createResolvedRecipeSession(
 export async function createRecipeSession(
   opts: CreateRecipeSessionOptions
 ): Promise<RecipeSessionHandle> {
-  const recipe = resolveRecipe({
+  const recipe = resolveRecipeAgent({
     recipeDir: opts.recipeDir,
     ...(opts.agentName ? { agentName: opts.agentName } : {}),
   });
-  return createResolvedRecipeSession(recipe, opts);
+  return createSessionForAgent(recipe, opts);
 }
 
-export async function createRecipeSessionFromResolved(
-  recipe: ResolvedRecipe,
-  opts: ResolvedRecipeSessionOptions
+export async function createAgentSession(
+  agent: ResolvedRecipeAgent,
+  opts: ResolvedAgentSessionOptions
 ): Promise<RecipeSessionHandle> {
-  return createResolvedRecipeSession(recipe, {
+  return createSessionForAgent(agent, {
     ...opts,
-    recipeDir: recipe.recipeDir,
-    agentName: recipe.agentName,
+    recipeDir: agent.recipeDir,
+    agentName: agent.agentName,
   });
 }

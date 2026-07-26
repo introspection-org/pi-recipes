@@ -11,7 +11,7 @@ resolveRecipeGraph()     parse every agent in the portable package once
     ├── graph.select()   select root and child execution plans
     │
     ▼
-createRecipeSessionFromResolved()
+createAgentSession()
                           construct one selected plan
     │
     ├── createRecipeSession()
@@ -22,12 +22,12 @@ createRecipeSessionFromResolved()
 
 Hosts choose the lowest layer they need.
 
-## `resolveRecipe`
+## `resolveRecipeAgent`
 
 ```ts
-import { resolveRecipe } from "@introspection-ai/recipes/recipe";
+import { resolveRecipeAgent } from "@introspection-ai/recipes/recipe";
 
-const recipe = resolveRecipe({
+const agent = resolveRecipeAgent({
   recipeDir,
   agentName,
 });
@@ -43,23 +43,23 @@ graph once, then select root and child plans from it:
 ```ts
 import { resolveRecipeGraph } from "@introspection-ai/recipes/recipe";
 import {
-  createRecipeSessionFromResolved,
+  createAgentSession,
 } from "@introspection-ai/recipes/session";
 
 const graph = resolveRecipeGraph({ recipeDir });
-const recipe = graph.select(agentName);
-const credentials = await credentialsFor(recipe.modelSpec);
+const agent = graph.select(agentName);
+const credentials = await credentialsFor(agent.modelSpec);
 
-const handle = await createRecipeSessionFromResolved(recipe, {
+const handle = await createAgentSession(agent, {
   cwd: workspaceDir,
   credentials,
 });
 
-const childRecipe = graph.select("researcher");
+const childAgent = graph.select("researcher");
 ```
 
 This keeps inspection and construction on the same resolution results and
-avoids reparsing the package for every child session. `resolveRecipe()` remains
+avoids reparsing the package for every child session. `resolveRecipeAgent()` remains
 the convenience API for selecting one plan.
 
 ## `createRecipeSession`

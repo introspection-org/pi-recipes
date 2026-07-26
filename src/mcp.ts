@@ -20,6 +20,8 @@ import {
 } from "./recipe-package.js";
 import { generatedBindingEnvVars } from "./recipe-mcp-config.js";
 
+export { preloadMcpCatalogs } from "./mcp-catalog.js";
+
 export interface McpToolCatalogEntry {
   name: string;
   description?: string;

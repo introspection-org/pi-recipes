@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   RecipeResolutionError,
-  resolveRecipe,
+  resolveRecipeAgent,
   resolveRecipeGraph,
 } from "../src/recipe/resolve.js";
 
@@ -74,10 +74,10 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("resolveRecipe", () => {
+describe("resolveRecipeAgent", () => {
   it("returns inputs that map directly to a Pi session", () => {
     const recipeDir = makeRecipe();
-    const resolved = resolveRecipe({ recipeDir });
+    const resolved = resolveRecipeAgent({ recipeDir });
 
     expect(resolved.agentName).toBe("researcher");
     expect(resolved.modelSpec).toBe("openai/gpt-5");
@@ -97,7 +97,7 @@ describe("resolveRecipe", () => {
 
   it("selects aliases and returns the canonical agent name", () => {
     const recipeDir = makeRecipe();
-    const resolved = resolveRecipe({ recipeDir, agentName: "agent" });
+    const resolved = resolveRecipeAgent({ recipeDir, agentName: "agent" });
     expect(resolved.agentName).toBe("researcher");
   });
 
@@ -133,7 +133,7 @@ describe("resolveRecipe", () => {
     );
     rmSync(join(recipeDir, "agents", "base.yaml"));
 
-    const resolved = resolveRecipe({ recipeDir });
+    const resolved = resolveRecipeAgent({ recipeDir });
 
     expect(resolved.agentName).toBe("agent");
     expect(resolved.thinkingLevel).toBeUndefined();
@@ -155,7 +155,7 @@ describe("resolveRecipe", () => {
       ].join("\n")
     );
 
-    const resolved = resolveRecipe({ recipeDir });
+    const resolved = resolveRecipeAgent({ recipeDir });
 
     expect([...resolved.subagents.keys()]).toEqual(["base"]);
     expect(resolved.tools).toEqual(["read", "mcp__search", "agent"]);
@@ -164,7 +164,7 @@ describe("resolveRecipe", () => {
   it("fails before returning a partial session configuration", () => {
     const recipeDir = makeRecipe();
     expect(() =>
-      resolveRecipe({ recipeDir, agentName: "missing" })
+      resolveRecipeAgent({ recipeDir, agentName: "missing" })
     ).toThrow(RecipeResolutionError);
   });
 });

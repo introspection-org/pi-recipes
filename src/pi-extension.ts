@@ -42,8 +42,8 @@ import {
 import { type RecipeAgentDefinition } from "./recipe-agent.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
-  resolveRecipe,
-  type ResolvedRecipe,
+  resolveRecipeAgent,
+  type ResolvedRecipeAgent,
 } from "./recipe/resolve.js";
 import {
   createAgentTool,
@@ -96,7 +96,7 @@ interface ChildRun extends ChildRunSnapshot {
 interface RecipeLaunchState {
   key: string;
   cwd: string;
-  resolved: ResolvedRecipe;
+  resolved: ResolvedRecipeAgent;
   extensionsLoaded: boolean;
   configured: boolean;
 }
@@ -613,9 +613,9 @@ export function createRecipesExtension(
     const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
     if (state?.key === key) return state;
 
-    let resolved: ResolvedRecipe;
+    let resolved: ResolvedRecipeAgent;
     try {
-      resolved = resolveRecipe({
+      resolved = resolveRecipeAgent({
         recipeDir,
         agentName: requestedAgentName,
       });

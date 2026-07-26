@@ -10,12 +10,12 @@ import {
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpBindingError } from "../src/mcp.js";
-import { resolveRecipe } from "../src/recipe/resolve.js";
+import { resolveRecipeAgent } from "../src/recipe/resolve.js";
 import { runRecipe } from "../src/run.js";
 import { createInProcessRunController } from "../src/run-controller.js";
 import {
   createRecipeSession,
-  createRecipeSessionFromResolved,
+  createAgentSession,
   RecipeCredentialError,
   RecipeMcpEnvironmentInUseError,
   RecipeModelError,
@@ -180,7 +180,7 @@ describe("createRecipeSession", () => {
     const { recipeDir, workspaceDir } = fixture();
     const handle = await open({ recipeDir, cwd: workspaceDir });
 
-    expect(handle.recipe.agentName).toBe("agent");
+    expect(handle.agent.agentName).toBe("agent");
     expect(handle.session.model?.id).toBe("claude-sonnet-4-5");
     expect(handle.session.systemPrompt).toContain("conformance fixture");
     expect(handle.session.systemPrompt).toContain("Conformance agent");
@@ -188,16 +188,16 @@ describe("createRecipeSession", () => {
 
   it("creates the exact Recipe definition already inspected by the host", async () => {
     const { recipeDir, workspaceDir } = fixture();
-    const recipe = resolveRecipe({ recipeDir });
-    const handle = await createRecipeSessionFromResolved(recipe, {
+    const recipe = resolveRecipeAgent({ recipeDir });
+    const handle = await createAgentSession(recipe, {
       cwd: workspaceDir,
       credentials: await credentialStore(),
       env: cleanEnv(),
     });
     handles.push(handle);
 
-    expect(handle.recipe).toBe(recipe);
-    expect(handle.recipe.agentName).toBe("agent");
+    expect(handle.agent).toBe(recipe);
+    expect(handle.agent.agentName).toBe("agent");
   });
 
   it("accepts host model wiring and reports construction diagnostics", async () => {

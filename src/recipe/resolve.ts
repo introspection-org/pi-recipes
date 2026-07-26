@@ -16,7 +16,10 @@ import {
   type PiPackageManifest,
 } from "../recipe-package.js";
 
-export interface ResolvedRecipe {
+export type { RecipePackageManifest } from "../recipe-package.js";
+export type { RecipeAgentMcp } from "../recipe-agent.js";
+
+export interface ResolvedRecipeAgent {
   recipeDir: string;
   manifest: PiPackageManifest;
   agentName: string;
@@ -33,7 +36,7 @@ export interface ResolvedRecipe {
   systemPromptOverride(base: string | undefined): string | undefined;
 }
 
-export interface ResolveRecipeOptions {
+export interface ResolveRecipeAgentOptions {
   recipeDir: string;
   agentName?: string;
 }
@@ -48,8 +51,8 @@ export interface ResolvedRecipeGraph {
   recipeDir: string;
   manifest: PiPackageManifest;
   /** Canonical names and authored aliases both resolve to the same plan. */
-  agents: ReadonlyMap<string, ResolvedRecipe>;
-  select(agentName?: string): ResolvedRecipe;
+  agents: ReadonlyMap<string, ResolvedRecipeAgent>;
+  select(agentName?: string): ResolvedRecipeAgent;
 }
 
 export class RecipeResolutionError extends Error {
@@ -167,7 +170,7 @@ function selectExtensionPaths(
   });
 }
 
-function buildResolvedRecipe(
+function buildResolvedRecipeAgent(
   recipeDir: string,
   manifest: PiPackageManifest,
   definitions: ReadonlyMap<string, RecipeAgentDefinition>,
@@ -176,7 +179,7 @@ function buildResolvedRecipe(
   skillResourcePaths: string[],
   promptPaths: string[],
   extensionPaths: string[]
-): ResolvedRecipe {
+): ResolvedRecipeAgent {
   const agentName = agent.name;
   const subagents = selectSubagents(definitions, agent);
   const modelSpec = agent.model?.name;
@@ -226,7 +229,7 @@ function buildResolvedRecipe(
 
 /** Parse and resolve every agent in a Recipe package exactly once. */
 export function resolveRecipeGraph(
-  opts: Pick<ResolveRecipeOptions, "recipeDir">
+  opts: Pick<ResolveRecipeAgentOptions, "recipeDir">
 ): ResolvedRecipeGraph {
   const recipeDir = resolve(opts.recipeDir);
   const manifest = readPiPackageManifest(recipeDir);
@@ -258,12 +261,12 @@ export function resolveRecipeGraph(
   const skillResourcePaths = packageResourcePaths(manifest, "skills");
   const promptPaths = packageResourcePaths(manifest, "prompts");
   const extensionPaths = packageResourcePaths(manifest, "extensions");
-  const canonical = new Map<string, ResolvedRecipe>();
-  const agents = new Map<string, ResolvedRecipe>();
+  const canonical = new Map<string, ResolvedRecipeAgent>();
+  const agents = new Map<string, ResolvedRecipeAgent>();
   for (const [key, definition] of definitions) {
     let resolvedAgent = canonical.get(definition.name);
     if (!resolvedAgent) {
-      resolvedAgent = buildResolvedRecipe(
+      resolvedAgent = buildResolvedRecipeAgent(
         recipeDir,
         manifest,
         definitions,
@@ -291,8 +294,8 @@ export function resolveRecipeGraph(
 }
 
 /** Resolve recipe-owned inputs for one Pi session. */
-export function resolveRecipe(
-  opts: ResolveRecipeOptions
-): ResolvedRecipe {
+export function resolveRecipeAgent(
+  opts: ResolveRecipeAgentOptions
+): ResolvedRecipeAgent {
   return resolveRecipeGraph({ recipeDir: opts.recipeDir }).select(opts.agentName);
 }

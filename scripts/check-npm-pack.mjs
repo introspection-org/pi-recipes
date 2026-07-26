@@ -19,10 +19,7 @@ process.stdin.on("end", () => {
       path.startsWith("bindings/") ||
       path.startsWith("harbor/") ||
       path === "dist/testing.js" ||
-      path === "dist/testing.d.ts" ||
-      path === "docs/recipe-evals.md" ||
-      path === "docs/deployment-configuration.md" ||
-      path === "docs/runtime-library.md"
+      path === "dist/testing.d.ts"
   );
   if (forbidden.length > 0) {
     console.error("npm package includes a retired surface:");

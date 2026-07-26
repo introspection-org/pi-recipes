@@ -14,7 +14,7 @@ entrypoints remain source-compatible unless noted below.
 
 ```diff
 - import { resolveRecipe } from "@introspection-ai/pi-recipes/recipe";
-+ import { resolveRecipe } from "@introspection-ai/recipes/recipe";
++ import { resolveRecipeAgent } from "@introspection-ai/recipes/recipe";
 
 - import { createRecipeSession } from "@introspection-ai/pi-recipes/session";
 + import { createRecipeSession } from "@introspection-ai/recipes/session";

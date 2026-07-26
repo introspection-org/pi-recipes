@@ -95,7 +95,7 @@ import { resolveRecipeGraph } from "@introspection-ai/recipes/recipe";
 const graph = resolveRecipeGraph({
   recipeDir: "./my-recipe",
 });
-const recipe = graph.select("agent");
+const agent = graph.select("agent");
 ```
 
 ```ts

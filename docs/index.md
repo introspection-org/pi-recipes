@@ -26,7 +26,7 @@ task lifecycle, protocols, and deployment.
 Recipe source
     │
     ▼
-resolveRecipe()          format interpretation
+resolveRecipeAgent()          format interpretation
     │
     ▼
 createRecipeSession()    complete live Pi agent

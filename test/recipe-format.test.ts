@@ -14,7 +14,7 @@ import {
   readPiPackageManifest,
   validatePiPackageManifest,
 } from "../src/recipe-package.js";
-import { resolveRecipe } from "../src/recipe/resolve.js";
+import { resolveRecipeAgent } from "../src/recipe/resolve.js";
 
 const cleanups: Array<() => void> = [];
 
@@ -74,7 +74,7 @@ describe("Recipe Format", () => {
       join(recipeDir, "skills", "research", "SKILL.md"),
     ]);
 
-    const recipe = resolveRecipe({ recipeDir });
+    const recipe = resolveRecipeAgent({ recipeDir });
     expect(recipe.agentName).toBe("agent");
     expect(recipe.modelSpec).toBe("anthropic/claude-sonnet-4-5");
     expect(recipe.tools).toEqual(["read"]);
@@ -93,7 +93,7 @@ describe("Recipe Format", () => {
       })
     );
 
-    expect(() => resolveRecipe({ recipeDir })).toThrow(
+    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
       /declares agents resource outside the package/
     );
   });
