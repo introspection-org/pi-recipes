@@ -359,14 +359,17 @@ function guardContent(
   };
 }
 
-function errorText(result: Recordish): string {
-  const text = (Array.isArray(result.content) ? result.content : [])
-    .map((value) => asRecord(value))
+function errorText(
+  result: Recordish,
+  env: NodeJS.ProcessEnv
+): string {
+  const guarded = guardContent(contentBlocks(result, undefined), env);
+  const text = guarded.content
     .filter(
-      (value): value is Recordish =>
-        value?.type === "text" && typeof value.text === "string"
+      (value): value is { type: "text"; text: string } =>
+        value.type === "text"
     )
-    .map((value) => String(value.text))
+    .map((value) => value.text)
     .join("\n")
     .trim();
   return text || "MCP tool execution failed.";
@@ -384,7 +387,7 @@ function validateResult(
     );
   }
   if (result.isError === true) {
-    throw new Error(errorText(result));
+    throw new Error(errorText(result, env));
   }
   const structuredContent = asRecord(result.structuredContent);
   if (tool.validateOutput) {

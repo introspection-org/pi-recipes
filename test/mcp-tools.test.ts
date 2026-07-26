@@ -305,6 +305,14 @@ describe("MCP tools mode", () => {
     ).rejects.toThrow("upstream denied access");
 
     mocks.callMcpDaemonTool.mockResolvedValueOnce({
+      isError: true,
+      content: [{ type: "text", text: "error line\n".repeat(100) }],
+    });
+    await expect(
+      (tool.execute as any)("call-4-large", {}, undefined, undefined)
+    ).rejects.toThrow("[Output truncated:");
+
+    mocks.callMcpDaemonTool.mockResolvedValueOnce({
       content: [{ type: "text", text: "line\n".repeat(100) }],
     });
     const result = await (tool.execute as any)(

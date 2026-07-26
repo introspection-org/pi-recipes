@@ -35,10 +35,30 @@ import {
   materializeSessionMcpCli,
   mcpSessionAllowsTool,
   nativeMcpClientPath,
+  isolateMcpEnvironment,
+  restoreMcpEnvironment,
+  snapshotMcpEnvironment,
   stopMcpDaemon,
   type McpSessionConfig,
   type RecipePackageManifest,
 } from "../src/index.js";
+
+describe("MCP environment leasing", () => {
+  it("preserves daemon generation across isolation and restoration", () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      PI_RECIPES_MCP_DAEMON_GENERATION: "host-generation",
+    };
+    const snapshot = snapshotMcpEnvironment(env);
+
+    isolateMcpEnvironment(env);
+    expect(env.PI_RECIPES_MCP_DAEMON_GENERATION).toBeUndefined();
+
+    env.PI_RECIPES_MCP_DAEMON_GENERATION = "leased-generation";
+    restoreMcpEnvironment(env, snapshot);
+    expect(env.PI_RECIPES_MCP_DAEMON_GENERATION).toBe("host-generation");
+  });
+});
 
 function recipeManifest(
   recipeDir: string,
