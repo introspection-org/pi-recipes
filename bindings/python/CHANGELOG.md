@@ -6,6 +6,20 @@
 
 * return structured recipe judge diagnostics from the shared validation core
 
+## [0.9.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-python-v0.8.0...pi-recipe-check-python-v0.9.0) (2026-07-26)
+
+
+### Miscellaneous Chores
+
+* **pi-recipe-check-python:** Synchronize pi-recipe-check versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * pi-recipe-check bumped from 0.8.0 to 0.9.0
+
 ## [0.8.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-python-v0.7.0...pi-recipe-check-python-v0.8.0) (2026-07-21)
 
 

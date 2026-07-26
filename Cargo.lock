@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "pi-recipe-check"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "pi-recipe-check-python"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "pi-recipe-check",
  "pyo3",

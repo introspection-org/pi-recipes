@@ -6,6 +6,17 @@
 
 * validate the portable authored judge contract in `check_recipe_files`
 
+## [0.9.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.8.0...pi-recipe-check-v0.9.0) (2026-07-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* define Recipes as the open format and portable runtime for Pi agents ([#130](https://github.com/introspection-org/pi-recipes/issues/130))
+
+### Features
+
+* define Recipes as the open format and portable runtime for Pi agents ([#130](https://github.com/introspection-org/pi-recipes/issues/130)) ([bee99ed](https://github.com/introspection-org/pi-recipes/commit/bee99edaf26489131d96fb28d313f3d5c6abb179))
+
 ## [0.8.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.7.0...pi-recipe-check-v0.8.0) (2026-07-21)
 
 
