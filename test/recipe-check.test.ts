@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -79,6 +80,30 @@ describe("shared Recipe validator bridge", () => {
     );
 
     await expect(checkRecipeAtLoad(root, env)).resolves.toMatchObject({
+      valid: true,
+      profile: "local",
+    });
+  });
+
+  it("includes symlinked Recipe resources without following cycles", async () => {
+    const root = recipe(
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/claude-haiku-4-5",
+        "tools: []",
+        "skills:",
+        "  - ../linked-skill",
+      ].join("\n")
+    );
+    const skill = join(root, "skill-source");
+    mkdirSync(skill);
+    writeFileSync(join(skill, "SKILL.md"), "# Linked skill\n");
+    symlinkSync(skill, join(root, "linked-skill"), "dir");
+    symlinkSync(root, join(skill, "cycle"), "dir");
+
+    const report = await checkRecipeAtLoad(root, env);
+    expect(report, JSON.stringify(report.diagnostics, null, 2)).toMatchObject({
       valid: true,
       profile: "local",
     });

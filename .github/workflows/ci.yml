@@ -68,3 +68,49 @@ jobs:
       - run: test -x vendor/mcp-client/linux-arm64/mcp-client
 
       - run: test -x vendor/recipe-check/linux-arm64/recipe-check
+
+  native-validator-portability:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-musl
+            arch: x64
+            target: x86_64-unknown-linux-musl
+            executable: recipe-check
+          - os: windows-latest
+            platform: win32
+            arch: x64
+            target: x86_64-pc-windows-msvc
+            executable: recipe-check.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install musl linker
+        if: ${{ matrix.platform == 'linux-musl' }}
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - run: cargo build --release --target ${{ matrix.target }} -p pi-recipe-check --bin recipe-check
+
+      - run: node scripts/package-recipe-check.mjs
+        env:
+          RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
+          RECIPE_CHECK_ARCH: ${{ matrix.arch }}
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+
+      - name: Verify packaged validator
+        shell: node {0}
+        run: |
+          const { existsSync } = require("node:fs");
+          const path = "vendor/recipe-check/${{ matrix.platform }}-${{ matrix.arch }}/${{ matrix.executable }}";
+          if (!existsSync(path)) throw new Error(`missing ${path}`);

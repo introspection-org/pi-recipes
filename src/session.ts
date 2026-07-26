@@ -215,17 +215,51 @@ type MutableAgentSession = {
   agent?: { state?: { tools?: Array<{ parameters?: unknown }> } };
 };
 
-function stripAdditionalProperties(value: unknown): unknown {
+type SchemaPosition = "schema" | "schema-map" | "literal";
+
+function schemaChildPosition(
+  position: SchemaPosition,
+  key: PropertyKey
+): SchemaPosition {
+  if (position === "schema-map") return "schema";
+  if (position === "literal") return "literal";
+  if (
+    key === "properties" ||
+    key === "patternProperties" ||
+    key === "$defs" ||
+    key === "definitions" ||
+    key === "dependentSchemas"
+  ) {
+    return "schema-map";
+  }
+  if (
+    key === "default" ||
+    key === "const" ||
+    key === "examples" ||
+    key === "enum"
+  ) {
+    return "literal";
+  }
+  return "schema";
+}
+
+function stripAdditionalProperties(
+  value: unknown,
+  position: SchemaPosition = "schema"
+): unknown {
   if (value === null || typeof value !== "object") return value;
   const clone: object = Array.isArray(value)
     ? []
     : Object.create(Object.getPrototypeOf(value));
   for (const key of Reflect.ownKeys(value)) {
-    if (key === "additionalProperties") continue;
+    if (position === "schema" && key === "additionalProperties") continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor) continue;
     if ("value" in descriptor) {
-      descriptor.value = stripAdditionalProperties(descriptor.value);
+      descriptor.value = stripAdditionalProperties(
+        descriptor.value,
+        schemaChildPosition(position, key)
+      );
     }
     Object.defineProperty(clone, key, descriptor);
   }
