@@ -615,7 +615,8 @@ async function createSessionForAgent(
           await loadRecipeExtensionFactory(recipe.recipeDir, extensionPath),
           recipeExtensionContext,
           recipeRegistrations,
-          extensionPath
+          extensionPath,
+          new Set(recipe.tools)
         )
       );
     }
