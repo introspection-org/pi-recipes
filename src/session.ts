@@ -16,6 +16,11 @@ import {
   type InlineExtension,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import {
+  instrumentSession,
+  type AgentMeta,
+  type InstrumentSessionOptions,
+} from "@introspection-sdk/introspection-pi";
 import { createAgentTool, type AgentRunController } from "./agent-tool.js";
 import {
   clearMcpCatalogPreload,
@@ -38,7 +43,6 @@ import {
   applyRecipeAgentModelConfigToSession,
 } from "./recipe-model.js";
 import { resolveRecipe, type ResolvedRecipe } from "./recipe/resolve.js";
-import { instrumentRecipeSession } from "./tracing.js";
 
 export { expectedProviderEnvVars } from "./provider-env.js";
 
@@ -113,11 +117,20 @@ export interface CreateRecipeSessionOptions {
   /** Tap on `session.subscribe`, detached at dispose. */
   onEvent?: (event: AgentSessionEvent) => void;
   /**
-   * Span identity when recipe tracing is initialized (see
-   * `initRecipeTracing`): `conversation_id` groups this session's gen_ai
-   * spans. Default: a fresh UUID per session.
+   * Attach GenAI semantic-convention instrumentation with a host-owned OTel
+   * tracer. Recipes creates no provider, processor, exporter, or global
+   * context; those remain the host's responsibility.
    */
-  tracing?: { conversationId?: string };
+  otel?: RecipeSessionOtelOptions;
+}
+
+export interface RecipeSessionOtelOptions
+  extends Omit<InstrumentSessionOptions, "meta"> {
+  /**
+   * Span identity. Missing fields derive from the resolved Recipe; a fresh
+   * conversation id is generated per session by default.
+   */
+  meta?: Partial<AgentMeta>;
 }
 
 export interface RecipeSessionHandle {
@@ -324,6 +337,18 @@ export async function createRecipeSession(
   });
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
+  const otel = opts.otel
+    ? {
+        ...opts.otel,
+        meta: {
+          conversationId: opts.otel.meta?.conversationId ?? randomUUID(),
+          agentId:
+            opts.otel.meta?.agentId ??
+            `${recipe.manifest.name}/${recipe.agentName}`,
+          agentName: opts.otel.meta?.agentName ?? recipe.agentName,
+        },
+      }
+    : undefined;
 
   // Model + credentials, fail-closed before any MCP runtime starts.
   const modelSpec = opts.model ?? recipe.modelSpec;
@@ -394,6 +419,7 @@ export async function createRecipeSession(
           ...(opts.credentials ? { credentials: opts.credentials } : {}),
           concurrency: opts.subagentLimits?.concurrency,
           depth: opts.subagentLimits?.depth,
+          ...(otel ? { otel } : {}),
         })
       : inertRunController();
   }
@@ -423,15 +449,9 @@ export async function createRecipeSession(
 
   const unsubscribe = opts.onEvent ? session.subscribe(opts.onEvent) : undefined;
 
-  // GenAI-semconv spans when the host initialized recipe tracing (or its
-  // own global provider is registered through instrumentRecipeSession).
-  const detachTelemetry = instrumentRecipeSession(session, {
-    meta: {
-      conversationId: opts.tracing?.conversationId ?? randomUUID(),
-      agentId: `${recipe.manifest.name}/${recipe.agentName}`,
-      agentName: recipe.agentName,
-    },
-  });
+  const instrumentation = otel
+    ? instrumentSession(session, otel)
+    : undefined;
 
   let disposed = false;
   return {
@@ -458,7 +478,7 @@ export async function createRecipeSession(
         // An idle session has nothing to abort.
       }
       session.dispose();
-      detachTelemetry?.();
+      instrumentation?.detach();
       if (mcp.materialized) {
         clearMcpCatalogPreload(env);
         await stopMcpDaemon(env);

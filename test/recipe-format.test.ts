@@ -119,6 +119,7 @@ describe("npm package boundary", () => {
     expect(pkg.bin).toBeUndefined();
     expect(pkg.exports).not.toHaveProperty("./serve");
     expect(pkg.exports).not.toHaveProperty("./agui");
+    expect(pkg.exports).not.toHaveProperty("./tracing");
     expect(pkg.exports).toHaveProperty("./session");
     expect(pkg.exports).toHaveProperty("./run");
     expect(pkg.exports).toHaveProperty("./test-utils");

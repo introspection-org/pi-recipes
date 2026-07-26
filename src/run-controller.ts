@@ -9,6 +9,7 @@ import { autoResolveInteractions } from "./interactions.js";
 import { promptResultText } from "./child-agent.js";
 import type {
   CreateRecipeSessionOptions,
+  RecipeSessionOtelOptions,
   RecipeSessionHandle,
 } from "./session.js";
 
@@ -27,6 +28,8 @@ export interface InProcessRunControllerOptions {
   depth?: number;
   /** Internal: this controller's own depth (root = 0). */
   currentDepth?: number;
+  /** Root session instrumentation inherited by in-process child sessions. */
+  otel?: RecipeSessionOtelOptions;
   /** Child session factory; defaults to `createRecipeSession`. Test/DI seam. */
   sessionFactory?: (
     options: CreateRecipeSessionOptions
@@ -119,6 +122,18 @@ export function createInProcessRunController(
           cwd: opts.cwd,
           env,
           ...(opts.credentials ? { credentials: opts.credentials } : {}),
+          ...(opts.otel
+            ? {
+                otel: {
+                  ...opts.otel,
+                  // Keep one conversation across the agent tree; let each
+                  // child derive its own Recipe agent id and name.
+                  meta: {
+                    conversationId: opts.otel.meta?.conversationId,
+                  },
+                },
+              }
+            : {}),
           // The parent materialized the MCP session for itself and its
           // visible subagents; children reuse that runtime.
           mcpMode: "inherit",

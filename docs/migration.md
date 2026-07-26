@@ -20,8 +20,9 @@ entrypoints remain source-compatible unless noted below.
 + import { createRecipeSession } from "@introspection-ai/recipes/session";
 ```
 
-The same replacement applies to `/run`, `/pi`, `/interactions`, `/tracing`,
-and `/test-utils`.
+The same replacement applies to `/run`, `/pi`, `/interactions`, and
+`/test-utils`. The former `/tracing` entrypoint is removed: pass a host-owned
+tracer through `createRecipeSession({ otel })` instead.
 
 ## Pi extension
 

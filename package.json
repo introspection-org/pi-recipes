@@ -63,10 +63,6 @@
 		"./inspect": {
 			"types": "./dist/inspect.d.ts",
 			"import": "./dist/inspect.js"
-		},
-		"./tracing": {
-			"types": "./dist/tracing.d.ts",
-			"import": "./dist/tracing.js"
 		}
 	},
 	"pi": {
@@ -86,12 +82,8 @@
 		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client"
 	},
 	"dependencies": {
-		"@introspection-sdk/introspection-pi": "^0.12.0",
+		"@introspection-sdk/introspection-pi": "^0.13.0",
 		"@opentelemetry/api": "^1.9.1",
-		"@opentelemetry/context-async-hooks": "^2.10.0",
-		"@opentelemetry/exporter-trace-otlp-proto": "^0.213.0",
-		"@opentelemetry/resources": "^2.10.0",
-		"@opentelemetry/sdk-trace-base": "^2.10.0",
 		"mcporter": "0.12.3",
 		"yaml": "^2.9.0"
 	},

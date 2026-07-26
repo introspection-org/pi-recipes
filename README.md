@@ -109,6 +109,7 @@ const handle = await createRecipeSession({
   credentials,
   mcpBindings,
   sessionManager,
+  otel: { tracer, meta: { conversationId } },
 });
 
 await handle.session.prompt("Start the task");
@@ -143,7 +144,6 @@ tests.
 - `@introspection-ai/recipes/pi` — shared subagent tool and controller types
 - `@introspection-ai/recipes/interactions` — portable user-input and approval contract
 - `@introspection-ai/recipes/inspect` — derive host requirements
-- `@introspection-ai/recipes/tracing` — optional OpenTelemetry instrumentation
 - `@introspection-ai/recipes/test-utils` — host conformance cases
 
 The package intentionally has no `recipes` executable and no generic HTTP

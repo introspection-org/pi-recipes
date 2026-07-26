@@ -20,6 +20,18 @@ import {
 } from "../src/session.js";
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
 
+const detachTelemetry = vi.hoisted(() => vi.fn());
+const instrumentSession = vi.hoisted(() =>
+  vi.fn(() => ({ detach: detachTelemetry }))
+);
+
+vi.mock("@introspection-sdk/introspection-pi", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@introspection-sdk/introspection-pi")
+  >()),
+  instrumentSession,
+}));
+
 class MockAssistantStream extends EventStream<
   AssistantMessageEvent,
   AssistantMessage
@@ -126,6 +138,8 @@ describe("createRecipeSession", () => {
       await handle.dispose().catch(() => {});
     }
     for (const cleanup of cleanups.splice(0)) cleanup();
+    instrumentSession.mockClear();
+    detachTelemetry.mockClear();
   });
 
   function fixture(options?: Parameters<typeof writeFixtureRecipe>[0]) {
@@ -281,6 +295,37 @@ describe("createRecipeSession", () => {
     expect(events).toContain("agent_start");
     expect(events).toContain("agent_end");
   });
+
+  it("attaches a host-owned OTel tracer and detaches it on dispose", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const tracer = {} as never;
+    const handle = await open({
+      recipeDir,
+      cwd: workspaceDir,
+      otel: {
+        tracer,
+        runSpans: false,
+        meta: { conversationId: "conversation-1" },
+      },
+    });
+
+    expect(instrumentSession).toHaveBeenCalledOnce();
+    expect(instrumentSession).toHaveBeenCalledWith(
+      handle.session,
+      expect.objectContaining({
+        tracer,
+        runSpans: false,
+        meta: {
+          conversationId: "conversation-1",
+          agentId: "conformance-fixture/agent",
+          agentName: "agent",
+        },
+      })
+    );
+
+    await handle.dispose();
+    expect(detachTelemetry).toHaveBeenCalledOnce();
+  });
 });
 
 describe("runRecipe", () => {
@@ -409,11 +454,24 @@ describe("in-process run controller", () => {
   it("runs a child through an injected session factory", async () => {
     const { recipeDir, workspaceDir } = fixture();
     let scripted: RecipeSessionHandle | null = null;
+    let childOptions:
+      | Parameters<typeof createRecipeSession>[0]
+      | undefined;
+    const tracer = {} as never;
     const controller = createInProcessRunController({
       recipeDir,
       cwd: workspaceDir,
       env: cleanEnv(),
+      otel: {
+        tracer,
+        meta: {
+          conversationId: "conversation-tree",
+          agentId: "root-id",
+          agentName: "root",
+        },
+      },
       sessionFactory: async (options) => {
+        childOptions = options;
         const handle = await createRecipeSession({
           ...options,
           credentials: await credentialStore(),
@@ -427,6 +485,12 @@ describe("in-process run controller", () => {
     const settled = await controller.wait(run.agent_run_id);
     expect(settled.status).toBe("completed");
     expect(settled.output).toContain("child says hi");
+    expect(childOptions?.otel).toMatchObject({
+      tracer,
+      meta: { conversationId: "conversation-tree" },
+    });
+    expect(childOptions?.otel?.meta?.agentId).toBeUndefined();
+    expect(childOptions?.otel?.meta?.agentName).toBeUndefined();
     await controller.close(run.agent_run_id);
     expect(scripted).not.toBeNull();
   });

@@ -55,6 +55,13 @@ const handle = await createRecipeSession({
   systemPrompt,
   onDiagnostics,
   onEvent,
+  otel: {
+    tracer,
+    meter,
+    meta: { conversationId },
+    runSpans: false,
+    getParentContext: () => currentTurnContext,
+  },
 });
 ```
 
@@ -73,7 +80,7 @@ The returned `RecipeSessionHandle` exposes:
 - `session` — Pi prompt, steer, follow-up, abort, messages, and events;
 - `recipe` — the resolved portable definition;
 - `runs` — the subagent run controller;
-- `dispose()` — child, session, tracing, and MCP cleanup.
+- `dispose()` — child, session, instrumentation, and MCP cleanup.
 
 Host injection is intentional. A managed host can supply durable session state,
 cross-process subagent execution, inline endpoint bindings, platform
@@ -110,14 +117,25 @@ const requirements = inspectRecipe(recipeDir);
 Inspection derives agents, providers, expected credential variables, required
 and optional MCP servers, and resource counts without creating a session.
 
-## Tracing
+## OpenTelemetry
 
-The tracing module attaches OpenTelemetry GenAI semantic-convention spans to
-Recipe sessions. Nothing exports by default.
+Pass a tracer through `otel` to attach the JS SDK's OpenTelemetry GenAI
+semantic-convention instrumentation to the session. Recipes derives default
+agent identity from the resolved package and generates a conversation id when
+the host does not provide one. The default in-process subagent controller
+inherits that conversation id while each child derives its own Recipe agent
+identity. Injected run controllers own their child-session instrumentation.
 
-Standalone hosts can initialize the standard `OTEL_EXPORTER_OTLP_*` pipeline.
-Hosts with an existing provider call `instrumentRecipeSession` with their own
-tracer. Provider ownership and export policy stay with the host.
+Recipes does not create or register an OTel provider, processor, exporter, or
+global context manager. The host owns that pipeline and its content policy. A
+standalone host can therefore use the same standard OTLP exporter for
+Braintrust, Langfuse, an OTel Collector, or another compatible backend. A host
+that needs structure-only infrastructure traces can wrap that exporter with
+`GenAiContentScrubbingExporter` from
+`@introspection-sdk/introspection-pi`.
+
+Short-lived hosts must flush their own provider after `runRecipe` completes;
+long-lived hosts should flush and shut it down with the host lifecycle.
 
 ## Host conformance
 
