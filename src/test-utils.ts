@@ -1,10 +1,10 @@
 /**
- * Host conformance suite for the recipe engine.
+ * Host conformance suite for Recipe sessions.
  *
  * A host that adopts `createRecipeSession` with its own injected pieces —
  * credential store, synthesized MCP bindings, run controller — runs these
  * cases in its own CI. Passing the suite is what "supported host" means: the
- * engine's contract cannot drift from its consumers silently.
+ * session contract cannot drift from its consumers silently.
  *
  * The cases are runner-agnostic: each is a `{ name, run }` pair that throws
  * on failure. In vitest:
@@ -23,11 +23,10 @@ import type {
   RecipeSessionHandle,
 } from "./session.js";
 
-export interface RecipeEngineHostAdapter {
+export interface RecipeHost {
   /**
-   * Create a session the way the host's runtime does — through its own
-   * engine invocation, with the host's default injections applied. The
-   * options here layer the suite's fixture on top.
+   * Create a session with the host's default injections applied. The options
+   * here layer the suite's fixture on top.
    */
   createSession(
     options: CreateRecipeSessionOptions
@@ -133,7 +132,7 @@ async function testCredentialStore(): Promise<InMemoryCredentialStore> {
 }
 
 export function hostConformanceCases(
-  host: RecipeEngineHostAdapter
+  host: RecipeHost
 ): HostConformanceCase[] {
   return [
     {

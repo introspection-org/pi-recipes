@@ -1,3 +1,3 @@
 [workspace]
-members = ["bindings/python", "crates/pi-mcp-client", "crates/pi-recipe-check"]
+members = ["crates/pi-mcp-client", "crates/pi-recipe-check"]
 resolver = "2"

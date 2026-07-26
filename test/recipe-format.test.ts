@@ -123,8 +123,13 @@ describe("npm package boundary", () => {
     expect(pkg.exports).toHaveProperty("./session");
     expect(pkg.exports).toHaveProperty("./run");
     expect(pkg.exports).toHaveProperty("./test-utils");
-    expect(pkg.files).not.toContain("harbor/pi_recipe_agent.py");
     expect(existsSync(join(root, "src", "cli.ts"))).toBe(false);
     expect(existsSync(join(root, "src", "serve.ts"))).toBe(false);
+    expect(
+      existsSync(join(root, "crates", "pi-recipe-check", "src", "main.rs"))
+    ).toBe(false);
+    expect(existsSync(join(root, "bindings"))).toBe(false);
+    expect(existsSync(join(root, "harbor"))).toBe(false);
+    expect(existsSync(join(root, "docs", "recipe-evals.md"))).toBe(false);
   });
 });

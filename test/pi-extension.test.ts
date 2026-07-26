@@ -4,7 +4,7 @@ import { delimiter, join } from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createRecipesExtension } from "../src/pi-extension.js";
-import { createMockExtensionAPI } from "../src/testing.js";
+import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 function extensionContext(cwd: string, notify = vi.fn()) {
   return {
@@ -78,7 +78,7 @@ function writeRecipe(root: string) {
   return recipeDir;
 }
 
-describe("Pi recipes launch extension", () => {
+describe("Recipes extension for Pi", () => {
   it("registers recipe launch flags", async () => {
     const pi = createMockExtensionAPI();
     createRecipesExtension()(pi);

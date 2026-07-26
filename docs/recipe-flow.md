@@ -1,7 +1,7 @@
 # Recipe workflow
 
 The `introspection` CLI owns the developer workflow. The Recipes npm package is
-the format implementation and Pi runtime extension; it does not install a
+the format implementation, Host API, and Pi extension; it does not install a
 second CLI.
 
 ## Create and run locally
@@ -15,10 +15,10 @@ introspection local
 
 `introspection init` scaffolds a Recipe and ensures compatible versions of Pi
 and the Recipes extension are present. `introspection check` runs the Recipe
-Format validator. `introspection local` resolves the repository's local runtime
+Format validator. `introspection local` resolves the repository's project
 manifest and launches Pi with the Recipe path.
 
-The local path requires no login and no Introspection cloud runtime.
+The local path requires no login or Introspection cloud service.
 
 ## Run Pi directly
 
@@ -37,5 +37,5 @@ The Recipe remains unchanged across hosts. A host calls
 `createRecipeSession()` and supplies its own credentials, task lifecycle,
 persistence, isolation, and protocol surface.
 
-Use Introspection when you want the managed host. Use a host adapter when you
-want to operate the same Recipe on another platform.
+Use Introspection when you want the managed host. Otherwise, integrate the Host
+API with the platform that will operate the Recipe.

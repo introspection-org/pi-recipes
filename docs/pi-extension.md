@@ -74,9 +74,9 @@ TypeScript extension sources declared by `package.json#pi.extensions` are
 loaded relative to the Recipe. Agent-level `extensions.include` and
 `extensions.exclude` select which declared extensions participate.
 
-Recipe extensions can import runtime helpers from `@introspection-ai/recipes`.
+Recipe extensions can import shared APIs from `@introspection-ai/recipes`.
 The loader also aliases the previous `@introspection-ai/pi-recipes` name during
-the migration period so existing Recipe source shares the same runtime state.
+the migration period so existing Recipe source shares the same module state.
 
 ## Validation
 
@@ -86,7 +86,7 @@ Run:
 introspection check
 ```
 
-The runtime also performs the minimum validation required to fail safely before
+Session construction also performs the minimum validation required to fail safely before
 constructing a session. Static authoring diagnostics remain the CLI validator's
 job.
 

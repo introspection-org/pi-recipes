@@ -63,7 +63,6 @@ function recipeManifest(
         },
       })),
     },
-    evals: { suites: [] },
   };
 }
 

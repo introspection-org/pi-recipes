@@ -18,7 +18,7 @@ package policy  ∩  active/visible-agent selections  =  authorized tools
 
 ## 1. Declare the package boundary
 
-`package.json#pi.mcp` declares the servers a recipe may use and the maximum
+`package.json#pi.mcp` declares the servers a Recipe may use and the maximum
 tool set available from each one. It can also reference portable MCP manifests.
 
 ```json
@@ -99,8 +99,8 @@ pi --recipe . --agent agent
 
 Do not commit or distribute `.pi/mcp.local.json`; publish validation rejects
 local configuration. Commit `.pi/mcp.local.example.json` when a binding template
-is helpful. A hosted runtime binds its own endpoint and credential system to the
-same shape. A binding overrides a package-manifest endpoint with the same id,
+is helpful. A host binds its own endpoint and credential system to the same
+shape. A binding overrides a package-manifest endpoint with the same id,
 but a server that the package does not permit, or that none of the active/visible
 agents permit, remains unavailable.
 
@@ -122,5 +122,5 @@ mcp call contacts.search_contacts query="Ada Lovelace"
 
 The command is headless and cannot add servers, mutate configuration, or start
 browser authentication. See [MCP authentication](mcp-auth.md) for OAuth and
-hosted binding details, and [Recipes extension](pi-extension.md#mcp) for the
-full runtime contract.
+hosted binding details, and [Recipes extension](pi-extension.md) for the
+full session contract.

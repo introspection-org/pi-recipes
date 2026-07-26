@@ -1,4 +1,3 @@
 {
-  "crates/pi-recipe-check": "0.8.0",
-  "bindings/python": "0.8.0"
+  "crates/pi-recipe-check": "0.8.0"
 }

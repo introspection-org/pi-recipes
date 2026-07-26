@@ -578,7 +578,7 @@ export function validateResolvedRecipeAgentDefinition(opts: {
         ])
       )
     : undefined;
-  // Rust recipe-check owns detailed authoring diagnostics. This runtime guard
+  // `introspection check` owns detailed authoring diagnostics. This session guard
   // only ensures malformed raw policies fail closed before agent startup.
   const invalidMcpPolicy = rawMcpChainInvalid(agentName) ||
     Object.entries(mcp ?? {}).some(([serverId, selection]) => {

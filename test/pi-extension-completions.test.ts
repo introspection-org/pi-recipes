@@ -11,7 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createRecipesExtension } from "../src/pi-extension.js";
-import { createMockExtensionAPI, type MockExtensionAPI } from "../src/testing.js";
+import {
+  createMockExtensionAPI,
+  type MockExtensionAPI,
+} from "./helpers/mock-extension.js";
 
 function extensionContext(cwd: string, opts: { isIdle?: () => boolean } = {}) {
   const authStorage = { kind: "shared-auth-storage" };

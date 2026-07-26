@@ -7,7 +7,7 @@ The project and npm package are now **Recipes**:
 Pi Recipes                    →  Recipes
 ```
 
-The artifact remains **a Recipe**. The package format and focused runtime
+The artifact remains **a Recipe**. The package format and focused Host API
 entrypoints remain source-compatible unless noted below.
 
 ## Package imports
@@ -35,8 +35,8 @@ The Recipe extension factory is now `createRecipesExtension`.
 `createPiRecipesExtension` remains as a deprecated source-compatible alias.
 
 Recipe-owned extensions that still import
-`@introspection-ai/pi-recipes/interactions` are aliased to the current runtime
-while they migrate.
+`@introspection-ai/pi-recipes/interactions` are aliased to the current
+module while they migrate.
 
 ## CLI
 
@@ -62,9 +62,5 @@ auth, and deployment adapters belong to the host.
 
 ## Validation
 
-The root npm package no longer downloads a platform-specific
-`recipe-check` executable. Validation remains available through:
-
-- `introspection check`;
-- the `pi-recipe-check` Rust crate and binary;
-- the `pi-recipe-check` Python package.
+The root npm package no longer downloads or exposes a `recipe-check`
+executable. Use `introspection check`.

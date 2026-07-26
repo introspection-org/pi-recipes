@@ -92,13 +92,13 @@ export interface CreateRecipeSessionOptions {
   settingsManager?: SettingsManager;
   /** Host extensions appended after the recipe's own extensions. */
   extensionFactories?: ExtensionFactory[];
-  /** Host event bus shared with the surrounding runtime. */
+  /** Host event bus shared with the surrounding application. */
   eventBus?: EventBus;
   /** Host-owned tools. Recipe tool selection still decides which names are live. */
   customTools?: ToolDefinition[];
   /**
    * Subagent run controller. Default: an in-process controller spawning
-   * children through this same rung. Pass `null` to disable the `agent` tool
+   * child Recipe sessions. Pass `null` to disable the `agent` tool
    * even when the recipe declares subagents.
    */
   runController?: AgentRunController | null;
@@ -259,7 +259,7 @@ export class RecipeMcpEnvironmentInUseError extends Error {
 /**
  * Everything `createRecipeSession` fail-closes on, without creating a
  * session or starting MCP: recipe resolution, model lookup, credentials.
- * Hosts with a boot phase (the serve layer) run this once to fail fast.
+ * Hosts with a boot phase can run this once to fail fast.
  */
 export async function preflightRecipeSession(
   opts: CreateRecipeSessionOptions
@@ -290,8 +290,8 @@ export async function preflightRecipeSession(
 
 /**
  * Materialize the session MCP runtime for a recipe scope into `env` at
- * `cwd`. Exposed for hosts that materialize once per process (the serve
- * layer) and create their sessions with `mcpMode: "inherit"`.
+ * `cwd`. Exposed for hosts that materialize once per process and create their
+ * sessions with `mcpMode: "inherit"`.
  */
 export async function materializeRecipeSessionMcp(
   recipe: ResolvedRecipe,

@@ -47,9 +47,9 @@ class RunNotFoundError extends Error {
 }
 
 /**
- * The default rung-3 subagent controller: children are recipe sessions
- * created through `createRecipeSession` in this process, with bounded
- * concurrency and delegation depth.
+ * The default in-process subagent controller. Children are Recipe sessions
+ * created through `createRecipeSession`, with bounded concurrency and
+ * one-level delegation.
  *
  * Recovery rule every controller must honor: a child whose agent profile no
  * longer exists errors the parent's `agent` tool call — it never wedges it.

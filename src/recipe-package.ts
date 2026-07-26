@@ -52,7 +52,7 @@ export function parseRecipeMcpToolSelection(
   return selection;
 }
 
-/** Minimal runtime guard; recipe-check owns detailed authoring diagnostics. */
+/** Minimal session guard; `introspection check` owns authoring diagnostics. */
 export function isValidRecipeMcpToolSelection(
   selection: RecipeMcpToolSelection
 ): boolean {
@@ -73,15 +73,6 @@ export interface RecipePackageMcpConfig {
   servers: RecipePackageMcpServer[];
 }
 
-export type RecipeEvalSuite =
-  | { name: string; type: "registry"; dataset: string; version: string }
-  | { name: string; type: "git"; repo: string; rev: string; dataset: string };
-
-export interface RecipeEvalsConfig {
-  suites: RecipeEvalSuite[];
-  raw?: unknown;
-}
-
 export interface RecipePackageManifest {
   name: string;
   version: string;
@@ -89,7 +80,6 @@ export interface RecipePackageManifest {
   path: string;
   resources: RecipePackageResources;
   mcp: RecipePackageMcpConfig;
-  evals: RecipeEvalsConfig;
 }
 
 export type PiPackageResources = RecipePackageResources;
@@ -142,12 +132,6 @@ function emptyMcpConfig(): RecipePackageMcpConfig {
   return {
     manifests: [],
     servers: [],
-  };
-}
-
-function emptyEvalsConfig(): RecipeEvalsConfig {
-  return {
-    suites: [],
   };
 }
 
@@ -316,232 +300,6 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
   return { manifests, servers };
 }
 
-function withRawEvalsConfig(
-  config: RecipeEvalsConfig,
-  raw: unknown
-): RecipeEvalsConfig {
-  Object.defineProperty(config, "raw", {
-    value: raw,
-    enumerable: false,
-    configurable: false,
-  });
-  return config;
-}
-
-export function parseEvalsConfig(
-  value: unknown,
-  present = value !== undefined
-): RecipeEvalsConfig {
-  if (!present) return emptyEvalsConfig();
-  const data = asRecord(value);
-  const rawSuites = Array.isArray(data.suites) ? data.suites : [];
-  const suites: RecipeEvalSuite[] = [];
-
-  for (const raw of rawSuites) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-    const suite = raw as Record<string, unknown>;
-    const name = stringValue(suite.name);
-    const type = stringValue(suite.type);
-    if (!name) continue;
-
-    if (type === "registry") {
-      const dataset = stringValue(suite.dataset);
-      const version = stringValue(suite.version);
-      if (!dataset || !version) continue;
-      suites.push({ name, type, dataset, version });
-    } else if (type === "git") {
-      const repo = stringValue(suite.repo);
-      const rev = stringValue(suite.rev);
-      const dataset = stringValue(suite.dataset);
-      if (!repo || !rev || !dataset) continue;
-      suites.push({
-        name,
-        type,
-        repo,
-        rev,
-        dataset,
-      });
-    }
-  }
-
-  return withRawEvalsConfig({ suites }, value);
-}
-
-function fixedRegistryTag(value: string): boolean {
-  const tag = value.trim();
-  if (!tag || tag.toLowerCase() === "latest") return false;
-  if (/\s/.test(tag) || /[\^~<>=*|]/.test(tag)) return false;
-  return !/(^|[._-])x($|[._-])/i.test(tag);
-}
-
-function fixedGitRev(value: string): boolean {
-  return /^[0-9a-fA-F]{7,40}$/.test(value);
-}
-
-export function validateRecipeEvalsConfig(
-  evals: RecipeEvalsConfig,
-  packageName?: string
-): RecipeValidationReport {
-  const findings: RecipeValidationFinding[] = [];
-  const raw = evals.raw;
-  const data = raw === undefined ? { suites: evals.suites } : asRecord(raw);
-  const rawSuites = Array.isArray(data.suites) ? data.suites : [];
-
-  if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) {
-    findings.push(
-      finding(
-        "error",
-        "evals.suite_invalid",
-        "pi.evals must be an object with a suites array",
-        packageName
-      )
-    );
-    return { valid: false, findings };
-  }
-
-  if (data.suites !== undefined && !Array.isArray(data.suites)) {
-    findings.push(
-      finding(
-        "error",
-        "evals.suite_invalid",
-        "pi.evals.suites must be an array",
-        packageName
-      )
-    );
-    return { valid: false, findings };
-  }
-
-  const seenNames = new Map<string, number>();
-  for (const [index, rawSuite] of rawSuites.entries()) {
-    const label = `pi.evals.suites[${index}]`;
-    if (!rawSuite || typeof rawSuite !== "object" || Array.isArray(rawSuite)) {
-      findings.push(
-        finding("error", "evals.suite_invalid", `${label} must be an object`, packageName)
-      );
-      continue;
-    }
-
-    const suite = rawSuite as Record<string, unknown>;
-    const name = stringValue(suite.name);
-    const type = stringValue(suite.type);
-    if (!name) {
-      findings.push(
-        finding(
-          "error",
-          "evals.suite_invalid",
-          `${label} must declare a non-empty name`,
-          packageName
-        )
-      );
-    } else {
-      const firstIndex = seenNames.get(name);
-      if (firstIndex !== undefined) {
-        findings.push(
-          finding(
-            "error",
-            "evals.name_duplicate",
-            `${label} reuses suite name "${name}" already declared at pi.evals.suites[${firstIndex}]`,
-            packageName
-          )
-        );
-      } else {
-        seenNames.set(name, index);
-      }
-    }
-
-    if (type !== "registry" && type !== "git") {
-      findings.push(
-        finding(
-          "error",
-          "evals.suite_invalid",
-          `${label} must use type "registry" or "git"`,
-          packageName
-        )
-      );
-      continue;
-    }
-
-    if (type === "registry") {
-      if (!stringValue(suite.dataset)) {
-        findings.push(
-          finding(
-            "error",
-            "evals.suite_invalid",
-            `${label} registry suite must declare dataset`,
-            packageName
-          )
-        );
-      }
-      const version = stringValue(suite.version);
-      if (!version) {
-        findings.push(
-          finding(
-            "error",
-            "evals.suite_invalid",
-            `${label} registry suite must declare version`,
-            packageName
-          )
-        );
-      } else if (!fixedRegistryTag(version)) {
-        findings.push(
-          finding(
-            "error",
-            "evals.pin_mutable",
-            `${label} registry version must be an explicit Harbor registry tag, not a mutable alias or range: ${version}`,
-            packageName
-          )
-        );
-      }
-    } else {
-      if (!stringValue(suite.repo)) {
-        findings.push(
-          finding(
-            "error",
-            "evals.suite_invalid",
-            `${label} git suite must declare repo`,
-            packageName
-          )
-        );
-      }
-      const rev = stringValue(suite.rev);
-      if (!rev) {
-        findings.push(
-          finding(
-            "error",
-            "evals.suite_invalid",
-            `${label} git suite must declare rev`,
-            packageName
-          )
-        );
-      } else if (!fixedGitRev(rev)) {
-        findings.push(
-          finding(
-            "error",
-            "evals.pin_mutable",
-            `${label} git rev must be a 7-40 character hex commit SHA: ${rev}`,
-            packageName
-          )
-        );
-      }
-      if (!stringValue(suite.dataset)) {
-        findings.push(
-          finding(
-            "error",
-            "evals.suite_invalid",
-            `${label} git suite must declare dataset`,
-            packageName
-          )
-        );
-      }
-    }
-  }
-
-  return {
-    valid: findings.every((item) => item.severity !== "error"),
-    findings,
-  };
-}
-
 function packageJsonPath(packageDir: string): string | undefined {
   const packagePath = join(packageDir, "package.json");
   return existsSync(packagePath) ? packagePath : undefined;
@@ -587,10 +345,6 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
     path: packageDir,
     resources,
     mcp: parseMcpConfig(pi.mcp),
-    evals: parseEvalsConfig(
-      pi.evals,
-      Object.prototype.hasOwnProperty.call(pi, "evals")
-    ),
   };
 }
 
@@ -758,8 +512,6 @@ export function validatePiPackageManifest(
       )
     );
   }
-  findings.push(...validateRecipeEvalsConfig(pkg.evals, pkg.name).findings);
-
   return {
     valid: findings.every((item) => item.severity !== "error"),
     findings,

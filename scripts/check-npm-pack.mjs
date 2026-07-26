@@ -13,14 +13,19 @@ process.stdin.on("end", () => {
   const files = entries.flatMap((entry) =>
     Array.isArray(entry.files) ? entry.files.map((file) => file.path) : []
   );
-  const forbidden = files.filter((path) =>
-    path.startsWith("harbor/jobs/") ||
-    path.includes("/__pycache__/") ||
-    path.startsWith("harbor/__pycache__/") ||
-    /\.py[cod]$/i.test(path)
+
+  const forbidden = files.filter(
+    (path) =>
+      path.startsWith("bindings/") ||
+      path.startsWith("harbor/") ||
+      path === "dist/testing.js" ||
+      path === "dist/testing.d.ts" ||
+      path === "docs/recipe-evals.md" ||
+      path === "docs/deployment-configuration.md" ||
+      path === "docs/runtime-library.md"
   );
   if (forbidden.length > 0) {
-    console.error("npm package includes generated Harbor output:");
+    console.error("npm package includes a retired surface:");
     for (const path of forbidden) console.error(`- ${path}`);
     process.exitCode = 1;
   }
