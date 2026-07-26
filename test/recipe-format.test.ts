@@ -329,7 +329,7 @@ describe("npm package boundary", () => {
     expect(pkg.exports).not.toHaveProperty("./tracing");
     expect(pkg.exports).toHaveProperty("./session");
     expect(pkg.exports).toHaveProperty("./extensions");
-    expect(pkg.exports).toHaveProperty("./run");
+    expect(pkg.exports).not.toHaveProperty("./run");
     expect(pkg.exports).toHaveProperty("./test-utils");
     expect(existsSync(join(root, "src", "cli.ts"))).toBe(false);
     expect(existsSync(join(root, "src", "serve.ts"))).toBe(false);

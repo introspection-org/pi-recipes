@@ -61,10 +61,6 @@
 			"types": "./dist/session.d.ts",
 			"import": "./dist/session.js"
 		},
-		"./run": {
-			"types": "./dist/run.d.ts",
-			"import": "./dist/run.js"
-		},
 		"./test-utils": {
 			"types": "./dist/test-utils.d.ts",
 			"import": "./dist/test-utils.js"

@@ -9,6 +9,5 @@ export * from "./recipe-agent.js";
 export * from "./recipe-model.js";
 export * from "./recipe-package.js";
 export * from "./recipe/resolve.js";
-export * from "./run.js";
 export * from "./run-controller.js";
 export * from "./session.js";

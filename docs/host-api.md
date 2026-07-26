@@ -10,8 +10,6 @@ resolveRecipe()     parse every agent in the portable package once
     │
     ▼
 createAgentSession() select one agent and construct its Pi session
-    │
-    └── runRecipe()   execute one turn through the same constructor and dispose
 ```
 
 Every host resolves the Recipe once and passes that immutable graph to the
@@ -134,24 +132,6 @@ uses an isolated session environment and does not expose its MCP runtime to
 shell tools. A host that provisions MCP separately passes
 `mcpProvisioning: "host"` to each session.
 
-## `runRecipe`
-
-```ts
-import { runRecipe } from "@introspection-ai/recipes/run";
-
-const result = await runRecipe({
-  recipe,
-  agentName,
-  cwd: workspaceDir,
-  prompt,
-  timeoutMs: 120_000,
-});
-```
-
-`runRecipe` creates one session, executes one prompt, returns the transcript and
-final text, and always disposes. It is suitable for tests, cron jobs, and queue
-workers that do not need a durable conversational host.
-
 ## Inspection
 
 ```ts
@@ -178,8 +158,7 @@ the same session instrumentation works with any OTLP-compatible backend. A
 host that needs structure-only traces can wrap its exporter with
 `GenAiContentScrubbingExporter` from `@introspection-sdk/introspection-pi`.
 
-Short-lived hosts must flush their own provider after `runRecipe` completes;
-long-lived hosts should flush and shut it down with the host lifecycle.
+Hosts must flush and shut down their provider with the host lifecycle.
 
 ## Host conformance
 

@@ -36,8 +36,6 @@ publish command.
 
 The Recipe remains unchanged across hosts. A long-lived host resolves the Recipe
 once, calls `createAgentSession()`, and supplies its own credentials, task
-lifecycle, persistence, isolation, and protocol surface. Every host uses the
-same constructor; `runRecipe()` only adds one-turn prompting and disposal.
+lifecycle, persistence, isolation, and protocol surface.
 
-Use Introspection when you want the managed host. Otherwise, integrate the Host
-API with the platform that will operate the Recipe.
+Integrate the Host API with the platform that will operate the Recipe.

@@ -29,7 +29,6 @@ resolveRecipe()          format interpretation
     ▼
 createAgentSession()     complete live Pi agent
     │
-    ├── runRecipe()       one-turn operation over the same constructor
     └── host              tasks, persistence, auth, protocols, deployment
 ```
 

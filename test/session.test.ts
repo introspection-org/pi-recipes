@@ -15,7 +15,6 @@ import {
   resolveRecipeAgent,
   resolveRecipe,
 } from "../src/recipe/resolve.js";
-import { runRecipe } from "../src/run.js";
 import { createInProcessRunController } from "../src/run-controller.js";
 import {
   createAgentSession,
@@ -83,44 +82,6 @@ function scriptReply(handle: RecipeSessionHandle, text: string): void {
     queueMicrotask(() => {
       stream.push({ type: "start", partial: assistantMessage("") });
       stream.push({ type: "done", reason: "stop", message: assistantMessage(text) });
-    });
-    return stream;
-  };
-}
-
-function scriptHangUntilAbort(handle: RecipeSessionHandle): void {
-  handle.session.agent.streamFunction = (_model, _context, options) => {
-    const stream = new MockAssistantStream();
-    const signal = options?.signal;
-    queueMicrotask(() => {
-      stream.push({ type: "start", partial: assistantMessage("") });
-      const checkAbort = () => {
-        if (signal?.aborted) {
-          stream.push({
-            type: "error",
-            reason: "aborted",
-            error: assistantMessage("Aborted", "aborted"),
-          });
-        } else {
-          setTimeout(checkAbort, 5);
-        }
-      };
-      checkAbort();
-    });
-    return stream;
-  };
-}
-
-function scriptError(handle: RecipeSessionHandle): void {
-  handle.session.agent.streamFunction = () => {
-    const stream = new MockAssistantStream();
-    queueMicrotask(() => {
-      stream.push({ type: "start", partial: assistantMessage("") });
-      stream.push({
-        type: "error",
-        reason: "error",
-        error: assistantMessage("provider exploded", "error"),
-      });
     });
     return stream;
   };
@@ -651,124 +612,6 @@ describe("createAgentSession", () => {
 
     await handle.dispose();
     expect(detachTelemetry).toHaveBeenCalledOnce();
-  });
-});
-
-describe("runRecipe", () => {
-  const cleanups: Array<() => void> = [];
-
-  afterEach(() => {
-    for (const cleanup of cleanups.splice(0)) cleanup();
-  });
-
-  function fixture() {
-    const created = writeFixtureRecipe();
-    cleanups.push(created.cleanup);
-    return created;
-  }
-
-  function scriptedFactory(script: (handle: RecipeSessionHandle) => void) {
-    return async (
-      options: Parameters<typeof createAgentSession>[0]
-    ): Promise<RecipeSessionHandle> => {
-      const handle = await createAgentSession(options);
-      script(handle);
-      return handle;
-    };
-  }
-
-  it("returns finished with the assistant text", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const result = await runRecipe({
-      recipe: resolveRecipe({ recipeDir }),
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      sessionFactory: scriptedFactory((handle) =>
-        scriptReply(handle, "one-shot reply")
-      ),
-    });
-    expect(result.status).toBe("finished");
-    expect(result.text).toBe("one-shot reply");
-    expect(result.messages.length).toBeGreaterThan(0);
-  });
-
-  it("returns failed, never throws, on agent-level error", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const result = await runRecipe({
-      recipe: resolveRecipe({ recipeDir }),
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      sessionFactory: scriptedFactory(scriptError),
-    });
-    expect(result.status).toBe("failed");
-    expect(result.error).toBeTruthy();
-  });
-
-  it("returns cancelled on timeout, and always disposes", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const result = await runRecipe({
-      recipe: resolveRecipe({ recipeDir }),
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      timeoutMs: 100,
-      sessionFactory: scriptedFactory(scriptHangUntilAbort),
-    });
-    expect(result.status).toBe("cancelled");
-  });
-
-  it("throws on caller mistakes (empty prompt)", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    await expect(
-      runRecipe({
-        recipe: resolveRecipe({ recipeDir }),
-        cwd: workspaceDir,
-        credentials: await credentialStore(),
-        env: cleanEnv(),
-        prompt: "   ",
-      })
-    ).rejects.toBeInstanceOf(TypeError);
-  });
-
-  it("returns cancelled when the signal is already aborted", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const controller = new AbortController();
-    controller.abort();
-    const result = await runRecipe({
-      recipe: resolveRecipe({ recipeDir }),
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      signal: controller.signal,
-    });
-    expect(result.status).toBe("cancelled");
-  });
-
-  it("returns cancelled when the signal aborts during session construction", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const controller = new AbortController();
-    const result = await runRecipe({
-      recipe: resolveRecipe({ recipeDir }),
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      signal: controller.signal,
-      sessionFactory: async (options) => {
-        const handle = await createAgentSession(options);
-        controller.abort();
-        return handle;
-      },
-    });
-
-    expect(result.status).toBe("cancelled");
-    expect(result.messages).toEqual([]);
   });
 });
 

@@ -113,17 +113,6 @@ await handle.session.prompt("Start the task");
 await handle.dispose();
 ```
 
-```ts
-import { runRecipe } from "@introspection-ai/recipes/run";
-
-const result = await runRecipe({
-  recipe,
-  agentName: "agent",
-  cwd: "./workspace",
-  prompt: "Produce the report",
-});
-```
-
 `createAgentSession` is the single host boundary for an inspected Recipe.
 It selects the requested agent from that immutable graph and constructs a
 standard Pi `AgentSession`. The host still owns task
@@ -139,7 +128,6 @@ tests.
 - `@introspection-ai/recipes` — full convenience barrel
 - `@introspection-ai/recipes/recipe` — resolve a Recipe into session inputs
 - `@introspection-ai/recipes/session` — create a live Pi Recipe session
-- `@introspection-ai/recipes/run` — execute one Recipe turn
 - `@introspection-ai/recipes/mcp` — MCP declarations, bindings, and selection
 - `@introspection-ai/recipes/pi-extension` — Pi extension entrypoint
 - `@introspection-ai/recipes/extensions` — session identity and conditional
