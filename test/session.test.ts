@@ -223,6 +223,52 @@ describe("createRecipeSession", () => {
     expect(onDiagnostics).toHaveBeenCalledOnce();
   });
 
+  it("normalizes Gemini tool schemas for every host", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const base = getModel("anthropic", "claude-sonnet-4-5");
+    expect(base).toBeDefined();
+    const handle = await open({
+      recipeDir,
+      cwd: workspaceDir,
+      modelOverride: {
+        ...base!,
+        id: "gemini-2.5-flash",
+        name: "Gemini 2.5 Flash",
+      },
+      customTools: [
+        {
+          name: "read",
+          description: "Structured tool",
+          parameters: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              nested: {
+                type: "object",
+                additionalProperties: false,
+                properties: {},
+              },
+            },
+          },
+          execute: async () => ({ content: [], details: {} }),
+        } as never,
+      ],
+    });
+
+    const tool = handle.session.agent.state.tools.find(
+      (candidate) => candidate.name === "read"
+    );
+    expect(tool?.parameters).toEqual({
+      type: "object",
+      properties: {
+        nested: {
+          type: "object",
+          properties: {},
+        },
+      },
+    });
+  });
+
   it("resolves credentials from provider env keys when no store is given", async () => {
     const { recipeDir, workspaceDir } = fixture();
     const handle = await createRecipeSession({

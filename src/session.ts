@@ -199,6 +199,41 @@ function parseModelSpec(spec: string): {
   return { provider, modelId, lookupProvider };
 }
 
+type MutableAgentSession = {
+  agent?: { state?: { tools?: Array<{ parameters?: unknown }> } };
+};
+
+function stripAdditionalProperties(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripAdditionalProperties(item));
+  }
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "additionalProperties")
+      .map(([key, nested]) => [key, stripAdditionalProperties(nested)])
+  );
+}
+
+/**
+ * Gemini rejects JSON Schema's `additionalProperties` keyword in tool
+ * declarations. Normalize the final Recipe toolset after host tools and the
+ * shared agent tool have been registered so every host gets the same behavior.
+ */
+function normalizeSessionToolsForModel(
+  session: AgentSession,
+  model: Model<any>
+): void {
+  const isGemini = [model.id, model.name].some((value) =>
+    value?.toLowerCase().includes("gemini")
+  );
+  if (!isGemini) return;
+  const mutableSession = session as MutableAgentSession;
+  for (const tool of mutableSession.agent?.state?.tools ?? []) {
+    tool.parameters = stripAdditionalProperties(tool.parameters);
+  }
+}
+
 /**
  * Ambient-credential providers resolve from their own SDK chain (AWS
  * profiles, ADC); `getEnvApiKey` reports them as "<authenticated>".
@@ -541,6 +576,7 @@ async function createResolvedRecipeSession(
       customTools,
     });
     session = created.session;
+    normalizeSessionToolsForModel(session, model);
     applyRecipeAgentModelConfigToSession(session, recipe.modelConfig);
     await session.bindExtensions({});
 
