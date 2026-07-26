@@ -142,6 +142,13 @@ resolved set forms the package's executable trust boundary and loads for every
 root and child session. Package membership means execution; agent YAML cannot
 select or remove extensions.
 
+An extension declaration may name a module or directory. A directory index
+(`index.ts`, `index.tsx`, `index.js`, `index.jsx`, `index.mjs`, or `index.cjs`,
+in that precedence order) owns the directory. Without an index, Recipes loads
+its direct extension modules and the indexes of its immediate child
+directories, both in lexical order. Discovery is intentionally shallow;
+declare deeper modules explicitly.
+
 Programmatic root and child sessions invoke the closure's factories for their
 own Pi runtime. Interactive Pi keeps one extension runtime for the selected
 Recipe launch and does not retry a partially failed closure without rebuilding

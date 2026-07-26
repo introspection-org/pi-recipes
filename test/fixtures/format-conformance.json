@@ -17,6 +17,15 @@
     }
   },
   {
+    "name": "extension directory",
+    "valid": true,
+    "files": {
+      "package.json": "{\"name\":\"extension-directory\",\"pi\":{\"extensions\":[\"extensions\"]}}",
+      "agents/agent.yaml": "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-6\n",
+      "extensions/index.ts": "export default () => {};\n"
+    }
+  },
+  {
     "name": "missing stable name",
     "valid": false,
     "files": {

@@ -496,17 +496,24 @@ fn resolve_resource_patterns(
             );
         }
         for path in matches {
-            if key == "extensions" && !is_loadable_extension_file(ctx, &path) {
-                ctx.error(
-                    "package.extensions_non_loadable",
-                    path.clone(),
-                    format!(
-                        "package.json#pi.extensions pattern '{pattern}' matched a file that is not a loadable extension module"
-                    ),
-                    Some("point extension patterns at .ts, .tsx, .js, .jsx, .mjs, or .cjs files"),
-                );
+            if key == "extensions" {
+                let entries = resolve_extension_entry(ctx, &path);
+                if entries.is_empty() {
+                    ctx.error(
+                        "package.extensions_non_loadable",
+                        path.clone(),
+                        format!(
+                            "package.json#pi.extensions pattern '{pattern}' matched no loadable extension modules"
+                        ),
+                        Some(
+                            "point extension patterns at modules or directories with an index, direct modules, or indexed child directories",
+                        ),
+                    );
+                }
+                resolved.extend(entries);
+            } else {
+                resolved.insert(path);
             }
-            resolved.insert(path);
         }
     }
 
@@ -2094,6 +2101,49 @@ fn is_loadable_extension_file(ctx: &CheckContext, path: &str) -> bool {
             extension(path),
             Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs")
         )
+}
+
+fn resolve_extension_entry(ctx: &CheckContext, path: &str) -> Vec<String> {
+    if is_loadable_extension_file(ctx, path) {
+        return vec![path.to_owned()];
+    }
+    if !ctx.has_dir(path) {
+        return Vec::new();
+    }
+
+    if let Some(index) = extension_index(ctx, path) {
+        return vec![index];
+    }
+
+    let prefix = format!("{path}/");
+    let mut entries = BTreeSet::new();
+    for file in ctx.files.keys() {
+        let Some(relative) = file.strip_prefix(&prefix) else {
+            continue;
+        };
+        if !relative.contains('/') && is_loadable_extension_file(ctx, file) {
+            entries.insert(file.clone());
+            continue;
+        }
+        let Some((child, remainder)) = relative.split_once('/') else {
+            continue;
+        };
+        if !remainder.contains('/')
+            && remainder.starts_with("index.")
+            && is_loadable_extension_file(ctx, file)
+            && extension_index(ctx, &format!("{path}/{child}")).as_deref() == Some(file.as_str())
+        {
+            entries.insert(file.clone());
+        }
+    }
+    entries.into_iter().collect()
+}
+
+fn extension_index(ctx: &CheckContext, directory: &str) -> Option<String> {
+    ["ts", "tsx", "js", "jsx", "mjs", "cjs"]
+        .into_iter()
+        .map(|extension| format!("{directory}/index.{extension}"))
+        .find(|path| ctx.has_file(path))
 }
 
 fn extension(path: &str) -> Option<&str> {

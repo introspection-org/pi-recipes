@@ -260,6 +260,58 @@ describe("Recipe Format", () => {
     ]);
   });
 
+  it("expands declared extension directories with shallow Pi semantics", () => {
+    const recipeDir = fixture();
+    mkdirSync(join(recipeDir, "extensions", "nested"), { recursive: true });
+    mkdirSync(join(recipeDir, "extensions", "without-index"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(recipeDir, "extensions", "z-last.ts"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "extensions", "a-first.js"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "extensions", "nested", "index.ts"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "extensions", "without-index", "ignored.ts"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "complete-agent",
+        pi: {
+          agents: ["agents/*.yaml"],
+          extensions: ["extensions"],
+        },
+      })
+    );
+
+    expect(resolveRecipe({ recipeDir }).selectAgent().extensionPaths).toEqual([
+      join(recipeDir, "extensions", "a-first.js"),
+      join(recipeDir, "extensions", "nested", "index.ts"),
+      join(recipeDir, "extensions", "z-last.ts"),
+    ]);
+
+    writeFileSync(
+      join(recipeDir, "extensions", "index.js"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "extensions", "index.ts"),
+      "export default () => {};\n"
+    );
+    expect(resolveRecipe({ recipeDir }).selectAgent().extensionPaths).toEqual([
+      join(recipeDir, "extensions", "index.ts"),
+    ]);
+  });
+
   it.skipIf(process.platform === "win32")(
     "rejects extension symlinks that execute outside the package",
     () => {

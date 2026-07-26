@@ -1,9 +1,9 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { realpathSync, statSync } from "node:fs";
+import { realpathSync, readdirSync, statSync } from "node:fs";
 import {
   basename,
-  extname,
   isAbsolute,
+  join,
   relative,
   resolve,
   sep,
@@ -88,38 +88,108 @@ const LOADABLE_EXTENSION_SUFFIXES = [
   ".cjs",
 ] as const;
 
-function validatePackageExtensionPaths(
+function isLoadableExtensionPath(path: string): boolean {
+  return LOADABLE_EXTENSION_SUFFIXES.some((suffix) =>
+    path.toLowerCase().endsWith(suffix)
+  );
+}
+
+function assertPackagePath(recipeDir: string, path: string): string {
+  const realRecipeDir = realpathSync(recipeDir);
+  const realPath = realpathSync(path);
+  const relativePath = relative(realRecipeDir, realPath);
+  if (
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new RecipeResolutionError(
+      `Recipe extension resolves outside the package: ${path}`
+    );
+  }
+  return realPath;
+}
+
+function directoryIndex(directory: string): string | undefined {
+  for (const suffix of LOADABLE_EXTENSION_SUFFIXES) {
+    const candidate = join(directory, `index${suffix}`);
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Try the next supported suffix.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Expand explicit extension directories using Pi's shallow discovery model:
+ * an index module owns the directory; otherwise load direct modules and indexes
+ * from immediate child directories. Declaration order remains authoritative.
+ */
+function resolvePackageExtensionPaths(
   recipeDir: string,
   paths: readonly string[]
-): void {
-  const realRecipeDir = realpathSync(recipeDir);
-  for (const path of paths) {
-    const realPath = realpathSync(path);
-    const relativePath = relative(realRecipeDir, realPath);
-    if (
-      relativePath === ".." ||
-      relativePath.startsWith(`..${sep}`) ||
-      isAbsolute(relativePath)
-    ) {
-      throw new RecipeResolutionError(
-        `Recipe extension resolves outside the package: ${path}`
-      );
-    }
-    if (!statSync(realPath).isFile()) {
-      throw new RecipeResolutionError(
-        `Recipe extension is not a file: ${path}`
-      );
-    }
-    if (
-      !LOADABLE_EXTENSION_SUFFIXES.some((suffix) =>
-        realPath.toLowerCase().endsWith(suffix)
-      )
-    ) {
+): string[] {
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+  const addFile = (path: string) => {
+    const realPath = assertPackagePath(recipeDir, path);
+    if (!statSync(realPath).isFile() || !isLoadableExtensionPath(realPath)) {
       throw new RecipeResolutionError(
         `Recipe extension is not a loadable module: ${path}`
       );
     }
+    if (!seen.has(realPath)) {
+      seen.add(realPath);
+      resolved.push(resolve(path));
+    }
+  };
+
+  for (const path of paths) {
+    const realPath = assertPackagePath(recipeDir, path);
+    if (statSync(realPath).isFile()) {
+      addFile(path);
+      continue;
+    }
+    if (!statSync(realPath).isDirectory()) {
+      throw new RecipeResolutionError(
+        `Recipe extension is neither a file nor directory: ${path}`
+      );
+    }
+
+    const directory = resolve(path);
+    const index = directoryIndex(directory);
+    if (index) {
+      addFile(index);
+      continue;
+    }
+
+    const entries = readdirSync(directory, { withFileTypes: true }).sort(
+      (left, right) =>
+        left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    );
+    let discovered = false;
+    for (const entry of entries) {
+      const candidate = join(directory, entry.name);
+      if (entry.isFile() && isLoadableExtensionPath(candidate)) {
+        discovered = true;
+        addFile(candidate);
+      } else if (entry.isDirectory()) {
+        const childIndex = directoryIndex(candidate);
+        if (childIndex) {
+          discovered = true;
+          addFile(childIndex);
+        }
+      }
+    }
+    if (!discovered) {
+      throw new RecipeResolutionError(
+        `Recipe extension directory has no loadable modules: ${path}`
+      );
+    }
   }
+  return resolved;
 }
 
 function deepFreeze<T>(value: T, seen = new Set<object>()): T {
@@ -335,8 +405,10 @@ export function resolveRecipe(
   const recipeSystemPrompt = loadRecipeSystemPrompt(recipeDir);
   const skillResourcePaths = packageResourcePaths(manifest, "skills");
   const promptPaths = packageResourcePaths(manifest, "prompts");
-  const extensionPaths = packageResourcePaths(manifest, "extensions");
-  validatePackageExtensionPaths(recipeDir, extensionPaths);
+  const extensionPaths = resolvePackageExtensionPaths(
+    recipeDir,
+    packageResourcePaths(manifest, "extensions")
+  );
   const agents = new Map<string, ResolvedRecipeAgent>();
   for (const definition of definitions.values()) {
     agents.set(
