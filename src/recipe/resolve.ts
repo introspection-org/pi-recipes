@@ -43,9 +43,8 @@ export interface ResolvedRecipeAgent {
   systemPromptOverride(base: string | undefined): string | undefined;
 }
 
-export interface ResolveRecipeAgentOptions {
+export interface ResolveRecipeOptions {
   recipeDir: string;
-  agentName?: string;
 }
 
 /**
@@ -237,9 +236,7 @@ function buildResolvedRecipeAgent(
 }
 
 /** Parse and resolve every agent in a Recipe package exactly once. */
-export function resolveRecipe(
-  opts: Pick<ResolveRecipeAgentOptions, "recipeDir">
-): ResolvedRecipe {
+export function resolveRecipe(opts: ResolveRecipeOptions): ResolvedRecipe {
   const recipeDir = resolve(opts.recipeDir);
   const manifest = readPiPackageManifest(recipeDir);
   const packageErrors = validatePiPackageManifest(manifest).findings.filter(
@@ -300,11 +297,4 @@ export function resolveRecipe(
       return agents.get(selected.agentName)!;
     },
   };
-}
-
-/** Resolve recipe-owned inputs for one Pi session. */
-export function resolveRecipeAgent(
-  opts: ResolveRecipeAgentOptions
-): ResolvedRecipeAgent {
-  return resolveRecipe({ recipeDir: opts.recipeDir }).selectAgent(opts.agentName);
 }

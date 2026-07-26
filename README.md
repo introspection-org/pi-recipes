@@ -87,48 +87,41 @@ Install Recipes in a Node.js host:
 npm install @introspection-ai/recipes
 ```
 
-Choose the lowest useful layer:
-
-```ts
-import { resolveRecipe } from "@introspection-ai/recipes/recipe";
-
-const recipe = resolveRecipe({
-  recipeDir: "./my-recipe",
-});
-const agent = recipe.selectAgent("agent");
-```
+One constructor turns a package into a live Pi agent:
 
 ```ts
 import { createAgentSession } from "@introspection-ai/recipes/session";
 
-const handle = await createAgentSession(agent, {
-  recipe,
-  cwd: "./workspace",
-  credentials,
-  mcpBindings,
-  sessionManager,
-  otel: { tracer, meta: { conversationId } },
-});
+const handle = await createAgentSession(
+  { recipeDir: "./my-recipe", agentName: "agent" },
+  {
+    cwd: "./workspace",
+    credentials,
+    mcpBindings,
+    sessionManager,
+    otel: { tracer, meta: { conversationId } },
+  },
+);
 
 await handle.session.prompt("Start the task");
 await handle.dispose();
 ```
 
-```ts
-import { runRecipe } from "@introspection-ai/recipes/run";
+Resolve the package yourself when the host inspects the plan before
+constructing, or when one snapshot should back many sessions:
 
-const result = await runRecipe({
-  recipeDir: "./my-recipe",
-  cwd: "./workspace",
-  prompt: "Produce the report",
-});
+```ts
+import { resolveRecipe } from "@introspection-ai/recipes/recipe";
+
+const recipe = resolveRecipe({ recipeDir: "./my-recipe" });
+const agent = recipe.selectAgent("agent");
+
+const handle = await createAgentSession(agent, { recipe, cwd, credentials });
 ```
 
-`createAgentSession` is the host boundary for an inspected execution plan.
-`createAgentSessionFromRecipe` is the shorter resolve-and-create convenience API. Both
-own Recipe semantics and Pi session construction. The host still owns task
-lifecycle, durable state, auth, networking, isolation, protocol translation,
-and deployment.
+`createAgentSession` is the host boundary. It owns Recipe semantics and Pi
+session construction; the host still owns task lifecycle, durable state, auth,
+networking, isolation, protocol translation, and deployment.
 
 See [Host API](docs/host-api.md) for the complete boundary and
 [host conformance](docs/host-api.md#host-conformance) for compatibility
@@ -136,15 +129,12 @@ tests.
 
 ## Public exports
 
-- `@introspection-ai/recipes` — full convenience barrel
 - `@introspection-ai/recipes/recipe` — resolve a Recipe into session inputs
 - `@introspection-ai/recipes/session` — create a live Pi Recipe session
-- `@introspection-ai/recipes/run` — execute one Recipe turn
 - `@introspection-ai/recipes/mcp` — MCP declarations, bindings, and selection
 - `@introspection-ai/recipes/pi-extension` — Pi extension entrypoint
 - `@introspection-ai/recipes/pi` — shared subagent tool and controller types
 - `@introspection-ai/recipes/interactions` — portable user-input and approval contract
-- `@introspection-ai/recipes/inspect` — derive host requirements
 - `@introspection-ai/recipes/test-utils` — host conformance cases
 
 The package intentionally has no `recipes` executable and no generic HTTP

@@ -12,20 +12,25 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpBindingError } from "../src/mcp.js";
 import {
-  resolveRecipeAgent,
   resolveRecipe,
 } from "../src/recipe/resolve.js";
-import { runRecipe } from "../src/run.js";
 import { createInProcessRunController } from "../src/run-controller.js";
 import {
-  createAgentSessionFromRecipe,
   createAgentSession,
+  type RecipeSessionOptions,
   RecipeCredentialError,
   RecipeMcpEnvironmentInUseError,
   RecipeModelError,
   type RecipeSessionHandle,
 } from "../src/session.js";
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
+
+// The collapsed constructor takes (target, options). These cases were written
+// against one flat bag, and it satisfies both parameters: the target reads
+// recipeDir/agentName, the options ignore them.
+const createSession = (options: RecipeSessionOptions) =>
+  createAgentSession(options, options);
+
 
 const detachTelemetry = vi.hoisted(() => vi.fn());
 const instrumentSession = vi.hoisted(() =>
@@ -146,7 +151,7 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-describe("createAgentSessionFromRecipe", () => {
+describe("createAgentSession", () => {
   const cleanups: Array<() => void> = [];
   const handles: RecipeSessionHandle[] = [];
 
@@ -166,12 +171,12 @@ describe("createAgentSessionFromRecipe", () => {
   }
 
   async function open(
-    options: Partial<Parameters<typeof createAgentSessionFromRecipe>[0]> & {
+    options: Partial<RecipeSessionOptions> & {
       recipeDir: string;
       cwd: string;
     }
   ): Promise<RecipeSessionHandle> {
-    const handle = await createAgentSessionFromRecipe({
+    const handle = await createSession({
       credentials: await credentialStore(),
       env: cleanEnv(),
       ...options,
@@ -192,7 +197,7 @@ describe("createAgentSessionFromRecipe", () => {
 
   it("creates the exact Recipe definition already inspected by the host", async () => {
     const { recipeDir, workspaceDir } = fixture();
-    const recipe = resolveRecipeAgent({ recipeDir });
+    const recipe = resolveRecipe({ recipeDir }).selectAgent();
     const handle = await createAgentSession(recipe, {
       cwd: workspaceDir,
       credentials: await credentialStore(),
@@ -294,7 +299,7 @@ describe("createAgentSessionFromRecipe", () => {
 
   it("resolves credentials from provider env keys when no store is given", async () => {
     const { recipeDir, workspaceDir } = fixture();
-    const handle = await createAgentSessionFromRecipe({
+    const handle = await createSession({
       recipeDir,
       cwd: workspaceDir,
       env: { ...cleanEnv(), ANTHROPIC_API_KEY: "env-key" },
@@ -306,7 +311,7 @@ describe("createAgentSessionFromRecipe", () => {
   it("fails closed when the provider has no credential", async () => {
     const { recipeDir, workspaceDir } = fixture();
     await expect(
-      createAgentSessionFromRecipe({ recipeDir, cwd: workspaceDir, env: cleanEnv() })
+      createSession({ recipeDir, cwd: workspaceDir, env: cleanEnv() })
     ).rejects.toSatisfy((err: unknown) => {
       expect(err).toBeInstanceOf(RecipeCredentialError);
       expect((err as Error).message).toContain("ANTHROPIC_API_KEY");
@@ -463,7 +468,7 @@ describe("createAgentSessionFromRecipe", () => {
     };
 
     await expect(
-      createAgentSessionFromRecipe({
+      createSession({
         ...baseOptions,
         systemPrompt: () => {
           throw new Error("prompt construction failed");
@@ -473,7 +478,7 @@ describe("createAgentSessionFromRecipe", () => {
     expect(env.PI_RECIPES_MCP_SESSION).toBe(hostSession);
     expect(env.MCPORTER_CONFIG).toBe(hostMcporter);
 
-    const recovered = await createAgentSessionFromRecipe(baseOptions);
+    const recovered = await createSession(baseOptions);
     handles.push(recovered);
     await recovered.dispose();
   });
@@ -569,124 +574,6 @@ describe("createAgentSessionFromRecipe", () => {
 
     await handle.dispose();
     expect(detachTelemetry).toHaveBeenCalledOnce();
-  });
-});
-
-describe("runRecipe", () => {
-  const cleanups: Array<() => void> = [];
-
-  afterEach(() => {
-    for (const cleanup of cleanups.splice(0)) cleanup();
-  });
-
-  function fixture() {
-    const created = writeFixtureRecipe();
-    cleanups.push(created.cleanup);
-    return created;
-  }
-
-  function scriptedFactory(script: (handle: RecipeSessionHandle) => void) {
-    return async (
-      options: Parameters<typeof createAgentSessionFromRecipe>[0]
-    ): Promise<RecipeSessionHandle> => {
-      const handle = await createAgentSessionFromRecipe(options);
-      script(handle);
-      return handle;
-    };
-  }
-
-  it("returns finished with the assistant text", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      sessionFactory: scriptedFactory((handle) =>
-        scriptReply(handle, "one-shot reply")
-      ),
-    });
-    expect(result.status).toBe("finished");
-    expect(result.text).toBe("one-shot reply");
-    expect(result.messages.length).toBeGreaterThan(0);
-  });
-
-  it("returns failed, never throws, on agent-level error", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      sessionFactory: scriptedFactory(scriptError),
-    });
-    expect(result.status).toBe("failed");
-    expect(result.error).toBeTruthy();
-  });
-
-  it("returns cancelled on timeout, and always disposes", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      timeoutMs: 100,
-      sessionFactory: scriptedFactory(scriptHangUntilAbort),
-    });
-    expect(result.status).toBe("cancelled");
-  });
-
-  it("throws on caller mistakes (empty prompt)", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    await expect(
-      runRecipe({
-        recipeDir,
-        cwd: workspaceDir,
-        credentials: await credentialStore(),
-        env: cleanEnv(),
-        prompt: "   ",
-      })
-    ).rejects.toBeInstanceOf(TypeError);
-  });
-
-  it("returns cancelled when the signal is already aborted", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const controller = new AbortController();
-    controller.abort();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      signal: controller.signal,
-    });
-    expect(result.status).toBe("cancelled");
-  });
-
-  it("returns cancelled when the signal aborts during session construction", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const controller = new AbortController();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      signal: controller.signal,
-      sessionFactory: async (options) => {
-        const handle = await createAgentSessionFromRecipe(options);
-        controller.abort();
-        return handle;
-      },
-    });
-
-    expect(result.status).toBe("cancelled");
-    expect(result.messages).toEqual([]);
   });
 });
 

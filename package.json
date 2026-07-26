@@ -29,10 +29,6 @@
 		"tag": "latest"
 	},
 	"exports": {
-		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
-		},
 		"./interactions": {
 			"types": "./dist/interactions.d.ts",
 			"import": "./dist/interactions.js"
@@ -57,17 +53,9 @@
 			"types": "./dist/session.d.ts",
 			"import": "./dist/session.js"
 		},
-		"./run": {
-			"types": "./dist/run.d.ts",
-			"import": "./dist/run.js"
-		},
 		"./test-utils": {
 			"types": "./dist/test-utils.d.ts",
 			"import": "./dist/test-utils.js"
-		},
-		"./inspect": {
-			"types": "./dist/inspect.d.ts",
-			"import": "./dist/inspect.js"
 		}
 	},
 	"pi": {

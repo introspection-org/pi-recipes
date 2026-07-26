@@ -296,16 +296,14 @@ export function nativeMcpClientPath(
   arch = process.arch
 ): string | undefined {
   const executable = platform === "win32" ? "mcp-client.exe" : "mcp-client";
-  const packageEntrypoint = fileURLToPath(
-    import.meta.resolve("@introspection-ai/recipes")
-  );
-  const candidate = resolve(
-    dirname(packageEntrypoint),
-    "..",
-    "vendor",
-    "mcp-client",
-    `${platform}-${arch}`,
-    executable
+  // Located relative to this module rather than by resolving the package by
+  // name: `vendor/` sits one level above both `src/` and `dist/`, and the
+  // package publishes subpaths only, so it has no root entry to resolve.
+  const candidate = fileURLToPath(
+    new URL(
+      `../vendor/mcp-client/${platform}-${arch}/${executable}`,
+      import.meta.url
+    )
   );
   return existsSync(candidate) ? candidate : undefined;
 }

@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { autoResolveInteractions } from "./interactions.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
-import { resolveRecipeAgent, type ResolvedRecipeAgent } from "./recipe/resolve.js";
+import { resolveRecipe, type ResolvedRecipeAgent } from "./recipe/resolve.js";
 import {
   createAgentSession,
   type RecipeSessionHandle,
@@ -260,10 +260,9 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
 
     const resolved =
       this.opts.agent ??
-      resolveRecipeAgent({
-        recipeDir: this.opts.recipeDir,
-        agentName: this.opts.agentName,
-      });
+      resolveRecipe({ recipeDir: this.opts.recipeDir }).selectAgent(
+        this.opts.agentName
+      );
     const model = applyRecipeAgentModelConfigToModel(
       modelFromSpec(resolved.modelSpec, this.opts.modelRegistry),
       resolved.modelConfig

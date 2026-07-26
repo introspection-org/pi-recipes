@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   RecipeResolutionError,
-  resolveRecipeAgent,
   resolveRecipe,
 } from "../src/recipe/resolve.js";
 
@@ -74,10 +73,10 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("resolveRecipeAgent", () => {
+describe("resolveRecipe().selectAgent()", () => {
   it("returns inputs that map directly to a Pi session", () => {
     const recipeDir = makeRecipe();
-    const resolved = resolveRecipeAgent({ recipeDir });
+    const resolved = resolveRecipe({ recipeDir }).selectAgent();
 
     expect(resolved.name).toBe("researcher");
     expect(resolved.modelSpec).toBe("openai/gpt-5");
@@ -97,7 +96,7 @@ describe("resolveRecipeAgent", () => {
 
   it("selects aliases and returns the canonical agent name", () => {
     const recipeDir = makeRecipe();
-    const resolved = resolveRecipeAgent({ recipeDir, agentName: "agent" });
+    const resolved = resolveRecipe({ recipeDir }).selectAgent("agent");
     expect(resolved.name).toBe("researcher");
   });
 
@@ -133,7 +132,7 @@ describe("resolveRecipeAgent", () => {
     );
     rmSync(join(recipeDir, "agents", "base.yaml"));
 
-    const resolved = resolveRecipeAgent({ recipeDir });
+    const resolved = resolveRecipe({ recipeDir }).selectAgent();
 
     expect(resolved.name).toBe("agent");
     expect(resolved.thinkingLevel).toBeUndefined();
@@ -155,7 +154,7 @@ describe("resolveRecipeAgent", () => {
       ].join("\n")
     );
 
-    const resolved = resolveRecipeAgent({ recipeDir });
+    const resolved = resolveRecipe({ recipeDir }).selectAgent();
 
     expect([...resolved.subagents.keys()]).toEqual(["base"]);
     expect(resolved.tools).toEqual(["read", "mcp__search", "agent"]);
@@ -193,7 +192,7 @@ describe("resolveRecipeAgent", () => {
       ].join("\n")
     );
 
-    const resolved = resolveRecipeAgent({ recipeDir });
+    const resolved = resolveRecipe({ recipeDir }).selectAgent();
 
     expect(resolved.mcp).toEqual({
       mode: "cli",
@@ -206,7 +205,7 @@ describe("resolveRecipeAgent", () => {
   it("fails before returning a partial session configuration", () => {
     const recipeDir = makeRecipe();
     expect(() =>
-      resolveRecipeAgent({ recipeDir, agentName: "missing" })
+      resolveRecipe({ recipeDir }).selectAgent("missing")
     ).toThrow(RecipeResolutionError);
   });
 });

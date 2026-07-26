@@ -18,14 +18,19 @@ function resolvePackage(specifier: string): string | undefined {
   }
 }
 
-function resolvePackageModuleRoot(packageName: string): string | undefined {
-  const resolved = resolvePackage(packageName);
+function resolvePackageModuleRoot(specifier: string): string | undefined {
+  const resolved = resolvePackage(specifier);
   if (!resolved) return undefined;
   return dirname(resolved.startsWith("file:") ? fileURLToPath(resolved) : resolved);
 }
 
 function recipeExtensionAliases(): Record<string, string> {
-  const recipesRoot = resolvePackageModuleRoot("@introspection-ai/recipes");
+  // Resolved through a published subpath: this package exposes subpaths only,
+  // so there is no root entry to resolve. Any subpath lands in the same
+  // directory, which is what the alias needs.
+  const recipesRoot = resolvePackageModuleRoot(
+    "@introspection-ai/recipes/interactions"
+  );
   return Object.fromEntries(
     [
       // Jiti aliases are package-prefix mappings. They must point at the
@@ -34,6 +39,7 @@ function recipeExtensionAliases(): Record<string, string> {
       // The self-alias also keeps recipe interaction imports on this package
       // instance, sharing interrupt state with the child-agent runner.
       ["@introspection-ai/recipes", recipesRoot],
+
       ["@earendil-works/pi-coding-agent", resolvePackageModuleRoot("@earendil-works/pi-coding-agent")],
       ["@earendil-works/pi-agent-core", resolvePackageModuleRoot("@earendil-works/pi-agent-core")],
       ["@earendil-works/pi-ai", resolvePackageModuleRoot("@earendil-works/pi-ai")],

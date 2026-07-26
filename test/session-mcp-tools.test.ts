@@ -13,10 +13,18 @@ vi.mock("../src/mcp-catalog.js", () => ({
 
 import { piMcpToolName } from "../src/mcp-tools.js";
 import {
-  createAgentSessionFromRecipe,
+  createAgentSession,
+  type RecipeSessionOptions,
   type RecipeSessionHandle,
 } from "../src/session.js";
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
+
+// The collapsed constructor takes (target, options). These cases were written
+// against one flat bag, and it satisfies both parameters: the target reads
+// recipeDir/agentName, the options ignore them.
+const createSession = (options: RecipeSessionOptions) =>
+  createAgentSession(options, options);
+
 
 async function credentials(): Promise<InMemoryCredentialStore> {
   const store = new InMemoryCredentialStore();
@@ -39,7 +47,7 @@ describe("canonical Recipe session MCP tools mode", () => {
     vi.clearAllMocks();
   });
 
-  it("registers deferred MCP tools through createAgentSessionFromRecipe", async () => {
+  it("registers deferred MCP tools through createAgentSession", async () => {
     const fixture = writeFixtureRecipe({
       manifestPi: {
         mcp: {
@@ -85,7 +93,7 @@ describe("canonical Recipe session MCP tools mode", () => {
     ]);
 
     const env = cleanEnv();
-    const handle = await createAgentSessionFromRecipe({
+    const handle = await createSession({
       recipeDir: fixture.recipeDir,
       cwd: fixture.workspaceDir,
       env,

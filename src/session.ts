@@ -49,7 +49,6 @@ import {
   applyRecipeAgentModelConfigToSession,
 } from "./recipe-model.js";
 import {
-  resolveRecipeAgent,
   resolveRecipe,
   type ResolvedRecipeAgent,
   type ResolvedRecipe,
@@ -66,7 +65,7 @@ export { expectedProviderEnvVars } from "./provider-env.js";
  * `required: true` MCP server with no binding throws `McpBindingError`, and a
  * model whose provider has no credential throws `RecipeCredentialError`.
  */
-export interface CreateAgentSessionFromRecipeOptions {
+export interface RecipeSessionOptions {
   recipeDir: string;
   /** Default: `agents/agent.yaml`, else the recipe's single-agent rule. */
   agentName?: string;
@@ -165,7 +164,7 @@ export interface RecipeSessionHandle {
  * construction without resolving the package a second time.
  */
 export type CreateAgentSessionOptions = Omit<
-  CreateAgentSessionFromRecipeOptions,
+  RecipeSessionOptions,
   "recipeDir" | "agentName"
 > & {
   /**
@@ -302,7 +301,7 @@ const AMBIENT_CREDENTIAL_SENTINEL = "<authenticated>";
  */
 async function resolveCredentialStore(
   lookupProvider: string,
-  opts: CreateAgentSessionFromRecipeOptions
+  opts: RecipeSessionOptions
 ): Promise<CredentialStore> {
   if (opts.credentials) {
     const stored = await opts.credentials.read(lookupProvider);
@@ -361,77 +360,11 @@ export class RecipeMcpEnvironmentInUseError extends Error {
   }
 }
 
-/**
- * Everything `createAgentSessionFromRecipe` fail-closes on, without creating a
- * session or starting MCP: recipe resolution, model lookup, credentials.
- * Hosts with a boot phase can run this once to fail fast.
- */
-export async function preflightRecipeSession(
-  opts: CreateAgentSessionFromRecipeOptions
-): Promise<ResolvedRecipeAgent> {
-  const recipe = resolveRecipeAgent({
-    recipeDir: opts.recipeDir,
-    ...(opts.agentName ? { agentName: opts.agentName } : {}),
-  });
-  const modelSpec = opts.model ?? recipe.modelSpec;
-  const { lookupProvider, modelId } = parseModelSpec(modelSpec);
-  const credentialProvider = opts.modelOverride?.provider ?? lookupProvider;
-  const credentials = await resolveCredentialStore(credentialProvider, opts);
-  const modelRuntime = await ModelRuntime.create({
-    credentials,
-    modelsPath: null,
-  });
-  const model =
-    opts.modelOverride ??
-    modelRuntime.getModel(lookupProvider, modelId) ??
-    (getModel(lookupProvider as never, modelId as never) as
-      | Model<any>
-      | undefined);
-  if (!model) {
-    throw new RecipeModelError(modelSpec);
-  }
-  return recipe;
-}
-
-/**
- * Materialize the session MCP runtime for a recipe scope into `env` at
- * `cwd`. Exposed for hosts that materialize once per process and create their
- * sessions with `mcpProvisioning: "host"`.
- */
-export async function materializeRecipeSessionMcp(
-  recipe: ResolvedRecipeAgent,
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  opts: Pick<
-    CreateAgentSessionFromRecipeOptions,
-    "mcpBindings" | "mcpBindingsPath"
-  > = {}
-): Promise<{ materialized: boolean }> {
-  const selections = scopedMcpSelections(recipe);
-  if (selections.length === 0) return { materialized: false };
-  if (opts.mcpBindingsPath) {
-    env.PI_RECIPES_MCP_LOCAL_CONFIG = opts.mcpBindingsPath;
-  } else if (!opts.mcpBindings) {
-    configureMcpLocalConfigPath({ cwd, recipeDir: recipe.recipeDir, env });
-  }
-  if (recipe.mcp?.mode === "cli") {
-    await materializeSessionMcpCli({ cwd, env });
-  }
-  await materializeMcpSession({
-    cwd,
-    manifest: recipe.manifest,
-    agentMcp: selections,
-    env,
-    ...(opts.mcpBindings ? { localConfig: opts.mcpBindings } : {}),
-  });
-  return { materialized: true };
-}
-
 async function configureSessionMcp(
   recipe: ResolvedRecipeAgent,
   cwd: string,
   env: NodeJS.ProcessEnv,
-  opts: CreateAgentSessionFromRecipeOptions,
+  opts: RecipeSessionOptions,
   activation: {
     getActiveTools(): string[];
     setActiveTools(names: string[]): void;
@@ -549,7 +482,7 @@ async function configureSessionMcp(
 
 async function createSessionForAgent(
   recipe: ResolvedRecipeAgent,
-  opts: CreateAgentSessionFromRecipeOptions & { recipe?: ResolvedRecipe }
+  opts: RecipeSessionOptions & { recipe?: ResolvedRecipe }
 ): Promise<RecipeSessionHandle> {
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
@@ -772,18 +705,41 @@ async function createSessionForAgent(
   }
 }
 
-export async function createAgentSessionFromRecipe(
-  opts: CreateAgentSessionFromRecipeOptions
-): Promise<RecipeSessionHandle> {
-  const resolvedRecipe = resolveRecipe({ recipeDir: opts.recipeDir });
-  const recipe = resolvedRecipe.selectAgent(opts.agentName);
-  return createSessionForAgent(recipe, { ...opts, recipe: resolvedRecipe });
+/**
+ * What a session is constructed from: an agent the host already selected off a
+ * `ResolvedRecipe`, or the package itself, which is resolved here.
+ */
+export type AgentSessionTarget =
+  | ResolvedRecipeAgent
+  | { recipeDir: string; agentName?: string };
+
+/**
+ * A `ResolvedRecipeAgent` always carries its `<provider>/<model_id>` spec and
+ * the unresolved form never does, so that one field totally discriminates the
+ * union without a tag on the public type.
+ */
+function isResolvedAgent(
+  target: AgentSessionTarget
+): target is ResolvedRecipeAgent {
+  return typeof (target as ResolvedRecipeAgent).modelSpec === "string";
 }
 
 export async function createAgentSession(
-  agent: ResolvedRecipeAgent,
-  opts: CreateAgentSessionOptions
+  target: AgentSessionTarget,
+  opts: CreateAgentSessionOptions = {}
 ): Promise<RecipeSessionHandle> {
+  if (!isResolvedAgent(target)) {
+    const resolvedRecipe = resolveRecipe({ recipeDir: target.recipeDir });
+    const resolved = resolvedRecipe.selectAgent(target.agentName);
+    return createSessionForAgent(resolved, {
+      ...opts,
+      recipe: opts.recipe ?? resolvedRecipe,
+      recipeDir: resolved.recipeDir,
+      agentName: resolved.name,
+    });
+  }
+
+  const agent = target;
   if (opts.recipe && opts.recipe.selectAgent(agent.name) !== agent) {
     throw new Error(
       `Resolved agent "${agent.name}" does not belong to the supplied ResolvedRecipe`

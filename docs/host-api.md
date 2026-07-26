@@ -3,81 +3,84 @@
 The Recipes Host API turns Recipe source into a complete live Pi agent. It
 defines the boundary between the portable agent and the system operating it.
 
-## API layers
+## Surface
 
 ```text
-resolveRecipe()     parse every agent in the portable package once
-    │
-    ├── recipe.selectAgent() select root and child agents
-    │
-    ▼
-createAgentSession()
-                          construct one selected plan
-    │
-    ├── createAgentSessionFromRecipe()
-    │                     resolve one plan and construct it
-    │
-    └── runRecipe()       execute one turn and dispose
+                     Recipe package
+                           │
+                           ▼
+                    resolveRecipe()
+                           │
+                           ▼
+              immutable ResolvedRecipe
+                           │
+                    selectAgent(name)
+                           │
+                           ▼
+                  ResolvedRecipeAgent
+                           │
+                   createAgentSession()
+                           │
+                           ▼
+          Pi session + AgentRunController
 ```
 
-Hosts choose the lowest layer they need.
+Two functions. `resolveRecipe()` parses the package once into an immutable
+snapshot; `createAgentSession()` turns one agent from it into a live Pi
+session. Everything below that line is the host's.
 
-## `resolveRecipeAgent`
-
-```ts
-import { resolveRecipeAgent } from "@introspection-ai/recipes/recipe";
-
-const agent = resolveRecipeAgent({
-  recipeDir,
-  agentName,
-});
-```
-
-The result contains the selected agent, visible subagents, model settings,
-tools, MCP policy, skills, prompts, extensions, and system-prompt composition.
-It does not create a model client or start a session.
-
-Long-lived hosts and hosts with persistent subagents should resolve the Recipe
-once, then select root and child agents from that immutable snapshot:
+## `resolveRecipe`
 
 ```ts
 import { resolveRecipe } from "@introspection-ai/recipes/recipe";
-import {
-  createAgentSession,
-} from "@introspection-ai/recipes/session";
 
 const recipe = resolveRecipe({ recipeDir });
 const agent = recipe.selectAgent(agentName);
-const credentials = await credentialsFor(agent.modelSpec);
+```
+
+The resolved agent carries visible subagents, model settings, tools, MCP
+policy, skills, prompts, extensions, and system-prompt composition. It creates
+no model client and starts no session.
+
+Hold the snapshot for the lifetime of a materialized Recipe. Selecting root and
+child agents from one parse is what keeps every session in a run reading the
+same source, and it avoids reparsing YAML per child.
+
+## `createAgentSession`
+
+`createAgentSession(target, options)` is the host integration point. The target
+is either an agent already selected off a `ResolvedRecipe`, or the package
+itself, which is resolved for you:
+
+```ts
+import { createAgentSession } from "@introspection-ai/recipes/session";
+
+// Resolve for me.
+const handle = await createAgentSession(
+  { recipeDir, agentName },
+  { cwd: workspaceDir, credentials }
+);
+```
+
+```ts
+// Or construct from a snapshot the host already inspected, and select its
+// children from that same parse.
+const recipe = resolveRecipe({ recipeDir });
+const agent = recipe.selectAgent(agentName);
 
 const handle = await createAgentSession(agent, {
   recipe,
   cwd: workspaceDir,
-  credentials,
+  credentials: await credentialsFor(agent.modelSpec),
 });
-
-const childAgent = recipe.selectAgent("researcher");
 ```
 
-This keeps inspection and construction on the same resolution results and
-avoids reparsing the package for every child session. `resolveRecipeAgent()` remains
-the convenience API for selecting one plan.
-
-## `createAgentSession`
-
-`createAgentSession(agent, options)` is the primary host integration point for
-hosts that inspect a Recipe before constructing it. It consumes the exact
-resolved plan the host inspected. Supply its `ResolvedRecipe` when using
-the default in-process subagent controller.
-
-## `createAgentSessionFromRecipe`
+The full options bag:
 
 ```ts
-import { createAgentSessionFromRecipe } from "@introspection-ai/recipes/session";
-
-const handle = await createAgentSessionFromRecipe({
-  recipeDir,
-  agentName,
+const handle = await createAgentSession(
+  { recipeDir, agentName },
+  {
   cwd: workspaceDir,
   credentials,
   modelOverride,
@@ -99,14 +102,15 @@ const handle = await createAgentSessionFromRecipe({
     meter,
     meta: { conversationId },
     runSpans: false,
-    getParentContext: () => currentTurnContext,
-  },
-});
+      getParentContext: () => currentTurnContext,
+    },
+  }
+);
 ```
 
-This is the resolve-and-create convenience integration. It:
+It:
 
-- resolves the Recipe and selected agent;
+- resolves the Recipe and selected agent, when given a package;
 - resolves model credentials fail-closed;
 - materializes required MCP bindings fail-closed;
 - loads Recipe skills, prompts, and extensions;
@@ -151,34 +155,6 @@ uses an isolated session environment and does not expose its MCP runtime to
 shell tools. A host that provisions MCP separately passes
 `mcpProvisioning: "host"` to each session.
 
-## `runRecipe`
-
-```ts
-import { runRecipe } from "@introspection-ai/recipes/run";
-
-const result = await runRecipe({
-  recipeDir,
-  cwd: workspaceDir,
-  prompt,
-  timeoutMs: 120_000,
-});
-```
-
-`runRecipe` creates one session, executes one prompt, returns the transcript and
-final text, and always disposes. It is suitable for tests, cron jobs, and queue
-workers that do not need a durable conversational host.
-
-## Inspection
-
-```ts
-import { inspectRecipe } from "@introspection-ai/recipes/inspect";
-
-const requirements = inspectRecipe(recipeDir);
-```
-
-Inspection derives agents, providers, expected credential variables, required
-and optional MCP servers, and resource counts without creating a session.
-
 ## OpenTelemetry
 
 Pass a tracer through `otel` to attach the JS SDK's OpenTelemetry GenAI
@@ -194,8 +170,9 @@ the same session instrumentation works with any OTLP-compatible backend. A
 host that needs structure-only traces can wrap its exporter with
 `GenAiContentScrubbingExporter` from `@introspection-sdk/introspection-pi`.
 
-Short-lived hosts must flush their own provider after `runRecipe` completes;
-long-lived hosts should flush and shut it down with the host lifecycle.
+Short-lived hosts must flush their own provider once their sessions are
+disposed; long-lived hosts should flush and shut it down with the host
+lifecycle.
 
 ## Host conformance
 
@@ -222,4 +199,4 @@ The package does not provide:
 - a deployment CLI;
 - provider-specific hosting integrations.
 
-Those layers compose above `createAgentSessionFromRecipe`.
+Those layers compose above `createAgentSession`.

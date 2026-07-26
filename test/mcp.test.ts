@@ -40,8 +40,8 @@ import {
   snapshotMcpEnvironment,
   stopMcpDaemon,
   type McpSessionConfig,
-  type RecipePackageManifest,
-} from "../src/index.js";
+} from "../src/mcp.js";
+import type { RecipePackageManifest } from "../src/recipe-package.js";
 
 describe("MCP environment leasing", () => {
   it("preserves daemon generation across isolation and restoration", () => {
@@ -473,19 +473,16 @@ describe("static MCP session materialization", () => {
   });
 
   it("resolves the native client from the installed package", () => {
-    const packageEntrypoint = fileURLToPath(
-      import.meta.resolve("@introspection-ai/recipes")
-    );
+    // The package publishes subpaths only, so the vendored binary is located
+    // relative to the module that needs it, not by resolving a root entry.
     const executable = process.platform === "win32" ? "mcp-client.exe" : "mcp-client";
 
     expect(nativeMcpClientPath()).toBe(
-      join(
-        dirname(packageEntrypoint),
-        "..",
-        "vendor",
-        "mcp-client",
-        `${process.platform}-${process.arch}`,
-        executable
+      fileURLToPath(
+        new URL(
+          `../vendor/mcp-client/${process.platform}-${process.arch}/${executable}`,
+          import.meta.resolve("../src/mcp.js")
+        )
       )
     );
   });

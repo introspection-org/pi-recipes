@@ -34,10 +34,11 @@ publish command.
 
 ## Deploy
 
-The Recipe remains unchanged across hosts. A long-lived host resolves the Recipe
-once, calls `createAgentSession()`, and supplies its own credentials, task
-lifecycle, persistence, isolation, and protocol surface. Short-lived hosts can
-use `createAgentSessionFromRecipe()` as the resolve-and-create convenience.
+The Recipe remains unchanged across hosts. A host calls `createAgentSession()`
+and supplies its own credentials, task lifecycle, persistence, isolation, and
+protocol surface. Pass `{ recipeDir }` and the package is resolved for you; a
+long-lived host resolves once with `resolveRecipe()` and constructs every
+session, root and child, from that snapshot.
 
 Use Introspection when you want the managed host. Otherwise, integrate the Host
 API with the platform that will operate the Recipe.

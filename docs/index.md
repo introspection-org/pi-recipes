@@ -28,10 +28,11 @@ Recipe source
 resolveRecipe()          format interpretation
     │
     ▼
+selectAgent(name)        one ResolvedRecipeAgent
+    │
+    ▼
 createAgentSession()     complete live Pi agent
     │
-    ├── createAgentSessionFromRecipe() resolve-and-create convenience
-    ├── runRecipe()           one-turn convenience
     └── host                  tasks, persistence, auth, protocols, deployment
 ```
 

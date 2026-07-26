@@ -14,7 +14,7 @@ import {
   readPiPackageManifest,
   validatePiPackageManifest,
 } from "../src/recipe-package.js";
-import { resolveRecipeAgent } from "../src/recipe/resolve.js";
+import { resolveRecipe } from "../src/recipe/resolve.js";
 
 const cleanups: Array<() => void> = [];
 
@@ -74,7 +74,7 @@ describe("Recipe Format", () => {
       join(recipeDir, "skills", "research", "SKILL.md"),
     ]);
 
-    const recipe = resolveRecipeAgent({ recipeDir });
+    const recipe = resolveRecipe({ recipeDir }).selectAgent();
     expect(recipe.name).toBe("agent");
     expect(recipe.modelSpec).toBe("anthropic/claude-sonnet-4-5");
     expect(recipe.tools).toEqual(["read"]);
@@ -93,7 +93,7 @@ describe("Recipe Format", () => {
       })
     );
 
-    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
       /declares agents resource outside the package/
     );
   });
@@ -121,7 +121,11 @@ describe("npm package boundary", () => {
     expect(pkg.exports).not.toHaveProperty("./agui");
     expect(pkg.exports).not.toHaveProperty("./tracing");
     expect(pkg.exports).toHaveProperty("./session");
-    expect(pkg.exports).toHaveProperty("./run");
+    // Subpaths only: no root barrel, and no one-turn harness. The key is
+    // checked directly because toHaveProperty reads "." as a path separator.
+    expect(Object.keys(pkg.exports)).not.toContain(".");
+    expect(pkg.exports).not.toHaveProperty("./run");
+    expect(pkg.exports).not.toHaveProperty("./inspect");
     expect(pkg.exports).toHaveProperty("./test-utils");
     expect(existsSync(join(root, "src", "cli.ts"))).toBe(false);
     expect(existsSync(join(root, "src", "serve.ts"))).toBe(false);
