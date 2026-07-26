@@ -13,9 +13,8 @@ import type {
   RecipeSessionHandle,
 } from "./session.js";
 
-/** Defaults proposed by the serve design; validated against real recipes. */
+/** Default in-process child concurrency. */
 export const DEFAULT_SUBAGENT_CONCURRENCY = 4;
-export const DEFAULT_SUBAGENT_DEPTH = 2;
 
 export interface InProcessRunControllerOptions {
   recipeDir: string;
@@ -24,10 +23,6 @@ export interface InProcessRunControllerOptions {
   credentials?: CredentialStore;
   /** Concurrent child runs; excess starts queue. Default 4. */
   concurrency?: number;
-  /** Delegation depth. Children at the last level lose the `agent` tool. Default 2. */
-  depth?: number;
-  /** Internal: this controller's own depth (root = 0). */
-  currentDepth?: number;
   /** Root session instrumentation inherited by in-process child sessions. */
   otel?: RecipeSessionOtelOptions;
   /** Child session factory; defaults to `createRecipeSession`. Test/DI seam. */
@@ -67,8 +62,6 @@ export function createInProcessRunController(
 ): AgentRunController {
   const env = opts.env ?? process.env;
   const concurrency = Math.max(1, opts.concurrency ?? DEFAULT_SUBAGENT_CONCURRENCY);
-  const maxDepth = Math.max(1, opts.depth ?? DEFAULT_SUBAGENT_DEPTH);
-  const currentDepth = opts.currentDepth ?? 0;
   const runs = new Map<string, ChildRun>();
 
   let active = 0;
@@ -138,14 +131,8 @@ export function createInProcessRunController(
           // The parent materialized the MCP session for itself and its
           // visible subagents; children reuse that runtime.
           mcpMode: "inherit",
-          ...(currentDepth + 1 >= maxDepth
-            ? { runController: null }
-            : {
-                runController: createInProcessRunController({
-                  ...opts,
-                  currentDepth: currentDepth + 1,
-                }),
-              }),
+          // Delegation is one level deep by the Recipe format contract.
+          runController: null,
           onEvent: (event) => {
             const record = event as { type?: string; toolName?: unknown };
             if (record.type === "tool_execution_start") {

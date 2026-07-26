@@ -106,8 +106,8 @@ export interface CreateRecipeSessionOptions {
   agentToolOptions?: {
     acknowledgeCompletions?(ids: readonly string[]): void;
   };
-  /** Bounds for the default in-process subagent controller. */
-  subagentLimits?: { concurrency?: number; depth?: number };
+  /** Concurrency bound for the default in-process subagent controller. */
+  subagentLimits?: { concurrency?: number };
   /** Extra skill roots beyond the recipe's. */
   additionalSkillPaths?: string[];
   /** Replace the recipe's resolved skill roots with host-materialized roots. */
@@ -506,7 +506,6 @@ export async function createRecipeSession(
             env,
             ...(opts.credentials ? { credentials: opts.credentials } : {}),
             concurrency: opts.subagentLimits?.concurrency,
-            depth: opts.subagentLimits?.depth,
             ...(otel ? { otel } : {}),
           })
         : inertRunController();

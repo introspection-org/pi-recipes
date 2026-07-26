@@ -668,6 +668,7 @@ describe("in-process run controller", () => {
     });
     expect(childOptions?.otel?.meta?.agentId).toBeUndefined();
     expect(childOptions?.otel?.meta?.agentName).toBeUndefined();
+    expect(childOptions?.runController).toBeNull();
     await controller.close(run.agent_run_id);
     expect(scripted).not.toBeNull();
   });
