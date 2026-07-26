@@ -6,6 +6,23 @@
 
 * validate the portable authored judge contract in `check_recipe_files`
 
+## [1.0.0](https://github.com/introspection-org/recipes/compare/pi-recipe-check-v0.8.0...pi-recipe-check-v1.0.0) (2026-07-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* define the portable Recipe session boundary ([#132](https://github.com/introspection-org/recipes/issues/132))
+* define Recipes as the open format and portable runtime for Pi agents ([#130](https://github.com/introspection-org/recipes/issues/130))
+
+### Features
+
+* define Recipes as the open format and portable runtime for Pi agents ([#130](https://github.com/introspection-org/recipes/issues/130)) ([bee99ed](https://github.com/introspection-org/recipes/commit/bee99edaf26489131d96fb28d313f3d5c6abb179))
+
+
+### Code Refactoring
+
+* define the portable Recipe session boundary ([#132](https://github.com/introspection-org/recipes/issues/132)) ([86de676](https://github.com/introspection-org/recipes/commit/86de67668d9066dcf00303cf394d752a7c67a427))
+
 ## [0.8.0](https://github.com/introspection-org/pi-recipes/compare/pi-recipe-check-v0.7.0...pi-recipe-check-v0.8.0) (2026-07-21)
 
 
