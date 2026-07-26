@@ -1,6 +1,6 @@
 {
 	"name": "@introspection-ai/recipes",
-	"version": "0.12.0",
+	"version": "0.13.0",
 	"description": "The open package format for complete, portable Pi agents.",
 	"license": "Apache-2.0",
 	"type": "module",

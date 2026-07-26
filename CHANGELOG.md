@@ -10,6 +10,18 @@
 
 * **recipe-check:** accept IPv6 loopback URLs in judge local model configuration
 
+## [0.13.0](https://github.com/introspection-org/pi-recipes/compare/v0.12.0...v0.13.0) (2026-07-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* define Recipes as the open format and portable runtime for Pi agents ([#130](https://github.com/introspection-org/pi-recipes/issues/130))
+
+### Features
+
+* define Recipes as the open format and portable runtime for Pi agents ([#130](https://github.com/introspection-org/pi-recipes/issues/130)) ([bee99ed](https://github.com/introspection-org/pi-recipes/commit/bee99edaf26489131d96fb28d313f3d5c6abb179))
+* **recipe-check:** export the typed judge spec model ([#120](https://github.com/introspection-org/pi-recipes/issues/120)) ([49bf99d](https://github.com/introspection-org/pi-recipes/commit/49bf99d7c92297bd512dc52fccac9de2acea3d01))
+
 ## [0.12.0](https://github.com/introspection-org/pi-recipes/compare/v0.11.0...v0.12.0) (2026-07-21)
 
 
