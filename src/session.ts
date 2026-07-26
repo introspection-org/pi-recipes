@@ -53,6 +53,9 @@ import {
   type ResolvedRecipeAgent,
   type ResolvedRecipe,
 } from "./recipe/resolve.js";
+import {
+  type McporterConfig,
+} from "./mcporter.js";
 
 export { expectedProviderEnvVars } from "./provider-env.js";
 
@@ -65,7 +68,7 @@ export { expectedProviderEnvVars } from "./provider-env.js";
  * `required: true` MCP server with no binding throws `McpBindingError`, and a
  * model whose provider has no credential throws `RecipeCredentialError`.
  */
-export interface RecipeSessionOptions {
+interface RecipeSessionOptions {
   recipeDir: string;
   /** Default: `agents/agent.yaml`, else the recipe's single-agent rule. */
   agentName?: string;
@@ -144,7 +147,7 @@ export interface RecipeSessionOtelOptions
   meta?: Partial<AgentMeta>;
 }
 
-export interface RecipeSessionHandle {
+export interface AgentSessionHandle {
   /** The live Pi session: prompt / steer / followUp / abort / subscribe. */
   session: AgentSession;
   /** The selected executable agent plan used to create this session. */
@@ -483,7 +486,7 @@ async function configureSessionMcp(
 async function createSessionForAgent(
   recipe: ResolvedRecipeAgent,
   opts: RecipeSessionOptions & { recipe?: ResolvedRecipe }
-): Promise<RecipeSessionHandle> {
+): Promise<AgentSessionHandle> {
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
   const otel = opts.otel
@@ -727,7 +730,7 @@ function isResolvedAgent(
 export async function createAgentSession(
   target: AgentSessionTarget,
   opts: CreateAgentSessionOptions = {}
-): Promise<RecipeSessionHandle> {
+): Promise<AgentSessionHandle> {
   if (!isResolvedAgent(target)) {
     const resolvedRecipe = resolveRecipe({ recipeDir: target.recipeDir });
     const resolved = resolvedRecipe.selectAgent(target.agentName);

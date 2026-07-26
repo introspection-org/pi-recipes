@@ -14,16 +14,16 @@ vi.mock("../src/mcp-catalog.js", () => ({
 import { piMcpToolName } from "../src/mcp-tools.js";
 import {
   createAgentSession,
-  type RecipeSessionOptions,
-  type RecipeSessionHandle,
+  type CreateAgentSessionOptions,
+  type AgentSessionHandle,
 } from "../src/session.js";
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
 
-// The collapsed constructor takes (target, options). These cases were written
-// against one flat bag, and it satisfies both parameters: the target reads
-// recipeDir/agentName, the options ignore them.
-const createSession = (options: RecipeSessionOptions) =>
-  createAgentSession(options, options);
+// These cases were written against one flat bag, which satisfies both
+// parameters: the target reads recipeDir/agentName, the options ignore them.
+const createSession = (
+  options: { recipeDir: string; agentName?: string } & CreateAgentSessionOptions
+) => createAgentSession(options, options);
 
 
 async function credentials(): Promise<InMemoryCredentialStore> {
@@ -36,7 +36,7 @@ async function credentials(): Promise<InMemoryCredentialStore> {
 }
 
 describe("canonical Recipe session MCP tools mode", () => {
-  const handles: RecipeSessionHandle[] = [];
+  const handles: AgentSessionHandle[] = [];
   const cleanups: Array<() => void> = [];
 
   afterEach(async () => {

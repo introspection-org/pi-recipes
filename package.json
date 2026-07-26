@@ -41,7 +41,7 @@
 			"types": "./dist/pi-extension.d.ts",
 			"import": "./dist/pi-extension.js"
 		},
-		"./pi": {
+		"./subagents": {
 			"types": "./dist/agent-tool.d.ts",
 			"import": "./dist/agent-tool.js"
 		},

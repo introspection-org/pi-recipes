@@ -20,7 +20,6 @@ import {
 } from "./mcp-contract.js";
 import { mcpCliHelpText } from "./mcp-cli-help.js";
 import {
-  defaultMcporterConfigPath,
   defaultMcpSessionPath,
   filterMcpCatalog,
   mcpSessionAllowsTool,
@@ -33,6 +32,10 @@ import {
   validateDelegatedMcpCommand,
 } from "./mcp-cli-policy.js";
 import type { McpCatalogServer } from "./mcp-daemon-protocol.js";
+import {
+  defaultMcporterConfigPath,
+  type McporterConfig,
+} from "./mcporter.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;

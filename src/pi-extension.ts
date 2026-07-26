@@ -60,6 +60,9 @@ import {
   type AgentRunController,
   type AgentRunSummary,
 } from "./agent-tool.js";
+import {
+  type McporterConfig,
+} from "./mcporter.js";
 
 export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;

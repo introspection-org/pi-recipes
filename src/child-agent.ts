@@ -16,7 +16,7 @@ import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import { resolveRecipe, type ResolvedRecipeAgent } from "./recipe/resolve.js";
 import {
   createAgentSession,
-  type RecipeSessionHandle,
+  type AgentSessionHandle,
 } from "./session.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
@@ -180,7 +180,7 @@ function messageFromEvent(event: AgentSessionEvent): Record<string, unknown> | n
 
 class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   private session: AgentSession | null = null;
-  private handle: RecipeSessionHandle | null = null;
+  private handle: AgentSessionHandle | null = null;
   private mcpRuntimeDir: string | null = null;
   private assistantStreamedText = false;
 

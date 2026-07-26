@@ -24,6 +24,11 @@ import {
   mcpSelectionAllowsTool,
   type ScopedMcpToolSelection,
 } from "./mcp-policy.js";
+import {
+  defaultMcporterConfigPath,
+  type McporterConfig,
+  type McporterServerConfig,
+} from "./mcporter.js";
 
 export { preloadMcpCatalogs } from "./mcp-catalog.js";
 export {
@@ -225,15 +230,11 @@ export function defaultMcpSessionPath(cwd: string): string {
   return join(cwd, ".pi", "mcp-session.json");
 }
 
-export function fallbackMcpSessionPath(): string {
+function fallbackMcpSessionPath(): string {
   return join(tmpdir(), "recipes", "mcp-session.json");
 }
 
-export function defaultMcporterConfigPath(cwd: string): string {
-  return join(cwd, ".pi", "mcporter.json");
-}
-
-export function fallbackMcporterConfigPath(): string {
+function fallbackMcporterConfigPath(): string {
   return join(tmpdir(), "recipes", "mcporter.json");
 }
 
@@ -269,12 +270,8 @@ export function configureMcpLocalConfigPath(opts: {
   return path;
 }
 
-export function defaultMcpBinDir(cwd: string): string {
+function defaultMcpBinDir(cwd: string): string {
   return join(cwd, ".pi", "bin");
-}
-
-export function mcporterCliEntrypointPath(): string {
-  return fileURLToPath(import.meta.resolve("mcporter/cli"));
 }
 
 function compiledEntrypoint(name: string): string {
@@ -649,25 +646,6 @@ async function writeWithFallback(
   }
 }
 
-export interface McporterServerConfig {
-  baseUrl: string;
-  headers: Record<string, string>;
-  allowedTools?: string[];
-  auth?: "oauth";
-  tokenCacheDir?: string;
-  clientName?: string;
-  oauthClientId?: string;
-  oauthClientSecretEnv?: string;
-  oauthTokenEndpointAuthMethod?: string;
-  oauthRedirectUrl?: string;
-  oauthScope?: string;
-  httpFetch?: "default" | "node-http1";
-}
-
-export interface McporterConfig {
-  imports: string[];
-  mcpServers: Record<string, McporterServerConfig>;
-}
 
 /**
  * Project the static session policy into the config the `mcp` CLI (mcporter)

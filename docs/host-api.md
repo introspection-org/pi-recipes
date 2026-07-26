@@ -118,7 +118,7 @@ It:
 - creates and binds the Pi `AgentSession`;
 - returns one idempotent `dispose()` boundary.
 
-The returned `RecipeSessionHandle` exposes:
+The returned `AgentSessionHandle` exposes:
 
 - `session` — Pi prompt, steer, follow-up, abort, messages, and events;
 - `agent` — the selected resolved portable definition;

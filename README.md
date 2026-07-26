@@ -133,7 +133,7 @@ tests.
 - `@introspection-ai/recipes/session` — create a live Pi Recipe session
 - `@introspection-ai/recipes/mcp` — MCP declarations, bindings, and selection
 - `@introspection-ai/recipes/pi-extension` — Pi extension entrypoint
-- `@introspection-ai/recipes/pi` — shared subagent tool and controller types
+- `@introspection-ai/recipes/subagents` — subagent tool and run-controller contract
 - `@introspection-ai/recipes/interactions` — portable user-input and approval contract
 - `@introspection-ai/recipes/test-utils` — host conformance cases
 

@@ -19,18 +19,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import type {
-  RecipeSessionOptions,
-  RecipeSessionHandle,
+  AgentSessionHandle,
+  AgentSessionTarget,
+  CreateAgentSessionOptions,
 } from "./session.js";
 
 export interface RecipeHost {
   /**
-   * Create a session with the host's default injections applied. The options
-   * here layer the suite's fixture on top.
+   * Create a session with the host's default injections applied. Mirrors
+   * `createAgentSession` exactly, so a host that passes the suite has
+   * exercised the real signature; the suite layers its fixture on top.
    */
   createSession(
-    options: RecipeSessionOptions
-  ): Promise<RecipeSessionHandle>;
+    target: AgentSessionTarget,
+    options: CreateAgentSessionOptions
+  ): Promise<AgentSessionHandle>;
 }
 
 export interface HostConformanceCase {
@@ -140,12 +143,16 @@ export function hostConformanceCases(
       async run() {
         const fixture = writeFixtureRecipe();
         try {
-          const handle = await host.createSession({
-            recipeDir: fixture.recipeDir,
-            cwd: fixture.workspaceDir,
-            credentials: await testCredentialStore(),
-            env: { ...cleanEnv() },
-          });
+          const handle = await host.createSession(
+            {
+              recipeDir: fixture.recipeDir,
+            },
+            {
+              cwd: fixture.workspaceDir,
+              credentials: await testCredentialStore(),
+              env: { ...cleanEnv() },
+            }
+          );
           try {
             assert(handle.agent.name === "agent", "agentName resolves");
             assert(
@@ -167,11 +174,15 @@ export function hostConformanceCases(
         const fixture = writeFixtureRecipe();
         try {
           const err = await expectRejection(
-            host.createSession({
-              recipeDir: fixture.recipeDir,
-              cwd: fixture.workspaceDir,
-              env: { ...cleanEnv() },
-            }),
+            host.createSession(
+            {
+                recipeDir: fixture.recipeDir,
+            },
+            {
+                cwd: fixture.workspaceDir,
+                env: { ...cleanEnv() },
+            }
+          ),
             "session construction without credentials"
           );
           assert(
@@ -198,12 +209,16 @@ export function hostConformanceCases(
         });
         try {
           const err = await expectRejection(
-            host.createSession({
-              recipeDir: fixture.recipeDir,
-              cwd: fixture.workspaceDir,
-              credentials: await testCredentialStore(),
-              env: { ...cleanEnv() },
-            }),
+            host.createSession(
+            {
+                recipeDir: fixture.recipeDir,
+            },
+            {
+                cwd: fixture.workspaceDir,
+                credentials: await testCredentialStore(),
+                env: { ...cleanEnv() },
+            }
+          ),
             "session construction with an unbound required MCP server"
           );
           assert(
@@ -231,21 +246,25 @@ export function hostConformanceCases(
         try {
           const env = { ...cleanEnv() };
           const originalPath = env.PATH;
-          const handle = await host.createSession({
-            recipeDir: fixture.recipeDir,
-            cwd: fixture.workspaceDir,
-            credentials: await testCredentialStore(),
-            env,
-            mcpBindings: {
-              servers: [
-                {
-                  id: "linear",
-                  transport: "streamable_http",
-                  url: "http://127.0.0.1:9/mcp",
-                },
-              ],
+          const handle = await host.createSession(
+            {
+              recipeDir: fixture.recipeDir,
             },
-          });
+            {
+              cwd: fixture.workspaceDir,
+              credentials: await testCredentialStore(),
+              env,
+              mcpBindings: {
+                servers: [
+                  {
+                    id: "linear",
+                    transport: "streamable_http",
+                    url: "http://127.0.0.1:9/mcp",
+                  },
+                ],
+              },
+            }
+          );
           await handle.dispose();
           await handle.dispose();
           assert(
@@ -263,12 +282,16 @@ export function hostConformanceCases(
       async run() {
         const fixture = writeFixtureRecipe({ subagents: ["helper"] });
         try {
-          const handle = await host.createSession({
-            recipeDir: fixture.recipeDir,
-            cwd: fixture.workspaceDir,
-            credentials: await testCredentialStore(),
-            env: { ...cleanEnv() },
-          });
+          const handle = await host.createSession(
+            {
+              recipeDir: fixture.recipeDir,
+            },
+            {
+              cwd: fixture.workspaceDir,
+              credentials: await testCredentialStore(),
+              env: { ...cleanEnv() },
+            }
+          );
           try {
             const settled = await Promise.race([
               (async () => {

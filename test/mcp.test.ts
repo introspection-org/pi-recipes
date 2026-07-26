@@ -28,7 +28,6 @@ import { callMcpDaemonTool } from "../src/mcp-daemon-client.js";
 import {
   buildMcporterConfig,
   clearMcpSession,
-  defaultMcporterConfigPath,
   defaultMcpSessionPath,
   filterMcpCatalog,
   materializeMcpSession,
@@ -42,6 +41,10 @@ import {
   type McpSessionConfig,
 } from "../src/mcp.js";
 import type { RecipePackageManifest } from "../src/recipe-package.js";
+import {
+  defaultMcporterConfigPath,
+  type McporterConfig,
+} from "../src/mcporter.js";
 
 describe("MCP environment leasing", () => {
   it("preserves daemon generation across isolation and restoration", () => {

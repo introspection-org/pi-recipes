@@ -4,10 +4,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  defaultMcporterConfigPath,
   materializeMcpSession,
 } from "../src/mcp.js";
 import type { RecipePackageManifest } from "../src/recipe-package.js";
+import {
+  defaultMcporterConfigPath,
+  type McporterConfig,
+} from "../src/mcporter.js";
 
 describe("MCP OAuth session configuration", () => {
   it("projects OAuth references without contacting the server", async () => {

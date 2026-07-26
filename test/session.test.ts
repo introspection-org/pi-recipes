@@ -17,19 +17,19 @@ import {
 import { createInProcessRunController } from "../src/run-controller.js";
 import {
   createAgentSession,
-  type RecipeSessionOptions,
+  type CreateAgentSessionOptions,
   RecipeCredentialError,
   RecipeMcpEnvironmentInUseError,
   RecipeModelError,
-  type RecipeSessionHandle,
+  type AgentSessionHandle,
 } from "../src/session.js";
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
 
-// The collapsed constructor takes (target, options). These cases were written
-// against one flat bag, and it satisfies both parameters: the target reads
-// recipeDir/agentName, the options ignore them.
-const createSession = (options: RecipeSessionOptions) =>
-  createAgentSession(options, options);
+// These cases were written against one flat bag, which satisfies both
+// parameters: the target reads recipeDir/agentName, the options ignore them.
+const createSession = (
+  options: { recipeDir: string; agentName?: string } & CreateAgentSessionOptions
+) => createAgentSession(options, options);
 
 
 const detachTelemetry = vi.hoisted(() => vi.fn());
@@ -83,7 +83,7 @@ function assistantMessage(
   };
 }
 
-function scriptReply(handle: RecipeSessionHandle, text: string): void {
+function scriptReply(handle: AgentSessionHandle, text: string): void {
   handle.session.agent.streamFunction = () => {
     const stream = new MockAssistantStream();
     queueMicrotask(() => {
@@ -94,7 +94,7 @@ function scriptReply(handle: RecipeSessionHandle, text: string): void {
   };
 }
 
-function scriptHangUntilAbort(handle: RecipeSessionHandle): void {
+function scriptHangUntilAbort(handle: AgentSessionHandle): void {
   handle.session.agent.streamFunction = (_model, _context, options) => {
     const stream = new MockAssistantStream();
     const signal = options?.signal;
@@ -117,7 +117,7 @@ function scriptHangUntilAbort(handle: RecipeSessionHandle): void {
   };
 }
 
-function scriptError(handle: RecipeSessionHandle): void {
+function scriptError(handle: AgentSessionHandle): void {
   handle.session.agent.streamFunction = () => {
     const stream = new MockAssistantStream();
     queueMicrotask(() => {
@@ -153,7 +153,7 @@ function deferred<T = void>() {
 
 describe("createAgentSession", () => {
   const cleanups: Array<() => void> = [];
-  const handles: RecipeSessionHandle[] = [];
+  const handles: AgentSessionHandle[] = [];
 
   afterEach(async () => {
     for (const handle of handles.splice(0)) {
@@ -171,11 +171,11 @@ describe("createAgentSession", () => {
   }
 
   async function open(
-    options: Partial<RecipeSessionOptions> & {
+    options: Partial<{ recipeDir: string; agentName?: string } & CreateAgentSessionOptions> & {
       recipeDir: string;
       cwd: string;
     }
-  ): Promise<RecipeSessionHandle> {
+  ): Promise<AgentSessionHandle> {
     const handle = await createSession({
       credentials: await credentialStore(),
       env: cleanEnv(),
@@ -605,7 +605,7 @@ describe("in-process run controller", () => {
 
   it("runs a child through an injected session factory", async () => {
     const { recipeDir, workspaceDir } = fixture();
-    let scripted: RecipeSessionHandle | null = null;
+    let scripted: AgentSessionHandle | null = null;
     let childOptions:
       | Parameters<typeof createAgentSession>[1]
       | undefined;
@@ -734,7 +734,7 @@ describe("in-process run controller", () => {
             messages: [],
           },
           dispose,
-        } as unknown as RecipeSessionHandle;
+        } as unknown as AgentSessionHandle;
       },
     });
 
@@ -763,7 +763,7 @@ describe("in-process run controller", () => {
         return {
           session: { prompt, messages: [] },
           dispose,
-        } as unknown as RecipeSessionHandle;
+        } as unknown as AgentSessionHandle;
       },
     });
 
@@ -832,7 +832,7 @@ describe("in-process run controller", () => {
             abort: vi.fn(async () => {}),
           },
           dispose: vi.fn(async () => {}),
-        } as unknown as RecipeSessionHandle;
+        } as unknown as AgentSessionHandle;
       },
     });
     const run = await controller.start({ name: "helper", prompt: "first" });

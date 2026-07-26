@@ -10,7 +10,7 @@ import { promptResultText } from "./child-agent.js";
 import type {
   CreateAgentSessionOptions,
   RecipeSessionOtelOptions,
-  RecipeSessionHandle,
+  AgentSessionHandle,
 } from "./session.js";
 import type { ResolvedRecipe } from "./recipe/resolve.js";
 
@@ -30,12 +30,12 @@ export interface InProcessRunControllerOptions {
   sessionFactory?: (
     agent: ReturnType<ResolvedRecipe["selectAgent"]>,
     options: CreateAgentSessionOptions
-  ) => Promise<RecipeSessionHandle>;
+  ) => Promise<AgentSessionHandle>;
 }
 
 interface ChildRun {
   summary: AgentRunSummary;
-  handle: RecipeSessionHandle | null;
+  handle: AgentSessionHandle | null;
   settled: Promise<void>;
   onUpdate?: ((summary: AgentRunSummary) => void | Promise<void>) | undefined;
   waiters: Array<() => void>;

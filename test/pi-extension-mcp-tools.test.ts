@@ -22,6 +22,9 @@ vi.mock("../src/mcp-catalog.js", () => ({
 import { createRecipesExtension } from "../src/pi-extension.js";
 import { piMcpToolName } from "../src/mcp-tools.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
+import {
+  type McporterConfig,
+} from "../src/mcporter.js";
 
 describe("Pi extension MCP tools mode", () => {
   const roots: string[] = [];
