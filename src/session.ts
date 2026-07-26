@@ -343,6 +343,7 @@ function scopedMcpSelections(recipe: ResolvedRecipeAgent): ScopedMcpToolSelectio
 }
 
 interface MaterializedSessionMcp {
+  available: boolean;
   materialized: boolean;
   tools?: ToolDefinition[];
   initialActiveToolNames?: string[];
@@ -439,7 +440,9 @@ async function configureSessionMcp(
   }
 ): Promise<MaterializedSessionMcp> {
   const selections = scopedMcpSelections(recipe);
-  if (selections.length === 0) return { materialized: false };
+  if (selections.length === 0) {
+    return { available: false, materialized: false };
+  }
   const mode = recipe.mcp?.mode ?? "cli";
   const hostProvisioned = opts.mcpProvisioning === "host";
   const mcpCwd = opts.mcpRuntimeDir ?? cwd;
@@ -524,6 +527,7 @@ async function configureSessionMcp(
         activation,
       });
       return {
+        available: true,
         materialized: !hostProvisioned,
         tools: materialized.tools,
         initialActiveToolNames: materialized.initialActiveToolNames,
@@ -539,6 +543,7 @@ async function configureSessionMcp(
       void preloadMcpCatalogs({ env: runtimeEnv }).catch(() => {});
     }
     return {
+      available: true,
       materialized: !hostProvisioned,
       release,
     };
@@ -703,7 +708,7 @@ async function createSessionForAgent(
     const selectedToolNames = [...tools, ...mcpToolNames];
     const environmentBash: ToolDefinition | undefined =
       (recipe.mcp?.mode ?? "cli") === "cli" &&
-      mcp.materialized &&
+      mcp.available &&
       env !== process.env &&
       tools.includes("bash") &&
       !(opts.customTools ?? []).some((tool) => tool.name === "bash")

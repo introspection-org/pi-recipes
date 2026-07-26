@@ -12,8 +12,10 @@ vi.mock("../src/mcp-catalog.js", () => ({
 }));
 
 import { piMcpToolName } from "../src/mcp-tools.js";
+import { resolveRecipeAgent } from "../src/recipe/resolve.js";
 import {
   createAgentSessionFromRecipe,
+  materializeRecipeSessionMcp,
   type RecipeSessionHandle,
 } from "../src/session.js";
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
@@ -174,5 +176,68 @@ describe("canonical Recipe session MCP tools mode", () => {
       undefined
     );
     expect(result.content[0]?.text).toContain("private-cli-env");
+  });
+
+  it("applies a host-provisioned CLI MCP environment to the session bash tool", async () => {
+    const fixture = writeFixtureRecipe({
+      tools: ["read", "bash"],
+      manifestPi: {
+        mcp: {
+          servers: [
+            {
+              id: "contacts",
+              tools: { include: ["search_contacts"] },
+            },
+          ],
+        },
+      },
+      agentExtras: [
+        "mcp:",
+        "  mode: cli",
+        "  servers:",
+        "    contacts:",
+        "      include: [search_contacts]",
+      ],
+    });
+    cleanups.push(fixture.cleanup);
+    const env = { ...cleanEnv(), HOST_MCP_MARKER: "host-owned" };
+    const mcpBindings = {
+      servers: [
+        {
+          id: "contacts",
+          transport: "streamable_http" as const,
+          url: "http://127.0.0.1:9/mcp",
+        },
+      ],
+    };
+    await materializeRecipeSessionMcp(
+      resolveRecipeAgent({ recipeDir: fixture.recipeDir }),
+      fixture.workspaceDir,
+      env,
+      { mcpBindings }
+    );
+    const handle = await createAgentSessionFromRecipe({
+      recipeDir: fixture.recipeDir,
+      cwd: fixture.workspaceDir,
+      env,
+      credentials: await credentials(),
+      mcpProvisioning: "host",
+    });
+    handles.push(handle);
+
+    const bash = handle.session.agent.state.tools.find(
+      (tool) => tool.name === "bash"
+    );
+    expect(bash).toBeDefined();
+    const result = await (bash!.execute as any)(
+      "call-host-env",
+      {
+        command:
+          'test -n "$PI_RECIPES_MCP_SESSION" && test "$HOST_MCP_MARKER" = host-owned && printf host-cli-env',
+      },
+      undefined,
+      undefined
+    );
+    expect(result.content[0]?.text).toContain("host-cli-env");
   });
 });
