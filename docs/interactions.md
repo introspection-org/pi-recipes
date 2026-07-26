@@ -1,6 +1,6 @@
 # Recipe Interactions
 
-`@introspection-ai/pi-recipes/interactions` gives recipe tools one contract for
+`@introspection-ai/recipes/interactions` gives recipe tools one contract for
 asking the user a question or requesting approval that works on every pi host:
 the local TUI, RPC-driven UIs, headless runs, and hosts that stream tool
 results to a remote frontend and can pause/resume a run.
@@ -16,7 +16,7 @@ names, schemas, and prompts — and call `askUserQuestion()` or
 ```ts
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { askUserQuestion } from "@introspection-ai/pi-recipes/interactions";
+import { askUserQuestion } from "@introspection-ai/recipes/interactions";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -61,7 +61,7 @@ The interaction helpers pick the best available channel, in order:
    (`DEFAULT_RPC_DIALOG_TIMEOUT_MS`, 120s) so a client that never renders
    them cannot wedge the session; a timed-out or dismissed dialog declines.
 3. **Pause/resume host** (`PI_INTERRUPT_RESUME` env, set by the host) —
-   the tool returns `Awaiting user response.` with a pi-recipes
+   the tool returns `Awaiting user response.` with a Recipes
    `details.interrupt` request whose outcome is `awaiting_user`. The host
    pauses the run, adapts the request to its own UI protocol, and later resumes
    the run by rewriting this tool result with the response envelope (below).
@@ -74,7 +74,7 @@ The interaction helpers pick the best available channel, in order:
 ## The interrupt request
 
 Pi's native tool-result shape is `content` plus arbitrary structured
-`details`. pi-recipes stores its interaction state at `details.interrupt`.
+`details`. Recipes stores its interaction state at `details.interrupt`.
 A host that supports pause/resume treats
 `details.interrupt.outcome.type === "awaiting_user"` as a pause request.
 Runtime adapters generate their own pause state from this record.
@@ -196,11 +196,11 @@ best judgment.
 
 1. Wrap every in-process child session prompt with
    `autoResolveInteractions()`. The guard is shared across separately resolved
-   copies of pi-recipes, so recipe-owned interaction tools observe the child
+   copies of Recipes, so Recipe-owned interaction tools observe the child
    boundary too.
 2. Watch root-session `tool_execution_end` events for
    `details.interrupt.outcome.type === "awaiting_user"`.
-3. Convert the pi-recipes interrupt request into the host UI protocol, pause the run, and
+3. Convert the Recipes interrupt request into the host UI protocol, pause the run, and
    persist the host descriptor(s); the pause frame itself is not replayable,
    so persisted descriptors are the source of truth.
 4. On resume, rewrite the paused tool result's text with the frozen envelope

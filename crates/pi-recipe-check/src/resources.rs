@@ -15,7 +15,7 @@
 //! ```
 //!
 //! This module is pure: [`validate_resources`] takes the already-parsed value
-//! and returns diagnostics, so any host (the recipes CLI,
+//! and returns diagnostics, so any host (the Introspection CLI,
 //! `introspection-cli`'s manifest validator, wasm/Python bindings) applies the
 //! same rules. Quantity grammar is the practical subset of Kubernetes
 //! quantities: `500m` millicores or decimal cores for CPU; bytes with binary

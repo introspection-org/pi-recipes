@@ -104,10 +104,9 @@ same shape. A binding overrides a package-manifest endpoint with the same id,
 but a server that the package does not permit, or that none of the active/visible
 agents permit, remains unavailable.
 
-When the local file is absent, `recipes install` copies
-`.pi/mcp.local.example.json` when provided or generates a template from declared
-`pi.mcp.servers`. A manifest-only recipe with no example needs no generated
-local file because its manifest can supply the endpoint.
+When the local file is absent, manifest-supplied endpoints remain usable.
+Required servers that need environment-specific bindings fail closed until the
+local Pi environment or embedding host supplies them.
 
 ## Use capabilities from an agent
 
@@ -123,5 +122,5 @@ mcp call contacts.search_contacts query="Ada Lovelace"
 
 The command is headless and cannot add servers, mutate configuration, or start
 browser authentication. See [MCP authentication](mcp-auth.md) for OAuth and
-hosted binding details, and [Pi Recipes extension](pi-extension.md#mcp) for the
+hosted binding details, and [Recipes extension](pi-extension.md#mcp) for the
 full runtime contract.

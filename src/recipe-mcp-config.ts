@@ -18,7 +18,7 @@ export function recipeMcpLocalConfigPath(recipeDir: string): string {
   return join(recipeDir, ".pi", "mcp.local.json");
 }
 
-function envPrefixForServer(id: string): string {
+export function envPrefixForServer(id: string): string {
   const normalized = id
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
@@ -26,7 +26,13 @@ function envPrefixForServer(id: string): string {
   return normalized.replace(/_MCP$/, "") || "MCP";
 }
 
-function placeholderEnvVars(content: string): string[] {
+/** The generated-binding env var names for a package MCP server id. */
+export function generatedBindingEnvVars(serverId: string): string[] {
+  const prefix = envPrefixForServer(serverId);
+  return [`${prefix}_MCP_URL`, `${prefix}_MCP_TOKEN`];
+}
+
+export function placeholderEnvVars(content: string): string[] {
   return Array.from(
     new Set(
       Array.from(content.matchAll(/\$\{([A-Z_][A-Z0-9_]*)\}/g))

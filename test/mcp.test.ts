@@ -430,7 +430,7 @@ describe("static MCP session materialization", () => {
 
   it("resolves the native client from the installed package", () => {
     const packageEntrypoint = fileURLToPath(
-      import.meta.resolve("@introspection-ai/pi-recipes")
+      import.meta.resolve("@introspection-ai/recipes")
     );
     const executable = process.platform === "win32" ? "mcp-client.exe" : "mcp-client";
 

@@ -753,7 +753,7 @@ export function validatePiPackageManifest(
       finding(
         "error",
         "pi.mcp_invalid",
-        `MCP server "${invalidMcpServer.id}" has an invalid tool policy; run recipes check for details`,
+        `MCP server "${invalidMcpServer.id}" has an invalid tool policy; run introspection check for details`,
         pkg.name
       )
     );

@@ -10,7 +10,7 @@ my-recipe/
 ```
 
 Nested files such as `judges/calibration/helpful.yaml` are not judge sources.
-The standalone `recipe-check` binary, npm `recipes check` command, and in-memory
+The standalone `recipe-check` binary, `introspection check`, and in-memory
 bindings discover the same direct-child set and return the same validation
 result. Recipes without judge sources have no judge diagnostics or
 `resources.judges` count.

@@ -20,7 +20,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createPiRecipesExtension } from "../src/pi-extension.js";
+import { createRecipesExtension } from "../src/pi-extension.js";
 import { createMockExtensionAPI, type MockExtensionAPI } from "../src/testing.js";
 
 // Shared gate between the mocked store and the test body. Hoisted so the
@@ -141,7 +141,7 @@ describe("child completion ordering vs persistence", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
       const ctx = extensionContext(projectDir);
-      createPiRecipesExtension({ createChildAgentRunner: pool.createChildAgentRunner as any })(pi);
+      createRecipesExtension({ createChildAgentRunner: pool.createChildAgentRunner as any })(pi);
       await pi.emitExtensionEvent({ type: "session_start", reason: "startup" } as any, ctx);
 
       const started = await (pi.tools.get("agent") as any).execute(

@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createPiRecipesExtension } from "../src/pi-extension.js";
+import { createRecipesExtension } from "../src/pi-extension.js";
 import { createMockExtensionAPI, type MockExtensionAPI } from "../src/testing.js";
 
 function extensionContext(cwd: string, notify = vi.fn()) {
@@ -119,7 +119,7 @@ async function startSession(
   pi.flagValues.set("recipe", recipeDir);
   pi.flagValues.set("agent", "main");
   const ctx = extensionContext(projectDir);
-  createPiRecipesExtension({ createChildAgentRunner: createChildAgentRunner as any })(pi);
+  createRecipesExtension({ createChildAgentRunner: createChildAgentRunner as any })(pi);
   await pi.emitExtensionEvent({ type: "session_start", reason: "startup" } as any, ctx);
   return { pi, ctx, projectDir };
 }

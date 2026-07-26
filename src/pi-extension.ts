@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  type AuthStorage,
   type ExtensionAPI,
   type ExtensionContext,
   type ExtensionFactory,
@@ -15,6 +14,7 @@ import {
   promptResultText,
   type RecipeChildToolEvent,
 } from "./child-agent.js";
+import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
 import {
   ChildAgentRunStore,
   type ChildRunSnapshot,
@@ -45,17 +45,19 @@ import {
   resolveRecipe,
   type ResolvedRecipe,
 } from "./recipe/resolve.js";
-import { resolveRecipeDirectory } from "./recipe-store.js";
 import {
   createAgentTool,
   type AgentRunController,
   type AgentRunSummary,
 } from "./agent-tool.js";
 
-export interface PiRecipesExtensionOptions {
+export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
   createChildAgentRunner?: CreateRecipeChildAgentRunner;
 }
+
+/** @deprecated Use `RecipesExtensionOptions`. */
+export type PiRecipesExtensionOptions = RecipesExtensionOptions;
 
 interface RecipeChildAgentRunner {
   start(): Promise<void>;
@@ -70,7 +72,6 @@ type CreateRecipeChildAgentRunner = (opts: {
   workspaceDir: string;
   agentName: string;
   env?: NodeJS.ProcessEnv;
-  authStorage?: AuthStorage;
   modelRegistry?: ModelRegistry;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
@@ -113,24 +114,10 @@ function stringFlag(value: boolean | string | undefined): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function isPathLikeRecipeInput(input: string): boolean {
-  return (
-    input.startsWith("/") ||
-    input.startsWith(".") ||
-    input.startsWith("~") ||
-    input.includes("/")
-  );
-}
-
 function recipeNotFoundMessage(input: string, resolvedPath: string): string {
   const lines = [`Recipe "${input}" was not found.`];
-  if (isPathLikeRecipeInput(input)) {
-    lines.push(`Resolved path: ${resolvedPath}`);
-    lines.push("Make sure that directory exists and contains package.json with a pi block.");
-  } else {
-    lines.push(`No installed recipe matched "${input}", and no local directory exists at: ${resolvedPath}`);
-    lines.push("Run `recipes list` to see installed recipes, or `recipes install <source>` first.");
-  }
+  lines.push(`Resolved path: ${resolvedPath}`);
+  lines.push("Pass a local Recipe directory containing package.json with a pi block.");
   lines.push("Then launch again with `pi --recipe <recipe>`.");
   return lines.join("\n");
 }
@@ -139,7 +126,7 @@ function recipeLoadErrorMessage(input: string, reason: string): string {
   return [
     `Recipe "${input}" could not be loaded.`,
     reason,
-    "Run `recipes check <recipe>` for a validation report.",
+    "Run `introspection check` from the repository for a validation report.",
   ].join("\n");
 }
 
@@ -418,81 +405,8 @@ function applyChildToolEvent(run: ChildRun, event: RecipeChildToolEvent): void {
   if (event.isError) call.error = text || "Tool failed";
 }
 
-function resolvePackage(specifier: string): string | undefined {
-  try {
-    return import.meta.resolve(specifier);
-  } catch {
-    // Fall through to CommonJS resolution for packages that do not expose ESM exports.
-  }
-  try {
-    return require.resolve(specifier);
-  } catch {
-    return undefined;
-  }
-}
-
-function resolvePackageModuleRoot(packageName: string): string | undefined {
-  const resolved = resolvePackage(packageName);
-  if (!resolved) return undefined;
-  return dirname(resolved.startsWith("file:") ? fileURLToPath(resolved) : resolved);
-}
-
-function recipeExtensionAliases(): Record<string, string> {
-  return Object.fromEntries(
-    [
-      // Jiti aliases are package-prefix mappings. They must point at the
-      // directory containing a package's resolved modules, not an entry file,
-      // so Jiti can append exported subpaths without corrupting the path.
-      // The self-alias also keeps recipe interaction imports on this package
-      // instance, sharing interrupt state with the child-agent runner.
-      ["@introspection-ai/pi-recipes", resolvePackageModuleRoot("@introspection-ai/pi-recipes")],
-      ["@earendil-works/pi-coding-agent", resolvePackageModuleRoot("@earendil-works/pi-coding-agent")],
-      ["@earendil-works/pi-agent-core", resolvePackageModuleRoot("@earendil-works/pi-agent-core")],
-      ["@earendil-works/pi-ai", resolvePackageModuleRoot("@earendil-works/pi-ai")],
-      ["typebox", resolvePackageModuleRoot("typebox")],
-      ["@sinclair/typebox", resolvePackageModuleRoot("typebox")],
-    ].filter((entry): entry is [string, string] => Boolean(entry[1]))
-  );
-}
-
-function loadJiti(): { createJiti: (url: string, opts: Record<string, unknown>) => { import: (id: string, opts?: { default?: boolean }) => Promise<unknown> } } {
-  try {
-    return require("jiti") as ReturnType<typeof loadJiti>;
-  } catch {
-    const piAgentEntry = resolvePackage("@earendil-works/pi-coding-agent");
-    if (!piAgentEntry) {
-      throw new Error("Unable to resolve @earendil-works/pi-coding-agent for recipe extension loading");
-    }
-    const piRequire = createRequire(piAgentEntry);
-    return piRequire("jiti") as ReturnType<typeof loadJiti>;
-  }
-}
-
-async function loadRecipeExtensionFactory(
-  recipeDir: string,
-  extensionPath: string
-): Promise<ExtensionFactory> {
-  const { createJiti } = loadJiti();
-  const recipeLoaderUrl = pathToFileURL(join(recipeDir, ".recipe-extension-loader.js")).href;
-  const jiti = createJiti(recipeLoaderUrl, {
-    moduleCache: false,
-    alias: recipeExtensionAliases(),
-  });
-  const loaded = await jiti.import(extensionPath, { default: true });
-  const factory =
-    typeof loaded === "function"
-      ? loaded
-      : loaded && typeof loaded === "object" && "default" in loaded && typeof loaded.default === "function"
-        ? loaded.default
-        : undefined;
-  if (!factory) {
-    throw new Error(`Recipe extension does not export a factory function: ${extensionPath}`);
-  }
-  return factory as ExtensionFactory;
-}
-
-export function createPiRecipesExtension(
-  opts: PiRecipesExtensionOptions = {}
+export function createRecipesExtension(
+  opts: RecipesExtensionOptions = {}
 ): ExtensionFactory {
   const env = opts.env ?? process.env;
   const createChildAgentRunner =
@@ -691,7 +605,7 @@ export function createPiRecipesExtension(
     const flag = recipeFlag(pi);
     if (!flag) return null;
 
-    const recipeDir = resolveRecipeDirectory(flag, { cwd, env });
+    const recipeDir = resolve(cwd, flag);
     if (!existsSync(recipeDir)) {
       throw new RecipeLaunchError(recipeNotFoundMessage(flag, recipeDir));
     }
@@ -899,7 +813,6 @@ export function createPiRecipesExtension(
       workspaceDir: launchState.cwd,
       env,
       agentName,
-      authStorage: ctx.modelRegistry.authStorage,
       modelRegistry: ctx.modelRegistry,
       onAssistantMessage(text, stream) {
         if (!run) return;
@@ -1195,4 +1108,7 @@ export function createPiRecipesExtension(
   };
 }
 
-export default createPiRecipesExtension();
+/** @deprecated Use `createRecipesExtension`. */
+export const createPiRecipesExtension = createRecipesExtension;
+
+export default createRecipesExtension();

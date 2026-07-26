@@ -1,10 +1,11 @@
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
+import { InMemoryCredentialStore, type CredentialStore } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
-  AuthStorage,
   createAgentSessionFromServices,
   createAgentSessionServices,
   type ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
@@ -36,7 +37,8 @@ export interface CreateRecipeChildAgentRunnerOptions {
   workspaceDir: string;
   agentName: string;
   env?: NodeJS.ProcessEnv;
-  authStorage?: AuthStorage;
+  credentials?: CredentialStore;
+  modelRuntime?: ModelRuntime;
   modelRegistry?: ModelRegistry;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
@@ -101,24 +103,45 @@ function modelFromSpec(
   );
 }
 
-function authStorageForChildAgent(
+async function modelRuntimeForChildAgent(
   model: Model<any>,
   opts: CreateRecipeChildAgentRunnerOptions
-): AuthStorage {
-  if (opts.authStorage) return opts.authStorage;
-  if (opts.modelRegistry) return opts.modelRegistry.authStorage;
+): Promise<ModelRuntime> {
+  if (opts.modelRuntime) return opts.modelRuntime;
 
-  const env = opts.env ?? process.env;
-  const apiKey = getEnvApiKey(model.provider) ?? env[`${model.provider.toUpperCase()}_API_KEY`];
-  if (!apiKey) {
-    throw new Error(
-      `${model.provider.toUpperCase()}_API_KEY is required when the background agent is not running inside Pi`
-    );
+  const credentials = opts.credentials ?? new InMemoryCredentialStore();
+  if (!opts.credentials) {
+    // Resolve the child's API key up front: prefer the host registry (so a
+    // key configured inside Pi flows to children), then provider env keys.
+    let apiKey: string | undefined;
+    let credentialEnv: Record<string, string> | undefined;
+    if (opts.modelRegistry) {
+      const auth = await opts.modelRegistry.getApiKeyAndHeaders(model);
+      if (auth.ok) {
+        apiKey = auth.apiKey;
+        credentialEnv = auth.env;
+        if (auth.headers) {
+          model.headers = { ...(model.headers ?? {}), ...auth.headers };
+        }
+      }
+    }
+    const env = opts.env ?? process.env;
+    apiKey ??=
+      getEnvApiKey(model.provider) ??
+      env[`${model.provider.toUpperCase()}_API_KEY`];
+    if (!apiKey && Object.keys(model.headers ?? {}).length === 0) {
+      throw new Error(
+        `${model.provider.toUpperCase()}_API_KEY is required when the background agent is not running inside Pi`
+      );
+    }
+    await credentials.modify(model.provider, async () => ({
+      type: "api_key",
+      ...(apiKey ? { key: apiKey } : {}),
+      ...(credentialEnv ? { env: credentialEnv } : {}),
+    }));
   }
 
-  const authStorage = AuthStorage.inMemory();
-  authStorage.setRuntimeApiKey(model.provider, apiKey);
-  return authStorage;
+  return ModelRuntime.create({ credentials, modelsPath: null });
 }
 
 function applySystemInstructions(
@@ -284,12 +307,11 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       modelFromSpec(modelSpec, this.opts.modelRegistry),
       agent.modelConfig
     );
-    const authStorage = authStorageForChildAgent(model, this.opts);
+    const modelRuntime = await modelRuntimeForChildAgent(model, this.opts);
     const services = await createAgentSessionServices({
       cwd: this.opts.workspaceDir,
       agentDir: this.opts.recipeDir,
-      authStorage,
-      modelRegistry: this.opts.modelRegistry,
+      modelRuntime,
       settingsManager: SettingsManager.create(
         this.opts.workspaceDir,
         this.opts.recipeDir

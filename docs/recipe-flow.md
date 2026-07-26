@@ -1,149 +1,41 @@
-# Pi Recipes: Install, Customize, Publish
+# Recipe workflow
 
-A recipe is a shareable Pi workflow package: it can add agents, instructions,
-skills, prompts, and optional runtime extensions.
+The `introspection` CLI owns the developer workflow. The Recipes npm package is
+the format implementation and Pi runtime extension; it does not install a
+second CLI.
 
-Use `recipes` to install recipes, make local edits, validate them, and
-publish your own.
-
-## 1. Install the Tooling
-
-Install [Pi](https://pi.dev/docs/latest/quickstart) first and confirm `pi` is on
-`PATH`. Pi Recipes currently requires Node.js 24 or later.
-
-Install the recipe CLI once:
+## Create and run locally
 
 ```bash
-npm install -g @introspection-ai/pi-recipes
+npm install -g @introspection-ai/cli
+introspection init
+introspection check
+introspection local
 ```
 
-`recipes` works with a companion Pi extension. `recipes install ...` sets it up
-automatically when needed. For a recipe created from scratch and run directly
-by path, run `recipes setup` immediately before the first Pi launch.
+`introspection init` scaffolds a Recipe and ensures compatible versions of Pi
+and the Recipes extension are present. `introspection check` runs the Recipe
+Format validator. `introspection local` resolves the repository's local runtime
+manifest and launches Pi with the Recipe path.
 
-Recipes are stored under:
+The local path requires no login and no Introspection cloud runtime.
 
-```text
-~/.pi/recipes
-```
-
-## 2. Install and Run a Recipe
-
-Install a recipe from GitHub:
+## Run Pi directly
 
 ```bash
-recipes install introspection-recipes/pi-codex#0.1.1
-```
-
-See what is installed:
-
-```bash
-recipes list
-```
-
-Run it in Pi:
-
-```bash
-pi --recipe pi-codex
-```
-
-If two installed recipes share the same short name, use the scoped name shown by
-`recipes list`:
-
-```bash
-pi --recipe introspection-recipes/pi-codex
-```
-
-## 3. Customize an Installed Recipe
-
-Use `customize` when you want to edit a recipe you installed from elsewhere:
-
-```bash
-recipes customize pi-codex --output ./my-agent
-```
-
-Example output:
-
-```text
-Created editable copy for pi-codex
-
-Edit this folder:
-  ./my-agent
-
-Then check and run it:
-  recipes check ./my-agent
-  pi --recipe ./my-agent
-```
-
-Edit files in the printed owned folder, then validate and run the customized copy:
-
-```bash
-recipes check ./my-agent
-pi --recipe ./my-agent
-```
-
-The installed source remains cached separately. Removing an owned derivative is
-an explicit filesystem or Git operation; `recipes customize` does not delete it.
-
-## 4. Create a New Recipe
-
-Create a starter recipe:
-
-```bash
-recipes create ./my-recipe
-```
-
-The starter contains:
-
-```text
-my-recipe/
-  package.json
-  README.md
-  SYSTEM.md
-  agents/
-    agent.yaml
-```
-
-`SYSTEM.md` contains instructions shared by every root and delegated agent in
-the recipe. Each `agents/*.yaml` file specializes one agent's model,
-capabilities, selected skills, visible subagents, and instructions. Use `from:`
-to derive variants and subagents from another agent. See
-[Agent Composition](agent-composition.md) for the merge and override rules.
-
-Validate and try it locally:
-
-```bash
-recipes check ./my-recipe
-recipes setup
+pi install npm:@introspection-ai/recipes
 pi --recipe ./my-recipe --agent agent
 ```
 
-## 5. Publish a Recipe
+Recipes are ordinary Git-backed source packages. Clone, fork, or copy them with
+normal Git and filesystem tools. There is no Recipe-specific install store or
+publish command.
 
-Publishing turns a local recipe into a GitHub-backed recipe. It validates the
-recipe, updates `package.json#name` to match the target repo, commits changes,
-creates the GitHub repo if needed, pushes `main`, and re-registers the local
-recipe.
+## Deploy
 
-```bash
-recipes publish ./my-recipe --github owner/my-recipe --visibility private
-```
+The Recipe remains unchanged across hosts. A host calls
+`createRecipeSession()` and supplies its own credentials, task lifecycle,
+persistence, isolation, and protocol surface.
 
-Use `--visibility public` for public recipes.
-
-After publishing, other users install it with:
-
-```bash
-recipes install github:owner/my-recipe
-pi --recipe my-recipe
-```
-
-## Mental Model
-
-- `install` gets a recipe into your local Pi recipe store.
-- `list` shows what Pi can run and where the local files are.
-- `customize` creates an editable local copy of an installed recipe.
-- `check` validates a recipe before running or publishing it.
-- `evals` runs pinned Harbor offline eval suites for a recipe.
-- `create` starts a new recipe from scratch.
-- `publish` pushes a recipe to GitHub so others can install it.
+Use Introspection when you want the managed host. Use a host adapter when you
+want to operate the same Recipe on another platform.

@@ -3,18 +3,17 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-import { createPiRecipesExtension } from "../src/pi-extension.js";
+import { createRecipesExtension } from "../src/pi-extension.js";
 import { createMockExtensionAPI } from "../src/testing.js";
 
 function extensionContext(cwd: string, notify = vi.fn()) {
-  const authStorage = { kind: "shared-auth-storage" };
   return {
     cwd,
     hasUI: true,
     ui: { notify },
     modelRegistry: {
-      authStorage,
       find: vi.fn((provider: string, id: string) => ({ provider, id })),
+      getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "test-key" })),
     },
   } as any;
 }
@@ -82,7 +81,7 @@ function writeRecipe(root: string) {
 describe("Pi recipes launch extension", () => {
   it("registers recipe launch flags", async () => {
     const pi = createMockExtensionAPI();
-    createPiRecipesExtension()(pi);
+    createRecipesExtension()(pi);
 
     expect(pi.commands.has("recipe")).toBe(true);
     expect(pi.commands.has("recipe-resources")).toBe(false);
@@ -100,7 +99,7 @@ describe("Pi recipes launch extension", () => {
   it("reports when recipe inspection commands run without an active recipe", async () => {
     const pi = createMockExtensionAPI();
     const notify = vi.fn();
-    createPiRecipesExtension()(pi);
+    createRecipesExtension()(pi);
 
     await pi.commands.get("recipe")?.handler("", extensionContext(process.cwd(), notify));
 
@@ -123,7 +122,7 @@ describe("Pi recipes launch extension", () => {
       const ctx = extensionContext(root, notify);
       pi.flagValues.set("agent", "main");
 
-      createPiRecipesExtension({ env })(pi);
+      createRecipesExtension({ env })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         ctx
@@ -148,7 +147,7 @@ describe("Pi recipes launch extension", () => {
       const ctx = extensionContext(root, notify);
       pi.flagValues.set("recipe", "missing-recipe");
 
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       await expect(
         pi.emitExtensionEvent({ type: "session_start", reason: "startup" } as any, ctx)
       ).resolves.toEqual([undefined]);
@@ -158,8 +157,8 @@ describe("Pi recipes launch extension", () => {
         "warning"
       );
       const message = notify.mock.calls[0]?.[0] as string;
-      expect(message).toContain("recipes list");
-      expect(message).toContain("recipes install <source>");
+      expect(message).toContain("Pass a local Recipe directory");
+      expect(message).toContain("pi --recipe <recipe>");
       expect(message).not.toContain("RecipePackageError");
       expect(message).not.toContain("at ");
 
@@ -211,7 +210,7 @@ describe("Pi recipes launch extension", () => {
       const ctx = extensionContext(root, notify);
       pi.flagValues.set("recipe", recipeDir);
 
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       await pi.emitExtensionEvent({ type: "session_start", reason: "startup" } as any, ctx);
 
       expect(notify).not.toHaveBeenCalledWith(
@@ -268,7 +267,7 @@ describe("Pi recipes launch extension", () => {
       );
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
 
       const promptResults = await pi.emitExtensionEvent(
         {
@@ -302,7 +301,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
 
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         ctx
@@ -388,7 +387,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("agent", "main");
       (pi as any).setModel = vi.fn().mockResolvedValue(false);
 
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         ctx
@@ -432,7 +431,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
 
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         extensionContext(projectDir)
@@ -484,7 +483,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "explorer");
 
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         extensionContext(projectDir)
@@ -582,7 +581,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
 
-      createPiRecipesExtension({ env })(pi);
+      createRecipesExtension({ env })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         ctx
@@ -684,7 +683,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
 
-      createPiRecipesExtension({ env })(pi);
+      createRecipesExtension({ env })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         ctx
@@ -731,7 +730,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
 
-      createPiRecipesExtension({ env })(pi);
+      createRecipesExtension({ env })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         ctx
@@ -806,7 +805,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
 
-      createPiRecipesExtension({ env })(pi);
+      createRecipesExtension({ env })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         ctx
@@ -850,7 +849,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
 
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         ctx
@@ -941,7 +940,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
 
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         extensionContext(projectDir)
@@ -992,7 +991,7 @@ describe("Pi recipes launch extension", () => {
         join(recipeDir, "extensions", "setup-git.ts"),
         [
           "import { defineTool } from '@earendil-works/pi-coding-agent';",
-          "import { askUserQuestion } from '@introspection-ai/pi-recipes/interactions';",
+          "import { askUserQuestion } from '@introspection-ai/recipes/interactions';",
           "import { Type } from 'typebox';",
           "import dep from 'recipe-test-dep';",
           "export default (pi) => {",
@@ -1042,7 +1041,7 @@ describe("Pi recipes launch extension", () => {
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       const notify = vi.fn();
 
       await pi.emitExtensionEvent(
@@ -1125,7 +1124,7 @@ describe("Pi recipes launch extension", () => {
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
-      createPiRecipesExtension()(pi);
+      createRecipesExtension()(pi);
       const notify = vi.fn();
 
       await pi.emitExtensionEvent(
@@ -1202,7 +1201,7 @@ describe("Pi recipes launch extension", () => {
       pi.flagValues.set("agent", "main");
       const ctx = extensionContext(projectDir);
 
-      createPiRecipesExtension({ createChildAgentRunner })(pi);
+      createRecipesExtension({ createChildAgentRunner })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         ctx
@@ -1229,7 +1228,6 @@ describe("Pi recipes launch extension", () => {
           recipeDir,
           agentName: "explorer",
           workspaceDir: projectDir,
-          authStorage: ctx.modelRegistry.authStorage,
           modelRegistry: ctx.modelRegistry,
         })
       );

@@ -304,7 +304,7 @@ export function loadRecipeAgentDefinitions(
 
   const sources = readRecipeAgentSources(recipeDir, {
     onInvalidFile: (path, error) => {
-      console.warn(`[pi-recipes] skipping ${path}: ${error.message}`);
+      console.warn(`[recipes] skipping ${path}: ${error.message}`);
     },
   });
   for (const source of sources) {
@@ -372,7 +372,7 @@ export function loadRecipeAgentDefinitions(
     const definition = resolveDefinition(name);
     if (!definition) {
       console.warn(
-        `[pi-recipes] skipping agent "${name}": ${fromChainSkipReason(
+        `[recipes] skipping agent "${name}": ${fromChainSkipReason(
           name,
           rawDefinitions,
           resolveName
@@ -598,7 +598,7 @@ export function validateResolvedRecipeAgentDefinition(opts: {
       agentName,
       field: "mcp",
       code: "mcp_invalid",
-      message: `Recipe agent "${agentName}" has an invalid MCP policy; run recipes check for details`,
+      message: `Recipe agent "${agentName}" has an invalid MCP policy; run introspection check for details`,
     });
   }
 
