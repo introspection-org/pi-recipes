@@ -85,7 +85,7 @@ function mockHandle() {
     dispose: vi.fn(async () => undefined),
   };
   mocks.createAgentSession.mockImplementation(
-    async (_agent: unknown, options: { onEvent?: (event: any) => void }) => {
+    async (options: { onEvent?: (event: any) => void }) => {
       if (options.onEvent) listeners.push(options.onEvent);
       return handle;
     }
@@ -113,22 +113,23 @@ describe("Recipe child agent runner", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-child-session-"));
     roots.push(root);
     const { recipeDir, workspaceDir } = writeRecipe(root);
-    const resolved = resolveRecipe({ recipeDir }).selectAgent("worker");
+    const recipe = resolveRecipe({ recipeDir });
+    const resolved = recipe.selectAgent("worker");
     const { handle } = mockHandle();
 
     const runner = createRecipeChildAgentRunner({
-      recipeDir,
+      recipe,
       workspaceDir,
       agentName: "worker",
-      agent: resolved,
       env: {},
     });
     await runner.start();
 
-    const sessionOptions = mocks.createAgentSession.mock.calls[0]?.[1];
+    const sessionOptions = mocks.createAgentSession.mock.calls[0]?.[0];
     expect(mocks.createAgentSession).toHaveBeenCalledWith(
-      resolved,
       expect.objectContaining({
+        recipe,
+        agentName: "worker",
         cwd: workspaceDir,
         env: {},
         modelOverride: expect.objectContaining({
@@ -161,14 +162,14 @@ describe("Recipe child agent runner", () => {
       '      defer: ["*"]',
       '      eager: [" search_contacts "]',
     ]);
-    const resolved = resolveRecipe({ recipeDir }).selectAgent("worker");
+    const recipe = resolveRecipe({ recipeDir });
+    const resolved = recipe.selectAgent("worker");
     mockHandle();
 
     const runner = createRecipeChildAgentRunner({
-      recipeDir,
+      recipe,
       workspaceDir,
       agentName: "worker",
-      agent: resolved,
       env: {},
     });
     await runner.start();
@@ -178,8 +179,10 @@ describe("Recipe child agent runner", () => {
       defer: ["*"],
       eager: ["search_contacts"],
     });
-    expect(mocks.createAgentSession.mock.calls[0]?.[0]).toBe(resolved);
-    expect(mocks.createAgentSession.mock.calls[0]?.[1]).not.toHaveProperty(
+    const sessionOptions = mocks.createAgentSession.mock.calls[0]?.[0];
+    expect(sessionOptions?.recipe).toBe(recipe);
+    expect(sessionOptions?.agentName).toBe("worker");
+    expect(sessionOptions).not.toHaveProperty(
       "mcpProvisioning"
     );
     await runner.shutdown();
@@ -189,12 +192,13 @@ describe("Recipe child agent runner", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-child-events-"));
     roots.push(root);
     const { recipeDir, workspaceDir } = writeRecipe(root);
+    const recipe = resolveRecipe({ recipeDir });
     const { emit } = mockHandle();
     const onToolEvent = vi.fn();
     const onAssistantMessage = vi.fn();
 
     const runner = createRecipeChildAgentRunner({
-      recipeDir,
+      recipe,
       workspaceDir,
       agentName: "worker",
       env: {},

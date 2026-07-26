@@ -13,18 +13,19 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { autoResolveInteractions } from "./interactions.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
-import { resolveRecipeAgent, type ResolvedRecipeAgent } from "./recipe/resolve.js";
+import {
+  type ResolvedRecipe,
+} from "./recipe/resolve.js";
 import {
   createAgentSession,
   type RecipeSessionHandle,
 } from "./session.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
-  recipeDir: string;
+  /** Immutable Recipe graph shared with the root Pi session. */
+  recipe: ResolvedRecipe;
   workspaceDir: string;
   agentName: string;
-  /** Already-resolved agent. Pi passes this from its immutable Recipe snapshot. */
-  agent?: ResolvedRecipeAgent;
   env?: NodeJS.ProcessEnv;
   credentials?: CredentialStore;
   modelRegistry?: ModelRegistry;
@@ -258,12 +259,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   async start(): Promise<void> {
     if (this.session) return;
 
-    const resolved =
-      this.opts.agent ??
-      resolveRecipeAgent({
-        recipeDir: this.opts.recipeDir,
-        agentName: this.opts.agentName,
-      });
+    const resolved = this.opts.recipe.selectAgent(this.opts.agentName);
     const model = applyRecipeAgentModelConfigToModel(
       modelFromSpec(resolved.modelSpec, this.opts.modelRegistry),
       resolved.modelConfig
@@ -271,7 +267,9 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     const credentials = await credentialsForChildAgent(model, this.opts);
     this.mcpRuntimeDir = await mkdtemp(join(tmpdir(), "recipes-child-mcp-"));
     try {
-      this.handle = await createAgentSession(resolved, {
+      this.handle = await createAgentSession({
+        recipe: this.opts.recipe,
+        agentName: resolved.name,
         cwd: this.opts.workspaceDir,
         env: { ...(this.opts.env ?? process.env) },
         mcpRuntimeDir: this.mcpRuntimeDir,

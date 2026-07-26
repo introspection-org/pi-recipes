@@ -1,8 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { promptResultText } from "./child-agent.js";
 import {
-  createAgentSessionFromRecipe,
-  type CreateAgentSessionFromRecipeOptions,
+  createAgentSession,
+  type CreateAgentSessionOptions,
 } from "./session.js";
 
 /**
@@ -13,13 +13,13 @@ import {
  * caller mistakes (bad options, unreadable recipe, missing credentials)
  * throw, from session construction.
  */
-export interface RunRecipeOptions extends CreateAgentSessionFromRecipeOptions {
+export interface RunRecipeOptions extends CreateAgentSessionOptions {
   prompt: string;
   timeoutMs?: number;
   signal?: AbortSignal;
-  /** Session factory; defaults to `createAgentSessionFromRecipe`. Test/DI seam. */
+  /** Session factory; defaults to `createAgentSession`. Test/DI seam. */
   sessionFactory?: (
-    options: CreateAgentSessionFromRecipeOptions
+    options: CreateAgentSessionOptions
   ) => Promise<import("./session.js").RecipeSessionHandle>;
 }
 
@@ -64,7 +64,7 @@ export async function runRecipe(
     return { status: "cancelled", text: "", messages: [] };
   }
 
-  const handle = await (sessionFactory ?? createAgentSessionFromRecipe)(sessionOptions);
+  const handle = await (sessionFactory ?? createAgentSession)(sessionOptions);
   let timedOut = false;
   let aborted = false;
   let timer: NodeJS.Timeout | undefined;

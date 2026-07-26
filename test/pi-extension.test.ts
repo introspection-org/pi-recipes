@@ -1387,9 +1387,8 @@ describe("Recipes extension for Pi", () => {
 
       expect(createChildAgentRunner).toHaveBeenCalledWith(
         expect.objectContaining({
-          recipeDir,
+          recipe: expect.objectContaining({ recipeDir }),
           agentName: "explorer",
-          agent: expect.objectContaining({ name: "explorer" }),
           workspaceDir: projectDir,
           modelRegistry: ctx.modelRegistry,
         })

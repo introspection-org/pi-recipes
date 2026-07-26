@@ -8,37 +8,14 @@ defines the boundary between the portable agent and the system operating it.
 ```text
 resolveRecipe()     parse every agent in the portable package once
     │
-    ├── recipe.selectAgent() select root and child agents
-    │
     ▼
-createAgentSession()
-                          construct one selected plan
+createAgentSession() select one agent and construct its Pi session
     │
-    ├── createAgentSessionFromRecipe()
-    │                     resolve one plan and construct it
-    │
-    └── runRecipe()       execute one turn and dispose
+    └── runRecipe()   execute one turn through the same constructor and dispose
 ```
 
-Hosts choose the lowest layer they need.
-
-## `resolveRecipeAgent`
-
-```ts
-import { resolveRecipeAgent } from "@introspection-ai/recipes/recipe";
-
-const agent = resolveRecipeAgent({
-  recipeDir,
-  agentName,
-});
-```
-
-The result contains the selected agent, visible subagents, model settings,
-tools, MCP policy, skills, prompts, extensions, and system-prompt composition.
-It does not create a model client or start a session.
-
-Long-lived hosts and hosts with persistent subagents should resolve the Recipe
-once, then select root and child agents from that immutable snapshot:
+Every host resolves the Recipe once and passes that immutable graph to the
+single session constructor:
 
 ```ts
 import { resolveRecipe } from "@introspection-ai/recipes/recipe";
@@ -50,18 +27,16 @@ const recipe = resolveRecipe({ recipeDir });
 const agent = recipe.selectAgent(agentName);
 const credentials = await credentialsFor(agent.modelSpec);
 
-const handle = await createAgentSession(agent, {
+const handle = await createAgentSession({
   recipe,
+  agentName,
   cwd: workspaceDir,
   credentials,
 });
-
-const childAgent = recipe.selectAgent("researcher");
 ```
 
 This keeps inspection and construction on the same resolution results and
-avoids reparsing the package for every child session. `resolveRecipeAgent()` remains
-the convenience API for selecting one plan.
+avoids reparsing the package for every root or child session.
 
 `inspectRecipe(recipeDir)` exposes the canonical resolved view used for setup
 and review. In addition to provider, credential, MCP, and resource summaries,
@@ -77,18 +52,13 @@ it returns:
 
 ## `createAgentSession`
 
-`createAgentSession(agent, options)` is the primary host integration point for
-hosts that inspect a Recipe before constructing it. It consumes the exact
-resolved plan the host inspected. Supply its `ResolvedRecipe` when using
-the default in-process subagent controller.
-
-## `createAgentSessionFromRecipe`
+`createAgentSession(options)` is the only session-construction API. It consumes
+the exact `ResolvedRecipe` the host inspected, selects `agentName`, and uses
+that same graph for every default in-process child session.
 
 ```ts
-import { createAgentSessionFromRecipe } from "@introspection-ai/recipes/session";
-
-const handle = await createAgentSessionFromRecipe({
-  recipeDir,
+const handle = await createAgentSession({
+  recipe,
   agentName,
   cwd: workspaceDir,
   credentials,
@@ -116,9 +86,9 @@ const handle = await createAgentSessionFromRecipe({
 });
 ```
 
-This is the resolve-and-create convenience integration. It:
+It:
 
-- resolves the Recipe and selected agent;
+- selects the agent from the supplied immutable Recipe;
 - resolves model credentials fail-closed;
 - materializes required MCP bindings fail-closed;
 - loads the complete ordered Recipe extension closure, selected skills, and
@@ -141,10 +111,10 @@ gateway-decorated model without reimplementing Recipe semantics. The Recipe
 continues to own model configuration and tool selection; host seams replace
 transport and materialized resources, not the portable definition.
 
-The default in-process subagent controller requires the `ResolvedRecipe`
-that produced the selected agent. It uses that same snapshot for every child, so
-no session reparses the package or observes a different source snapshot.
-Injected controllers own child selection and may omit `recipe`.
+The default in-process subagent controller uses that same Recipe snapshot for
+every child, so no session reparses the package or observes a different source
+snapshot. Injected controllers own child selection and execution after the root
+session is constructed.
 
 An injected `runController` is owned by the returned session handle.
 `dispose()` calls the controller's `shutdown()` exactly once; controller
@@ -170,7 +140,8 @@ shell tools. A host that provisions MCP separately passes
 import { runRecipe } from "@introspection-ai/recipes/run";
 
 const result = await runRecipe({
-  recipeDir,
+  recipe,
+  agentName,
   cwd: workspaceDir,
   prompt,
   timeoutMs: 120_000,
@@ -221,7 +192,7 @@ for (const testCase of hostConformanceCases(myHost)) {
 ```
 
 Passing the suite means the host is using the same session construction
-contract as Pi and Introspection. Protocol behavior, persistence, tenancy, and
+contract as Pi. Protocol behavior, persistence, tenancy, and
 deployment remain host-specific and require their own tests.
 
 ## Deliberate non-features
@@ -235,4 +206,4 @@ The package does not provide:
 - a deployment CLI;
 - provider-specific hosting integrations.
 
-Those layers compose above `createAgentSessionFromRecipe`.
+Those layers compose above `createAgentSession`.

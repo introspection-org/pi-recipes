@@ -94,14 +94,14 @@ import { resolveRecipe } from "@introspection-ai/recipes/recipe";
 const recipe = resolveRecipe({
   recipeDir: "./my-recipe",
 });
-const agent = recipe.selectAgent("agent");
 ```
 
 ```ts
 import { createAgentSession } from "@introspection-ai/recipes/session";
 
-const handle = await createAgentSession(agent, {
+const handle = await createAgentSession({
   recipe,
+  agentName: "agent",
   cwd: "./workspace",
   credentials,
   mcpBindings,
@@ -117,15 +117,16 @@ await handle.dispose();
 import { runRecipe } from "@introspection-ai/recipes/run";
 
 const result = await runRecipe({
-  recipeDir: "./my-recipe",
+  recipe,
+  agentName: "agent",
   cwd: "./workspace",
   prompt: "Produce the report",
 });
 ```
 
-`createAgentSession` is the host boundary for an inspected execution plan.
-`createAgentSessionFromRecipe` is the shorter resolve-and-create convenience API. Both
-own Recipe semantics and Pi session construction. The host still owns task
+`createAgentSession` is the single host boundary for an inspected Recipe.
+It selects the requested agent from that immutable graph and constructs a
+standard Pi `AgentSession`. The host still owns task
 lifecycle, durable state, auth, networking, isolation, protocol translation,
 and deployment.
 

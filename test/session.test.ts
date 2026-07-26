@@ -18,7 +18,6 @@ import {
 import { runRecipe } from "../src/run.js";
 import { createInProcessRunController } from "../src/run-controller.js";
 import {
-  createAgentSessionFromRecipe,
   createAgentSession,
   RecipeCredentialError,
   RecipeMcpEnvironmentInUseError,
@@ -146,7 +145,7 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-describe("createAgentSessionFromRecipe", () => {
+describe("createAgentSession", () => {
   const cleanups: Array<() => void> = [];
   const handles: RecipeSessionHandle[] = [];
 
@@ -166,15 +165,17 @@ describe("createAgentSessionFromRecipe", () => {
   }
 
   async function open(
-    options: Partial<Parameters<typeof createAgentSessionFromRecipe>[0]> & {
+    options: Omit<Partial<Parameters<typeof createAgentSession>[0]>, "recipe"> & {
       recipeDir: string;
       cwd: string;
     }
   ): Promise<RecipeSessionHandle> {
-    const handle = await createAgentSessionFromRecipe({
+    const { recipeDir, ...sessionOptions } = options;
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir }),
       credentials: await credentialStore(),
       env: cleanEnv(),
-      ...options,
+      ...sessionOptions,
     });
     handles.push(handle);
     return handle;
@@ -243,15 +244,17 @@ describe("createAgentSessionFromRecipe", () => {
 
   it("creates the exact Recipe definition already inspected by the host", async () => {
     const { recipeDir, workspaceDir } = fixture();
-    const recipe = resolveRecipeAgent({ recipeDir });
-    const handle = await createAgentSession(recipe, {
+    const recipe = resolveRecipe({ recipeDir });
+    const agent = recipe.selectAgent();
+    const handle = await createAgentSession({
+      recipe,
       cwd: workspaceDir,
       credentials: await credentialStore(),
       env: cleanEnv(),
     });
     handles.push(handle);
 
-    expect(handle.agent).toBe(recipe);
+    expect(handle.agent).toBe(agent);
     expect(handle.agent.name).toBe("agent");
   });
 
@@ -345,8 +348,8 @@ describe("createAgentSessionFromRecipe", () => {
 
   it("resolves credentials from provider env keys when no store is given", async () => {
     const { recipeDir, workspaceDir } = fixture();
-    const handle = await createAgentSessionFromRecipe({
-      recipeDir,
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       env: { ...cleanEnv(), ANTHROPIC_API_KEY: "env-key" },
     });
@@ -357,7 +360,11 @@ describe("createAgentSessionFromRecipe", () => {
   it("fails closed when the provider has no credential", async () => {
     const { recipeDir, workspaceDir } = fixture();
     await expect(
-      createAgentSessionFromRecipe({ recipeDir, cwd: workspaceDir, env: cleanEnv() })
+      createAgentSession({
+        recipe: resolveRecipe({ recipeDir }),
+        cwd: workspaceDir,
+        env: cleanEnv(),
+      })
     ).rejects.toSatisfy((err: unknown) => {
       expect(err).toBeInstanceOf(RecipeCredentialError);
       expect((err as Error).message).toContain("ANTHROPIC_API_KEY");
@@ -522,7 +529,7 @@ describe("createAgentSessionFromRecipe", () => {
       MCPORTER_CONFIG: hostMcporter,
     };
     const baseOptions = {
-      recipeDir,
+      recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       env,
       credentials: await credentialStore(),
@@ -538,7 +545,7 @@ describe("createAgentSessionFromRecipe", () => {
     };
 
     await expect(
-      createAgentSessionFromRecipe({
+      createAgentSession({
         ...baseOptions,
         systemPrompt: () => {
           throw new Error("prompt construction failed");
@@ -548,7 +555,7 @@ describe("createAgentSessionFromRecipe", () => {
     expect(env.PI_RECIPES_MCP_SESSION).toBe(hostSession);
     expect(env.MCPORTER_CONFIG).toBe(hostMcporter);
 
-    const recovered = await createAgentSessionFromRecipe(baseOptions);
+    const recovered = await createAgentSession(baseOptions);
     handles.push(recovered);
     await recovered.dispose();
   });
@@ -662,9 +669,9 @@ describe("runRecipe", () => {
 
   function scriptedFactory(script: (handle: RecipeSessionHandle) => void) {
     return async (
-      options: Parameters<typeof createAgentSessionFromRecipe>[0]
+      options: Parameters<typeof createAgentSession>[0]
     ): Promise<RecipeSessionHandle> => {
-      const handle = await createAgentSessionFromRecipe(options);
+      const handle = await createAgentSession(options);
       script(handle);
       return handle;
     };
@@ -673,7 +680,7 @@ describe("runRecipe", () => {
   it("returns finished with the assistant text", async () => {
     const { recipeDir, workspaceDir } = fixture();
     const result = await runRecipe({
-      recipeDir,
+      recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       credentials: await credentialStore(),
       env: cleanEnv(),
@@ -690,7 +697,7 @@ describe("runRecipe", () => {
   it("returns failed, never throws, on agent-level error", async () => {
     const { recipeDir, workspaceDir } = fixture();
     const result = await runRecipe({
-      recipeDir,
+      recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       credentials: await credentialStore(),
       env: cleanEnv(),
@@ -704,7 +711,7 @@ describe("runRecipe", () => {
   it("returns cancelled on timeout, and always disposes", async () => {
     const { recipeDir, workspaceDir } = fixture();
     const result = await runRecipe({
-      recipeDir,
+      recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       credentials: await credentialStore(),
       env: cleanEnv(),
@@ -719,7 +726,7 @@ describe("runRecipe", () => {
     const { recipeDir, workspaceDir } = fixture();
     await expect(
       runRecipe({
-        recipeDir,
+        recipe: resolveRecipe({ recipeDir }),
         cwd: workspaceDir,
         credentials: await credentialStore(),
         env: cleanEnv(),
@@ -733,7 +740,7 @@ describe("runRecipe", () => {
     const controller = new AbortController();
     controller.abort();
     const result = await runRecipe({
-      recipeDir,
+      recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       credentials: await credentialStore(),
       env: cleanEnv(),
@@ -747,14 +754,14 @@ describe("runRecipe", () => {
     const { recipeDir, workspaceDir } = fixture();
     const controller = new AbortController();
     const result = await runRecipe({
-      recipeDir,
+      recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       credentials: await credentialStore(),
       env: cleanEnv(),
       prompt: "hi",
       signal: controller.signal,
       sessionFactory: async (options) => {
-        const handle = await createAgentSessionFromRecipe(options);
+        const handle = await createAgentSession(options);
         controller.abort();
         return handle;
       },
@@ -796,7 +803,7 @@ describe("in-process run controller", () => {
     const parentEnv = cleanEnv();
     let scripted: RecipeSessionHandle | null = null;
     let childOptions:
-      | Parameters<typeof createAgentSession>[1]
+      | Parameters<typeof createAgentSession>[0]
       | undefined;
     const tracer = {} as never;
     const controller = createInProcessRunController({
@@ -811,9 +818,9 @@ describe("in-process run controller", () => {
           agentName: "root",
         },
       },
-      sessionFactory: async (agent, options) => {
+      sessionFactory: async (options) => {
         childOptions = options;
-        const handle = await createAgentSession(agent, {
+        const handle = await createAgentSession({
           ...options,
           credentials: await credentialStore(),
         });
@@ -849,8 +856,8 @@ describe("in-process run controller", () => {
       cwd: workspaceDir,
       env: cleanEnv(),
       concurrency: 1,
-      sessionFactory: async (agent, options) => {
-        const handle = await createAgentSession(agent, {
+      sessionFactory: async (options) => {
+        const handle = await createAgentSession({
           ...options,
           credentials: await credentialStore(),
         });
@@ -885,10 +892,10 @@ describe("in-process run controller", () => {
       recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       env: cleanEnv(),
-      sessionFactory: async (agent, options) => {
+      sessionFactory: async (options) => {
         factoryCalls += 1;
         await factoryGate.promise;
-        const handle = await createAgentSession(agent, {
+        const handle = await createAgentSession({
           ...options,
           credentials: await credentialStore(),
         });
@@ -1011,7 +1018,7 @@ describe("in-process run controller", () => {
       recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       env: cleanEnv(),
-      sessionFactory: async (_agent, options) => {
+      sessionFactory: async (options) => {
         onEvent = options.onEvent as typeof onEvent;
         return {
           session: {

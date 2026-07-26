@@ -13,6 +13,8 @@ import { Text } from "@earendil-works/pi-tui";
 import {
   createRecipeChildAgentRunner,
   promptResultText,
+  type CreateRecipeChildAgentRunner,
+  type RecipeChildAgentRunner,
   type RecipeChildToolEvent,
 } from "./child-agent.js";
 import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
@@ -73,25 +75,6 @@ export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
   createChildAgentRunner?: CreateRecipeChildAgentRunner;
 }
-
-interface RecipeChildAgentRunner {
-  start(): Promise<void>;
-  prompt(prompt: string): Promise<unknown>;
-  steer(message: string): Promise<void>;
-  cancel(): Promise<void>;
-  shutdown(): Promise<void>;
-}
-
-type CreateRecipeChildAgentRunner = (opts: {
-  recipeDir: string;
-  workspaceDir: string;
-  agentName: string;
-  agent: ResolvedRecipeAgent;
-  env?: NodeJS.ProcessEnv;
-  modelRegistry?: ModelRegistry;
-  onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
-  onToolEvent?: (event: RecipeChildToolEvent) => void;
-}) => RecipeChildAgentRunner;
 
 interface AgentCallParams {
   action?: string;
@@ -1052,11 +1035,10 @@ export function createRecipesExtension(
       }
     };
     const runner = createChildAgentRunner({
-      recipeDir: launchState.resolved.recipeDir,
+      recipe: launchState.resolvedRecipe,
       workspaceDir: launchState.cwd,
       env,
       agentName,
-      agent: launchState.resolvedRecipe.selectAgent(agentName),
       modelRegistry: ctx.modelRegistry,
       onAssistantMessage(text, stream) {
         if (!run) return;

@@ -27,10 +27,7 @@ export interface InProcessRunControllerOptions {
   /** Root session instrumentation inherited by in-process child sessions. */
   otel?: RecipeSessionOtelOptions;
   /** Child session factory; defaults to `createAgentSession`. Test/DI seam. */
-  sessionFactory?: (
-    agent: ReturnType<ResolvedRecipe["selectAgent"]>,
-    options: CreateAgentSessionOptions
-  ) => Promise<RecipeSessionHandle>;
+  sessionFactory?: (options: CreateAgentSessionOptions) => Promise<RecipeSessionHandle>;
 }
 
 interface ChildRun {
@@ -112,9 +109,9 @@ export function createInProcessRunController(
         const sessionFactory =
           opts.sessionFactory ??
           (await import("./session.js")).createAgentSession;
-        const childAgent = opts.recipe.selectAgent(run.summary.agent_name);
-        run.handle = await sessionFactory(childAgent, {
+        run.handle = await sessionFactory({
           recipe: opts.recipe,
+          agentName: run.summary.agent_name,
           cwd: opts.cwd,
           // Every in-process child owns a private MCP environment. Sharing the
           // root object would either collide with its lease or expose its CLI

@@ -29,9 +29,8 @@ resolveRecipe()          format interpretation
     ▼
 createAgentSession()     complete live Pi agent
     │
-    ├── createAgentSessionFromRecipe() resolve-and-create convenience
-    ├── runRecipe()           one-turn convenience
-    └── host                  tasks, persistence, auth, protocols, deployment
+    ├── runRecipe()       one-turn operation over the same constructor
+    └── host              tasks, persistence, auth, protocols, deployment
 ```
 
 Recipes stops at the live session boundary. It does not ship a generic server,
