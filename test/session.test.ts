@@ -8,6 +8,7 @@ import {
   type AssistantMessageEvent,
 } from "@earendil-works/pi-ai/compat";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpBindingError } from "../src/mcp.js";
 import {
@@ -230,6 +231,14 @@ describe("createAgentSessionFromRecipe", () => {
     const { recipeDir, workspaceDir } = fixture();
     const base = getModel("anthropic", "claude-sonnet-4-5");
     expect(base).toBeDefined();
+    const parameters = Type.Object({
+      nested: Type.Object({}, { additionalProperties: false }),
+    });
+    const symbolMetadata = Symbol("schema-metadata");
+    Object.defineProperty(parameters, symbolMetadata, {
+      value: "preserved",
+      enumerable: false,
+    });
     const handle = await open({
       recipeDir,
       cwd: workspaceDir,
@@ -242,17 +251,7 @@ describe("createAgentSessionFromRecipe", () => {
         {
           name: "read",
           description: "Structured tool",
-          parameters: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              nested: {
-                type: "object",
-                additionalProperties: false,
-                properties: {},
-              },
-            },
-          },
+          parameters,
           execute: async () => ({ content: [], details: {} }),
         } as never,
       ],
@@ -269,7 +268,18 @@ describe("createAgentSessionFromRecipe", () => {
           properties: {},
         },
       },
+      required: ["nested"],
     });
+    expect(Object.getPrototypeOf(tool?.parameters)).toBe(
+      Object.getPrototypeOf(parameters)
+    );
+    expect(
+      (tool?.parameters as Record<PropertyKey, unknown>)[symbolMetadata]
+    ).toBe("preserved");
+    expect(
+      Object.getOwnPropertyDescriptor(tool?.parameters, symbolMetadata)
+        ?.enumerable
+    ).toBe(false);
   });
 
   it("resolves credentials from provider env keys when no store is given", async () => {

@@ -290,19 +290,21 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       throw new Error(`Agent not found: ${agentName}`);
     }
 
-    const validationFindings = validateResolvedRecipeAgentDefinition({
-      recipeDir: this.opts.recipeDir,
-      agentName,
-      requireExplicitName: true,
-      requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
-    });
-    const validationErrors = validationFindings.filter(
-      (finding) => finding.severity !== "warning"
-    );
-    if (validationErrors.length > 0) {
-      throw new Error(
-        validationErrors.map((finding) => finding.message).join("\n")
+    if (!resolved) {
+      const validationFindings = validateResolvedRecipeAgentDefinition({
+        recipeDir: this.opts.recipeDir,
+        agentName,
+        requireExplicitName: true,
+        requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+      });
+      const validationErrors = validationFindings.filter(
+        (finding) => finding.severity !== "warning"
       );
+      if (validationErrors.length > 0) {
+        throw new Error(
+          validationErrors.map((finding) => finding.message).join("\n")
+        );
+      }
     }
 
     const modelSpec = agent.model?.name;
@@ -324,16 +326,23 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       ),
       resourceLoaderOptions: {
         noSkills: true,
-        additionalSkillPaths: resolveAgentSkillPaths(
-          this.opts.recipeDir,
-          packageResourcePaths(readPiPackageManifest(this.opts.recipeDir), "skills"),
-          agent.skills
-        ),
-        systemPromptOverride: (base) =>
-          applySystemInstructions(
-            loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
-            agent.systemInstructions
+        additionalSkillPaths:
+          resolved?.skillPaths ??
+          resolveAgentSkillPaths(
+            this.opts.recipeDir,
+            packageResourcePaths(
+              readPiPackageManifest(this.opts.recipeDir),
+              "skills"
+            ),
+            agent.skills
           ),
+        systemPromptOverride: resolved
+          ? (base) => resolved.systemPromptOverride(base)
+          : (base) =>
+              applySystemInstructions(
+                loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
+                agent.systemInstructions
+              ),
       },
     });
 

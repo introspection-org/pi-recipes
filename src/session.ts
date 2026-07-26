@@ -216,15 +216,20 @@ type MutableAgentSession = {
 };
 
 function stripAdditionalProperties(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => stripAdditionalProperties(item));
-  }
   if (value === null || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => key !== "additionalProperties")
-      .map(([key, nested]) => [key, stripAdditionalProperties(nested)])
-  );
+  const clone: object = Array.isArray(value)
+    ? []
+    : Object.create(Object.getPrototypeOf(value));
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === "additionalProperties") continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    if ("value" in descriptor) {
+      descriptor.value = stripAdditionalProperties(descriptor.value);
+    }
+    Object.defineProperty(clone, key, descriptor);
+  }
+  return clone;
 }
 
 /**
