@@ -12,7 +12,7 @@
 
 <div align="center">
   <a href="https://pi.recipes"><img src="https://img.shields.io/badge/website-pi.recipes-blue" alt="Website"></a>
-  <a href="https://github.com/introspection-org/pi-recipes/actions/workflows/ci.yml"><img src="https://github.com/introspection-org/pi-recipes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/introspection-org/recipes/actions/workflows/ci.yml"><img src="https://github.com/introspection-org/recipes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.npmjs.com/package/@introspection-ai/recipes"><img src="https://img.shields.io/npm/v/@introspection-ai/recipes?label=npm" alt="npm version"></a>
   <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
 </div>

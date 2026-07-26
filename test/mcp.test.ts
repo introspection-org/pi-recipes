@@ -288,7 +288,7 @@ function startStubMcpServer(options: { failListAttempts?: number } = {}): Promis
 
 describe("static MCP session materialization", () => {
   it("writes policy and credential references without network discovery", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-static-"));
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-static-"));
     try {
       const cwd = join(root, "workspace");
       const recipeDir = join(root, "recipe");
@@ -345,7 +345,7 @@ describe("static MCP session materialization", () => {
   });
 
   it("fails immediately when a required binding is missing", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-required-"));
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-required-"));
     try {
       const recipeDir = join(root, "recipe");
       mkdirSync(recipeDir, { recursive: true });
@@ -367,7 +367,7 @@ describe("static MCP session materialization", () => {
   });
 
   it("removes stale policy and writes a closed transport config", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-clear-"));
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-clear-"));
     try {
       mkdirSync(join(root, ".pi"), { recursive: true });
       writeFileSync(defaultMcpSessionPath(root), "stale");
@@ -409,7 +409,7 @@ describe("static MCP session materialization", () => {
   });
 
   it("materializes a session-pinned CLI shim", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-shim-"));
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-shim-"));
     try {
       const result = await materializeSessionMcpCli({ cwd: root, env: {} });
       const script = readFileSync(result.shimPath, "utf8");
@@ -448,7 +448,7 @@ describe("static MCP session materialization", () => {
 
 describe("lazy MCP CLI discovery", () => {
   it("reuses one daemon runtime across concurrent calls and later commands", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-daemon-"));
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-daemon-"));
     const stub = await startStubMcpServer({ failListAttempts: 1 });
     const cwd = join(root, "workspace");
     const recipeDir = join(root, "recipe");
@@ -653,7 +653,7 @@ describe("lazy MCP CLI discovery", () => {
   }, 30_000);
 
   it("discovers once on first use, caches per server, and enforces policy", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-lazy-"));
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-lazy-"));
     const stub = await startStubMcpServer();
     try {
       const cwd = join(root, "workspace");
@@ -758,7 +758,7 @@ describe("lazy MCP CLI discovery", () => {
   }, 30_000);
 
   it("deduplicates concurrent discovery across CLI processes", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-lock-"));
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-lock-"));
     const stub = await startStubMcpServer();
     try {
       const cwd = join(root, "workspace");

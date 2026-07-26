@@ -11,7 +11,7 @@ import {
 
 describe("MCP OAuth session configuration", () => {
   it("projects OAuth references without contacting the server", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-oauth-"));
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-oauth-"));
     try {
       const cwd = join(root, "workspace");
       const recipeDir = join(root, "recipe");

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Unix-socket client for the Recipes session-local MCP daemon"
 license = "Apache-2.0"
-repository = "https://github.com/introspection-org/pi-recipes"
+repository = "https://github.com/introspection-org/recipes"
 publish = false
 
 [dependencies]

@@ -6,8 +6,10 @@ import {
   copyFileSync,
   existsSync,
   mkdtempSync,
+  realpathSync,
   readdirSync,
   readFileSync,
+  statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -56,6 +58,18 @@ function executableName(): string {
   return process.platform === "win32" ? "recipe-check.exe" : "recipe-check";
 }
 
+function packagedPlatformIds(): string[] {
+  const generic = `${process.platform}-${process.arch}`;
+  if (process.platform !== "linux") return [generic];
+  const report = process.report?.getReport() as
+    | { header?: { glibcVersionRuntime?: string } }
+    | undefined;
+  const header = report?.header;
+  return header?.glibcVersionRuntime
+    ? [generic]
+    : [`linux-${process.arch}-musl`, generic];
+}
+
 function executablePath(path: string): string {
   if (process.platform === "win32") return path;
   try {
@@ -72,7 +86,7 @@ function executablePath(path: string): string {
   } catch {
     // Some package stores are immutable. Materialize the private helper in a
     // process-owned temporary directory rather than requiring an install hook.
-    const directory = mkdtempSync(join(tmpdir(), "pi-recipe-check-"));
+    const directory = mkdtempSync(join(tmpdir(), "recipe-check-"));
     const target = join(directory, executableName());
     copyFileSync(path, target);
     chmodSync(target, 0o755);
@@ -88,15 +102,17 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
     return { command: executablePath(env.PI_RECIPE_CHECK_BIN), args: [] };
   }
   const root = packageRoot();
-  const packaged = resolve(
-    root,
-    "vendor",
-    "recipe-check",
-    `${process.platform}-${process.arch}`,
-    executableName()
-  );
-  if (existsSync(packaged)) {
-    return { command: executablePath(packaged), args: [] };
+  for (const platformId of packagedPlatformIds()) {
+    const packaged = resolve(
+      root,
+      "vendor",
+      "recipe-check",
+      platformId,
+      executableName()
+    );
+    if (existsSync(packaged)) {
+      return { command: executablePath(packaged), args: [] };
+    }
   }
 
   for (const profile of ["release", "debug"]) {
@@ -105,7 +121,7 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
       return { command: executablePath(candidate), args: [] };
     }
   }
-  const manifest = resolve(root, "crates", "pi-recipe-check", "Cargo.toml");
+  const manifest = resolve(root, "crates", "recipe-check", "Cargo.toml");
   if (existsSync(manifest)) {
     return {
       command: "cargo",
@@ -142,17 +158,35 @@ function snapshot(recipeDir: string): {
 } {
   const files: Array<{ path: string; content?: string }> = [];
   const directories: string[] = [];
-  const visit = (directory: string): void => {
+  const visit = (directory: string, ancestors: ReadonlySet<string>): void => {
+    const realDirectory = realpathSync(directory);
+    if (ancestors.has(realDirectory)) return;
+    const nextAncestors = new Set(ancestors);
+    nextAncestors.add(realDirectory);
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const absolute = join(directory, entry.name);
       const path = relative(recipeDir, absolute).replaceAll("\\", "/");
-      if (entry.isDirectory()) {
+      let target: {
+        isDirectory(): boolean;
+        isFile(): boolean;
+      } = entry;
+      if (entry.isSymbolicLink()) {
+        try {
+          target = statSync(absolute);
+        } catch {
+          // A dangling or inaccessible link is not authored Recipe content.
+          // Keep the pre-symlink behavior and let explicit references surface
+          // as normal missing-resource diagnostics from the shared checker.
+          continue;
+        }
+      }
+      if (target.isDirectory()) {
         if (entry.name === ".git" || BLOCKED_GENERATED_DIRS.has(entry.name)) {
           continue;
         }
         directories.push(path);
-        visit(absolute);
-      } else if (entry.isFile()) {
+        visit(absolute, nextAncestors);
+      } else if (target.isFile()) {
         files.push({
           path,
           ...(needsContent(path)
@@ -162,7 +196,7 @@ function snapshot(recipeDir: string): {
       }
     }
   };
-  visit(recipeDir);
+  visit(recipeDir, new Set());
   directories.sort();
   files.sort((left, right) => left.path.localeCompare(right.path));
   return { files, directories };

@@ -1,4 +1,4 @@
-# pi-recipe-check
+# recipe-check
 
 Pure validation library for [Recipe](https://pi.recipes) packages: the
 `package.json#pi` manifest, agent YAML files (required fields, `from`
@@ -8,10 +8,10 @@ include/exclude policy, and dependency lockfile rules.
 ## I/O-free API
 
 The core API takes an in-memory snapshot and never touches the filesystem, so
-`introspection check` can validate the files it already discovered:
+a host can validate files it already discovered:
 
 ```rust
-use pi_recipe_check::{check_recipe_files, CheckProfile, RecipeFile, RecipeFiles};
+use recipe_check::{check_recipe_files, CheckProfile, RecipeFile, RecipeFiles};
 
 let input = RecipeFiles {
     files: vec![
@@ -24,8 +24,8 @@ let report = check_recipe_files(&input, CheckProfile::Ci);
 assert!(!report.valid);
 ```
 
-This crate is shared by the Introspection CLI and the Recipes extension. Its
-core remains I/O-free. The crate's `recipe-check` binary is a private
+The crate is shared by CLI hosts and the Recipes extension. Its core remains
+I/O-free. The `recipe-check` binary is a private
 snapshot-in/snapshot-out bridge embedded in the npm package so `pi --recipe`
 can run the same validator at startup; it is not a user-facing Recipes CLI and
 does not walk the filesystem.
@@ -46,7 +46,7 @@ Judge sources are optional and discovered only at `judges/*.yaml` and
 authored contract and returns `judge.*` diagnostics plus a
 `resources.judges` count. It does not expose normalized registry projections
 or project-scoped identity. See the
-[Recipe judge specification](https://github.com/introspection-org/pi-recipes/blob/main/docs/recipe-judges.md)
+[Recipe judge specification](https://github.com/introspection-org/recipes/blob/main/docs/recipe-judges.md)
 for the complete schema and the boundary with judge execution.
 
 ## License

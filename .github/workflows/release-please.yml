@@ -37,7 +37,7 @@ jobs:
       pull-requests: write
     outputs:
       root_release_created: ${{ steps.root_release.outputs.release_created }}
-      crate_release_created: ${{ steps.checker_release.outputs['crates/pi-recipe-check--release_created'] }}
+      crate_release_created: ${{ steps.checker_release.outputs['crates/recipe-check--release_created'] }}
     steps:
       # Each train owns a different manifest. Concurrent release PRs therefore
       # never edit the same version-state file.
@@ -65,15 +65,45 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             arch: x64
+            platform_id: linux-x64
+            target: x86_64-unknown-linux-gnu
+            package_mcp: true
+            is_musl: false
           - os: ubuntu-24.04-arm
             platform: linux
             arch: arm64
+            platform_id: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            package_mcp: true
+            is_musl: false
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            platform_id: linux-x64-musl
+            target: x86_64-unknown-linux-musl
+            package_mcp: false
+            is_musl: true
           - os: macos-14
             platform: darwin
             arch: arm64
+            platform_id: darwin-arm64
+            target: aarch64-apple-darwin
+            package_mcp: true
+            is_musl: false
           - os: macos-15-intel
             platform: darwin
             arch: x64
+            platform_id: darwin-x64
+            target: x86_64-apple-darwin
+            package_mcp: true
+            is_musl: false
+          - os: windows-latest
+            platform: win32
+            arch: x64
+            platform_id: win32-x64
+            target: x86_64-pc-windows-msvc
+            package_mcp: false
+            is_musl: false
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -81,27 +111,38 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
-      - run: cargo build --release -p pi-mcp-client
+      - name: Install musl linker
+        if: ${{ matrix.is_musl }}
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - run: cargo build --release -p pi-recipe-check --bin recipe-check
+      - run: cargo build --release --target ${{ matrix.target }} -p pi-mcp-client
+        if: ${{ matrix.package_mcp }}
+
+      - run: cargo build --release --target ${{ matrix.target }} -p recipe-check --bin recipe-check
 
       - run: node scripts/package-mcp-client.mjs
+        if: ${{ matrix.package_mcp }}
         env:
           MCP_CLIENT_PLATFORM: ${{ matrix.platform }}
           MCP_CLIENT_ARCH: ${{ matrix.arch }}
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
 
       - run: node scripts/package-recipe-check.mjs
         env:
           RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
           RECIPE_CHECK_ARCH: ${{ matrix.arch }}
+          RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: native-tools-${{ matrix.platform }}-${{ matrix.arch }}
+          name: native-tools-${{ matrix.platform_id }}
           path: |
             vendor/mcp-client/${{ matrix.platform }}-${{ matrix.arch }}
-            vendor/recipe-check/${{ matrix.platform }}-${{ matrix.arch }}
+            vendor/recipe-check/${{ matrix.platform_id }}
           if-no-files-found: error
 
   publish:
@@ -202,7 +243,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - run: cargo test -p pi-recipe-check
+      - run: cargo test -p recipe-check
 
       - name: Publish to crates.io
         env:
@@ -210,10 +251,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(cargo pkgid -p pi-recipe-check | sed 's/.*[@#]//')"
-          if curl -sfo /dev/null -A "pi-recipes-release (github.com/introspection-org/pi-recipes)" \
-            "https://crates.io/api/v1/crates/pi-recipe-check/${version}"; then
-            echo "pi-recipe-check@${version} is already published"
+          version="$(cargo pkgid -p recipe-check | sed 's/.*[@#]//')"
+          if [[ "$version" == "0.0.0" ]]; then
+            echo "recipe-check has not been prepared by its 0.1.0 release PR"
+            exit 1
+          fi
+          if curl -sfo /dev/null -A "recipes-release (github.com/introspection-org/recipes)" \
+            "https://crates.io/api/v1/crates/recipe-check/${version}"; then
+            echo "recipe-check@${version} is already published"
           else
-            cargo publish -p pi-recipe-check
+            cargo publish -p recipe-check
           fi

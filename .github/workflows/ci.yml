@@ -49,11 +49,11 @@ jobs:
         with:
           node-version: 24
 
-      - run: cargo test -p pi-mcp-client -p pi-recipe-check
+      - run: cargo test -p pi-mcp-client -p recipe-check
 
       - run: cargo build --release -p pi-mcp-client
 
-      - run: cargo build --release -p pi-recipe-check --bin recipe-check
+      - run: cargo build --release -p recipe-check --bin recipe-check
 
       - run: node scripts/package-mcp-client.mjs
         env:
@@ -64,7 +64,59 @@ jobs:
         env:
           RECIPE_CHECK_PLATFORM: linux
           RECIPE_CHECK_ARCH: arm64
+          RECIPE_CHECK_PLATFORM_ID: linux-arm64
 
       - run: test -x vendor/mcp-client/linux-arm64/mcp-client
 
       - run: test -x vendor/recipe-check/linux-arm64/recipe-check
+
+  native-validator-portability:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            platform_id: linux-x64-musl
+            target: x86_64-unknown-linux-musl
+            executable: recipe-check
+            is_musl: true
+          - os: windows-latest
+            platform: win32
+            arch: x64
+            platform_id: win32-x64
+            target: x86_64-pc-windows-msvc
+            executable: recipe-check.exe
+            is_musl: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install musl linker
+        if: ${{ matrix.is_musl }}
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - run: cargo build --release --target ${{ matrix.target }} -p recipe-check --bin recipe-check
+
+      - run: node scripts/package-recipe-check.mjs
+        env:
+          RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
+          RECIPE_CHECK_ARCH: ${{ matrix.arch }}
+          RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+
+      - name: Verify packaged validator
+        shell: node {0}
+        run: |
+          const { existsSync } = require("node:fs");
+          const path = "vendor/recipe-check/${{ matrix.platform_id }}/${{ matrix.executable }}";
+          if (!existsSync(path)) throw new Error(`missing ${path}`);

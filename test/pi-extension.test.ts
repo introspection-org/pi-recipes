@@ -211,7 +211,7 @@ describe("Recipes extension for Pi", () => {
   });
 
   it("renders shared validator errors and prevents Pi fallback", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-check-error-"));
+    const root = mkdtempSync(join(tmpdir(), "recipe-check-error-"));
     try {
       const recipeDir = writeRecipe(root);
       const pi = createMockExtensionAPI();
@@ -259,7 +259,7 @@ describe("Recipes extension for Pi", () => {
   });
 
   it("sets a failing exit code for an invalid printed recipe session", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-check-print-error-"));
+    const root = mkdtempSync(join(tmpdir(), "recipe-check-print-error-"));
     const previousExitCode = process.exitCode;
     try {
       const recipeDir = writeRecipe(root);
@@ -294,7 +294,7 @@ describe("Recipes extension for Pi", () => {
   });
 
   it("renders shared validator warnings and continues", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-check-warning-"));
+    const root = mkdtempSync(join(tmpdir(), "recipe-check-warning-"));
     try {
       const recipeDir = writeRecipe(root);
       const pi = createMockExtensionAPI();
@@ -1159,7 +1159,7 @@ describe("Recipes extension for Pi", () => {
           "export default (pi) => {",
           "  if (dep.value !== 'loaded') throw new Error('recipe dependency did not load');",
           "  if (typeof defineTool !== 'function') throw new Error('pi-coding-agent did not load');",
-          "  if (typeof askUserQuestion !== 'function') throw new Error('pi-recipes interactions did not load');",
+          "  if (typeof askUserQuestion !== 'function') throw new Error('recipes interactions did not load');",
           "  if (typeof Type.Object !== 'function') throw new Error('typebox did not load');",
           "  pi.registerTool({",
           "    name: 'setup_git',",

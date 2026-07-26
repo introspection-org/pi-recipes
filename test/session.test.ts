@@ -233,6 +233,12 @@ describe("createAgentSessionFromRecipe", () => {
     expect(base).toBeDefined();
     const parameters = Type.Object({
       nested: Type.Object({}, { additionalProperties: false }),
+      additionalProperties: Type.String(),
+      literal: Type.Optional(
+        Type.Unknown({
+          default: { additionalProperties: "kept" },
+        })
+      ),
     });
     const symbolMetadata = Symbol("schema-metadata");
     Object.defineProperty(parameters, symbolMetadata, {
@@ -267,8 +273,12 @@ describe("createAgentSessionFromRecipe", () => {
           type: "object",
           properties: {},
         },
+        additionalProperties: { type: "string" },
+        literal: {
+          default: { additionalProperties: "kept" },
+        },
       },
-      required: ["nested"],
+      required: ["nested", "additionalProperties"],
     });
     expect(Object.getPrototypeOf(tool?.parameters)).toBe(
       Object.getPrototypeOf(parameters)

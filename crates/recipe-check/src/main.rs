@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::process::ExitCode;
 
-use pi_recipe_check::{check_recipe_files, CheckProfile, RecipeFiles};
+use recipe_check::{check_recipe_files, CheckProfile, RecipeFiles};
 
 fn profile(args: &[String]) -> Result<CheckProfile, String> {
     let value = args

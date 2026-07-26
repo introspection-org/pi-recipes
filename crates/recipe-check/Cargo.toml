@@ -1,13 +1,13 @@
 [package]
-name = "pi-recipe-check"
-version = "0.8.0"
+name = "recipe-check"
+version = "0.0.0"
 edition = "2021"
-description = "Pure validation library used by introspection check"
+description = "Pure validation engine for Recipe packages"
 license = "Apache-2.0"
-repository = "https://github.com/introspection-org/pi-recipes"
+repository = "https://github.com/introspection-org/recipes"
 homepage = "https://pi.recipes"
 readme = "README.md"
-keywords = ["pi", "recipes", "validation", "lint", "agents"]
+keywords = ["recipes", "validation", "lint", "agents"]
 categories = ["development-tools"]
 
 [[bin]]

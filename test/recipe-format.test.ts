@@ -128,7 +128,7 @@ describe("npm package boundary", () => {
     // Internal snapshot bridge used by `pi --recipe`; it is not exposed in
     // package.json#bin and therefore does not restore a Recipes CLI.
     expect(
-      existsSync(join(root, "crates", "pi-recipe-check", "src", "main.rs"))
+      existsSync(join(root, "crates", "recipe-check", "src", "main.rs"))
     ).toBe(true);
     expect(existsSync(join(root, "bindings"))).toBe(false);
     expect(existsSync(join(root, "harbor"))).toBe(false);
