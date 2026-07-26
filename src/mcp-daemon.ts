@@ -130,7 +130,11 @@ async function joinCatalogPreload(): Promise<void> {
   await preload.catch(() => {});
 }
 
-function send(socket: Socket, envelope: McpDaemonEnvelope): void {
+function send(
+  socket: Socket,
+  envelope: McpDaemonEnvelope,
+  serializationError = "response_too_large"
+): void {
   if (!socket.destroyed && !socket.writableEnded) {
     try {
       socket.write(serializeMcpDaemonEnvelope(envelope), () => {});
@@ -138,7 +142,7 @@ function send(socket: Socket, envelope: McpDaemonEnvelope): void {
       socket.write(
         `${JSON.stringify({
           id: envelope.id,
-          error: "response_too_large",
+          error: serializationError,
         })}\n`,
         () => {}
       );
@@ -313,7 +317,11 @@ async function callTool(
         `MCP tool call '${request.server}.${request.tool}' was cancelled; remote outcome is unknown.`
       );
     }
-    send(socket, { id: request.id, result });
+    send(
+      socket,
+      { id: request.id, result },
+      `MCP tool call '${request.server}.${request.tool}' completed but its response could not be returned; remote outcome is unknown; do not retry automatically.`
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     send(socket, {

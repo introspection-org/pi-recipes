@@ -69,14 +69,7 @@ Omitting a server—or the entire agent `mcp` block—means no access. `exclude`
 removes exact names after inclusion and always wins. MCP tools are selected here,
 not in the agent's ordinary `tools` list.
 
-`mode: cli` creates the session-local `mcp` command. This is also the default
-for the legacy flat form:
-
-```yaml
-mcp:
-  contacts:
-    include: ["*"]
-```
+`mode: cli` creates the session-local `mcp` command.
 
 `mode: tools` registers every authorized MCP tool with Pi. Server-local
 `defer` selectors control which authorized tools start hidden from the model;

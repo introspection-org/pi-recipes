@@ -43,7 +43,7 @@ export interface RecipeAgentMcpServer {
 export type RecipeAgentMcpMode = "cli" | "tools";
 
 export interface RecipeAgentMcp {
-  /** Omission preserves the legacy CLI behavior. */
+  /** Omission inherits the parent mode or defaults the resolved root to CLI. */
   mode?: RecipeAgentMcpMode;
   /** Authorization selection, still upper-bounded by package.json#pi.mcp. */
   servers: Record<string, RecipeAgentMcpServer>;
@@ -217,14 +217,7 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
   const value = data.mcp;
   const validObject = Boolean(value) && typeof value === "object" && !Array.isArray(value);
   const raw = asRecord(value);
-  const modeValue = raw.mode;
-  const structured =
-    Object.hasOwn(raw, "servers") ||
-    (Object.hasOwn(raw, "mode") &&
-      (modeValue === null ||
-        typeof modeValue !== "object" ||
-        Array.isArray(modeValue)));
-  const rawServers = structured ? asRecord(raw.servers) : raw;
+  const rawServers = asRecord(raw.servers);
   const servers: Record<string, RecipeAgentMcpServer> = {};
   for (const [serverId, serverValue] of Object.entries(rawServers)) {
     const serverRaw = asRecord(serverValue);
@@ -279,24 +272,23 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
             ? stringArray(server.eager).map((selector) => selector.trim())
             : undefined
         ) ||
-        ((!structured || mode === "cli") &&
+        (mode === "cli" &&
           (Object.hasOwn(server, "defer") || Object.hasOwn(server, "eager")))
       );
     }
   );
   const malformedStructured =
     malformedServers ||
-    (structured &&
-      ((Object.hasOwn(raw, "mode") &&
+    !Object.hasOwn(raw, "servers") ||
+    (Object.hasOwn(raw, "mode") &&
         raw.mode !== "cli" &&
         raw.mode !== "tools") ||
-        Object.keys(rawServers).some((serverId) => !serverId.trim()) ||
-        hasNormalizedMcpServerCollision(Object.keys(rawServers)) ||
-        (Object.hasOwn(raw, "servers") &&
-          (!raw.servers ||
-            typeof raw.servers !== "object" ||
-            Array.isArray(raw.servers))) ||
-        Object.hasOwn(raw, "initial_tools")));
+    Object.keys(rawServers).some((serverId) => !serverId.trim()) ||
+    hasNormalizedMcpServerCollision(Object.keys(rawServers)) ||
+    !raw.servers ||
+    typeof raw.servers !== "object" ||
+    Array.isArray(raw.servers) ||
+    Object.keys(raw).some((key) => !["mode", "servers"].includes(key));
   if (!validObject || malformedStructured) {
     Object.defineProperty(mcp, INVALID_AGENT_MCP, {
       value: true,

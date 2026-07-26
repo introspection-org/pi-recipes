@@ -119,4 +119,60 @@ describe("canonical Recipe session MCP tools mode", () => {
     expect(env.PI_RECIPES_MCP_SESSION).toBeUndefined();
     expect(env.MCPORTER_CONFIG).toBeUndefined();
   });
+
+  it("applies a private CLI MCP environment to the session bash tool", async () => {
+    const fixture = writeFixtureRecipe({
+      tools: ["read", "bash"],
+      manifestPi: {
+        mcp: {
+          servers: [
+            {
+              id: "contacts",
+              tools: { include: ["search_contacts"] },
+            },
+          ],
+        },
+      },
+      agentExtras: [
+        "mcp:",
+        "  mode: cli",
+        "  servers:",
+        "    contacts:",
+        "      include: [search_contacts]",
+      ],
+    });
+    cleanups.push(fixture.cleanup);
+    const env = { ...cleanEnv(), RECIPE_CHILD_MARKER: "isolated" };
+    const handle = await createAgentSessionFromRecipe({
+      recipeDir: fixture.recipeDir,
+      cwd: fixture.workspaceDir,
+      env,
+      credentials: await credentials(),
+      mcpBindings: {
+        servers: [
+          {
+            id: "contacts",
+            transport: "streamable_http",
+            url: "http://127.0.0.1:9/mcp",
+          },
+        ],
+      },
+    });
+    handles.push(handle);
+
+    const bash = handle.session.agent.state.tools.find(
+      (tool) => tool.name === "bash"
+    );
+    expect(bash).toBeDefined();
+    const result = await (bash!.execute as any)(
+      "call-env",
+      {
+        command:
+          'test -n "$PI_RECIPES_MCP_SESSION" && test "$RECIPE_CHILD_MARKER" = isolated && printf private-cli-env',
+      },
+      undefined,
+      undefined
+    );
+    expect(result.content[0]?.text).toContain("private-cli-env");
+  });
 });

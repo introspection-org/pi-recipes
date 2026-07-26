@@ -328,7 +328,13 @@ describe("createAgentSessionFromRecipe", () => {
           servers: [{ id: "linear", required: true, tools: { include: ["*"] } }],
         },
       },
-      agentExtras: ["mcp:", "  linear:", '    include: ["*"]'],
+      agentExtras: [
+        "mcp:",
+        "  mode: cli",
+        "  servers:",
+        "    linear:",
+        '      include: ["*"]',
+      ],
     });
     await expect(
       open({ recipeDir, cwd: workspaceDir })
@@ -347,7 +353,13 @@ describe("createAgentSessionFromRecipe", () => {
           servers: [{ id: "linear", required: true, tools: { include: ["*"] } }],
         },
       },
-      agentExtras: ["mcp:", "  linear:", '    include: ["*"]'],
+      agentExtras: [
+        "mcp:",
+        "  mode: cli",
+        "  servers:",
+        "    linear:",
+        '      include: ["*"]',
+      ],
     });
     const env = cleanEnv();
     const handle = await open({
@@ -393,7 +405,13 @@ describe("createAgentSessionFromRecipe", () => {
           ],
         },
       },
-      agentExtras: ["mcp:", "  linear:", '    include: ["*"]'],
+      agentExtras: [
+        "mcp:",
+        "  mode: cli",
+        "  servers:",
+        "    linear:",
+        '      include: ["*"]',
+      ],
     });
     const hostSession = join(workspaceDir, "host-session.json");
     const hostMcporter = join(workspaceDir, "host-mcporter.json");
@@ -437,7 +455,13 @@ describe("createAgentSessionFromRecipe", () => {
           ],
         },
       },
-      agentExtras: ["mcp:", "  linear:", '    include: ["*"]'],
+      agentExtras: [
+        "mcp:",
+        "  mode: cli",
+        "  servers:",
+        "    linear:",
+        '      include: ["*"]',
+      ],
     });
     const hostSession = join(workspaceDir, "host-session.json");
     const hostMcporter = join(workspaceDir, "host-mcporter.json");
@@ -718,6 +742,7 @@ describe("in-process run controller", () => {
 
   it("runs a child through an injected session factory", async () => {
     const { recipeDir, workspaceDir } = fixture();
+    const parentEnv = cleanEnv();
     let scripted: RecipeSessionHandle | null = null;
     let childOptions:
       | Parameters<typeof createAgentSession>[1]
@@ -726,7 +751,7 @@ describe("in-process run controller", () => {
     const controller = createInProcessRunController({
       recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
-      env: cleanEnv(),
+      env: parentEnv,
       otel: {
         tracer,
         meta: {
@@ -757,6 +782,8 @@ describe("in-process run controller", () => {
     expect(childOptions?.otel?.meta?.agentId).toBeUndefined();
     expect(childOptions?.otel?.meta?.agentName).toBeUndefined();
     expect(childOptions?.runController).toBeNull();
+    expect(childOptions?.env).not.toBe(parentEnv);
+    expect(childOptions?.env).toEqual(parentEnv);
     await controller.close(run.agent_run_id);
     expect(scripted).not.toBeNull();
   });

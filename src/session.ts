@@ -4,6 +4,7 @@ import { InMemoryCredentialStore, type CredentialStore } from "@earendil-works/p
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
+  createBashToolDefinition,
   createAgentSessionFromServices,
   createAgentSessionServices,
   ModelRuntime,
@@ -637,12 +638,13 @@ async function createSessionForAgent(
     }
     inlineExtensions.push(...(opts.extensionFactories ?? []));
 
+    const settingsManager =
+      opts.settingsManager ?? SettingsManager.create(cwd, recipe.recipeDir);
     const services = await createAgentSessionServices({
       cwd,
       agentDir: recipe.recipeDir,
       modelRuntime,
-      settingsManager:
-        opts.settingsManager ?? SettingsManager.create(cwd, recipe.recipeDir),
+      settingsManager,
       resourceLoaderOptions: {
         eventBus: opts.eventBus,
         noSkills: true,
@@ -699,7 +701,23 @@ async function createSessionForAgent(
       );
     }
     const selectedToolNames = [...tools, ...mcpToolNames];
+    const environmentBash: ToolDefinition | undefined =
+      (recipe.mcp?.mode ?? "cli") === "cli" &&
+      mcp.materialized &&
+      env !== process.env &&
+      tools.includes("bash") &&
+      !(opts.customTools ?? []).some((tool) => tool.name === "bash")
+        ? (createBashToolDefinition(cwd, {
+            commandPrefix: settingsManager.getShellCommandPrefix(),
+            shellPath: settingsManager.getShellPath(),
+            spawnHook: (context) => ({
+              ...context,
+              env: { ...context.env, ...env },
+            }),
+          }) as ToolDefinition)
+        : undefined;
     const customTools = [
+      ...(environmentBash ? [environmentBash] : []),
       ...(opts.customTools ?? []),
       ...(wantsSubagents
         ? [createAgentTool(runs, recipe.subagents, opts.agentToolOptions)]

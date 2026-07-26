@@ -116,7 +116,10 @@ export function createInProcessRunController(
         run.handle = await sessionFactory(childAgent, {
           recipe: opts.recipe,
           cwd: opts.cwd,
-          env,
+          // Every in-process child owns a private MCP environment. Sharing the
+          // root object would either collide with its lease or expose its CLI
+          // runtime to the child.
+          env: { ...env },
           ...(opts.credentials ? { credentials: opts.credentials } : {}),
           ...(opts.otel
             ? {

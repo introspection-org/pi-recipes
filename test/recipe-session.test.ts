@@ -161,48 +161,6 @@ describe("resolveRecipeAgent", () => {
     expect(resolved.tools).toEqual(["read", "mcp__search", "agent"]);
   });
 
-  it("preserves a legacy flat MCP server named mode", () => {
-    const recipeDir = makeRecipe();
-    writeFileSync(
-      join(recipeDir, "package.json"),
-      JSON.stringify({
-        name: "fixture-recipe",
-        version: "1.0.0",
-        pi: {
-          agents: ["agents"],
-          mcp: {
-            servers: [
-              { id: "mode", tools: { include: ["search_contacts"] } },
-            ],
-          },
-        },
-      })
-    );
-    writeFileSync(
-      join(recipeDir, "agents", "agent.yaml"),
-      [
-        "name: agent",
-        "model:",
-        "  name: openai/gpt-5",
-        "tools: []",
-        "mcp:",
-        "  mode:",
-        "    include: [search_contacts]",
-        "system_instructions:",
-        "  content: Test",
-      ].join("\n")
-    );
-
-    const resolved = resolveRecipeAgent({ recipeDir });
-
-    expect(resolved.mcp).toEqual({
-      mode: "cli",
-      servers: {
-        mode: { include: ["search_contacts"] },
-      },
-    });
-  });
-
   it("inherits deferred MCP policy and overrides eager tools per server", () => {
     const recipeDir = makeRecipe();
     writeFileSync(
