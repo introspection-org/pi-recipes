@@ -169,4 +169,39 @@ describe("MCP catalog preload", () => {
     }
     expect(cancelledRequestId).toBeDefined();
   });
+
+  it("marks a lost post-dispatch daemon response as outcome unknown", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "recipes-call-lost-response-"));
+    directories.push(directory);
+    const socketPath = join(directory, "mcp.sock");
+    const token = "test-token";
+    const fingerprint = "test-fingerprint";
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8");
+      socket.once("data", (chunk) => {
+        const request = JSON.parse(String(chunk).split("\n")[0]!);
+        if (request.type === "ping") {
+          socket.end(
+            `${JSON.stringify({ id: request.id, ready: true, fingerprint })}\n`
+          );
+          return;
+        }
+        if (request.type === "call") socket.destroy();
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    const env: NodeJS.ProcessEnv = {
+      [MCP_DAEMON_SOCKET_ENV]: socketPath,
+      [MCP_DAEMON_TOKEN_ENV]: token,
+      [MCP_DAEMON_FINGERPRINT_ENV]: fingerprint,
+    };
+
+    await expect(
+      callMcpDaemonTool("contacts", "update_contact", {}, { env })
+    ).rejects.toThrow("remote outcome is unknown; do not retry automatically");
+  });
 });

@@ -41,14 +41,18 @@ export function mcpDaemonEnvironment(env: NodeJS.ProcessEnv = process.env): {
 export function exchangeMcpDaemon(
   request: McpDaemonRequest,
   onEnvelope: (envelope: McpDaemonEnvelope, socket: Socket) => void,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  onRequestWritten?: () => void
 ): Promise<void> {
   const { socketPath } = mcpDaemonEnvironment(env);
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
     let buffer = "";
     socket.setEncoding("utf8");
-    socket.once("connect", () => socket.write(`${JSON.stringify(request)}\n`));
+    socket.once("connect", () => {
+      socket.write(`${JSON.stringify(request)}\n`);
+      onRequestWritten?.();
+    });
     socket.on("data", (chunk) => {
       buffer += chunk;
       if (
@@ -178,6 +182,7 @@ export async function callMcpDaemonTool(
   let result: unknown;
   let hasResult = false;
   let daemonError: string | undefined;
+  let requestWritten = false;
   let aborted = false;
   let timedOut = false;
   let resolveAbort: (() => void) | undefined;
@@ -236,10 +241,21 @@ export async function callMcpDaemonTool(
         socket.end();
       }
     },
-    env
+    env,
+    () => {
+      requestWritten = true;
+    }
   );
   try {
     await Promise.race([exchange, abortPromise]);
+  } catch (error) {
+    if (requestWritten) {
+      throw new Error(
+        `MCP tool call '${server}.${tool}' lost its daemon response after dispatch; remote outcome is unknown; do not retry automatically.`,
+        { cause: error }
+      );
+    }
+    throw error;
   } finally {
     clearTimeout(hardTimeout);
     signal?.removeEventListener("abort", onAbort);
@@ -256,6 +272,12 @@ export async function callMcpDaemonTool(
     );
   }
   if (daemonError) throw new Error(`MCP daemon: ${daemonError}`);
-  if (!hasResult) throw new Error("MCP daemon returned no tool result.");
+  if (!hasResult) {
+    throw new Error(
+      requestWritten
+        ? `MCP tool call '${server}.${tool}' returned no daemon result after dispatch; remote outcome is unknown; do not retry automatically.`
+        : "MCP daemon returned no tool result."
+    );
+  }
   return result;
 }
