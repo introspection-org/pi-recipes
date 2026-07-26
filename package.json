@@ -18,12 +18,12 @@
 	],
 	"repository": {
 		"type": "git",
-		"url": "git+ssh://git@github.com/introspection-org/pi-recipes.git"
+		"url": "git+ssh://git@github.com/introspection-org/recipes.git"
 	},
 	"bugs": {
-		"url": "https://github.com/introspection-org/pi-recipes/issues"
+		"url": "https://github.com/introspection-org/recipes/issues"
 	},
-	"homepage": "https://github.com/introspection-org/pi-recipes#readme",
+	"homepage": "https://github.com/introspection-org/recipes#readme",
 	"publishConfig": {
 		"access": "public",
 		"tag": "latest"
@@ -78,11 +78,11 @@
 	"scripts": {
 		"build": "pnpm build:ts && pnpm build:native",
 		"build:ts": "rm -rf dist && tsc && node scripts/build-mcp-daemon.mjs",
-		"build:native": "cargo build --release -p pi-mcp-client && cargo build --release -p pi-recipe-check --bin recipe-check && node scripts/package-mcp-client.mjs && node scripts/package-recipe-check.mjs",
+		"build:native": "cargo build --release -p pi-mcp-client && cargo build --release -p recipe-check --bin recipe-check && node scripts/package-mcp-client.mjs && node scripts/package-recipe-check.mjs",
 		"bench:mcp-client": "pnpm build:ts && cargo build --release -p pi-mcp-client && node scripts/benchmark-mcp-client.mjs",
 		"prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-		"test": "pnpm build:ts && cargo test -p pi-mcp-client -p pi-recipe-check && cargo build -p pi-mcp-client && cargo build -p pi-recipe-check --bin recipe-check && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
+		"test": "pnpm build:ts && cargo test -p pi-mcp-client -p recipe-check && cargo build -p pi-mcp-client && cargo build -p recipe-check --bin recipe-check && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
 		"pack:check": "pnpm pack --dry-run --json | node scripts/check-npm-pack.mjs",
 		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client vendor/recipe-check"
 	},

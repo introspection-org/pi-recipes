@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const platform = process.env.RECIPE_CHECK_PLATFORM ?? process.platform;
 const arch = process.env.RECIPE_CHECK_ARCH ?? process.arch;
+const platformId =
+  process.env.RECIPE_CHECK_PLATFORM_ID ?? `${platform}-${arch}`;
 const executable = platform === "win32" ? "recipe-check.exe" : "recipe-check";
 const cargoTarget = process.env.CARGO_BUILD_TARGET;
 const source =
@@ -24,7 +26,7 @@ const targetDir = resolve(
   root,
   "vendor",
   "recipe-check",
-  `${platform}-${arch}`
+  platformId
 );
 const target = resolve(targetDir, executable);
 mkdirSync(targetDir, { recursive: true });

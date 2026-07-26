@@ -31,7 +31,7 @@ afterEach(async () => {
 
 describe("MCP catalog preload", () => {
   it("delegates retry ownership to the daemon and reuses the successful result", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "pi-recipes-catalog-"));
+    const directory = mkdtempSync(join(tmpdir(), "recipes-catalog-"));
     directories.push(directory);
     const socketPath = join(directory, "mcp.sock");
     const token = "test-token";

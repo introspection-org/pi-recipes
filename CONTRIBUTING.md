@@ -31,13 +31,13 @@ Pi records the local package path in `~/.pi/agent/settings.json`. Re-run
 ## Validation library
 
 The pure validation library used by `introspection check` lives in
-[`crates/pi-recipe-check`](crates/pi-recipe-check). For changes there, also
+[`crates/recipe-check`](crates/recipe-check). For changes there, also
 run:
 
 ```bash
 cargo fmt --all --check
-cargo clippy -p pi-recipe-check --all-targets
-cargo test -p pi-recipe-check
+cargo clippy -p recipe-check --all-targets
+cargo test -p recipe-check
 ```
 
 Recipes does not expose a standalone validation command. Run

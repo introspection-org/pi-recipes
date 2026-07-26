@@ -221,7 +221,7 @@ export function defaultMcpSessionPath(cwd: string): string {
 }
 
 export function fallbackMcpSessionPath(): string {
-  return join(tmpdir(), "pi-recipes", "mcp-session.json");
+  return join(tmpdir(), "recipes", "mcp-session.json");
 }
 
 export function defaultMcporterConfigPath(cwd: string): string {
@@ -229,7 +229,7 @@ export function defaultMcporterConfigPath(cwd: string): string {
 }
 
 export function fallbackMcporterConfigPath(): string {
-  return join(tmpdir(), "pi-recipes", "mcporter.json");
+  return join(tmpdir(), "recipes", "mcporter.json");
 }
 
 export function defaultMcpLocalConfigPath(cwd: string): string {
@@ -819,8 +819,8 @@ export async function materializeMcpSession(
     .slice(0, 20);
   env[MCP_DAEMON_SOCKET_ENV] =
     process.platform === "win32"
-      ? `\\\\.\\pipe\\pi-recipes-mcp-${socketKey}`
-      : join(tmpdir(), `pi-recipes-mcp-${socketKey}.sock`);
+      ? `\\\\.\\pipe\\recipes-mcp-${socketKey}`
+      : join(tmpdir(), `recipes-mcp-${socketKey}.sock`);
   // Re-materialization with identical policy must not strand a running daemon
   // behind a newly rotated client token. Rotate only when the session changes.
   env[MCP_DAEMON_TOKEN_ENV] =

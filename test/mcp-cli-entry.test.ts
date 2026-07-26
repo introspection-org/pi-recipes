@@ -16,7 +16,7 @@ describe("mcp CLI entry", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "pi-recipes-mcp-entry-"));
+    dir = mkdtempSync(join(tmpdir(), "recipes-mcp-entry-"));
     writeFileSync(join(dir, "mcporter.json"), JSON.stringify({ imports: [], mcpServers: {} }));
     writeFileSync(
       join(dir, "mcp-session.json"),

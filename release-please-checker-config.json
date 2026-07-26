@@ -4,11 +4,11 @@
   "release-type": "rust",
   "always-update": true,
   "separate-pull-requests": true,
-  "group-pull-request-title-pattern": "chore(${branch}): release pi-recipe-check ${version}",
+  "group-pull-request-title-pattern": "chore(${branch}): release recipe-check ${version}",
   "packages": {
-    "crates/pi-recipe-check": {
+    "crates/recipe-check": {
       "release-type": "rust",
-      "component": "pi-recipe-check",
+      "component": "recipe-check",
       "include-component-in-tag": true,
       "bump-minor-pre-major": true
     }

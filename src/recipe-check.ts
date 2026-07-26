@@ -86,7 +86,7 @@ function executablePath(path: string): string {
   } catch {
     // Some package stores are immutable. Materialize the private helper in a
     // process-owned temporary directory rather than requiring an install hook.
-    const directory = mkdtempSync(join(tmpdir(), "pi-recipe-check-"));
+    const directory = mkdtempSync(join(tmpdir(), "recipe-check-"));
     const target = join(directory, executableName());
     copyFileSync(path, target);
     chmodSync(target, 0o755);
@@ -121,7 +121,7 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
       return { command: executablePath(candidate), args: [] };
     }
   }
-  const manifest = resolve(root, "crates", "pi-recipe-check", "Cargo.toml");
+  const manifest = resolve(root, "crates", "recipe-check", "Cargo.toml");
   if (existsSync(manifest)) {
     return {
       command: "cargo",
@@ -166,7 +166,20 @@ function snapshot(recipeDir: string): {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const absolute = join(directory, entry.name);
       const path = relative(recipeDir, absolute).replaceAll("\\", "/");
-      const target = entry.isSymbolicLink() ? statSync(absolute) : entry;
+      let target: {
+        isDirectory(): boolean;
+        isFile(): boolean;
+      } = entry;
+      if (entry.isSymbolicLink()) {
+        try {
+          target = statSync(absolute);
+        } catch {
+          // A dangling or inaccessible link is not authored Recipe content.
+          // Keep the pre-symlink behavior and let explicit references surface
+          // as normal missing-resource diagnostics from the shared checker.
+          continue;
+        }
+      }
       if (target.isDirectory()) {
         if (entry.name === ".git" || BLOCKED_GENERATED_DIRS.has(entry.name)) {
           continue;

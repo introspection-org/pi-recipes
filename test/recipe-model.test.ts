@@ -119,7 +119,7 @@ describe("recipe agent model config loading", () => {
   let recipeDir: string;
 
   beforeEach(() => {
-    recipeDir = mkdtempSync(join(tmpdir(), "pi-recipes-model-"));
+    recipeDir = mkdtempSync(join(tmpdir(), "recipes-model-"));
     writeFileSync(
       join(recipeDir, "package.json"),
       JSON.stringify({ name: "model-recipe", version: "0.0.1", pi: { agents: ["agents/*.yaml"] } })

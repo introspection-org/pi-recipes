@@ -109,6 +109,23 @@ describe("shared Recipe validator bridge", () => {
     });
   });
 
+  it("ignores dangling symlinks while validating the remaining Recipe", async () => {
+    const root = recipe(
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/claude-haiku-4-5",
+        "tools: []",
+      ].join("\n")
+    );
+    symlinkSync(join(root, "missing-target"), join(root, "stale-link"));
+
+    await expect(checkRecipeAtLoad(root, env)).resolves.toMatchObject({
+      valid: true,
+      profile: "local",
+    });
+  });
+
   it("runs a validator whose npm package mode was normalized to 0644", async () => {
     const root = recipe(
       [
