@@ -1,15 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Features
-
-* **recipe-check:** validate portable direct-child recipe judge YAML through every checker surface
-
-### Bug Fixes
-
-* **recipe-check:** accept IPv6 loopback URLs in judge local model configuration
-
 ## [0.13.0](https://github.com/introspection-org/pi-recipes/compare/v0.12.0...v0.13.0) (2026-07-26)
 
 
@@ -27,11 +17,12 @@
 
 ### Features
 
-* **recipe-check:** validate recipe judge YAML ([#117](https://github.com/introspection-org/pi-recipes/issues/117)) ([32ecf79](https://github.com/introspection-org/pi-recipes/commit/32ecf79a808dec375c2c961f09ebf6615eeb2835))
+* **recipe-check:** validate portable direct-child recipe judge YAML through every checker surface ([#117](https://github.com/introspection-org/pi-recipes/issues/117)) ([32ecf79](https://github.com/introspection-org/pi-recipes/commit/32ecf79a808dec375c2c961f09ebf6615eeb2835))
 
 
 ### Bug Fixes
 
+* **recipe-check:** accept IPv6 loopback URLs in judge local model configuration ([#117](https://github.com/introspection-org/pi-recipes/issues/117)) ([32ecf79](https://github.com/introspection-org/pi-recipes/commit/32ecf79a808dec375c2c961f09ebf6615eeb2835))
 * isolate release train state ([#119](https://github.com/introspection-org/pi-recipes/issues/119)) ([c4700e9](https://github.com/introspection-org/pi-recipes/commit/c4700e97ac35130208b4fe6baae2e550eefad645))
 * **release:** repair and separate release trains ([#115](https://github.com/introspection-org/pi-recipes/issues/115)) ([b49e0c5](https://github.com/introspection-org/pi-recipes/commit/b49e0c5ce9f16bae325e01636487c64aa118c011))
 
