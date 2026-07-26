@@ -1,25 +1,28 @@
 # Changelog
 
-## Unreleased
+## [0.13.0](https://github.com/introspection-org/pi-recipes/compare/v0.12.0...v0.13.0) (2026-07-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* define Recipes as the open format and portable runtime for Pi agents ([#130](https://github.com/introspection-org/pi-recipes/issues/130))
 
 ### Features
 
-* **recipe-check:** validate portable direct-child recipe judge YAML through every checker surface
-
-### Bug Fixes
-
-* **recipe-check:** accept IPv6 loopback URLs in judge local model configuration
+* define Recipes as the open format and portable runtime for Pi agents ([#130](https://github.com/introspection-org/pi-recipes/issues/130)) ([bee99ed](https://github.com/introspection-org/pi-recipes/commit/bee99edaf26489131d96fb28d313f3d5c6abb179))
+* **recipe-check:** export the typed judge spec model ([#120](https://github.com/introspection-org/pi-recipes/issues/120)) ([49bf99d](https://github.com/introspection-org/pi-recipes/commit/49bf99d7c92297bd512dc52fccac9de2acea3d01))
 
 ## [0.12.0](https://github.com/introspection-org/pi-recipes/compare/v0.11.0...v0.12.0) (2026-07-21)
 
 
 ### Features
 
-* **recipe-check:** validate recipe judge YAML ([#117](https://github.com/introspection-org/pi-recipes/issues/117)) ([32ecf79](https://github.com/introspection-org/pi-recipes/commit/32ecf79a808dec375c2c961f09ebf6615eeb2835))
+* **recipe-check:** validate portable direct-child recipe judge YAML through every checker surface ([#117](https://github.com/introspection-org/pi-recipes/issues/117)) ([32ecf79](https://github.com/introspection-org/pi-recipes/commit/32ecf79a808dec375c2c961f09ebf6615eeb2835))
 
 
 ### Bug Fixes
 
+* **recipe-check:** accept IPv6 loopback URLs in judge local model configuration ([#117](https://github.com/introspection-org/pi-recipes/issues/117)) ([32ecf79](https://github.com/introspection-org/pi-recipes/commit/32ecf79a808dec375c2c961f09ebf6615eeb2835))
 * isolate release train state ([#119](https://github.com/introspection-org/pi-recipes/issues/119)) ([c4700e9](https://github.com/introspection-org/pi-recipes/commit/c4700e97ac35130208b4fe6baae2e550eefad645))
 * **release:** repair and separate release trains ([#115](https://github.com/introspection-org/pi-recipes/issues/115)) ([b49e0c5](https://github.com/introspection-org/pi-recipes/commit/b49e0c5ce9f16bae325e01636487c64aa118c011))
 
