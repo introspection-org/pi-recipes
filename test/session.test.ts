@@ -190,6 +190,57 @@ describe("createAgentSessionFromRecipe", () => {
     expect(handle.session.systemPrompt).toContain("Conformance agent");
   });
 
+  it("fails closed when a package extension cannot load", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      manifestPi: { extensions: ["extensions/fail.ts"] },
+    });
+    mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "extensions", "fail.ts"),
+      "export default () => { throw new Error('extension exploded'); };\n"
+    );
+
+    await expect(
+      open({ recipeDir, cwd: workspaceDir })
+    ).rejects.toThrow("extension exploded");
+  });
+
+  it("fails closed when an agent declares an unavailable tool", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      tools: ["missing_tool"],
+    });
+
+    await expect(
+      open({ recipeDir, cwd: workspaceDir })
+    ).rejects.toThrow(
+      'Recipe agent "agent" declares unavailable tool(s): missing_tool'
+    );
+  });
+
+  it("does not auto-load ambient Recipe-directory extensions", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      tools: ["ambient_tool"],
+    });
+    mkdirSync(join(recipeDir, ".pi", "extensions"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, ".pi", "extensions", "ambient.ts"),
+      [
+        "export default (pi) => {",
+        "  pi.registerTool({",
+        "    name: 'ambient_tool',",
+        "    description: 'Must not load',",
+        "    parameters: { type: 'object', properties: {} },",
+        "    async execute() { return { content: [], details: {} }; }",
+        "  });",
+        "};",
+      ].join("\n")
+    );
+
+    await expect(
+      open({ recipeDir, cwd: workspaceDir })
+    ).rejects.toThrow("declares unavailable tool(s): ambient_tool");
+  });
+
   it("creates the exact Recipe definition already inspected by the host", async () => {
     const { recipeDir, workspaceDir } = fixture();
     const recipe = resolveRecipeAgent({ recipeDir });
@@ -782,6 +833,7 @@ describe("in-process run controller", () => {
     expect(childOptions?.otel?.meta?.agentId).toBeUndefined();
     expect(childOptions?.otel?.meta?.agentName).toBeUndefined();
     expect(childOptions?.runController).toBeNull();
+    expect(childOptions?.sessionRole).toBe("subagent");
     expect(childOptions?.env).not.toBe(parentEnv);
     expect(childOptions?.env).toEqual(parentEnv);
     await controller.close(run.agent_run_id);

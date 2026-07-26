@@ -53,7 +53,7 @@ For the selected agent, the extension:
 1. reads the root `package.json#pi` resource declarations;
 2. resolves the agent YAML, including `from:` inheritance;
 3. selects the model, thinking level, and tool allowlist;
-4. loads selected skills, prompts, and Recipe-owned extensions;
+4. loads selected skills, package prompts, and the complete Recipe extension closure;
 5. materializes declared MCP bindings from host or local configuration;
 6. exposes only the declared subagents through the shared `agent` tool.
 
@@ -72,16 +72,42 @@ remain unavailable. See [MCP configuration](mcp-configuration.md).
 ## Recipe-owned extensions
 
 TypeScript extension sources declared by `package.json#pi.extensions` are
-loaded relative to the Recipe. Agent-level `extensions.include` and
-`extensions.exclude` select which declared extensions participate.
+resolved deterministically and loaded for every Recipe session. This complete
+set is one executable closure; agent YAML only controls which registered tools
+the model may call.
 
-Recipe extensions can import shared APIs from `@introspection-ai/recipes`.
+Recipe extensions can import `forAgent`, `forRecipeSession`, and
+`getRecipeSessionContext` from `@introspection-ai/recipes/extensions` for
+session-local conditional behavior:
+
+```ts
+import { forAgent } from "@introspection-ai/recipes/extensions";
+
+export default function reviewerHooks(pi) {
+  forAgent(pi, "reviewer", () => {
+    pi.on("tool_call", reviewPolicy);
+  });
+}
+```
+
+The context distinguishes `root` and `subagent` roles. Conditional behavior is
+not code isolation: the extension module still executes with the Pi process's
+authority. `forAgent` matches the final resolved `agent.name` exactly; `from`
+is configuration inheritance and does not make a derived agent match its
+ancestor's hooks.
+
+The closure contains every extension declared by the Recipe. It does not claim
+exclusive ownership of the surrounding Pi process: trusted global or project
+extensions already loaded by interactive Pi may still run hooks, providers,
+commands, and other non-tool behavior. Recipe `tools` remains the exact
+model-callable allowlist. Embedded Recipe sessions disable ambient extensions,
+skills, prompt templates, and context files by default.
 
 ## Validation
 
 Every `pi --recipe` launch automatically runs the shared Recipe Format
-validator with its local profile. Errors are rendered in Pi and stop the
-session before any model call; warnings are rendered and launch continues.
+validator. Invalid Recipes are rendered in Pi and stop the session before any
+model call.
 
 For an explicit manual or CI check, run:
 

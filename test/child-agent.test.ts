@@ -136,6 +136,7 @@ describe("Recipe child agent runner", () => {
           id: "test-model",
         }),
         runController: null,
+        sessionRole: "subagent",
       })
     );
     expect(sessionOptions.mcpRuntimeDir).not.toBe(workspaceDir);

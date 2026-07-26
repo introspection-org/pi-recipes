@@ -48,7 +48,7 @@ describe("Pi extension MCP tools mode", () => {
         pi: {
           agents: ["agents/*.yaml"],
           mcp: {
-            manifest: "mcp.json",
+            manifests: ["mcp.json"],
             servers: [
               {
                 id: "contacts",

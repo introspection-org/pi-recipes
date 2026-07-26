@@ -135,6 +135,7 @@ export function createInProcessRunController(
             : {}),
           // Delegation is one level deep by the Recipe format contract.
           runController: null,
+          sessionRole: "subagent",
           onEvent: (event) => {
             const record = event as { type?: string; toolName?: unknown };
             if (record.type === "tool_execution_start") {

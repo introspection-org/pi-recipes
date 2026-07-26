@@ -44,6 +44,20 @@ describe("recipe agent skills", () => {
     }
   });
 
+  it("uses a portable name for an unnamed root skill", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-root-skill-"));
+    try {
+      const skillPath = join(root, "SKILL.md");
+      writeFileSync(skillPath, "---\ndescription: Root guidance\n---\n");
+
+      expect(resolveAgentSkillPaths(root, [skillPath], ["skill"])).toEqual([
+        skillPath,
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("preserves diagnostics for malformed selected skills only", () => {
     const root = mkdtempSync(join(tmpdir(), "recipe-agent-skill-diagnostics-"));
     try {

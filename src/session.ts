@@ -46,8 +46,14 @@ import { createMcpToolSet } from "./mcp-tools.js";
 import { expectedProviderEnvVars } from "./provider-env.js";
 import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
 import {
+  bindRecipeExtensionFactory,
+  createRecipeExtensionRegistrationRegistry,
+  type RecipeExtensionSessionContext,
+} from "./extensions.js";
+import {
   applyRecipeAgentModelConfigToModel,
   applyRecipeAgentModelConfigToSession,
+  cloneModelForRecipe,
 } from "./recipe-model.js";
 import {
   resolveRecipeAgent,
@@ -69,7 +75,7 @@ export { expectedProviderEnvVars } from "./provider-env.js";
  */
 export interface CreateAgentSessionFromRecipeOptions {
   recipeDir: string;
-  /** Default: `agents/agent.yaml`, else the recipe's single-agent rule. */
+  /** Default: the agent named `agent`, else the recipe's single-agent rule. */
   agentName?: string;
   /** Agent workspace. Default: `process.cwd()`. */
   cwd?: string;
@@ -103,6 +109,8 @@ export interface CreateAgentSessionFromRecipeOptions {
   settingsManager?: SettingsManager;
   /** Host extensions appended after the recipe's own extensions. */
   extensionFactories?: ExtensionFactory[];
+  /** Recipe extension dispatch role. Default: `root`. */
+  sessionRole?: RecipeExtensionSessionContext["session"]["role"];
   /** Host event bus shared with the surrounding application. */
   eventBus?: EventBus;
   /** Host-owned tools. Recipe tool selection still decides which names are live. */
@@ -364,38 +372,6 @@ export class RecipeMcpEnvironmentInUseError extends Error {
 }
 
 /**
- * Everything `createAgentSessionFromRecipe` fail-closes on, without creating a
- * session or starting MCP: recipe resolution, model lookup, credentials.
- * Hosts with a boot phase can run this once to fail fast.
- */
-export async function preflightRecipeSession(
-  opts: CreateAgentSessionFromRecipeOptions
-): Promise<ResolvedRecipeAgent> {
-  const recipe = resolveRecipeAgent({
-    recipeDir: opts.recipeDir,
-    ...(opts.agentName ? { agentName: opts.agentName } : {}),
-  });
-  const modelSpec = opts.model ?? recipe.modelSpec;
-  const { lookupProvider, modelId } = parseModelSpec(modelSpec);
-  const credentialProvider = opts.modelOverride?.provider ?? lookupProvider;
-  const credentials = await resolveCredentialStore(credentialProvider, opts);
-  const modelRuntime = await ModelRuntime.create({
-    credentials,
-    modelsPath: null,
-  });
-  const model =
-    opts.modelOverride ??
-    modelRuntime.getModel(lookupProvider, modelId) ??
-    (getModel(lookupProvider as never, modelId as never) as
-      | Model<any>
-      | undefined);
-  if (!model) {
-    throw new RecipeModelError(modelSpec);
-  }
-  return recipe;
-}
-
-/**
  * Materialize the session MCP runtime for a recipe scope into `env` at
  * `cwd`. Exposed for hosts that materialize once per process and create their
  * sessions with `mcpProvisioning: "host"`.
@@ -559,6 +535,13 @@ async function createSessionForAgent(
 ): Promise<RecipeSessionHandle> {
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
+  const recipeExtensionContext: RecipeExtensionSessionContext = Object.freeze({
+    recipe: Object.freeze({ name: recipe.manifest.name }),
+    agent: Object.freeze({ name: recipe.name }),
+    session: Object.freeze({
+      role: opts.sessionRole ?? "root",
+    }),
+  });
   const otel = opts.otel
     ? {
         ...opts.otel,
@@ -578,15 +561,8 @@ async function createSessionForAgent(
   const credentialProvider = opts.modelOverride?.provider ?? lookupProvider;
   const credentials = await resolveCredentialStore(credentialProvider, opts);
   const modelRuntime = await ModelRuntime.create({ credentials, modelsPath: null });
-  const model: Model<any> | undefined =
-    opts.modelOverride ??
-    modelRuntime.getModel(lookupProvider, modelId) ??
-    (getModel(lookupProvider as never, modelId as never) as Model<any> | undefined);
-  if (!model) {
-    throw new RecipeModelError(modelSpec);
-  }
-  applyRecipeAgentModelConfigToModel(model, recipe.modelConfig);
 
+  let model: Model<any> | undefined;
   let session: AgentSession | undefined;
   let runs: AgentRunController | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -636,9 +612,31 @@ async function createSessionForAgent(
     // Recipe extensions load through the shared jiti loader; host extensions
     // append after them, matching the Pi extension host's ordering.
     const inlineExtensions: InlineExtension[] = [];
+    const recipeRegistrations =
+      createRecipeExtensionRegistrationRegistry();
+    for (const toolName of [
+      "read",
+      "bash",
+      "edit",
+      "write",
+      "grep",
+      "find",
+      "ls",
+      ...(opts.customTools ?? []).map((tool) => tool.name),
+      ...(recipe.subagents.size > 0 && opts.runController !== null
+        ? ["agent"]
+        : []),
+    ]) {
+      recipeRegistrations.claim("tool", toolName, "<host>");
+    }
     for (const extensionPath of recipe.extensionPaths) {
       inlineExtensions.push(
-        await loadRecipeExtensionFactory(recipe.recipeDir, extensionPath)
+        bindRecipeExtensionFactory(
+          await loadRecipeExtensionFactory(recipe.recipeDir, extensionPath),
+          recipeExtensionContext,
+          recipeRegistrations,
+          extensionPath
+        )
       );
     }
     inlineExtensions.push(...(opts.extensionFactories ?? []));
@@ -652,12 +650,15 @@ async function createSessionForAgent(
       settingsManager,
       resourceLoaderOptions: {
         eventBus: opts.eventBus,
+        noExtensions: true,
         noSkills: true,
+        noPromptTemplates: true,
+        noContextFiles: true,
         additionalSkillPaths: [
           ...(opts.skillPaths ?? recipe.skillPaths),
           ...(opts.additionalSkillPaths ?? []),
         ],
-        additionalPromptTemplatePaths: recipe.promptPaths,
+        additionalPromptTemplatePaths: [...recipe.promptPaths],
         extensionFactories: inlineExtensions,
         systemPromptOverride: (base) => {
           const resolved = recipe.systemPromptOverride(base);
@@ -666,6 +667,36 @@ async function createSessionForAgent(
       },
     });
     opts.onDiagnostics?.(services.diagnostics);
+    const extensionLoadErrors =
+      services.resourceLoader.getExtensions().errors;
+    const fatalDiagnostics = services.diagnostics.filter(
+      (diagnostic) => diagnostic.type === "error"
+    );
+    if (fatalDiagnostics.length > 0 || extensionLoadErrors.length > 0) {
+      throw new Error(
+        `Recipe extension startup failed:\n${[
+          ...extensionLoadErrors.map(
+            ({ path, error }) => `- ${path}: ${error}`
+          ),
+          ...fatalDiagnostics.map(
+            (diagnostic) => `- ${diagnostic.message}`
+          ),
+        ]
+          .join("\n")}`
+      );
+    }
+    const selectedModel =
+      opts.modelOverride ??
+      services.modelRuntime.getModel(lookupProvider, modelId) ??
+      modelRuntime.getModel(lookupProvider, modelId) ??
+      (getModel(lookupProvider as never, modelId as never) as
+        | Model<any>
+        | undefined);
+    if (!selectedModel) {
+      throw new RecipeModelError(modelSpec);
+    }
+    model = cloneModelForRecipe(selectedModel);
+    applyRecipeAgentModelConfigToModel(model, recipe.modelConfig);
 
     // Subagents: the shared `agent` tool against an injected or in-process
     // controller. `runController: null` disables delegation outright.
@@ -688,17 +719,23 @@ async function createSessionForAgent(
           })
         : inertRunController();
     }
-    const tools = wantsSubagents
-      ? recipe.tools
-      : recipe.tools.filter((tool) => tool !== "agent");
+    const tools = [
+      ...recipe.tools,
+      ...(wantsSubagents ? ["agent"] : []),
+    ];
     const mcpToolNames = mcp.tools?.map((tool) => tool.name) ?? [];
+    const recipeExtensionToolNames = new Set(
+      services.resourceLoader
+        .getExtensions()
+        .extensions.flatMap((extension) => [...extension.tools.keys()])
+    );
     const occupiedToolNames = new Set([
       ...tools,
       ...(opts.customTools ?? []).map((tool) => tool.name),
       ...(wantsSubagents ? ["agent"] : []),
     ]);
     const collisions = mcpToolNames.filter((name) =>
-      occupiedToolNames.has(name)
+      occupiedToolNames.has(name) || recipeExtensionToolNames.has(name)
     );
     if (collisions.length > 0) {
       throw new Error(
@@ -744,10 +781,18 @@ async function createSessionForAgent(
     normalizeSessionToolsForModel(session, model);
     applyRecipeAgentModelConfigToSession(session, recipe.modelConfig);
     await session.bindExtensions({});
-    if (mcp.tools) {
-      const registered = new Set(
-        session.getAllTools().map((tool) => tool.name)
+    const registered = new Set(
+      session.getAllTools().map((tool) => tool.name)
+    );
+    const missingDeclaredTools = selectedToolNames.filter(
+      (name) => !registered.has(name)
+    );
+    if (missingDeclaredTools.length > 0) {
+      throw new Error(
+        `Recipe agent "${recipe.name}" declares unavailable tool(s): ${missingDeclaredTools.join(", ")}`
       );
+    }
+    if (mcp.tools) {
       const missingRegistered = mcpToolNames.filter(
         (name) => !registered.has(name)
       );

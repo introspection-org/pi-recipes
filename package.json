@@ -37,6 +37,10 @@
 			"types": "./dist/interactions.d.ts",
 			"import": "./dist/interactions.js"
 		},
+		"./extensions": {
+			"types": "./dist/extensions.d.ts",
+			"import": "./dist/extensions.js"
+		},
 		"./mcp": {
 			"types": "./dist/mcp.d.ts",
 			"import": "./dist/mcp.js"

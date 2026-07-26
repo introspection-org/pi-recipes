@@ -82,12 +82,20 @@ export function createMockExtensionAPI(): MockExtensionAPI {
       return api.activeTools;
     },
     getAllTools() {
-      return [...tools.values()].map((tool) => ({
+      const builtins = ["read", "bash", "edit", "write"]
+        .filter((name) => !tools.has(name))
+        .map((name) => ({
+          name,
+          description: `${name} test tool`,
+          parameters: {},
+          sourceInfo: { path: `<builtin:${name}>`, source: "builtin", scope: "temporary", origin: "top-level" },
+        }));
+      return [...builtins, ...[...tools.values()].map((tool) => ({
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
         sourceInfo: { path: "<test>", source: "test", scope: "temporary", origin: "top-level" },
-      }));
+      }))];
     },
     setThinkingLevel(level: string) {
       api.thinkingLevel = level;

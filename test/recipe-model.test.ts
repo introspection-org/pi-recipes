@@ -1,10 +1,14 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadRecipeAgentDefinitions, validateRecipeAgentDefinitions } from "../src/recipe-agent.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  loadValidatedRecipeAgentDefinitions,
+  validateRecipeAgentDefinitions,
+} from "../src/recipe-agent.js";
 import {
   applyRecipeAgentModelConfigToModel,
+  cloneModelForRecipe,
   mergeRecipeAgentModelConfig,
   parseRecipeAgentModelConfig,
   RecipeModelConfigError,
@@ -43,13 +47,13 @@ describe("parseRecipeAgentModelConfig", () => {
     });
   });
 
-  it("accepts thinkingLevel camelCase and reasoning_effort alias", () => {
-    expect(parseRecipeAgentModelConfig("test", { thinkingLevel: "low" })).toEqual({
-      thinkingLevel: "low",
-    });
-    expect(parseRecipeAgentModelConfig("test", { reasoning_effort: "high" })).toEqual({
-      thinkingLevel: "high",
-    });
+  it("rejects non-canonical thinking-level aliases", () => {
+    expect(() =>
+      parseRecipeAgentModelConfig("test", { thinkingLevel: "low" })
+    ).toThrow(/unsupported model key/);
+    expect(() =>
+      parseRecipeAgentModelConfig("test", { reasoning_effort: "high" })
+    ).toThrow(/unsupported model key/);
   });
 
   it("rejects unknown keys and invalid values", () => {
@@ -59,9 +63,6 @@ describe("parseRecipeAgentModelConfig", () => {
     expect(() => parseRecipeAgentModelConfig("test", { temperature: "hot" })).toThrow(
       /temperature/
     );
-    expect(() =>
-      parseRecipeAgentModelConfig("test", { thinking_level: "low", reasoning_effort: "high" })
-    ).toThrow(/different values/);
     expect(() => parseRecipeAgentModelConfig("test", "gpt")).toThrow(/expected object/);
   });
 
@@ -71,7 +72,7 @@ describe("parseRecipeAgentModelConfig", () => {
 });
 
 describe("mergeRecipeAgentModelConfig", () => {
-  it("merges sections by key with the overlay winning", () => {
+  it("resets inherited tuning when model identity changes", () => {
     const merged = mergeRecipeAgentModelConfig(
       {
         name: "openai/gpt-5.5",
@@ -87,9 +88,23 @@ describe("mergeRecipeAgentModelConfig", () => {
 
     expect(merged).toEqual({
       name: "anthropic/claude-fable-5",
-      streamOptions: { temperature: 0.7, maxTokens: 1024 },
-      anthropic: { betas: ["a"] },
+      streamOptions: { temperature: 0.7 },
       openrouter: { sort: "price" },
+    });
+  });
+
+  it("merges sections when the child omits model identity", () => {
+    expect(
+      mergeRecipeAgentModelConfig(
+        {
+          name: "anthropic/claude-fable-5",
+          streamOptions: { temperature: 0.2, maxTokens: 1024 },
+        },
+        { streamOptions: { temperature: 0.7 } }
+      )
+    ).toEqual({
+      name: "anthropic/claude-fable-5",
+      streamOptions: { temperature: 0.7, maxTokens: 1024 },
     });
   });
 
@@ -101,6 +116,24 @@ describe("mergeRecipeAgentModelConfig", () => {
 });
 
 describe("applyRecipeAgentModelConfigToModel", () => {
+  it("applies configuration to a session-local model clone", () => {
+    const shared = {
+      provider: "anthropic",
+      id: "claude",
+      headers: { existing: "yes" },
+      compat: { supportsStore: true },
+    } as any;
+    const local = cloneModelForRecipe(shared);
+    applyRecipeAgentModelConfigToModel(local, {
+      anthropic: { betas: ["context-1m"] },
+    });
+
+    expect(local).not.toBe(shared);
+    expect(local.headers).not.toBe(shared.headers);
+    expect(shared.headers).toEqual({ existing: "yes" });
+    expect(shared.compat).toEqual({ supportsStore: true });
+  });
+
   it("applies routing and merges anthropic beta headers", () => {
     const model = {
       headers: { "anthropic-beta": "existing" },
@@ -129,13 +162,13 @@ describe("recipe agent model config loading", () => {
 
   afterEach(() => {
     rmSync(recipeDir, { recursive: true, force: true });
-    vi.restoreAllMocks();
   });
 
-  it("carries the merged model config across the from chain", () => {
+  it("starts fresh model config when identity changes across the from chain", () => {
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
       [
+        "name: agent",
         "description: base",
         "model:",
         "  name: openai/gpt-5.5",
@@ -148,6 +181,7 @@ describe("recipe agent model config loading", () => {
     writeFileSync(
       join(recipeDir, "agents", "sweep.yaml"),
       [
+        "name: sweep",
         "from: agent",
         "description: sweep",
         "model:",
@@ -156,38 +190,105 @@ describe("recipe agent model config loading", () => {
       ].join("\n")
     );
 
-    const definitions = loadRecipeAgentDefinitions(recipeDir);
+    const definitions = loadValidatedRecipeAgentDefinitions(recipeDir).definitions;
     const sweep = definitions.get("sweep");
 
     expect(sweep?.model).toEqual({ name: "anthropic/claude-fable-5", thinkingLevel: "high" });
     expect(sweep?.modelConfig).toEqual({
       name: "anthropic/claude-fable-5",
       thinkingLevel: "high",
-      streamOptions: { temperature: 0.2 },
-      anthropic: { betas: ["interleaved-thinking"] },
     });
   });
 
-  it("skips files with invalid model config and surfaces a validation finding", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("accepts the minimal explicitly named agent", () => {
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
-      ["description: ok", "model:", "  name: openai/gpt-5.5"].join("\n")
+      "name: agent\nmodel:\n  name: openai/gpt-5.5\n"
+    );
+
+    expect(validateRecipeAgentDefinitions(recipeDir)).toEqual([]);
+    expect(
+      loadValidatedRecipeAgentDefinitions(recipeDir).definitions.get("agent")
+    ).toMatchObject({
+      name: "agent",
+      tools: [],
+      skills: [],
+      subagents: [],
+    });
+  });
+
+  it("rejects legacy agent instruction keys", () => {
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: openai/gpt-5.5",
+        "systemInstructions:",
+        "  content: legacy",
+        "prompt: legacy",
+      ].join("\n")
+    );
+
+    expect(validateRecipeAgentDefinitions(recipeDir)).toEqual([
+      expect.objectContaining({
+        agentName: "agent",
+        field: "file",
+        message: expect.stringMatching(/unsupported key\(s\): .*prompt.*systemInstructions|unsupported key\(s\): .*systemInstructions.*prompt/),
+      }),
+    ]);
+  });
+
+  it.each([
+    ["name", "name: 42"],
+    ["from", "from: []"],
+    ["description", "description: {}"],
+    ["tools", "tools: [read, 42]"],
+    ["skills", "skills: missing"],
+    ["subagents", "subagents: ['']"],
+    ["extensions", "extensions:\n  include: [42]"],
+    [
+      "system instructions",
+      "system_instructions:\n  mode: invalid\n  content: Test",
+    ],
+  ])("rejects malformed present %s fields", (_label, fieldYaml) => {
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        ...(_label === "name" ? [] : ["name: agent"]),
+        "model:",
+        "  name: openai/gpt-5.5",
+        fieldYaml,
+      ].join("\n")
+    );
+
+    expect(validateRecipeAgentDefinitions(recipeDir)).toEqual([
+      expect.objectContaining({
+        agentName: "agent",
+        field: "file",
+      }),
+    ]);
+  });
+
+  it("excludes invalid files from the parsed graph and returns their diagnostics", () => {
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      ["name: agent", "description: ok", "model:", "  name: openai/gpt-5.5"].join("\n")
     );
     writeFileSync(
       join(recipeDir, "agents", "broken.yaml"),
-      ["description: bad", "model:", "  temprature: 1"].join("\n")
+      ["name: broken", "description: bad", "model:", "  temprature: 1"].join("\n")
     );
 
-    const definitions = loadRecipeAgentDefinitions(recipeDir);
+    const result = loadValidatedRecipeAgentDefinitions(recipeDir);
+    const definitions = result.definitions;
 
     expect(definitions.has("agent")).toBe(true);
     expect(definitions.has("broken")).toBe(false);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("broken.yaml"));
-
-    const findings = validateRecipeAgentDefinitions(recipeDir);
     expect(
-      findings.some((finding) => finding.field === "file" && finding.agentName === "broken")
+      result.findings.some(
+        (finding) => finding.field === "file" && finding.agentName === "broken"
+      )
     ).toBe(true);
   });
 });

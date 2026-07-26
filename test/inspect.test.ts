@@ -15,10 +15,24 @@ describe("inspectRecipe", () => {
     const fixture = writeFixtureRecipe();
     cleanups.push(fixture.cleanup);
 
-    expect(inspectRecipe(fixture.recipeDir).credential_env).toEqual([
+    const inspection = inspectRecipe(fixture.recipeDir);
+    expect(inspection.credential_env).toEqual([
       "ANTHROPIC_API_KEY",
       "ANTHROPIC_OAUTH_TOKEN",
     ]);
+    expect(inspection.resolved_agents[0]).toMatchObject({
+      name: "agent",
+      prompt: { base: "SYSTEM.md" },
+      tools: {
+        authored: ["read"],
+        root: ["read"],
+        subagent: ["read"],
+      },
+    });
+    expect(inspection.host_boundary).toEqual({
+      interactive_pi_may_add_ambient_resources: true,
+      embedded_host_overrides_are_not_recipe_source: true,
+    });
   });
 
   it("reports OAuth client-secret variables from local MCP bindings", () => {

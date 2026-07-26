@@ -7,9 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const recipeCheckMocks = vi.hoisted(() => ({
   checkRecipeAtLoad: vi.fn(async () => ({
     valid: true,
-    profile: "local" as const,
     diagnostics: [] as Array<{
-      severity: "error" | "warning";
       code: string;
       path: string;
       span?: { line: number; column: number };
@@ -31,7 +29,6 @@ beforeEach(() => {
   recipeCheckMocks.checkRecipeAtLoad.mockReset();
   recipeCheckMocks.checkRecipeAtLoad.mockResolvedValue({
     valid: true,
-    profile: "local",
     diagnostics: [],
   });
 });
@@ -221,10 +218,8 @@ describe("Recipes extension for Pi", () => {
       pi.flagValues.set("recipe", recipeDir);
       recipeCheckMocks.checkRecipeAtLoad.mockResolvedValueOnce({
         valid: false,
-        profile: "local",
         diagnostics: [
           {
-            severity: "error",
             code: "agent.subagent_missing",
             path: "defs/main.yaml",
             span: { line: 8, column: 3 },
@@ -268,10 +263,8 @@ describe("Recipes extension for Pi", () => {
       pi.flagValues.set("recipe", recipeDir);
       recipeCheckMocks.checkRecipeAtLoad.mockResolvedValueOnce({
         valid: false,
-        profile: "local",
         diagnostics: [
           {
-            severity: "error",
             code: "agent.invalid",
             path: "defs/main.yaml",
             message: "invalid agent",
@@ -289,46 +282,6 @@ describe("Recipes extension for Pi", () => {
       expect(pi.sessionName).toBeUndefined();
     } finally {
       process.exitCode = previousExitCode;
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("renders shared validator warnings and continues", async () => {
-    const root = mkdtempSync(join(tmpdir(), "recipe-check-warning-"));
-    try {
-      const recipeDir = writeRecipe(root);
-      const pi = createMockExtensionAPI();
-      const notify = vi.fn();
-      const ctx = extensionContext(root, notify);
-      pi.flagValues.set("recipe", recipeDir);
-      pi.flagValues.set("agent", "main");
-      recipeCheckMocks.checkRecipeAtLoad.mockResolvedValueOnce({
-        valid: true,
-        profile: "local",
-        diagnostics: [
-          {
-            severity: "warning",
-            code: "package.description_missing",
-            path: "package.json",
-            message: "package description is missing",
-          },
-        ],
-      });
-
-      createRecipesExtension()(pi);
-      await pi.emitExtensionEvent(
-        { type: "session_start", reason: "startup" } as any,
-        ctx
-      );
-
-      expect(notify).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "warning [package.description_missing] package.json"
-        ),
-        "warning"
-      );
-      expect(pi.sessionName).toBe("demo@1.0.0 agent:main");
-    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -725,7 +678,7 @@ describe("Recipes extension for Pi", () => {
             pi: {
               agents: ["defs/*.yaml"],
               mcp: {
-                manifest: "mcp.json",
+                manifests: ["mcp.json"],
                 servers: [
                   {
                     id: "partner-mcp",
@@ -771,6 +724,12 @@ describe("Recipes extension for Pi", () => {
       expect(materialized.servers[0].catalog.map((tool: { name: string }) => tool.name)).toEqual([
         "get_value",
       ]);
+      await pi.emitExtensionEvent(
+        { type: "session_shutdown" } as any,
+        ctx
+      );
+      expect(env.PI_RECIPE_DIR).toBeUndefined();
+      expect(env.PI_AGENT_NAME).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -829,7 +788,7 @@ describe("Recipes extension for Pi", () => {
             pi: {
               agents: ["defs/*.yaml"],
               mcp: {
-                manifest: "mcp.json",
+                manifests: ["mcp.json"],
                 servers: [
                   {
                     id: "partner-mcp",
@@ -1152,7 +1111,7 @@ describe("Recipes extension for Pi", () => {
         ].join("\n")
       );
       writeFileSync(
-        join(recipeDir, "extensions", "setup-git.ts"),
+        join(recipeDir, "extensions", "a-setup-git.ts"),
         [
           "import { defineTool } from '@earendil-works/pi-coding-agent';",
           "import { askUserQuestion } from '@introspection-ai/recipes/interactions';",
@@ -1176,7 +1135,7 @@ describe("Recipes extension for Pi", () => {
         ].join("\n")
       );
       writeFileSync(
-        join(recipeDir, "extensions", "optional-runtime.ts"),
+        join(recipeDir, "extensions", "z-optional-runtime.ts"),
         "export default () => { throw new Error('runtime-only extension unavailable'); };\n"
       );
       writeFileSync(
@@ -1214,17 +1173,26 @@ describe("Recipes extension for Pi", () => {
       );
 
       expect(pi.tools.has("setup_git")).toBe(true);
-      expect(pi.activeTools.sort()).toEqual(["setup_git"]);
+      expect(pi.activeTools).toEqual([]);
       expect(notify).toHaveBeenCalledWith(
-        expect.stringContaining("runtime-only extension unavailable"),
+        expect.stringContaining("extension startup failed"),
         "warning"
       );
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "new" } as any,
+        extensionContext(join(root, "project"), notify)
+      );
+      expect(notify).not.toHaveBeenCalledWith(
+        expect.stringContaining('registration "setup_git" conflicts'),
+        "warning"
+      );
+      expect(pi.activeTools).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("filters recipe extensions through the selected agent", async () => {
+  it("loads the complete ordered package extension closure", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {
       const recipeDir = writeRecipe(root);
@@ -1243,11 +1211,6 @@ describe("Recipes extension for Pi", () => {
           "system_instructions:",
           "  mode: append",
           "  content: Main instructions",
-          "extensions:",
-          "  include:",
-          "    - \"*\"",
-          "  exclude:",
-          "    - optional-runtime",
         ].join("\n")
       );
       writeFileSync(
@@ -1268,7 +1231,7 @@ describe("Recipes extension for Pi", () => {
       );
       writeFileSync(
         join(recipeDir, "extensions", "optional-runtime.ts"),
-        "export default () => { throw new Error('excluded extension loaded'); };\n"
+        "export default () => {};\n"
       );
       writeFileSync(
         join(recipeDir, "package.json"),
@@ -1278,7 +1241,10 @@ describe("Recipes extension for Pi", () => {
             version: "1.0.0",
             pi: {
               agents: ["defs/*.yaml"],
-              extensions: ["extensions/*.ts"],
+              extensions: [
+                "extensions/setup-git.ts",
+                "extensions/optional-runtime.ts",
+              ],
             },
           },
           null,
@@ -1298,13 +1264,45 @@ describe("Recipes extension for Pi", () => {
 
       expect(pi.tools.has("setup_git")).toBe(true);
       expect(pi.activeTools.sort()).toEqual(["setup_git"]);
-      expect(notify).not.toHaveBeenCalledWith(
-        expect.stringContaining("excluded extension loaded"),
-        "warning"
-      );
       expect(notify).toHaveBeenCalledWith(
-        "Recipe extensions: 1/1 loaded",
+        "Recipe extensions: 2/2 loaded",
         "info"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when an agent requests an unavailable tool", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "tools: [missing_tool]",
+        ].join("\n")
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension()(pi);
+      const notify = vi.fn();
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        extensionContext(join(root, "project"), notify)
+      );
+
+      expect(pi.activeTools).toEqual([]);
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Recipe agent "main" declares unavailable tool(s): missing_tool'
+        ),
+        "warning"
       );
     } finally {
       rmSync(root, { recursive: true, force: true });

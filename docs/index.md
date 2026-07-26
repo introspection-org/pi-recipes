@@ -17,7 +17,6 @@ task lifecycle, protocols, and deployment.
 | Compose agents and subagents | [Agent composition](agent-composition.md) |
 | Ask for user input across hosts | [Interactions](interactions.md) |
 | Declare capability policy and bindings | [MCP configuration](mcp-configuration.md) |
-| Package quality definitions | [Recipe judges](recipe-judges.md) |
 
 ## Boundary
 

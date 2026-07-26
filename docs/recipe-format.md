@@ -23,7 +23,18 @@ This format does not claim interoperability with non-Pi agent harnesses.
 
 ## Package root
 
-A Recipe MUST be a directory containing `package.json`. The manifest MUST have:
+A Recipe MUST be a directory containing `package.json`. At minimum, its
+manifest contains a package name and a `pi` object:
+
+```json
+{
+  "name": "acme-research",
+  "pi": {}
+}
+```
+
+A fuller package may declare distribution metadata and explicit resource
+paths:
 
 ```json
 {
@@ -39,15 +50,27 @@ A Recipe MUST be a directory containing `package.json`. The manifest MUST have:
 }
 ```
 
-`name` is the package identity. `version` is distribution metadata and defaults
-to `0.0.0` when omitted for compatibility. `description` is human-facing.
+`name` is the package identity. `version` is optional distribution metadata and
+defaults to `0.0.0` when omitted. `description` is optional human-facing
+metadata. When resource arrays are omitted, conventional `agents/`, `skills/`,
+and `prompts/` directories are discovered when present. Executable extensions
+and MCP servers are never discovered by convention and MUST be declared
+explicitly.
+
+Omission and an explicit empty array are different:
+
+- an omitted `agents`, `skills`, or `prompts` key opts into its documented
+  conventional directory;
+- an explicit `[]` resolves no resources of that kind;
+- every explicitly authored path or glob MUST match.
 
 Resource paths:
 
 - MUST be relative to the package root;
-- MUST NOT traverse outside the package;
+- MUST NOT resolve outside the package, including through symlinks;
 - MAY be files, directories, or supported glob patterns;
-- are resolved deterministically in lexical order.
+- preserve declaration order, with matches inside each glob ordered
+  lexically.
 
 Unknown top-level `package.json` fields retain normal npm semantics. Unknown
 Recipe fields inside supported `pi` structures are validation errors unless a
@@ -55,8 +78,9 @@ later format version explicitly defines them.
 
 ## Agents
 
-`pi.agents` declares YAML agent definitions. A resolved Recipe MUST contain at
-least one agent.
+`pi.agents` may declare YAML agent definitions explicitly. When omitted,
+direct `.yaml` and `.yml` children of `agents/` are discovered. A resolved
+Recipe MUST contain at least one agent.
 
 ```yaml
 name: agent
@@ -67,8 +91,6 @@ model:
 tools: [read, bash]
 skills: [research]
 subagents: [reviewer]
-extensions:
-  include: [citations]
 system_instructions:
   mode: append
   content: Verify every material claim.
@@ -79,14 +101,22 @@ acyclic. Child fields override inherited scalar fields; documented collection
 fields use the merge or replacement behavior in
 [Agent composition](agent-composition.md).
 
-Every fully resolved agent MUST define:
+Every agent YAML MUST declare a package-unique lowercase kebab-case `name`.
+This is its
+stable identity for selection, subagent references, artifacts, and telemetry;
+the filename has no semantic meaning.
 
-- `model.name` as `<provider>/<model_id>`;
-- `model.thinking_level`;
-- `tools`;
-- `system_instructions`.
+Every fully resolved agent MUST also define `model.name` as
+`<provider>/<model_id>`. The model may be declared directly or inherited with
+`from`.
 
-Omitted `skills` and `subagents` resolve to empty lists.
+All remaining agent fields are optional. Omitted `tools`, `skills`, and
+`subagents` resolve to empty lists. Omitted `model.thinking_level` preserves the
+provider or session default. Omitted agent instructions preserve `SYSTEM.md`
+when present, or Pi's normal base prompt otherwise.
+
+`tools` MUST NOT contain `agent`. The host materializes that session-generated
+tool for a root session whose effective `subagents` list is non-empty.
 
 The default agent is named `agent`. If no `agent` exists, a host MAY select the
 only declared agent. When multiple agents exist without `agent`, the caller
@@ -99,13 +129,32 @@ MUST select one explicitly.
 replace the current prompt.
 
 Skills follow the [Agent Skills](https://agentskills.io) directory convention
-and are selected from the resources declared by `pi.skills`.
+and are selected from the resources declared by `pi.skills`. A skill is named
+by its `SKILL.md` frontmatter `name`, then by its containing directory; a
+root-level unnamed `SKILL.md` uses the portable fallback name `skill`.
 
 Prompt templates are declared by `pi.prompts`.
 
-Recipe-owned Pi extensions are declared by `pi.extensions`. An agent MAY select
-declared extensions with `extensions.include` and `extensions.exclude`. A host
-MUST NOT load undeclared Recipe extension source.
+Recipe-owned Pi extensions are declared by `pi.extensions`. The deterministically
+resolved set forms the package's executable trust boundary and loads for every
+root and child session. Package membership means execution; agent YAML cannot
+select or remove extensions.
+
+Programmatic root and child sessions invoke the closure's factories for their
+own Pi runtime. Interactive Pi keeps one extension runtime for the selected
+Recipe launch and does not retry a partially failed closure without rebuilding
+that runtime. Extension load failures stop the agent before a model call.
+Recipe extensions MUST NOT override host or Pi built-in tool names; use a
+distinct tool name when behavior differs. Extension code retains its non-tool
+behavior even when none of its tools appear in the selected agent's `tools`
+allowlist.
+
+The package extension closure is complete with respect to Recipe source, not
+the surrounding host process. A host MAY supply extensions, settings, or other
+runtime policy. Interactive Pi may already have trusted global or project
+resources loaded; compatible hosts MUST keep those additions distinguishable
+from Recipe-owned inputs. `tools` limits model-callable tools, not extension
+hook execution.
 
 ## Tools, subagents, and capabilities
 
@@ -124,12 +173,6 @@ MUST reject an unbound required server before the session begins.
 See [MCP configuration](mcp-configuration.md) for the complete authored and
 binding grammar.
 
-## Quality definitions
-
-Recipe-owned judge YAML expresses portable quality definitions. Hosts MAY use
-those definitions online or offline, but MUST preserve their authored identity
-and semantics.
-
 ## Host responsibilities
 
 The Recipe Format owns:
@@ -137,10 +180,9 @@ The Recipe Format owns:
 - package and agent interpretation;
 - instruction composition;
 - model and tool selection;
-- skill, prompt, and extension selection;
+- skill and prompt selection plus the package extension closure;
 - subagent visibility;
 - capability policy;
-- quality definitions.
 
 The host owns:
 
@@ -164,12 +206,12 @@ the format and Host API are not a sandbox boundary.
 
 There are two conformance layers:
 
-1. `introspection check` validates authored Recipe source without executing it.
+1. A Recipe checker validates authored Recipe source without executing it.
 2. `@introspection-ai/recipes/test-utils` verifies that a host constructs and
    disposes Recipe sessions with the required semantics.
 
-Pi also runs the same validator automatically with the local profile whenever
-it launches with `--recipe`. Other hosts SHOULD run both layers in CI.
+Pi also runs the same validator automatically whenever it launches with
+`--recipe`. Other hosts SHOULD run both layers in CI.
 
 ## Evolution
 

@@ -1,53 +1,46 @@
 # recipe-check
 
-Pure validation library for [Recipe](https://pi.recipes) packages: the
-`package.json#pi` manifest, agent YAML files (required fields, `from`
-inheritance, name conflicts), direct-child judge YAML definitions, MCP tool
-include/exclude policy, and dependency lockfile rules.
+Pure structural validation for [Recipe](https://pi.recipes) packages.
+
+The checker validates the portable authored contract:
+
+- the `package.json#pi` manifest and its resource paths;
+- agent YAML shape, names, and `from` inheritance;
+- each agent's explicit stable `name`, required resolved `model.name`, and any
+  declared skill, subagent, or extension references;
+- package and agent MCP authorization policy.
+
+It deliberately does not validate host manifests, compute resources,
+package-manager policy, publication metadata, licenses, or local endpoint
+bindings.
 
 ## I/O-free API
 
-The core API takes an in-memory snapshot and never touches the filesystem, so
-a host can validate files it already discovered:
+The core API accepts an in-memory snapshot and never touches the filesystem:
 
 ```rust
-use recipe_check::{check_recipe_files, CheckProfile, RecipeFile, RecipeFiles};
+use recipe_check::{check_recipe_files, RecipeFile, RecipeFiles};
 
 let input = RecipeFiles {
     files: vec![
-        RecipeFile::new("package.json", r#"{ "name": "demo", "pi": { "agents": ["agents/*.yaml"] } }"#),
+        RecipeFile::new(
+            "package.json",
+            r#"{ "name": "demo", "pi": { "agents": ["agents/*.yaml"] } }"#,
+        ),
         RecipeFile::new("agents/agent.yaml", "name: agent\n..."),
     ],
-    directories: Vec::new(), // ancestors of file paths are implied
+    directories: Vec::new(),
 };
-let report = check_recipe_files(&input, CheckProfile::Ci);
+let report = check_recipe_files(&input);
 assert!(!report.valid);
 ```
 
-The crate is shared by CLI hosts and the Recipes extension. Its core remains
-I/O-free. The `recipe-check` binary is a private
-snapshot-in/snapshot-out bridge embedded in the npm package so `pi --recipe`
-can run the same validator at startup; it is not a user-facing Recipes CLI and
-does not walk the filesystem.
+The `recipe-check` binary is a private snapshot-in/snapshot-out bridge embedded
+in the npm package so `pi --recipe` can run the same checker at startup. It is
+not a user-facing filesystem CLI.
 
-The crate also exposes a standalone `resources` module for validating
-Kubernetes-style compute overrides in host manifests. That utility is not part
-of the Recipe Format; it is co-located here so hosts can share one pure
-quantity grammar and consistency rule.
-
-Diagnostics carry a stable `code`, a recipe-relative `path`, an optional
-1-based `span` (line/column, populated for JSON/YAML parse errors), a
-`message`, and an optional `help` string. Profiles (`local`, `ci`, `publish`)
-escalate advisory checks — e.g. a missing dependency lockfile is a warning
-locally and an error in `ci`/`publish`.
-
-Judge sources are optional and discovered only at `judges/*.yaml` and
-`judges/*.yml`; nested YAML is ignored. The library validates the portable
-authored contract and returns `judge.*` diagnostics plus a
-`resources.judges` count. It does not expose normalized registry projections
-or project-scoped identity. See the
-[Recipe judge specification](https://github.com/introspection-org/recipes/blob/main/docs/recipe-judges.md)
-for the complete schema and the boundary with judge execution.
+Diagnostics include a stable code, Recipe-relative path, optional 1-based
+source span, message, and optional help text.
 
 ## License
 

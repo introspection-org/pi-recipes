@@ -278,6 +278,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
         credentials,
         modelOverride: model,
         runController: null,
+        sessionRole: "subagent",
         onEvent: (event) => this.handleSessionEvent(event),
       });
     } catch (error) {

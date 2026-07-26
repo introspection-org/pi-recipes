@@ -22,7 +22,7 @@
 **Everything that makes your agent yours, in one portable package.**
 
 A Recipe keeps a complete Pi agent—its instructions, models, tools, skills,
-extensions, subagents, capability policy, and quality definitions—together as
+package-wide executable extensions, subagents, and capability policy together as
 ordinary source you can inspect, fork, validate, and own.
 
 Run the same Recipe locally, on Introspection, or in another compatible Pi
@@ -50,7 +50,6 @@ my-recipe/
 ├── agents/*.yaml         # models, tools, skills, subagents, policy
 ├── skills/**/SKILL.md    # reusable domain workflows
 ├── extensions/*.ts       # optional Recipe-owned Pi extensions
-├── judges/*.yaml         # optional portable quality definitions
 └── .pi/mcp.local.example.json # optional binding template
 ```
 
@@ -142,9 +141,12 @@ tests.
 - `@introspection-ai/recipes/run` — execute one Recipe turn
 - `@introspection-ai/recipes/mcp` — MCP declarations, bindings, and selection
 - `@introspection-ai/recipes/pi-extension` — Pi extension entrypoint
+- `@introspection-ai/recipes/extensions` — session identity and conditional
+  Recipe extension helpers
 - `@introspection-ai/recipes/pi` — shared subagent tool and controller types
 - `@introspection-ai/recipes/interactions` — portable user-input and approval contract
-- `@introspection-ai/recipes/inspect` — derive host requirements
+- `@introspection-ai/recipes/inspect` — inspect resolved inheritance,
+  capabilities, package closure, host requirements, and runtime boundaries
 - `@introspection-ai/recipes/test-utils` — host conformance cases
 
 The package intentionally has no `recipes` executable and no generic HTTP
@@ -160,10 +162,9 @@ introspection check
 ```
 
 Every `pi --recipe` launch automatically runs the same Recipe Format validator
-with the local profile before constructing a session. Errors stop Pi rather
-than falling back to an unconfigured agent; warnings are shown and launch
-continues. `introspection check` remains the explicit command for manual and CI
-validation.
+before constructing a session. Invalid Recipes stop Pi rather than falling back
+to an unconfigured agent. `introspection check` remains the explicit command
+for manual and CI validation.
 
 ## Documentation
 
@@ -174,7 +175,6 @@ validation.
 - [Agent composition](docs/agent-composition.md)
 - [Interactions](docs/interactions.md)
 - [MCP configuration](docs/mcp-configuration.md)
-- [Recipe judges](docs/recipe-judges.md)
 
 ## Contributing
 

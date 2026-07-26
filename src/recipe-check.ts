@@ -16,7 +16,6 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export interface RecipeCheckDiagnostic {
-  severity: "error" | "warning";
   code: string;
   path: string;
   span?: { line: number; column: number };
@@ -26,11 +25,10 @@ export interface RecipeCheckDiagnostic {
 
 export interface RecipeCheckReport {
   valid: boolean;
-  profile: "local" | "ci" | "publish";
   diagnostics: RecipeCheckDiagnostic[];
 }
 
-// Keep Pi startup snapshots aligned with `introspection check`: generated
+// Keep Pi startup snapshots aligned with the shared Recipe checker: generated
 // dependency/build trees are not authored Recipe source.
 const BLOCKED_GENERATED_DIRS = new Set([
   "node_modules",
@@ -144,9 +142,8 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
 function needsContent(path: string): boolean {
   return (
     path === "package.json" ||
-    path === "package-lock.json" ||
-    path === "npm-shrinkwrap.json" ||
-    path === ".pi/mcp.local.example.json" ||
+    path === "SKILL.md" ||
+    path.endsWith("/SKILL.md") ||
     path.endsWith(".yaml") ||
     path.endsWith(".yml")
   );
@@ -207,14 +204,7 @@ export async function checkRecipeAtLoad(
   env: NodeJS.ProcessEnv
 ): Promise<RecipeCheckReport> {
   const base = validatorCommand(env);
-  const args = [
-    ...base.args,
-    "--snapshot",
-    "-",
-    "--profile",
-    "local",
-    "--json",
-  ];
+  const args = base.args;
   const input = JSON.stringify(snapshot(recipeDir));
   return await new Promise((resolveReport, rejectReport) => {
     const child = spawn(base.command, args, {
@@ -264,7 +254,7 @@ export function formatRecipeDiagnostics(
         ? `:${diagnostic.span.line}:${diagnostic.span.column}`
         : "";
       const help = diagnostic.help ? `\n  help: ${diagnostic.help}` : "";
-      return `${diagnostic.severity} [${diagnostic.code}] ${diagnostic.path}${location}: ${diagnostic.message}${help}`;
+      return `error [${diagnostic.code}] ${diagnostic.path}${location}: ${diagnostic.message}${help}`;
     })
     .join("\n");
 }

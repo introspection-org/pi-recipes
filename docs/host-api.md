@@ -63,6 +63,18 @@ This keeps inspection and construction on the same resolution results and
 avoids reparsing the package for every child session. `resolveRecipeAgent()` remains
 the convenience API for selecting one plan.
 
+`inspectRecipe(recipeDir)` exposes the canonical resolved view used for setup
+and review. In addition to provider, credential, MCP, and resource summaries,
+it returns:
+
+- effective model and prompt provenance;
+- fields declared at each point in the `from:` chain;
+- authored tools versus root and delegated-session tools;
+- selected skills, visible subagents, and MCP policy;
+- the ordered package extension and prompt closure;
+- explicit host-boundary markers for ambient interactive Pi resources and
+  embedded host overrides.
+
 ## `createAgentSession`
 
 `createAgentSession(agent, options)` is the primary host integration point for
@@ -109,7 +121,8 @@ This is the resolve-and-create convenience integration. It:
 - resolves the Recipe and selected agent;
 - resolves model credentials fail-closed;
 - materializes required MCP bindings fail-closed;
-- loads Recipe skills, prompts, and extensions;
+- loads the complete ordered Recipe extension closure, selected skills, and
+  package prompts;
 - registers the shared subagent tool;
 - creates and binds the Pi `AgentSession`;
 - returns one idempotent `dispose()` boundary.

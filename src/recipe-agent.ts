@@ -8,6 +8,7 @@ import {
   type RecipeAgentModelConfig,
 } from "./recipe-model.js";
 import {
+  assertRecipePathContained,
   isValidRecipeMcpToolSelection,
   packageResourcePaths,
   parseRecipeMcpToolSelection,
@@ -22,11 +23,6 @@ import {
 export interface RecipeSystemInstructions {
   mode: "append" | "replace";
   content: string;
-}
-
-export interface RecipeAgentExtensions {
-  include?: string[];
-  exclude?: string[];
 }
 
 export interface RecipeAgentMcpServer {
@@ -73,49 +69,38 @@ export interface RecipeAgentDefinition {
   /** MCP tool selection, separate from the exact Pi/extension tool allowlist. */
   mcp?: RecipeAgentMcp;
   skills: string[];
-  /** True when `skills:` was declared (directly or inherited) rather than defaulted to []. */
-  skillsDeclared?: boolean;
   subagents: string[];
-  subagentsDeclared?: boolean;
-  extensions?: RecipeAgentExtensions;
   systemInstructions?: RecipeSystemInstructions;
+  /** Fields authored on this definition rather than inherited through `from`. */
+  declaredFields?: readonly RecipeAgentConfigField[];
 }
+
+export type RecipeAgentConfigField =
+  | "description"
+  | "model"
+  | "tools"
+  | "mcp"
+  | "skills"
+  | "subagents"
+  | "system_instructions";
 
 type ParsedRecipeAgentDefinition = Omit<
   RecipeAgentDefinition,
-  "tools" | "skills" | "skillsDeclared" | "subagents" | "subagentsDeclared"
+  "tools" | "skills" | "subagents"
 > & {
   tools?: string[];
   skills?: string[];
   subagents?: string[];
 };
 
-export type RequiredResolvedRecipeAgentField =
-  | "model.name"
-  | "model.thinkingLevel"
-  | "tools"
-  | "skills"
-  | "subagents"
-  | "systemInstructions";
-
-export const REQUIRED_RECIPE_AGENT_FIELDS: RequiredResolvedRecipeAgentField[] = [
-  "model.name",
-  "model.thinkingLevel",
-  "tools",
-  "systemInstructions",
-];
-
 export interface RecipeAgentValidationFinding {
   agentName: string;
-  field: "name" | "from" | "file" | "mcp" | RequiredResolvedRecipeAgentField;
+  field: "name" | "from" | "file" | "mcp" | "model.name";
   code?: string;
-  severity?: "error" | "warning";
   message: string;
 }
 
 interface RecipeAgentSource {
-  fallbackName: string;
-  explicitName: boolean;
   definition: ParsedRecipeAgentDefinition;
 }
 
@@ -128,11 +113,11 @@ const AGENT_YAML_KEYS = new Set([
   "mcp",
   "skills",
   "subagents",
-  "extensions",
   "system_instructions",
-  "systemInstructions",
-  "prompt",
 ]);
+
+const PORTABLE_AGENT_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const MAX_INHERITANCE_DEPTH = 128;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -142,8 +127,87 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
     : [];
+}
+
+function isNonEmptyStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "string" && Boolean(item.trim()))
+  );
+}
+
+function invalidAgentField(
+  data: Record<string, unknown>
+): string | undefined {
+  if (!Object.hasOwn(data, "name")) {
+    return "name is required";
+  }
+  for (const key of ["name", "from"] as const) {
+    if (
+      Object.hasOwn(data, key) &&
+      (typeof data[key] !== "string" || !data[key].trim())
+    ) {
+      return `${key} must be a non-empty string`;
+    }
+    if (
+      Object.hasOwn(data, key) &&
+      typeof data[key] === "string" &&
+      !PORTABLE_AGENT_NAME.test(data[key].trim())
+    ) {
+      return `${key} must use lowercase kebab-case`;
+    }
+  }
+  if (
+    Object.hasOwn(data, "description") &&
+    typeof data.description !== "string"
+  ) {
+    return "description must be a string";
+  }
+  for (const key of ["tools", "skills", "subagents"] as const) {
+    if (Object.hasOwn(data, key) && !isNonEmptyStringArray(data[key])) {
+      return `${key} must be an array of non-empty strings`;
+    }
+    if (
+      Object.hasOwn(data, key) &&
+      new Set(stringArray(data[key])).size !== stringArray(data[key]).length
+    ) {
+      return `${key} must not contain duplicate entries`;
+    }
+  }
+  if (stringArray(data.tools).includes("agent")) {
+    return "tools must not declare the session-generated agent tool";
+  }
+  if (Object.hasOwn(data, "system_instructions")) {
+    const value = data.system_instructions;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return "system_instructions must be an object";
+    }
+    const instructions = value as Record<string, unknown>;
+    const unknown = Object.keys(instructions).filter(
+      (key) => key !== "mode" && key !== "content"
+    );
+    if (unknown.length > 0) {
+      return `system_instructions has unsupported key(s): ${unknown.join(", ")}`;
+    }
+    if (typeof instructions.content !== "string") {
+      return "system_instructions.content must be a string";
+    }
+    if (!instructions.content.trim()) {
+      return "system_instructions.content must be non-empty";
+    }
+    if (
+      Object.hasOwn(instructions, "mode") &&
+      instructions.mode !== "append" &&
+      instructions.mode !== "replace"
+    ) {
+      return "system_instructions.mode must be append or replace";
+    }
+  }
+  return undefined;
 }
 
 function modelProjection(config: RecipeAgentModelConfig | undefined):
@@ -163,21 +227,25 @@ function modelProjection(config: RecipeAgentModelConfig | undefined):
 function parseSystemInstructions(
   data: Record<string, unknown>
 ): RecipeSystemInstructions | undefined {
-  const raw = asRecord(data.system_instructions ?? data.systemInstructions);
+  const raw = asRecord(data.system_instructions);
   if (Object.hasOwn(raw, "content") && typeof raw.content === "string") {
     const mode = raw.mode === "replace" ? "replace" : "append";
     return { mode, content: raw.content.trim() };
   }
-  const prompt = typeof data.prompt === "string" ? data.prompt.trim() : "";
-  return prompt ? { mode: "append", content: prompt } : undefined;
+  return undefined;
 }
 
-function parseExtensions(data: Record<string, unknown>): RecipeAgentExtensions | undefined {
-  const raw = asRecord(data.extensions);
-  const extensions: RecipeAgentExtensions = {};
-  if (Object.hasOwn(raw, "include")) extensions.include = stringArray(raw.include);
-  if (Object.hasOwn(raw, "exclude")) extensions.exclude = stringArray(raw.exclude);
-  return extensions.include || extensions.exclude ? extensions : undefined;
+function mergeSystemInstructions(
+  base: RecipeSystemInstructions | undefined,
+  child: RecipeSystemInstructions | undefined
+): RecipeSystemInstructions | undefined {
+  if (!base) return child;
+  if (!child) return base;
+  if (child.mode === "replace") return child;
+  return {
+    mode: base.mode,
+    content: `${base.content}\n\n${child.content}`,
+  };
 }
 
 function normalizedMcpServerId(value: string): string {
@@ -254,6 +322,14 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
         !serverValue ||
         typeof serverValue !== "object" ||
         Array.isArray(serverValue) ||
+        Object.keys(server).some(
+          (key) => !["include", "exclude", "defer", "eager"].includes(key)
+        ) ||
+        ["include", "exclude", "defer", "eager"].some((key) => {
+          if (!Object.hasOwn(server, key)) return false;
+          const values = stringArray(server[key]);
+          return new Set(values).size !== values.length;
+        }) ||
         ["defer", "eager"].some(
           (key) =>
             Object.hasOwn(server, key) &&
@@ -304,43 +380,9 @@ function mergeMcp(
 ): RecipeAgentMcp | undefined {
   if (!base) return child;
   if (!child) return base;
-  const mergedServers: Record<string, RecipeAgentMcpServer> = {
-    ...base.servers,
-  };
-  for (const [serverId, childServer] of Object.entries(child.servers)) {
-    const baseServer = base.servers[serverId];
-    mergedServers[serverId] = {
-      ...(baseServer?.include !== undefined ? { include: baseServer.include } : {}),
-      ...(baseServer?.exclude !== undefined ? { exclude: baseServer.exclude } : {}),
-      ...(baseServer?.defer !== undefined ? { defer: baseServer.defer } : {}),
-      ...(baseServer?.eager !== undefined ? { eager: baseServer.eager } : {}),
-      ...(childServer.include !== undefined ? { include: childServer.include } : {}),
-      ...(childServer.exclude !== undefined ? { exclude: childServer.exclude } : {}),
-      ...(childServer.defer !== undefined ? { defer: childServer.defer } : {}),
-      ...(childServer.eager !== undefined ? { eager: childServer.eager } : {}),
-    };
-  }
-  const mode = child.mode ?? base.mode;
-  const merged: ParsedRecipeAgentMcp = {
-    ...(mode ? { mode } : {}),
-    servers:
-      mode === "cli"
-        ? Object.fromEntries(
-            Object.entries(mergedServers).map(([serverId, server]) => [
-              serverId,
-              {
-                ...(server.include !== undefined
-                  ? { include: server.include }
-                  : {}),
-                ...(server.exclude !== undefined
-                  ? { exclude: server.exclude }
-                  : {}),
-              },
-            ])
-          )
-        : mergedServers,
-  };
-  return merged;
+  // Capability policy is a review boundary: once a child declares `mcp`, the
+  // whole block replaces its base instead of silently retaining parent servers.
+  return child;
 }
 
 function readYaml(path: string): Record<string, unknown> {
@@ -387,9 +429,6 @@ function readRecipeAgentSources(
   const sources: RecipeAgentSource[] = [];
   for (const path of recipeAgentFiles(recipeDir)) {
     const data = readYaml(path);
-    const fallbackName = basename(path).replace(/\.ya?ml$/i, "");
-    const explicitName = typeof data.name === "string" && Boolean(data.name.trim());
-    const name = explicitName ? (data.name as string).trim() : fallbackName;
 
     const unknownKeys = Object.keys(data).filter((key) => !AGENT_YAML_KEYS.has(key));
     if (unknownKeys.length > 0) {
@@ -399,6 +438,15 @@ function readRecipeAgentSources(
       );
       continue;
     }
+    const fieldError = invalidAgentField(data);
+    if (fieldError) {
+      opts.onInvalidFile?.(
+        path,
+        new Error(`Agent YAML at ${path}: ${fieldError}`)
+      );
+      continue;
+    }
+    const name = (data.name as string).trim();
 
     let modelConfig: RecipeAgentModelConfig | undefined;
     try {
@@ -410,8 +458,6 @@ function readRecipeAgentSources(
     }
 
     sources.push({
-      fallbackName,
-      explicitName,
       definition: {
         name,
         from: typeof data.from === "string" && data.from.trim() ? data.from.trim() : undefined,
@@ -423,8 +469,18 @@ function readRecipeAgentSources(
         mcp: parseMcp(data),
         skills: Object.hasOwn(data, "skills") ? stringArray(data.skills) : undefined,
         subagents: Object.hasOwn(data, "subagents") ? stringArray(data.subagents) : undefined,
-        extensions: parseExtensions(data),
         systemInstructions: parseSystemInstructions(data),
+        declaredFields: [
+          "description",
+          "model",
+          "tools",
+          "mcp",
+          "skills",
+          "subagents",
+          "system_instructions",
+        ].filter((key): key is RecipeAgentConfigField =>
+          Object.hasOwn(data, key)
+        ),
       },
     });
   }
@@ -432,49 +488,28 @@ function readRecipeAgentSources(
 }
 
 function definitionsFromSources(
-  sources: RecipeAgentSource[],
-  warnOnInvalidInheritance: boolean
+  sources: RecipeAgentSource[]
 ): Map<string, RecipeAgentDefinition> {
   const rawDefinitions = new Map<string, ParsedRecipeAgentDefinition>();
-  const aliases = new Map<string, string>();
   const resolvedDefinitions = new Map<string, RecipeAgentDefinition>();
   const definitions = new Map<string, RecipeAgentDefinition>();
 
   for (const source of sources) {
     rawDefinitions.set(source.definition.name, source.definition);
-    aliases.set(source.fallbackName, source.definition.name);
-  }
-
-  function resolveName(name: string): string {
-    return rawDefinitions.has(name) ? name : aliases.get(name) ?? name;
-  }
-
-  function mergeExtensions(
-    base: RecipeAgentExtensions | undefined,
-    child: RecipeAgentExtensions | undefined
-  ): RecipeAgentExtensions | undefined {
-    if (!base) return child;
-    if (!child) return base;
-    return {
-      ...(base.include ? { include: base.include } : {}),
-      ...(base.exclude ? { exclude: base.exclude } : {}),
-      ...(child.include ? { include: child.include } : {}),
-      ...(child.exclude ? { exclude: child.exclude } : {}),
-    };
   }
 
   function resolveDefinition(
     name: string,
     stack: string[] = []
   ): RecipeAgentDefinition | undefined {
-    const resolvedName = resolveName(name);
-    if (resolvedDefinitions.has(resolvedName)) return resolvedDefinitions.get(resolvedName);
-    if (stack.includes(resolvedName)) return undefined;
-    const raw = rawDefinitions.get(resolvedName);
+    if (resolvedDefinitions.has(name)) return resolvedDefinitions.get(name);
+    if (stack.length >= MAX_INHERITANCE_DEPTH) return undefined;
+    if (stack.includes(name)) return undefined;
+    const raw = rawDefinitions.get(name);
     if (!raw) return undefined;
 
     const base = raw.from
-      ? resolveDefinition(raw.from, [...stack, resolvedName])
+      ? resolveDefinition(raw.from, [...stack, name])
       : undefined;
     if (raw.from && !base) return undefined;
 
@@ -492,157 +527,92 @@ function definitionsFromSources(
       mcp: mergeMcp(base?.mcp, raw.mcp),
       skills: raw.skills ?? base?.skills ?? [],
       subagents: raw.subagents ?? base?.subagents ?? [],
-      skillsDeclared: raw.skills !== undefined || base?.skillsDeclared === true,
-      subagentsDeclared: raw.subagents !== undefined || base?.subagentsDeclared === true,
-      extensions: mergeExtensions(base?.extensions, raw.extensions),
-      systemInstructions: raw.systemInstructions ?? base?.systemInstructions,
+      systemInstructions: mergeSystemInstructions(
+        base?.systemInstructions,
+        raw.systemInstructions
+      ),
+      declaredFields: [...(raw.declaredFields ?? [])],
     };
-    resolvedDefinitions.set(resolvedName, definition);
+    resolvedDefinitions.set(name, definition);
     return definition;
   }
 
   for (const name of rawDefinitions.keys()) {
     const definition = resolveDefinition(name);
-    if (!definition) {
-      if (warnOnInvalidInheritance) {
-        console.warn(
-          `[recipes] skipping agent "${name}": ${fromChainSkipReason(
-            name,
-            rawDefinitions,
-            resolveName
-          )}`
-        );
-      }
-      continue;
-    }
+    if (!definition) continue;
     definitions.set(name, definition);
   }
-  for (const [alias, name] of aliases) {
-    if (definitions.has(alias)) continue;
-    const definition = definitions.get(name);
-    if (definition) definitions.set(alias, definition);
-  }
-
   return definitions;
-}
-
-export function loadRecipeAgentDefinitions(
-  recipeDir: string
-): Map<string, RecipeAgentDefinition> {
-  const sources = readRecipeAgentSources(recipeDir, {
-    onInvalidFile: (path, error) => {
-      console.warn(`[recipes] skipping ${path}: ${error.message}`);
-    },
-  });
-  return definitionsFromSources(sources, true);
-}
-
-/** Explain why an agent's from: chain failed to resolve (cycle or missing base). */
-function fromChainSkipReason(
-  name: string,
-  rawDefinitions: Map<string, ParsedRecipeAgentDefinition>,
-  resolveName: (name: string) => string
-): string {
-  const stack: string[] = [];
-  let current = resolveName(name);
-  for (;;) {
-    const raw = rawDefinitions.get(current);
-    if (!raw?.from) return "from: chain failed to resolve";
-    const next = resolveName(raw.from);
-    if (!rawDefinitions.has(next)) {
-      return `from: "${raw.from}" does not exist in the recipe`;
-    }
-    if (stack.includes(next) || next === current) {
-      return `from: cycle detected (${[...stack, current, next].join(" -> ")})`;
-    }
-    stack.push(current);
-    current = next;
-  }
-}
-
-function recipeAgentFieldProvided(
-  definition: ParsedRecipeAgentDefinition,
-  field: RequiredResolvedRecipeAgentField
-): boolean {
-  if (field === "model.name") return Boolean(definition.model?.name);
-  if (field === "model.thinkingLevel") return Boolean(definition.model?.thinkingLevel);
-  if (field === "tools") return definition.tools !== undefined;
-  if (field === "skills") return definition.skills !== undefined;
-  if (field === "subagents") return definition.subagents !== undefined;
-  return definition.systemInstructions !== undefined;
 }
 
 function validateResolvedRecipeAgentSource(
   opts: {
     recipeDir: string;
     agentName: string;
-    requireExplicitName?: boolean;
-    requiredFields?: RequiredResolvedRecipeAgentField[];
   },
   sources: RecipeAgentSource[]
 ): RecipeAgentValidationFinding[] {
   const rawDefinitions = new Map<string, ParsedRecipeAgentDefinition>();
-  const aliases = new Map<string, string>();
-  const explicitNames = new Map<string, boolean>();
   for (const source of sources) {
     rawDefinitions.set(source.definition.name, source.definition);
-    aliases.set(source.fallbackName, source.definition.name);
-    explicitNames.set(source.definition.name, source.explicitName);
-  }
-
-  function resolveName(name: string): string {
-    return rawDefinitions.has(name) ? name : aliases.get(name) ?? name;
   }
 
   function inheritanceFinding(
     name: string,
     stack: string[] = []
   ): RecipeAgentValidationFinding | undefined {
-    const resolvedName = resolveName(name);
-    const definition = rawDefinitions.get(resolvedName);
+    if (stack.length >= MAX_INHERITANCE_DEPTH) {
+      return {
+        agentName: name,
+        field: "from",
+        message: `Recipe agent "${name}" exceeds the maximum from depth of ${MAX_INHERITANCE_DEPTH}`,
+      };
+    }
+    const definition = rawDefinitions.get(name);
     if (!definition) {
       return {
-        agentName: resolvedName,
+        agentName: name,
         field: "from",
-        message: `Recipe agent "${resolvedName}" was not found`,
+        message: `Recipe agent "${name}" was not found`,
       };
     }
     if (!definition.from) return undefined;
 
-    const resolvedFrom = resolveName(definition.from);
+    const resolvedFrom = definition.from;
     if (stack.includes(resolvedFrom)) {
       return {
-        agentName: resolvedName,
+        agentName: name,
         field: "from",
-        message: `Recipe agent "${resolvedName}" has cyclic from chain: ${[
+        message: `Recipe agent "${name}" has cyclic from chain: ${[
           ...stack,
-          resolvedName,
+          name,
           resolvedFrom,
         ].join(" -> ")}`,
       };
     }
     if (!rawDefinitions.has(resolvedFrom)) {
       return {
-        agentName: resolvedName,
+        agentName: name,
         field: "from",
-        message: `Recipe agent "${resolvedName}" inherits from missing agent "${definition.from}"`,
+        message: `Recipe agent "${name}" inherits from missing agent "${definition.from}"`,
       };
     }
-    return inheritanceFinding(definition.from, [...stack, resolvedName]);
+    return inheritanceFinding(definition.from, [...stack, name]);
   }
 
-  function resolvedFieldProvided(
+  function resolvedModelProvided(
     name: string,
-    field: RequiredResolvedRecipeAgentField,
     stack: string[] = []
   ): boolean {
-    const resolvedName = resolveName(name);
-    if (stack.includes(resolvedName)) return false;
-    const definition = rawDefinitions.get(resolvedName);
+    if (
+      stack.includes(name) ||
+      stack.length >= MAX_INHERITANCE_DEPTH
+    ) return false;
+    const definition = rawDefinitions.get(name);
     if (!definition) return false;
-    if (recipeAgentFieldProvided(definition, field)) return true;
+    if (definition.model?.name) return true;
     return definition.from
-      ? resolvedFieldProvided(definition.from, field, [...stack, resolvedName])
+      ? resolvedModelProvided(definition.from, [...stack, name])
       : false;
   }
 
@@ -650,13 +620,15 @@ function validateResolvedRecipeAgentSource(
     name: string,
     stack: string[] = []
   ): string[] | undefined {
-    const resolvedName = resolveName(name);
-    if (stack.includes(resolvedName)) return undefined;
-    const definition = rawDefinitions.get(resolvedName);
+    if (
+      stack.includes(name) ||
+      stack.length >= MAX_INHERITANCE_DEPTH
+    ) return undefined;
+    const definition = rawDefinitions.get(name);
     if (!definition) return undefined;
     if (definition.tools !== undefined) return definition.tools;
     return definition.from
-      ? resolvedTools(definition.from, [...stack, resolvedName])
+      ? resolvedTools(definition.from, [...stack, name])
       : undefined;
   }
 
@@ -664,20 +636,24 @@ function validateResolvedRecipeAgentSource(
     name: string,
     stack: string[] = []
   ): RecipeAgentMcp | undefined {
-    const resolvedName = resolveName(name);
-    if (stack.includes(resolvedName)) return undefined;
-    const definition = rawDefinitions.get(resolvedName);
+    if (
+      stack.includes(name) ||
+      stack.length >= MAX_INHERITANCE_DEPTH
+    ) return undefined;
+    const definition = rawDefinitions.get(name);
     if (!definition) return undefined;
     const base = definition.from
-      ? resolvedMcp(definition.from, [...stack, resolvedName])
+      ? resolvedMcp(definition.from, [...stack, name])
       : undefined;
     return mergeMcp(base, definition.mcp);
   }
 
   function rawMcpChainInvalid(name: string, stack: string[] = []): boolean {
-    const resolvedName = resolveName(name);
-    if (stack.includes(resolvedName)) return false;
-    const definition = rawDefinitions.get(resolvedName);
+    if (
+      stack.includes(name) ||
+      stack.length >= MAX_INHERITANCE_DEPTH
+    ) return false;
+    const definition = rawDefinitions.get(name);
     if (!definition) return false;
     const rawMcp = definition.mcp as ParsedRecipeAgentMcp | undefined;
     if (
@@ -689,31 +665,21 @@ function validateResolvedRecipeAgentSource(
       return true;
     }
     return definition.from
-      ? rawMcpChainInvalid(definition.from, [...stack, resolvedName])
+      ? rawMcpChainInvalid(definition.from, [...stack, name])
       : false;
   }
 
-  const agentName = resolveName(opts.agentName);
+  const agentName = opts.agentName;
   const findings: RecipeAgentValidationFinding[] = [];
-  if (opts.requireExplicitName && explicitNames.get(agentName) !== true) {
-    findings.push({
-      agentName,
-      field: "name",
-      severity: "warning",
-      message: `Recipe agent "${agentName}" must declare name`,
-    });
-  }
 
   const inheritance = inheritanceFinding(agentName);
   if (inheritance) findings.push(inheritance);
 
-  for (const field of opts.requiredFields ?? []) {
-    if (resolvedFieldProvided(agentName, field)) continue;
+  if (!resolvedModelProvided(agentName)) {
     findings.push({
       agentName,
-      field,
-      ...(field === "model.name" ? {} : { severity: "warning" as const }),
-      message: `Recipe agent "${agentName}" must declare ${field} directly or inherit it with from`,
+      field: "model.name",
+      message: `Recipe agent "${agentName}" must declare model.name directly or inherit it with from`,
     });
   }
 
@@ -727,7 +693,7 @@ function validateResolvedRecipeAgentSource(
         ])
       )
     : undefined;
-  // `introspection check` owns detailed authoring diagnostics. This session guard
+  // The Recipe checker owns detailed authoring diagnostics. This session guard
   // only ensures malformed raw policies fail closed before agent startup.
   const invalidMcpPolicy = rawMcpChainInvalid(agentName) ||
     Object.entries(mcp?.servers ?? {}).some(([serverId, selection]) => {
@@ -758,7 +724,7 @@ function validateResolvedRecipeAgentSource(
       agentName,
       field: "mcp",
       code: "mcp_invalid",
-      message: `Recipe agent "${agentName}" has an invalid MCP policy; run introspection check for details`,
+      message: `Recipe agent "${agentName}" has an invalid MCP policy`,
     });
   }
 
@@ -768,8 +734,6 @@ function validateResolvedRecipeAgentSource(
 export function validateResolvedRecipeAgentDefinition(opts: {
   recipeDir: string;
   agentName: string;
-  requireExplicitName?: boolean;
-  requiredFields?: RequiredResolvedRecipeAgentField[];
 }): RecipeAgentValidationFinding[] {
   return validateResolvedRecipeAgentSource(
     opts,
@@ -804,38 +768,21 @@ function validateRecipeAgentNames(
   sources: RecipeAgentSource[]
 ): RecipeAgentValidationFinding[] {
   const findings: RecipeAgentValidationFinding[] = [];
-  const explicitNameCounts = new Map<string, number>();
-  const explicitNames = new Set<string>();
+  const nameCounts = new Map<string, number>();
 
   for (const source of sources) {
-    if (!source.explicitName) continue;
-    explicitNames.add(source.definition.name);
-    explicitNameCounts.set(
+    nameCounts.set(
       source.definition.name,
-      (explicitNameCounts.get(source.definition.name) ?? 0) + 1
+      (nameCounts.get(source.definition.name) ?? 0) + 1
     );
   }
 
-  for (const [name, count] of explicitNameCounts) {
+  for (const [name, count] of nameCounts) {
     if (count <= 1) continue;
     findings.push({
       agentName: name,
       field: "name",
       message: `Recipe agent name "${name}" is declared by multiple files`,
-    });
-  }
-
-  for (const source of sources) {
-    if (
-      source.fallbackName === source.definition.name ||
-      !explicitNames.has(source.fallbackName)
-    ) {
-      continue;
-    }
-    findings.push({
-      agentName: source.definition.name,
-      field: "name",
-      message: `Recipe agent file alias "${source.fallbackName}" conflicts with an explicit agent name`,
     });
   }
 
@@ -859,8 +806,6 @@ function validateRecipeAgentSources(
         {
           recipeDir,
           agentName,
-          requireExplicitName: true,
-          requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
         },
         sources
       )
@@ -890,7 +835,7 @@ export function loadValidatedRecipeAgentDefinitions(
       });
     },
   });
-  const definitions = definitionsFromSources(sources, false);
+  const definitions = definitionsFromSources(sources);
   return {
     definitions,
     findings: validateRecipeAgentSources(
@@ -907,39 +852,10 @@ export function validateRecipeAgentDefinitions(
   return loadValidatedRecipeAgentDefinitions(recipeDir).findings;
 }
 
-export function resolveRecipeAgentName(opts: {
-  recipeDir: string;
-  agentName?: string;
-}): string {
-  if (opts.agentName?.trim()) return opts.agentName.trim();
-  const definitions = loadRecipeAgentDefinitions(opts.recipeDir);
-  const defaultAgent = definitions.get("agent");
-  if (defaultAgent) return defaultAgent.name;
-  const uniqueNames = [
-    ...new Set([...definitions.values()].map((definition) => definition.name)),
-  ];
-  if (uniqueNames.length === 1) return uniqueNames[0]!;
-  if (uniqueNames.length === 0) return "agent";
-  throw new Error(
-    "Recipe has multiple agents and no default entrypoint; add agents/agent.yaml or set PI_AGENT_NAME"
-  );
-}
-
-export function resolveRecipeAgentDefinition(opts: {
-  recipeDir: string;
-  agentName?: string;
-}): {
-  agentName: string;
-  agent: RecipeAgentDefinition | null;
-} {
-  const agentName = resolveRecipeAgentName(opts);
-  const agent = loadRecipeAgentDefinitions(opts.recipeDir).get(agentName) ?? null;
-  return { agentName, agent };
-}
-
 export function loadRecipeSystemPrompt(recipeDir: string): string | undefined {
   const path = join(recipeDir, "SYSTEM.md");
   if (!existsSync(path)) return undefined;
+  assertRecipePathContained(recipeDir, path, "SYSTEM.md");
   const content = readFileSync(path, "utf8").trim();
   return content || undefined;
 }
