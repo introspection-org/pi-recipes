@@ -1,12 +1,13 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { constants, existsSync, readFileSync } from "node:fs";
-import { access, chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   MCP_DAEMON_FINGERPRINT_ENV,
+  MCP_DAEMON_GENERATION_ENV,
   MCP_DAEMON_PARENT_PID_ENV,
   MCP_DAEMON_SOCKET_ENV,
   MCP_DAEMON_TOKEN_ENV,
@@ -45,6 +46,7 @@ export interface McpSessionServer {
   id: string;
   name: string;
   base_url: string;
+  required?: boolean;
   package_tools: RecipeMcpToolSelection;
   agent_tools: RecipeMcpToolSelection[];
   /** Optional package-pinned catalog. Dynamic bindings leave this absent. */
@@ -117,7 +119,7 @@ export interface McpConfigurationDiagnostic {
 export interface MaterializeMcpSessionOptions {
   cwd: string;
   manifest: RecipePackageManifest;
-  /** MCP selections for the active agent and its visible subagents. */
+  /** MCP selections for the one resolved agent owning this session. */
   agentMcp?: readonly ScopedMcpToolSelection[];
   env?: NodeJS.ProcessEnv;
   /**
@@ -125,6 +127,8 @@ export interface MaterializeMcpSessionOptions {
    * (`.pi/mcp.local.json`) is not consulted.
    */
   localConfig?: McpLocalConfig;
+  /** Explicit generated mcporter target for a private tools-mode runtime. */
+  mcporterConfigPath?: string;
 }
 
 /**
@@ -167,6 +171,7 @@ const MCP_RUNTIME_ENV_KEYS = [
   MCP_LOCAL_CONFIG_ENV,
   MCP_BIN_DIR_ENV,
   MCP_DAEMON_FINGERPRINT_ENV,
+  MCP_DAEMON_GENERATION_ENV,
   MCP_DAEMON_PARENT_PID_ENV,
   MCP_DAEMON_SOCKET_ENV,
   MCP_DAEMON_TOKEN_ENV,
@@ -325,6 +330,12 @@ function prependPath(env: NodeJS.ProcessEnv, dir: string): void {
   env[key] = [dir, current].filter(Boolean).join(delimiter);
 }
 
+function removePathEntry(env: NodeJS.ProcessEnv, dir: string): void {
+  const key = pathKey(env);
+  const entries = (env[key] ?? "").split(delimiter).filter(Boolean);
+  env[key] = entries.filter((entry) => entry !== dir).join(delimiter);
+}
+
 export async function materializeSessionMcpCli(opts: {
   cwd: string;
   env?: NodeJS.ProcessEnv;
@@ -384,6 +395,21 @@ export async function materializeSessionMcpCli(opts: {
 
 function sessionPath(env: NodeJS.ProcessEnv, cwd = process.cwd()): string {
   return env[MCP_SESSION_ENV] || defaultMcpSessionPath(cwd);
+}
+
+export function readMcpSessionConfig(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env
+): McpSessionConfig {
+  const path = sessionPath(env, cwd);
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as McpSessionConfig;
+  if (
+    parsed.version !== 1 ||
+    !Array.isArray(parsed.servers)
+  ) {
+    throw new Error(`Unsupported Recipe MCP session at ${path}`);
+  }
+  return parsed;
 }
 
 function localMcpConfigPath(env: NodeJS.ProcessEnv, cwd = process.cwd()): string {
@@ -687,13 +713,14 @@ async function writeMcporterConfig(
   env: NodeJS.ProcessEnv,
   cwd: string,
   session: McpSessionConfig,
-  bindings?: readonly McpEndpointBinding[]
+  bindings?: readonly McpEndpointBinding[],
+  targetPath?: string
 ): Promise<string> {
   const config = bindings
     ? projectMcporterConfig(session, bindings)
     : buildMcporterConfig(session, { env, cwd });
   const writtenPath = await writeWithFallback(
-    defaultMcporterConfigPath(cwd),
+    targetPath || defaultMcporterConfigPath(cwd),
     `${JSON.stringify(config, null, 2)}\n`,
     defaultMcporterConfigPath(cwd),
     fallbackMcporterConfigPath()
@@ -717,6 +744,72 @@ export async function clearMcpSession(
   // shim from an earlier session must resolve to "no servers", never to
   // mcporter's host-level config discovery.
   await writeMcporterConfig(env, cwd, { version: 1, servers: [] });
+}
+
+/**
+ * Remove the CLI-facing MCP surface entirely. Tools mode calls this before it
+ * creates its private daemon environment so shell tools cannot inherit the
+ * session, mcporter config, or `mcp` shim.
+ */
+export async function clearSessionMcpCli(
+  env: NodeJS.ProcessEnv,
+  cwd: string
+): Promise<{ previousMcporterConfig?: string }> {
+  const previousMcporterConfig = env[MCPORTER_CONFIG_ENV];
+  await stopMcpDaemon(env);
+  const configuredSession = sessionPath(env, cwd);
+  const configuredMcporter =
+    env[MCPORTER_CONFIG_ENV] === fallbackMcporterConfigPath()
+      ? fallbackMcporterConfigPath()
+      : defaultMcporterConfigPath(cwd);
+  const binDir = env[MCP_BIN_DIR_ENV] || defaultMcpBinDir(cwd);
+  removePathEntry(env, binDir);
+  delete env[MCP_BIN_DIR_ENV];
+  delete env[MCP_SESSION_ENV];
+  delete env[MCPORTER_CONFIG_ENV];
+  await Promise.all([
+    rm(configuredSession, { force: true }),
+    configuredSession === defaultMcpSessionPath(cwd)
+      ? Promise.resolve()
+      : rm(defaultMcpSessionPath(cwd), { force: true }),
+    rm(configuredMcporter, { force: true }),
+    configuredMcporter === defaultMcporterConfigPath(cwd)
+      ? Promise.resolve()
+      : rm(defaultMcporterConfigPath(cwd), { force: true }),
+    rm(join(binDir, "mcp"), { force: true }),
+  ]);
+  return {
+    ...(previousMcporterConfig ? { previousMcporterConfig } : {}),
+  };
+}
+
+export async function createIsolatedMcpEnvironment(
+  baseEnv: NodeJS.ProcessEnv
+): Promise<{
+  env: NodeJS.ProcessEnv;
+  directory: string;
+  mcporterConfigPath: string;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), "recipes-mcp-tools-"));
+  const env = { ...baseEnv };
+  for (const key of [
+    MCP_DAEMON_SOCKET_ENV,
+    MCP_DAEMON_TOKEN_ENV,
+    MCP_DAEMON_FINGERPRINT_ENV,
+    MCP_DAEMON_PARENT_PID_ENV,
+    MCP_SESSION_ROOT_ENV,
+    MCP_DAEMON_GENERATION_ENV,
+  ]) {
+    delete env[key];
+  }
+  delete env[MCP_BIN_DIR_ENV];
+  delete env[MCPORTER_CONFIG_ENV];
+  env[MCP_SESSION_ENV] = join(directory, "session.json");
+  return {
+    env,
+    directory,
+    mcporterConfigPath: join(directory, "mcporter.json"),
+  };
 }
 
 export async function materializeMcpSession(
@@ -782,6 +875,7 @@ export async function materializeMcpSession(
       id,
       name: binding?.name ?? declared?.name ?? id,
       base_url: baseUrl,
+      ...(packageServer.required ? { required: true } : {}),
       package_tools: packageServer.tools,
       agent_tools: selected,
       ...(declared?.tools ? { catalog } : {}),
@@ -811,10 +905,19 @@ export async function materializeMcpSession(
     fallbackMcpSessionPath()
   );
   env[MCP_SESSION_ENV] = writtenPath;
+  env[MCP_SESSION_ROOT_ENV] = opts.cwd;
   env[MCP_DAEMON_FINGERPRINT_ENV] = fingerprint;
   env[MCP_DAEMON_PARENT_PID_ENV] = String(process.pid);
+  if (
+    !env[MCP_DAEMON_GENERATION_ENV] ||
+    (previousFingerprint && previousFingerprint !== fingerprint)
+  ) {
+    env[MCP_DAEMON_GENERATION_ENV] = randomBytes(12).toString("hex");
+  }
   const socketKey = createHash("sha256")
-    .update(`${opts.cwd}\0${fingerprint}`)
+    .update(
+      `${opts.cwd}\0${fingerprint}\0${env[MCP_DAEMON_GENERATION_ENV]}`
+    )
     .digest("hex")
     .slice(0, 20);
   env[MCP_DAEMON_SOCKET_ENV] =
@@ -827,7 +930,13 @@ export async function materializeMcpSession(
     previousFingerprint === fingerprint && previousToken
       ? previousToken
       : randomBytes(32).toString("hex");
-  await writeMcporterConfig(env, opts.cwd, session, endpointBindingList);
+  await writeMcporterConfig(
+    env,
+    opts.cwd,
+    session,
+    endpointBindingList,
+    opts.mcporterConfigPath
+  );
   return { ...session, diagnostics };
 }
 
@@ -837,10 +946,19 @@ export async function stopMcpDaemon(env: NodeJS.ProcessEnv): Promise<void> {
   if (socketPath && token) {
     await new Promise<void>((resolve) => {
       const socket = createConnection(socketPath);
+      let settled = false;
+      let hardTimeout: NodeJS.Timeout | undefined;
       const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (hardTimeout) clearTimeout(hardTimeout);
         socket.destroy();
         resolve();
       };
+      // net.Socket's idle timeout starts after connection establishment. Keep
+      // a real deadline as well so a stale or disappearing Unix socket cannot
+      // leave session shutdown pending with no ref'ed event-loop handles.
+      hardTimeout = setTimeout(finish, 500);
       socket.setTimeout(500, finish);
       socket.once("connect", () => {
         socket.end(
@@ -848,6 +966,7 @@ export async function stopMcpDaemon(env: NodeJS.ProcessEnv): Promise<void> {
         );
       });
       socket.once("end", finish);
+      socket.once("close", finish);
       socket.once("error", finish);
     });
   }
@@ -856,4 +975,5 @@ export async function stopMcpDaemon(env: NodeJS.ProcessEnv): Promise<void> {
   delete env[MCP_DAEMON_FINGERPRINT_ENV];
   delete env[MCP_DAEMON_PARENT_PID_ENV];
   delete env[MCP_SESSION_ROOT_ENV];
+  delete env[MCP_DAEMON_GENERATION_ENV];
 }

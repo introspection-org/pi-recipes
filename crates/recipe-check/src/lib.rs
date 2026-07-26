@@ -129,16 +129,30 @@ struct RawAgent {
     path: String,
     from: Option<String>,
     fields: HashSet<AgentField>,
-    mcp: Option<BTreeMap<String, McpToolSelectors>>,
+    mcp: Option<AgentMcpConfig>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct McpToolSelectors {
     include: Option<BTreeSet<String>>,
     exclude: Option<BTreeSet<String>>,
+    defer: Option<BTreeSet<String>>,
+    eager: Option<BTreeSet<String>>,
 }
 
 type McpToolPolicy = BTreeMap<String, McpToolSelectors>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentMcpMode {
+    Cli,
+    Tools,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AgentMcpConfig {
+    mode: Option<AgentMcpMode>,
+    servers: BTreeMap<String, McpToolSelectors>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AgentField {
@@ -1039,11 +1053,7 @@ fn validate_agent_string_array(
     }
 }
 
-fn validate_agent_mcp(
-    map: &JsonMap,
-    path: &str,
-    ctx: &mut CheckContext,
-) -> Option<BTreeMap<String, McpToolSelectors>> {
+fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Option<AgentMcpConfig> {
     let value = map.get("mcp")?;
     let Some(mcp) = value.as_object() else {
         ctx.error(
@@ -1052,10 +1062,60 @@ fn validate_agent_mcp(
             "Agent mcp must be an object",
             Some("remove mcp for no access, or declare server policies"),
         );
-        return Some(BTreeMap::new());
+        return Some(AgentMcpConfig::default());
     };
+    let mode = match mcp.get("mode") {
+        Some(JsonValue::String(value)) if value == "cli" => Some(AgentMcpMode::Cli),
+        Some(JsonValue::String(value)) if value == "tools" => Some(AgentMcpMode::Tools),
+        Some(_) => {
+            ctx.error(
+                "agent.mcp_mode_invalid",
+                path,
+                "Agent mcp.mode must be 'cli' or 'tools'",
+                Some("set mcp.mode to cli or tools"),
+            );
+            None
+        }
+        None => None,
+    };
+    let empty_servers = JsonMap::new();
+    let servers = match mcp.get("servers") {
+        Some(JsonValue::Object(servers)) => servers,
+        Some(_) => {
+            ctx.error(
+                "agent.mcp_servers_invalid",
+                path,
+                "Agent mcp.servers must be an object",
+                Some("move server selections under mcp.servers"),
+            );
+            return Some(AgentMcpConfig {
+                mode,
+                ..AgentMcpConfig::default()
+            });
+        }
+        None => {
+            ctx.error(
+                "agent.mcp_servers_invalid",
+                path,
+                "Agent mcp.servers is required",
+                Some("declare server selections under mcp.servers"),
+            );
+            &empty_servers
+        }
+    };
+    for key in mcp
+        .keys()
+        .filter(|key| !matches!(key.as_str(), "mode" | "servers"))
+    {
+        ctx.error(
+            "agent.mcp_key_unknown",
+            path,
+            format!("Unknown Agent mcp field '{key}'"),
+            Some("use only mode and servers"),
+        );
+    }
     let mut parsed = BTreeMap::new();
-    for (server_key, value) in mcp {
+    for (server_key, value) in servers {
         if server_key.trim().is_empty() {
             ctx.error(
                 "agent.mcp_server_invalid",
@@ -1076,10 +1136,20 @@ fn validate_agent_mcp(
             continue;
         };
         let mut selectors = McpToolSelectors::default();
-        for key in ["include", "exclude"] {
+        for key in ["include", "exclude", "defer", "eager"] {
             let Some(value) = server.get(key) else {
                 continue;
             };
+            if matches!(key, "defer" | "eager") && mode == Some(AgentMcpMode::Cli) {
+                ctx.error(
+                    "agent.mcp_activation_invalid",
+                    path,
+                    format!(
+                        "Agent mcp server '{server_id}' {key} is only valid when mcp.mode is tools"
+                    ),
+                    Some("remove the activation selector or set mcp.mode to tools"),
+                );
+            }
             if let Err(message) = string_array(value) {
                 ctx.error(
                     "agent.mcp_invalid",
@@ -1099,10 +1169,11 @@ fn validate_agent_mcp(
                 .map(str::to_owned)
                 .collect::<BTreeSet<_>>();
             for selector in &values {
-                let valid = if key == "include" {
-                    !selector.is_empty() && (selector == "*" || !selector.contains('*'))
-                } else {
-                    !selector.is_empty() && !selector.contains('*')
+                let valid = match key {
+                    "include" | "defer" | "eager" => {
+                        !selector.is_empty() && (selector == "*" || !selector.contains('*'))
+                    }
+                    _ => !selector.is_empty() && !selector.contains('*'),
                 };
                 if !valid {
                     ctx.error(
@@ -1110,7 +1181,7 @@ fn validate_agent_mcp(
                         path,
                         format!(
                             "Agent mcp server '{server_id}' {key} entry '{selector}' must be {}",
-                            if key == "include" {
+                            if matches!(key, "include" | "defer" | "eager") {
                                 "an exact tool name or '*'"
                             } else {
                                 "an exact tool name"
@@ -1120,15 +1191,40 @@ fn validate_agent_mcp(
                     );
                 }
             }
-            if key == "include" {
-                selectors.include = Some(values);
-            } else {
-                selectors.exclude = Some(values);
+            if matches!(key, "defer" | "eager") && values.contains("*") && items.len() != 1 {
+                ctx.error(
+                    "agent.mcp_activation_selector_invalid",
+                    path,
+                    format!("Agent mcp server '{server_id}' {key} must use '*' by itself"),
+                    None::<String>,
+                );
+            }
+            match key {
+                "include" => selectors.include = Some(values),
+                "exclude" => selectors.exclude = Some(values),
+                "defer" => selectors.defer = Some(values),
+                "eager" => selectors.eager = Some(values),
+                _ => unreachable!(),
             }
         }
-        parsed.insert(safe_mcp_server_id(server_id), selectors);
+        let normalized_server_id = safe_mcp_server_id(server_id);
+        if parsed.contains_key(&normalized_server_id) {
+            ctx.error(
+                "agent.mcp_server_collision",
+                path,
+                format!(
+                    "Agent mcp server '{server_id}' collides with another server after id normalization"
+                ),
+                Some("use server ids that remain unique after normalization"),
+            );
+            continue;
+        }
+        parsed.insert(normalized_server_id, selectors);
     }
-    Some(parsed)
+    Some(AgentMcpConfig {
+        mode,
+        servers: parsed,
+    })
 }
 
 fn validate_agent_system_instructions(
@@ -1335,7 +1431,7 @@ fn resolved_agent_mcp(
     raw_by_name: &HashMap<String, &RawAgent>,
     aliases: &HashMap<String, String>,
     stack: &mut Vec<String>,
-) -> Option<BTreeMap<String, McpToolSelectors>> {
+) -> Option<AgentMcpConfig> {
     let resolved = resolve_agent_name(name, raw_by_name, aliases);
     if stack.contains(&resolved) {
         return None;
@@ -1350,11 +1446,11 @@ fn resolved_agent_mcp(
     stack.pop();
 
     let Some(child) = &agent.mcp else {
-        return (!merged.is_empty()).then_some(merged);
+        return (!merged.servers.is_empty() || merged.mode.is_some()).then_some(merged);
     };
-    for (server_id, child_tools) in child {
-        let base_tools = merged.get(server_id);
-        merged.insert(
+    for (server_id, child_tools) in &child.servers {
+        let base_tools = merged.servers.get(server_id);
+        merged.servers.insert(
             server_id.clone(),
             McpToolSelectors {
                 include: child_tools
@@ -1365,8 +1461,25 @@ fn resolved_agent_mcp(
                     .exclude
                     .clone()
                     .or_else(|| base_tools.and_then(|tools| tools.exclude.clone())),
+                defer: child_tools
+                    .defer
+                    .clone()
+                    .or_else(|| base_tools.and_then(|tools| tools.defer.clone())),
+                eager: child_tools
+                    .eager
+                    .clone()
+                    .or_else(|| base_tools.and_then(|tools| tools.eager.clone())),
             },
         );
+    }
+    if child.mode.is_some() {
+        merged.mode = child.mode;
+    }
+    if merged.mode == Some(AgentMcpMode::Cli) {
+        for selection in merged.servers.values_mut() {
+            selection.defer = None;
+            selection.eager = None;
+        }
     }
     Some(merged)
 }
@@ -1386,11 +1499,27 @@ fn validate_resolved_agent_mcp(
         .map(|agent| agent.path.clone())
         .unwrap_or_default();
 
-    for (server_id, selection) in mcp {
-        let Some(include) = selection.include else {
+    if mcp.mode != Some(AgentMcpMode::Tools)
+        && mcp
+            .servers
+            .values()
+            .any(|selection| selection.defer.is_some() || selection.eager.is_some())
+    {
+        ctx.error(
+            "agent.mcp_activation_invalid",
+            path.clone(),
+            format!(
+                "Recipe agent '{name}' may use defer and eager only when its resolved mcp.mode is tools"
+            ),
+            Some("set mcp.mode to tools or remove defer and eager"),
+        );
+    }
+
+    for (server_id, selection) in &mcp.servers {
+        let Some(include) = &selection.include else {
             continue;
         };
-        let Some(server_policy) = mcp_tool_policy.and_then(|policy| policy.get(&server_id)) else {
+        let Some(server_policy) = mcp_tool_policy.and_then(|policy| policy.get(server_id)) else {
             ctx.error(
                 "agent.mcp_server_undeclared",
                 path.clone(),
@@ -1411,6 +1540,31 @@ fn validate_resolved_agent_mcp(
                 ),
                 Some("include the tool in the package MCP policy or update the agent"),
             );
+        }
+    }
+    for (server_id, selection) in &mcp.servers {
+        for (kind, selectors) in [
+            ("defer", selection.defer.as_ref()),
+            ("eager", selection.eager.as_ref()),
+        ] {
+            let Some(selectors) = selectors else {
+                continue;
+            };
+            for tool in selectors.iter().filter(|tool| tool.as_str() != "*") {
+                if mcp_package_policy_allows(selection, tool) {
+                    continue;
+                }
+                ctx.error(
+                    "agent.mcp_activation_tool_unauthorized",
+                    path.clone(),
+                    format!(
+                        "Recipe agent '{name}' {kind} selector '{server_id}/{tool}' is outside its mcp.servers authorization"
+                    ),
+                    Some(format!(
+                        "authorize the tool under mcp.servers or remove it from {kind}"
+                    )),
+                );
+            }
         }
     }
 }
@@ -1638,6 +1792,8 @@ fn mcp_tool_policy(value: Option<&JsonValue>) -> Option<McpToolPolicy> {
             McpToolSelectors {
                 include,
                 exclude: exclude.and_then(json_string_set),
+                defer: None,
+                eager: None,
             },
         );
     }
@@ -2122,14 +2278,156 @@ mod tests {
                 "exclude": ["delete_org"]
             }),
             concat!(
-                "  salesforce:\n",
-                "    include:\n",
-                "      - '*'\n",
-                "    exclude:\n",
-                "      - export_all\n",
+                "  mode: cli\n",
+                "  servers:\n",
+                "    salesforce:\n",
+                "      include:\n",
+                "        - '*'\n",
+                "      exclude:\n",
+                "        - export_all\n",
             ),
             true,
         );
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn accepts_structured_tools_mode_with_authorized_activation() {
+        let input = selector_recipe(
+            json!({ "include": ["search_profiles", "get_profile"] }),
+            concat!(
+                "  mode: tools\n",
+                "  servers:\n",
+                "    salesforce:\n",
+                "      include:\n",
+                "        - search_profiles\n",
+                "        - get_profile\n",
+                "      defer:\n",
+                "        - '*'\n",
+                "      eager:\n",
+                "        - search_profiles\n",
+            ),
+            true,
+        );
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn rejects_invalid_structured_mcp_mode_and_unknown_keys() {
+        let input = selector_recipe(
+            json!({ "include": ["search_profiles"] }),
+            concat!(
+                "  mode: deferred\n",
+                "  servers:\n",
+                "    salesforce:\n",
+                "      include:\n",
+                "        - search_profiles\n",
+                "  initial_tools:\n",
+                "    salesforce: search_profiles\n",
+            ),
+            true,
+        );
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(!report.valid);
+        for code in ["agent.mcp_mode_invalid", "agent.mcp_key_unknown"] {
+            assert!(
+                report
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == code),
+                "missing {code}: {:?}",
+                report.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_activation_outside_agent_authorization() {
+        let input = selector_recipe(
+            json!({ "include": ["search_profiles", "delete_profile"] }),
+            concat!(
+                "  mode: tools\n",
+                "  servers:\n",
+                "    salesforce:\n",
+                "      include:\n",
+                "        - search_profiles\n",
+                "      eager:\n",
+                "        - delete_profile\n",
+            ),
+            true,
+        );
+
+        let report = check_recipe_files(&input, CheckProfile::Ci);
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.mcp_activation_tool_unauthorized"
+                && diagnostic.message.contains("salesforce/delete_profile")
+        }));
+    }
+
+    #[test]
+    fn accepts_independent_mcp_modes_across_visible_agent_tree() {
+        let package = json!({
+            "name": "mcp-mode-conflict",
+            "version": "0.1.0",
+            "pi": {
+                "agents": ["agents/*.yaml"],
+                "mcp": {
+                    "servers": [{
+                        "id": "salesforce",
+                        "tools": { "include": ["search_profiles"] }
+                    }]
+                }
+            }
+        });
+        let root = concat!(
+            "name: root\n",
+            "model:\n",
+            "  name: test/provider-model\n",
+            "tools: []\n",
+            "mcp:\n",
+            "  mode: tools\n",
+            "  servers:\n",
+            "    salesforce:\n",
+            "      include:\n",
+            "        - search_profiles\n",
+            "subagents:\n",
+            "  - child\n",
+            "system_instructions:\n",
+            "  content: Root instructions\n",
+        );
+        let child = concat!(
+            "name: child\n",
+            "model:\n",
+            "  name: test/provider-model\n",
+            "tools: []\n",
+            "mcp:\n",
+            "  mode: cli\n",
+            "  servers:\n",
+            "    salesforce:\n",
+            "      include:\n",
+            "        - search_profiles\n",
+            "subagents: []\n",
+            "system_instructions:\n",
+            "  content: Child instructions\n",
+        );
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/root.yaml", root),
+            ("agents/child.yaml", child),
+        ]);
 
         let report = check_recipe_files(&input, CheckProfile::Ci);
 
@@ -2143,7 +2441,7 @@ mod tests {
                 "include": ["*"],
                 "exclude": ["delete_org"]
             }),
-            "  salesforce:\n    include:\n      - delete_org\n",
+            "  mode: cli\n  servers:\n    salesforce:\n      include:\n        - delete_org\n",
             true,
         );
 
@@ -2160,7 +2458,7 @@ mod tests {
     fn rejects_malformed_agent_mcp_selectors() {
         let input = selector_recipe(
             json!({ "include": ["*"] }),
-            "  salesforce:\n    include:\n      - search_*\n",
+            "  mode: cli\n  servers:\n    salesforce:\n      include:\n        - search_*\n",
             true,
         );
 
@@ -2211,7 +2509,11 @@ mod tests {
 
     #[test]
     fn missing_agent_mcp_includes_are_silent_and_fail_closed() {
-        let input = selector_recipe(json!({}), "  salesforce: {}\n", true);
+        let input = selector_recipe(
+            json!({}),
+            "  mode: cli\n  servers:\n    salesforce: {}\n",
+            true,
+        );
 
         let report = check_recipe_files(&input, CheckProfile::Ci);
 
@@ -2226,7 +2528,11 @@ mod tests {
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.mcp_include_missing"));
 
-        let empty_agent_mcp = selector_recipe(json!({ "include": ["*"] }), "  {}\n", true);
+        let empty_agent_mcp = selector_recipe(
+            json!({ "include": ["*"] }),
+            "  mode: cli\n  servers: {}\n",
+            true,
+        );
         let empty_report = check_recipe_files(&empty_agent_mcp, CheckProfile::Ci);
         assert!(empty_report.valid, "{:?}", empty_report.diagnostics);
         assert!(!empty_report
@@ -2336,7 +2642,7 @@ mod tests {
     fn rejects_agent_mcp_access_without_package_server_policy() {
         let mut input = selector_recipe(
             json!({ "include": ["search_profiles"] }),
-            "  salesforce:\n    include:\n      - search_profiles\n",
+            "  mode: cli\n  servers:\n    salesforce:\n      include:\n        - search_profiles\n",
             true,
         );
         let package = json!({

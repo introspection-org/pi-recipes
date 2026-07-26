@@ -42,6 +42,7 @@ interface FixtureOptions {
   agentExtras?: string[];
   manifestPi?: Record<string, unknown>;
   subagents?: string[];
+  tools?: string[];
 }
 
 /** Write a minimal recipe package into a fresh temp dir. */
@@ -72,7 +73,7 @@ export function writeFixtureRecipe(options: FixtureOptions = {}): {
       "model:",
       "  name: anthropic/claude-sonnet-4-5",
       "  thinking_level: low",
-      "tools: [read]",
+      `tools: [${(options.tools ?? ["read"]).join(", ")}]`,
       ...(options.subagents?.length
         ? ["subagents:", ...options.subagents.map((name) => `  - ${name}`)]
         : []),
@@ -194,7 +195,13 @@ export function hostConformanceCases(
               ],
             },
           },
-          agentExtras: ["mcp:", "  linear:", '    include: ["*"]'],
+          agentExtras: [
+            "mcp:",
+            "  mode: cli",
+            "  servers:",
+            "    linear:",
+            '      include: ["*"]',
+          ],
         });
         try {
           const err = await expectRejection(
@@ -226,7 +233,13 @@ export function hostConformanceCases(
               ],
             },
           },
-          agentExtras: ["mcp:", "  linear:", '    include: ["*"]'],
+          agentExtras: [
+            "mcp:",
+            "  mode: cli",
+            "  servers:",
+            "    linear:",
+            '      include: ["*"]',
+          ],
         });
         try {
           const env = { ...cleanEnv() };

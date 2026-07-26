@@ -1,4 +1,5 @@
 import type { RecipeMcpToolSelection } from "./recipe-package.js";
+import type { RecipeAgentMcp } from "./recipe-agent.js";
 
 export interface ScopedMcpToolSelection {
   serverId: string;
@@ -15,9 +16,9 @@ export function normalizeMcpServerId(value: string): string {
 }
 
 export function resolveAgentMcpSelections(
-  mcp: Readonly<Record<string, RecipeMcpToolSelection>> | undefined
+  mcp: RecipeAgentMcp | undefined
 ): ScopedMcpToolSelection[] {
-  return Object.entries(mcp ?? {}).map(([serverId, selection]) => ({
+  return Object.entries(mcp?.servers ?? {}).map(([serverId, selection]) => ({
     serverId: normalizeMcpServerId(serverId),
     tools: selection,
   }));

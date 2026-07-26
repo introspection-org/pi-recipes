@@ -30,7 +30,13 @@ describe("inspectRecipe", () => {
           ],
         },
       },
-      agentExtras: ["mcp:", "  crm:", '    include: ["*"]'],
+      agentExtras: [
+        "mcp:",
+        "  mode: cli",
+        "  servers:",
+        "    crm:",
+        '      include: ["*"]',
+      ],
     });
     cleanups.push(fixture.cleanup);
     const configDir = join(fixture.recipeDir, ".pi");

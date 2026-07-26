@@ -5,6 +5,8 @@ import {
   loadValidatedRecipeAgentDefinitions,
   loadRecipeSystemPrompt,
   type RecipeAgentDefinition,
+  type RecipeAgentMcp,
+  type RecipeAgentMcpMode,
   type RecipeSystemInstructions,
 } from "../recipe-agent.js";
 import type { RecipeAgentModelConfig } from "../recipe-model.js";
@@ -19,6 +21,11 @@ import {
 export type { RecipePackageManifest } from "../recipe-package.js";
 export type { RecipeAgentMcp } from "../recipe-agent.js";
 
+export interface ResolvedRecipeAgentMcp
+  extends Omit<RecipeAgentMcp, "mode"> {
+  mode: RecipeAgentMcpMode;
+}
+
 export interface ResolvedRecipeAgent {
   recipeDir: string;
   manifest: PiPackageManifest;
@@ -29,7 +36,7 @@ export interface ResolvedRecipeAgent {
   modelConfig?: RecipeAgentModelConfig;
   thinkingLevel?: ThinkingLevel;
   tools: string[];
-  mcp: RecipeAgentDefinition["mcp"];
+  mcp?: ResolvedRecipeAgentMcp;
   skillPaths: string[];
   promptPaths: string[];
   extensionPaths: string[];
@@ -206,7 +213,9 @@ function buildResolvedRecipeAgent(
         ...(subagents.size > 0 ? ["agent"] : []),
       ]),
     ],
-    mcp: agent.mcp,
+    ...(agent.mcp
+      ? { mcp: { ...agent.mcp, mode: agent.mcp.mode ?? "cli" } }
+      : {}),
     skillPaths: resolveAgentSkillPaths(
       recipeDir,
       skillResourcePaths,

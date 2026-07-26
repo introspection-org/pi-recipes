@@ -14,7 +14,7 @@
 //! Unlike recipe checking, parsing is strict: any invalid definition fails
 //! the whole batch with a [`JudgeSpecError`] instead of a diagnostic report.
 
-use std::collections::{HashSet, BTreeSet};
+use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 
 use regex::RegexBuilder;
@@ -301,7 +301,9 @@ fn validate_llm_config(context: &str, llm: &JudgeLlmConfig) -> Result<(), JudgeS
         spec_bail!("{context} llm.transport.max_retries exceeds the limit of 10");
     }
     if llm.transport.max_retry_delay_ms > 60_000 {
-        spec_bail!("{context} llm.transport.max_retry_delay_ms exceeds the 60000 millisecond limit");
+        spec_bail!(
+            "{context} llm.transport.max_retry_delay_ms exceeds the 60000 millisecond limit"
+        );
     }
     if let Some(local) = &llm.local {
         let url = match url::Url::parse(&local.base_url) {
@@ -522,8 +524,14 @@ llm:
     #[test]
     fn parses_sorted_and_applies_spec_defaults() {
         let sources = [
-            source("judges/b.yaml", "judge: b\ninstructions: Grade b.\nllm:\n  model: gpt-5\n"),
-            source("judges/a.yaml", "judge: a\ninstructions: Grade a.\nllm:\n  model: gpt-5\n"),
+            source(
+                "judges/b.yaml",
+                "judge: b\ninstructions: Grade b.\nllm:\n  model: gpt-5\n",
+            ),
+            source(
+                "judges/a.yaml",
+                "judge: a\ninstructions: Grade a.\nllm:\n  model: gpt-5\n",
+            ),
         ];
         let parsed = parse_judge_definitions(&sources).unwrap();
         assert_eq!(parsed.len(), 2);
@@ -533,7 +541,10 @@ llm:
         let definition = &parsed[0].definition;
         assert_eq!(definition.llm.provider, "openai");
         assert_eq!(definition.llm.request.temperature, 0.0);
-        assert_eq!(definition.llm.transport.timeout_ms, DEFAULT_JUDGE_TIMEOUT_MS);
+        assert_eq!(
+            definition.llm.transport.timeout_ms,
+            DEFAULT_JUDGE_TIMEOUT_MS
+        );
         assert_eq!(definition.on, json!({}));
     }
 
@@ -745,7 +756,10 @@ llm:
         let request = schema["$defs"]["JudgeLlmRequest"].as_object().unwrap();
         assert_eq!(request["properties"]["temperature"]["minimum"], json!(0.0));
         assert_eq!(request["properties"]["temperature"]["maximum"], json!(2.0));
-        assert_eq!(request["properties"]["max_tokens"]["maximum"], json!(131_072));
+        assert_eq!(
+            request["properties"]["max_tokens"]["maximum"],
+            json!(131_072)
+        );
 
         let transport = schema["$defs"]["JudgeLlmTransport"].as_object().unwrap();
         assert_eq!(
@@ -755,8 +769,8 @@ llm:
         assert_eq!(transport["properties"]["max_retries"]["maximum"], json!(10));
 
         // Gate match property names mirror validate_gate's path rules.
-        let matcher_names = &properties["on"]["anyOf"][2]["items"]["properties"]["match"]
-            ["propertyNames"]["allOf"];
+        let matcher_names =
+            &properties["on"]["anyOf"][2]["items"]["properties"]["match"]["propertyNames"]["allOf"];
         let constraints = matcher_names.as_array().unwrap();
         assert_eq!(constraints[0], json!({ "minLength": 1 }));
         assert_eq!(

@@ -38,6 +38,38 @@ jobs:
 
       - run: pnpm pack:check
 
+  pi-minimum:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: |
+          pnpm pkg set \
+            devDependencies.@earendil-works/pi-agent-core=0.82.0 \
+            devDependencies.@earendil-works/pi-ai=0.82.0 \
+            devDependencies.@earendil-works/pi-coding-agent=0.82.0 \
+            devDependencies.@earendil-works/pi-tui=0.82.0
+          pnpm install --no-frozen-lockfile
+
+      - run: |
+          cargo build -p pi-mcp-client
+          cargo build -p recipe-check --bin recipe-check
+          MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs
+          RECIPE_CHECK_BIN=target/debug/recipe-check node scripts/package-recipe-check.mjs
+
+      - run: pnpm typecheck
+
+      - run: pnpm exec vitest run test/mcp-tools.test.ts test/pi-extension-mcp-tools.test.ts test/child-agent.test.ts
+
   native-linux-arm64:
     runs-on: ubuntu-24.04-arm
     steps:

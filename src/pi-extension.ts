@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -28,7 +29,9 @@ import {
 } from "./child-agent-completions.js";
 import {
   clearMcpSession,
+  clearSessionMcpCli,
   configureMcpLocalConfigPath,
+  createIsolatedMcpEnvironment,
   formatMcpConfigurationDiagnostics,
   materializeMcpSession,
   materializeSessionMcpCli,
@@ -40,6 +43,8 @@ import {
   preloadMcpCatalogs,
 } from "./mcp-catalog.js";
 import { type RecipeAgentDefinition } from "./recipe-agent.js";
+import type { RecipeAgentMcpMode } from "./recipe-agent.js";
+import { createMcpToolSet } from "./mcp-tools.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
   checkRecipeAtLoad,
@@ -103,6 +108,13 @@ interface RecipeLaunchState {
   resolved: ResolvedRecipeAgent;
   extensionsLoaded: boolean;
   configured: boolean;
+  mcpConfigured: boolean;
+  agentMcpMode: RecipeAgentMcpMode;
+  initialMcpToolNames: string[];
+  mcpSearchToolName?: string;
+  mcpPrivateEnv?: NodeJS.ProcessEnv;
+  mcpPrivateDirectory?: string;
+  mcpAmbientMcporterConfig?: string;
 }
 
 const require = createRequire(import.meta.url);
@@ -155,8 +167,8 @@ function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
   return resolveAgentMcpSelections(agent.mcp);
 }
 
-function scopedMcpSelections(state: RecipeLaunchState) {
-  return [state.resolved.definition, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
+function resolvedMcpMode(state: RecipeLaunchState): RecipeAgentMcpMode {
+  return state.resolved.mcp?.mode ?? "cli";
 }
 
 function textResult<TDetails>(text: string, details: TDetails) {
@@ -584,6 +596,26 @@ export function createRecipesExtension(
     );
   }
 
+  async function closeRootMcpRuntime(): Promise<void> {
+    const privateEnv = state?.mcpPrivateEnv;
+    const privateDirectory = state?.mcpPrivateDirectory;
+    if (privateEnv) {
+      clearMcpCatalogPreload(privateEnv);
+      await stopMcpDaemon(privateEnv);
+    }
+    if (privateDirectory) {
+      await rm(privateDirectory, { recursive: true, force: true });
+    }
+    if (state) {
+      state.mcpPrivateEnv = undefined;
+      state.mcpPrivateDirectory = undefined;
+      if (state.mcpAmbientMcporterConfig) {
+        env.MCPORTER_CONFIG = state.mcpAmbientMcporterConfig;
+        state.mcpAmbientMcporterConfig = undefined;
+      }
+    }
+  }
+
   function archivedControlError(id: string) {
     return {
       ...textResult(
@@ -643,6 +675,9 @@ export function createRecipesExtension(
       resolved,
       extensionsLoaded: false,
       configured: false,
+      mcpConfigured: false,
+      agentMcpMode: "cli",
+      initialMcpToolNames: [],
     };
     return state;
   }
@@ -746,51 +781,80 @@ export function createRecipesExtension(
       pi.setThinkingLevel(launchState.resolved.thinkingLevel);
     }
 
-    const activeTools = new Set(launchState.resolved.tools);
+    const activeTools = new Set([
+      ...launchState.resolved.tools,
+      ...launchState.initialMcpToolNames,
+      ...(launchState.mcpSearchToolName
+        ? [launchState.mcpSearchToolName]
+        : []),
+    ]);
     pi.setActiveTools([...activeTools]);
     launchState.configured = true;
     sessionConfigurationError = null;
   }
 
   async function configureMcp(
+    pi: ExtensionAPI,
     launchState: RecipeLaunchState,
     ctx: Pick<ExtensionContext, "ui">
   ): Promise<void> {
-    const mcpSelections = scopedMcpSelections(launchState);
-    if (mcpSelections.length === 0) {
-      await clearMcpSession(env, launchState.cwd);
-      return;
-    }
-
+    if (launchState.mcpConfigured) return;
+    launchState.agentMcpMode = resolvedMcpMode(launchState);
+    launchState.initialMcpToolNames = [];
+    launchState.mcpSearchToolName = undefined;
     configureMcpLocalConfigPath({
       cwd: launchState.cwd,
       recipeDir: launchState.resolved.recipeDir,
       env,
     });
-    const [, session] = await Promise.all([
-      materializeSessionMcpCli({
-        cwd: launchState.cwd,
-        env,
-      }),
-      materializeMcpSession({
-        cwd: launchState.cwd,
-        manifest: launchState.resolved.manifest,
-        agentMcp: mcpSelections,
-        env,
-      }),
-    ]);
-    if (session.servers.length > 0) {
-      void preloadMcpCatalogs({ env }).catch((error) => {
-        console.warn(
-          `Recipe MCP catalog preload failed: ${error instanceof Error ? error.message : String(error)}`
-        );
-      });
-      ctx.ui.notify(
-        `Recipe MCP: ${session.servers.length} server(s) configured; runtime warming in background`,
-        "info"
+
+    if (launchState.agentMcpMode === "cli") {
+      const mcpSelections = resolveAgentMcpSelections(
+        launchState.resolved.mcp
       );
-      const detail = formatMcpConfigurationDiagnostics(session.diagnostics ?? []);
-      if (detail) {
+      if (mcpSelections.length === 0) {
+        await clearMcpSession(env, launchState.cwd);
+        launchState.mcpConfigured = true;
+        return;
+      }
+      const [, session] = await Promise.all([
+        materializeSessionMcpCli({
+          cwd: launchState.cwd,
+          env,
+        }),
+        materializeMcpSession({
+          cwd: launchState.cwd,
+          manifest: launchState.resolved.manifest,
+          agentMcp: mcpSelections,
+          env,
+        }),
+      ]);
+      if (session.servers.length > 0) {
+        void preloadMcpCatalogs({ env }).catch((error) => {
+          console.warn(
+            `Recipe MCP catalog preload failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
+        ctx.ui.notify(
+          `Recipe MCP: ${session.servers.length} server(s) configured; runtime warming in background`,
+          "info"
+        );
+      } else {
+        const detail = formatMcpConfigurationDiagnostics(
+          session.diagnostics ?? []
+        );
+        ctx.ui.notify(
+          [
+            "Recipe MCP: no servers are available to this agent. Check package policy and .pi/mcp.local.json.",
+            ...(detail ? ["", detail] : []),
+          ].join("\n"),
+          "warning"
+        );
+      }
+      const detail = formatMcpConfigurationDiagnostics(
+        session.diagnostics ?? []
+      );
+      if (session.servers.length > 0 && detail) {
         ctx.ui.notify(
           [
             "Recipe MCP: some configured servers or tools were filtered.",
@@ -800,15 +864,112 @@ export function createRecipesExtension(
           "warning"
         );
       }
-    } else {
-      const detail = formatMcpConfigurationDiagnostics(session.diagnostics ?? []);
+      launchState.mcpConfigured = true;
+      return;
+    }
+
+    const clearedCli = await clearSessionMcpCli(env, launchState.cwd);
+    launchState.mcpAmbientMcporterConfig =
+      clearedCli.previousMcporterConfig;
+    const rootMcp = launchState.resolved.mcp;
+    const rootSelections = mcpSelectionsForAgent(
+      launchState.resolved.definition
+    );
+    if (!rootMcp || rootSelections.length === 0) {
+      launchState.mcpConfigured = true;
+      return;
+    }
+
+    const privateRuntime = await createIsolatedMcpEnvironment(env);
+    launchState.mcpPrivateEnv = privateRuntime.env;
+    launchState.mcpPrivateDirectory = privateRuntime.directory;
+    try {
+      const session = await materializeMcpSession({
+        cwd: launchState.cwd,
+        manifest: launchState.resolved.manifest,
+        agentMcp: rootSelections,
+        env: privateRuntime.env,
+        mcporterConfigPath: privateRuntime.mcporterConfigPath,
+      });
+      if (session.servers.length === 0) {
+        const detail = formatMcpConfigurationDiagnostics(
+          session.diagnostics ?? []
+        );
+        ctx.ui.notify(
+          [
+            "Recipe MCP tools: no servers are available to the root agent.",
+            ...(detail ? ["", detail] : []),
+          ].join("\n"),
+          "warning"
+        );
+        launchState.mcpConfigured = true;
+        return;
+      }
+      const catalogs = await preloadMcpCatalogs({
+        env: privateRuntime.env,
+        allowPartial: true,
+      });
+      const materialized = createMcpToolSet({
+        session,
+        catalogs,
+        mcp: rootMcp,
+        env: privateRuntime.env,
+        activation: {
+          getActiveTools: () => pi.getActiveTools(),
+          setActiveTools: (names) => pi.setActiveTools(names),
+        },
+      });
+      const existing = new Set(pi.getAllTools().map((tool) => tool.name));
+      for (const tool of materialized.tools) {
+        if (existing.has(tool.name)) {
+          throw new Error(
+            `Cannot register MCP tool '${tool.name}': the Pi tool name is already in use.`
+          );
+        }
+      }
+      for (const tool of materialized.tools) pi.registerTool(tool);
+      const registered = new Set(pi.getAllTools().map((tool) => tool.name));
+      const missing = materialized.tools
+        .map((tool) => tool.name)
+        .filter((name) => !registered.has(name));
+      if (missing.length > 0) {
+        throw new Error(
+          `Pi did not register MCP tool(s): ${missing.join(", ")}`
+        );
+      }
+      launchState.initialMcpToolNames =
+        materialized.initialActiveToolNames;
+      launchState.mcpSearchToolName = materialized.searchToolName;
       ctx.ui.notify(
-        [
-          "Recipe MCP: no servers are available to this agent. Check package policy and .pi/mcp.local.json.",
-          ...(detail ? ["", detail] : []),
-        ].join("\n"),
-        "warning"
+        `Recipe MCP tools: ${materialized.toolNames.length} registered, ${materialized.initialActiveToolNames.length} initially active${
+          materialized.searchToolName ? "; deferred search enabled" : ""
+        }`,
+        "info"
       );
+      const diagnostics = [
+        ...formatMcpConfigurationDiagnostics(session.diagnostics ?? [])
+          .split("\n")
+          .filter(Boolean),
+        ...materialized.diagnostics,
+      ];
+      if (diagnostics.length > 0) {
+        ctx.ui.notify(
+          [
+            "Recipe MCP: some configured tools were unavailable.",
+            "",
+            ...diagnostics,
+          ].join("\n"),
+          "warning"
+        );
+      }
+      launchState.mcpConfigured = true;
+    } catch (error) {
+      clearMcpCatalogPreload(privateRuntime.env);
+      await stopMcpDaemon(privateRuntime.env);
+      await rm(privateRuntime.directory, { recursive: true, force: true });
+      launchState.mcpPrivateEnv = undefined;
+      launchState.mcpPrivateDirectory = undefined;
+      throw error;
     }
   }
 
@@ -1005,6 +1166,7 @@ export function createRecipesExtension(
             return;
           }
           await closeAllChildRuns();
+          await closeRootMcpRuntime();
           state = null;
           archivedRuns.clear();
           completions.clear();
@@ -1077,18 +1239,25 @@ export function createRecipesExtension(
       }
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return;
+      launchState.configured = false;
       visibleAgentDefinitions.clear();
       for (const [name, definition] of launchState.resolved.subagents) {
         visibleAgentDefinitions.set(name, definition);
       }
       await loadRecipeExtensions(pi, ctx, launchState);
       try {
-        await configureMcp(launchState, ctx);
+        await configureMcp(pi, launchState, ctx);
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        sessionConfigurationError = message;
+        pi.setActiveTools([]);
         ctx.ui.notify(
-          `Recipe MCP failed to configure: ${err instanceof Error ? err.message : String(err)}`,
+          `Recipe MCP failed to configure: ${message}`,
           "warning"
         );
+        if (ctx.mode === "json" || ctx.mode === "print") {
+          process.exitCode = 1;
+        }
         return;
       }
       try {
@@ -1122,6 +1291,7 @@ export function createRecipesExtension(
 
     pi.on("session_shutdown", async () => {
       await closeAllChildRuns();
+      await closeRootMcpRuntime();
       clearMcpCatalogPreload(env);
       await stopMcpDaemon(env);
     });

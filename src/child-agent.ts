@@ -1,37 +1,23 @@
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
-import { InMemoryCredentialStore, type CredentialStore } from "@earendil-works/pi-ai";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
-  createAgentSessionFromServices,
-  createAgentSessionServices,
-  type ModelRegistry,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
+  InMemoryCredentialStore,
+  type CredentialStore,
+} from "@earendil-works/pi-ai";
+import {
   type AgentSession,
   type AgentSessionEvent,
+  type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import { autoResolveInteractions } from "./interactions.js";
+import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
+import { resolveRecipeAgent, type ResolvedRecipeAgent } from "./recipe/resolve.js";
 import {
-  loadRecipeSystemPrompt,
-  REQUIRED_RECIPE_AGENT_FIELDS,
-  resolveRecipeAgentDefinition,
-  validateResolvedRecipeAgentDefinition,
-  type RecipeSystemInstructions,
-} from "./recipe-agent.js";
-import {
-  packageResourcePaths,
-  readPiPackageManifest,
-} from "./recipe-package.js";
-import { resolveAgentSkillPaths } from "./recipe-skills.js";
-import {
-  applyRecipeAgentModelConfigToModel,
-  applyRecipeAgentModelConfigToSession,
-} from "./recipe-model.js";
-import {
-  executableRecipeToolNames,
-} from "./mcp-policy.js";
-import type { ResolvedRecipeAgent } from "./recipe/resolve.js";
+  createAgentSession,
+  type RecipeSessionHandle,
+} from "./session.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
   recipeDir: string;
@@ -41,7 +27,6 @@ export interface CreateRecipeChildAgentRunnerOptions {
   agent?: ResolvedRecipeAgent;
   env?: NodeJS.ProcessEnv;
   credentials?: CredentialStore;
-  modelRuntime?: ModelRuntime;
   modelRegistry?: ModelRegistry;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
@@ -82,7 +67,11 @@ export type RecipeChildToolEvent =
       isError: boolean;
     };
 
-function parseModelSpec(spec: string): { provider: string; modelId: string; lookupProvider: string } {
+function parseModelSpec(spec: string): {
+  provider: string;
+  modelId: string;
+  lookupProvider: string;
+} {
   const slash = spec.indexOf("/");
   if (slash < 0) {
     throw new Error(
@@ -106,12 +95,10 @@ function modelFromSpec(
   );
 }
 
-async function modelRuntimeForChildAgent(
+async function credentialsForChildAgent(
   model: Model<any>,
   opts: CreateRecipeChildAgentRunnerOptions
-): Promise<ModelRuntime> {
-  if (opts.modelRuntime) return opts.modelRuntime;
-
+): Promise<CredentialStore> {
   const credentials = opts.credentials ?? new InMemoryCredentialStore();
   if (!opts.credentials) {
     // Resolve the child's API key up front: prefer the host registry (so a
@@ -130,7 +117,7 @@ async function modelRuntimeForChildAgent(
     }
     const env = opts.env ?? process.env;
     apiKey ??=
-      getEnvApiKey(model.provider) ??
+      getEnvApiKey(model.provider, env as Record<string, string>) ??
       env[`${model.provider.toUpperCase()}_API_KEY`];
     if (!apiKey && Object.keys(model.headers ?? {}).length === 0) {
       throw new Error(
@@ -144,16 +131,7 @@ async function modelRuntimeForChildAgent(
     }));
   }
 
-  return ModelRuntime.create({ credentials, modelsPath: null });
-}
-
-function applySystemInstructions(
-  base: string | undefined,
-  instructions: RecipeSystemInstructions | undefined
-): string | undefined {
-  if (!instructions) return base;
-  if (instructions.mode === "replace") return instructions.content;
-  return [base, instructions.content].filter(Boolean).join("\n\n");
+  return credentials;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -202,7 +180,8 @@ function messageFromEvent(event: AgentSessionEvent): Record<string, unknown> | n
 
 class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   private session: AgentSession | null = null;
-  private unsubscribe: (() => void) | null = null;
+  private handle: RecipeSessionHandle | null = null;
+  private mcpRuntimeDir: string | null = null;
   private assistantStreamedText = false;
 
   constructor(private readonly opts: CreateRecipeChildAgentRunnerOptions) {}
@@ -279,94 +258,34 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   async start(): Promise<void> {
     if (this.session) return;
 
-    const resolved = this.opts.agent;
-    const { agentName, agent } = resolved
-      ? { agentName: resolved.name, agent: resolved.definition }
-      : resolveRecipeAgentDefinition({
-          recipeDir: this.opts.recipeDir,
-          agentName: this.opts.agentName,
-        });
-    if (!agent) {
-      throw new Error(`Agent not found: ${agentName}`);
-    }
-
-    if (!resolved) {
-      const validationFindings = validateResolvedRecipeAgentDefinition({
+    const resolved =
+      this.opts.agent ??
+      resolveRecipeAgent({
         recipeDir: this.opts.recipeDir,
-        agentName,
-        requireExplicitName: true,
-        requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+        agentName: this.opts.agentName,
       });
-      const validationErrors = validationFindings.filter(
-        (finding) => finding.severity !== "warning"
-      );
-      if (validationErrors.length > 0) {
-        throw new Error(
-          validationErrors.map((finding) => finding.message).join("\n")
-        );
-      }
-    }
-
-    const modelSpec = agent.model?.name;
-    if (!modelSpec) {
-      throw new Error(`Agent "${agentName}" must declare model.name`);
-    }
     const model = applyRecipeAgentModelConfigToModel(
-      modelFromSpec(modelSpec, this.opts.modelRegistry),
-      agent.modelConfig
+      modelFromSpec(resolved.modelSpec, this.opts.modelRegistry),
+      resolved.modelConfig
     );
-    const modelRuntime = await modelRuntimeForChildAgent(model, this.opts);
-    const services = await createAgentSessionServices({
-      cwd: this.opts.workspaceDir,
-      agentDir: this.opts.recipeDir,
-      modelRuntime,
-      settingsManager: SettingsManager.create(
-        this.opts.workspaceDir,
-        this.opts.recipeDir
-      ),
-      resourceLoaderOptions: {
-        noSkills: true,
-        additionalSkillPaths:
-          resolved?.skillPaths ??
-          resolveAgentSkillPaths(
-            this.opts.recipeDir,
-            packageResourcePaths(
-              readPiPackageManifest(this.opts.recipeDir),
-              "skills"
-            ),
-            agent.skills
-          ),
-        systemPromptOverride: resolved
-          ? (base) => resolved.systemPromptOverride(base)
-          : (base) =>
-              applySystemInstructions(
-                loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
-                agent.systemInstructions
-              ),
-      },
-    });
-
-    // Delegated recipe agents are intentionally one level deep. An agent
-    // selected as the root session gets the dynamic `agent` tool from the
-    // extension, while the same definition running as a child never does.
-    const executableTools = executableRecipeToolNames(agent.tools).filter(
-      (tool) => tool !== "agent"
-    );
-    const created = await createAgentSessionFromServices({
-      services,
-      sessionManager: SessionManager.inMemory(this.opts.workspaceDir),
-      model,
-      ...(agent.model?.thinkingLevel
-        ? { thinkingLevel: agent.model.thinkingLevel as ThinkingLevel }
-        : {}),
-      tools: executableTools,
-    });
-    this.session = created.session;
-    applyRecipeAgentModelConfigToSession(this.session, agent.modelConfig);
-    await this.session.bindExtensions({});
-    this.unsubscribe = this.session.subscribe((event) => {
-      this.handleSessionEvent(event);
-    });
+    const credentials = await credentialsForChildAgent(model, this.opts);
+    this.mcpRuntimeDir = await mkdtemp(join(tmpdir(), "recipes-child-mcp-"));
+    try {
+      this.handle = await createAgentSession(resolved, {
+        cwd: this.opts.workspaceDir,
+        env: { ...(this.opts.env ?? process.env) },
+        mcpRuntimeDir: this.mcpRuntimeDir,
+        credentials,
+        modelOverride: model,
+        runController: null,
+        onEvent: (event) => this.handleSessionEvent(event),
+      });
+    } catch (error) {
+      await rm(this.mcpRuntimeDir, { recursive: true, force: true });
+      this.mcpRuntimeDir = null;
+      throw error;
+    }
+    this.session = this.handle.session;
   }
 
   async prompt(prompt: string): Promise<string> {
@@ -390,10 +309,13 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   }
 
   async shutdown(): Promise<void> {
-    this.unsubscribe?.();
-    this.unsubscribe = null;
-    this.session?.dispose();
+    await this.handle?.dispose();
+    this.handle = null;
     this.session = null;
+    if (this.mcpRuntimeDir) {
+      await rm(this.mcpRuntimeDir, { recursive: true, force: true });
+      this.mcpRuntimeDir = null;
+    }
   }
 }
 
