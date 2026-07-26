@@ -2,7 +2,7 @@
 
 **Status:** Open format, version 1  
 **Reference implementation:** `@introspection-ai/recipes`  
-**Validator:** `pi-recipe-check`
+**Validator:** `introspection check`
 
 The Recipe Format is a Git-native package contract for complete Pi agents. It
 defines the agent-owned inputs that a compatible host must interpret the same
@@ -124,18 +124,11 @@ MUST reject an unbound required server before the session begins.
 See [MCP configuration](mcp-configuration.md) for the complete authored and
 binding grammar.
 
-## Quality and resource intent
+## Quality definitions
 
 Recipe-owned judge YAML expresses portable quality definitions. Hosts MAY use
 those definitions online or offline, but MUST preserve their authored identity
 and semantics.
-
-`pi.evals` MAY pin external evaluation suites. The format records the pin; an
-evaluation runner remains an external tool.
-
-Portable resource intent is declared under the documented runtime resource
-grammar. A host decides whether it can satisfy that intent and MUST report
-unsupported required resources rather than silently weakening them.
 
 ## Host responsibilities
 
@@ -147,7 +140,7 @@ The Recipe Format owns:
 - skill, prompt, and extension selection;
 - subagent visibility;
 - capability policy;
-- quality definitions and resource intent.
+- quality definitions.
 
 The host owns:
 
@@ -162,16 +155,21 @@ The host owns:
 
 Those host concerns MUST NOT become mandatory Recipe source fields.
 
+Recipe packages are trusted application code. In particular, authored
+TypeScript extensions execute inside the Pi process with its authority. A host
+that accepts third-party Recipes MUST review or isolate them before execution;
+the format and Host API are not a sandbox boundary.
+
 ## Conformance
 
 There are two conformance layers:
 
-1. `pi-recipe-check` validates authored package snapshots without executing
-   them.
+1. `introspection check` validates authored Recipe source without executing it.
 2. `@introspection-ai/recipes/test-utils` verifies that a host constructs and
    disposes Recipe sessions with the required semantics.
 
-A host SHOULD run both layers in CI.
+Pi also runs the same validator automatically with the local profile whenever
+it launches with `--recipe`. Other hosts SHOULD run both layers in CI.
 
 ## Evolution
 

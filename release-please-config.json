@@ -7,12 +7,7 @@
   "packages": {
     ".": {
       "release-type": "node",
-      "package-name": "",
-      "exclude-paths": [
-        "bindings/python"
-      ],
-      "bump-minor-pre-major": true
+      "package-name": ""
     }
-  },
-  "bump-minor-pre-major": true
+  }
 }

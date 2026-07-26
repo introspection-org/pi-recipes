@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveRecipe } from "../src/recipe/resolve.js";
 
 const mocks = vi.hoisted(() => ({
   createAgentSessionFromServices: vi.fn(),
@@ -104,6 +105,70 @@ describe("recipe child agent tools", () => {
     expect(mocks.createAgentSessionFromServices).toHaveBeenCalledWith(
       expect.objectContaining({ tools: [] })
     );
+    await runner.shutdown();
+  });
+
+  it("constructs a resolved child from its immutable plan", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-child-resolved-"));
+    roots.push(root);
+    const recipeDir = join(root, "recipe");
+    const workspaceDir = join(root, "workspace");
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(workspaceDir, { recursive: true });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "child-resolved-test",
+        version: "0.1.0",
+        pi: { agents: ["agents/*.yaml"] },
+      })
+    );
+    const agentPath = join(recipeDir, "agents", "worker.yaml");
+    writeFileSync(
+      agentPath,
+      [
+        "name: worker",
+        "model:",
+        "  name: openai/test-model",
+        "tools: []",
+        "skills: []",
+        "subagents: []",
+        "system_instructions:",
+        "  mode: append",
+        "  content: Resolved instructions",
+        "",
+      ].join("\n")
+    );
+    const resolved = resolveRecipe({ recipeDir }).selectAgent("worker");
+    rmSync(agentPath);
+    rmSync(join(recipeDir, "package.json"));
+
+    const session = {
+      agent: {},
+      bindExtensions: vi.fn(async () => undefined),
+      dispose: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    mocks.createAgentSessionServices.mockResolvedValue({});
+    mocks.createAgentSessionFromServices.mockResolvedValue({ session });
+
+    const runner = createRecipeChildAgentRunner({
+      recipeDir,
+      workspaceDir,
+      agentName: "worker",
+      agent: resolved,
+      env: {},
+    });
+    await runner.start();
+
+    const options = mocks.createAgentSessionServices.mock.calls[0]![0] as {
+      resourceLoaderOptions: {
+        systemPromptOverride(base: string): string;
+      };
+    };
+    expect(
+      options.resourceLoaderOptions.systemPromptOverride("Base instructions")
+    ).toBe("Base instructions\n\nResolved instructions");
     await runner.shutdown();
   });
 

@@ -1,16 +1,14 @@
 # pi-recipe-check
 
-Pure validation engine for [Pi recipe](https://pi.recipes) packages: the
+Pure validation library for [Recipe](https://pi.recipes) packages: the
 `package.json#pi` manifest, agent YAML files (required fields, `from`
 inheritance, name conflicts), direct-child judge YAML definitions, MCP tool
-include/exclude policy, evals pinning, and dependency lockfile rules.
+include/exclude policy, and dependency lockfile rules.
 
-## Design: I/O-free core
+## I/O-free API
 
 The core API takes an in-memory snapshot and never touches the filesystem, so
-the same engine can be embedded natively (e.g. by `introspection-cli`), bound
-to wasm or Python later, or driven by a host that already holds file contents
-(a webhook, a git tree):
+`introspection check` can validate the files it already discovered:
 
 ```rust
 use pi_recipe_check::{check_recipe_files, CheckProfile, RecipeFile, RecipeFiles};
@@ -26,17 +24,16 @@ let report = check_recipe_files(&input, CheckProfile::Ci);
 assert!(!report.valid);
 ```
 
-The default `fs` feature adds `check_recipe(dir, profile)`, a front-end that
-walks a recipe directory into a snapshot (following file/directory symlinks
-one level, never recursively), and the `cli` feature builds the standalone
-`recipe-check` binary. The Recipes runtime npm package does not bundle the
-validator. Build with `--no-default-features` to get only the pure core.
+This crate is shared by the Introspection CLI and the Recipes extension. Its
+core remains I/O-free. The crate's `recipe-check` binary is a private
+snapshot-in/snapshot-out bridge embedded in the npm package so `pi --recipe`
+can run the same validator at startup; it is not a user-facing Recipes CLI and
+does not walk the filesystem.
 
-A standalone `resources` module validates Kubernetes-style compute
-overrides (`requests`/`limits` with `cpu`/`memory` quantities such as `500m`
-or `1.5Gi`) so hosts that carry a resources block — e.g. an Introspection
-manifest's `runtime.resources` — share one quantity grammar and consistency
-rule.
+The crate also exposes a standalone `resources` module for validating
+Kubernetes-style compute overrides in host manifests. That utility is not part
+of the Recipe Format; it is co-located here so hosts can share one pure
+quantity grammar and consistency rule.
 
 Diagnostics carry a stable `code`, a recipe-relative `path`, an optional
 1-based `span` (line/column, populated for JSON/YAML parse errors), a
@@ -45,11 +42,12 @@ escalate advisory checks — e.g. a missing dependency lockfile is a warning
 locally and an error in `ci`/`publish`.
 
 Judge sources are optional and discovered only at `judges/*.yaml` and
-`judges/*.yml`; nested YAML is ignored. The core validates the portable authored
-contract and returns `judge.*` diagnostics plus a `resources.judges` count. It
-does not expose normalized registry projections or project-scoped identity.
-See the [recipe judge specification](https://github.com/introspection-org/pi-recipes/blob/main/docs/recipe-judges.md)
-for the complete schema and the boundary with runtime evaluation.
+`judges/*.yml`; nested YAML is ignored. The library validates the portable
+authored contract and returns `judge.*` diagnostics plus a
+`resources.judges` count. It does not expose normalized registry projections
+or project-scoped identity. See the
+[Recipe judge specification](https://github.com/introspection-org/pi-recipes/blob/main/docs/recipe-judges.md)
+for the complete schema and the boundary with judge execution.
 
 ## License
 

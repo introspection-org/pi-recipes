@@ -30,12 +30,15 @@ import {
 } from "./recipe-model.js";
 import {
   executableRecipeToolNames,
-} from "./mcp.js";
+} from "./mcp-policy.js";
+import type { ResolvedRecipeAgent } from "./recipe/resolve.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
   recipeDir: string;
   workspaceDir: string;
   agentName: string;
+  /** Already-resolved agent. Pi passes this from its immutable Recipe snapshot. */
+  agent?: ResolvedRecipeAgent;
   env?: NodeJS.ProcessEnv;
   credentials?: CredentialStore;
   modelRuntime?: ModelRuntime;
@@ -276,27 +279,32 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   async start(): Promise<void> {
     if (this.session) return;
 
-    const { agentName, agent } = resolveRecipeAgentDefinition({
-      recipeDir: this.opts.recipeDir,
-      agentName: this.opts.agentName,
-    });
+    const resolved = this.opts.agent;
+    const { agentName, agent } = resolved
+      ? { agentName: resolved.name, agent: resolved.definition }
+      : resolveRecipeAgentDefinition({
+          recipeDir: this.opts.recipeDir,
+          agentName: this.opts.agentName,
+        });
     if (!agent) {
       throw new Error(`Agent not found: ${agentName}`);
     }
 
-    const validationFindings = validateResolvedRecipeAgentDefinition({
-      recipeDir: this.opts.recipeDir,
-      agentName,
-      requireExplicitName: true,
-      requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
-    });
-    const validationErrors = validationFindings.filter(
-      (finding) => finding.severity !== "warning"
-    );
-    if (validationErrors.length > 0) {
-      throw new Error(
-        validationErrors.map((finding) => finding.message).join("\n")
+    if (!resolved) {
+      const validationFindings = validateResolvedRecipeAgentDefinition({
+        recipeDir: this.opts.recipeDir,
+        agentName,
+        requireExplicitName: true,
+        requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+      });
+      const validationErrors = validationFindings.filter(
+        (finding) => finding.severity !== "warning"
       );
+      if (validationErrors.length > 0) {
+        throw new Error(
+          validationErrors.map((finding) => finding.message).join("\n")
+        );
+      }
     }
 
     const modelSpec = agent.model?.name;
@@ -318,16 +326,23 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       ),
       resourceLoaderOptions: {
         noSkills: true,
-        additionalSkillPaths: resolveAgentSkillPaths(
-          this.opts.recipeDir,
-          packageResourcePaths(readPiPackageManifest(this.opts.recipeDir), "skills"),
-          agent.skills
-        ),
-        systemPromptOverride: (base) =>
-          applySystemInstructions(
-            loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
-            agent.systemInstructions
+        additionalSkillPaths:
+          resolved?.skillPaths ??
+          resolveAgentSkillPaths(
+            this.opts.recipeDir,
+            packageResourcePaths(
+              readPiPackageManifest(this.opts.recipeDir),
+              "skills"
+            ),
+            agent.skills
           ),
+        systemPromptOverride: resolved
+          ? (base) => resolved.systemPromptOverride(base)
+          : (base) =>
+              applySystemInstructions(
+                loadRecipeSystemPrompt(this.opts.recipeDir) ?? base,
+                agent.systemInstructions
+              ),
       },
     });
 

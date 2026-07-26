@@ -15,8 +15,8 @@ pnpm test
 pnpm build
 ```
 
-`pnpm test` builds the TypeScript sources and the `recipe-check` binary before
-running vitest, so a working Rust toolchain (stable) is required.
+`pnpm test` builds the TypeScript sources and native MCP client before running
+vitest, so a working Rust toolchain (stable) is required.
 
 Install from a local clone into Pi:
 
@@ -28,9 +28,9 @@ pi install "$(pwd)"
 Pi records the local package path in `~/.pi/agent/settings.json`. Re-run
 `pnpm build` after changing extension source.
 
-## Rust Validator (`pi-recipe-check`)
+## Validation library
 
-The recipe validation engine lives in
+The pure validation library used by `introspection check` lives in
 [`crates/pi-recipe-check`](crates/pi-recipe-check). For changes there, also
 run:
 
@@ -38,38 +38,18 @@ run:
 cargo fmt --all --check
 cargo clippy -p pi-recipe-check --all-targets
 cargo test -p pi-recipe-check
-cargo build -p pi-recipe-check --no-default-features
 ```
 
-The last command guards the pure, I/O-free core: it must keep building without
-the `fs`/`cli` features so the crate stays embeddable (native, wasm, Python).
-
-## Python Bindings
-
-The typed Python package and PyO3 extension live in
-[`bindings/python`](bindings/python). Install
-[`uv`](https://docs.astral.sh/uv/getting-started/installation/), then build and
-test it from the repository root:
-
-```bash
-uv sync --project bindings/python --locked
-uv run --project bindings/python --locked ruff format --check bindings/python/python bindings/python/tests
-uv run --project bindings/python --locked ruff check bindings/python/python bindings/python/tests
-uv run --project bindings/python --locked mypy --strict bindings/python/python bindings/python/tests
-uv run --project bindings/python --locked maturin develop --manifest-path bindings/python/Cargo.toml
-uv run --project bindings/python --no-sync pytest bindings/python/tests
-```
-
-The Python binding must depend on `pi-recipe-check` with default features
-disabled so it cannot accidentally introduce filesystem access.
+Recipes does not expose a standalone validation command. Run
+`introspection check` for the supported user-facing workflow.
 
 ## Commits and Releases
 
 - Use [Conventional Commit](https://www.conventionalcommits.org) messages:
   `fix:` for patches, `feat:` for minor changes, `feat!:` or a
   `BREAKING CHANGE:` footer for major changes.
-- Releases follow SemVer and are cut automatically by release-please for both
-  the npm package and the `pi-recipe-check` crate — never bump package
+- Releases follow SemVer and are cut automatically by release-please for the
+  npm package and its validation-library dependency — never bump package
   versions by hand; let the release PRs do it.
 - Beta prereleases use the `beta` npm dist-tag, stable releases use `latest`.
 

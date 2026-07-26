@@ -1,10 +1,9 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { basename, extname, relative, resolve } from "node:path";
-import { executableRecipeToolNames } from "../mcp.js";
+import { executableRecipeToolNames } from "../mcp-policy.js";
 import {
-  loadRecipeAgentDefinitions,
+  loadValidatedRecipeAgentDefinitions,
   loadRecipeSystemPrompt,
-  validateRecipeAgentDefinitions,
   type RecipeAgentDefinition,
   type RecipeSystemInstructions,
 } from "../recipe-agent.js";
@@ -17,11 +16,14 @@ import {
   type PiPackageManifest,
 } from "../recipe-package.js";
 
-export interface ResolvedRecipe {
+export type { RecipePackageManifest } from "../recipe-package.js";
+export type { RecipeAgentMcp } from "../recipe-agent.js";
+
+export interface ResolvedRecipeAgent {
   recipeDir: string;
   manifest: PiPackageManifest;
-  agentName: string;
-  agent: RecipeAgentDefinition;
+  name: string;
+  definition: RecipeAgentDefinition;
   subagents: ReadonlyMap<string, RecipeAgentDefinition>;
   modelSpec: string;
   modelConfig?: RecipeAgentModelConfig;
@@ -34,9 +36,23 @@ export interface ResolvedRecipe {
   systemPromptOverride(base: string | undefined): string | undefined;
 }
 
-export interface ResolveRecipeOptions {
+export interface ResolveRecipeAgentOptions {
   recipeDir: string;
   agentName?: string;
+}
+
+/**
+ * One parsed Recipe package with every agent compiled into an executable plan.
+ *
+ * Hosts should keep this snapshot for the lifetime of a materialized Recipe and
+ * select root/child sessions from it instead of reparsing YAML per session.
+ */
+export interface ResolvedRecipe {
+  recipeDir: string;
+  manifest: PiPackageManifest;
+  /** Canonical names and authored aliases both resolve to the same plan. */
+  agents: ReadonlyMap<string, ResolvedRecipeAgent>;
+  selectAgent(agentName?: string): ResolvedRecipeAgent;
 }
 
 export class RecipeResolutionError extends Error {
@@ -154,50 +170,30 @@ function selectExtensionPaths(
   });
 }
 
-/** Resolve recipe-owned inputs for Pi's ordinary session constructors. */
-export function resolveRecipe(
-  opts: ResolveRecipeOptions
-): ResolvedRecipe {
-  const recipeDir = resolve(opts.recipeDir);
-  const manifest = readPiPackageManifest(recipeDir);
-  const packageErrors = validatePiPackageManifest(manifest).findings.filter(
-    (finding) => finding.severity === "error"
-  );
-  if (packageErrors.length > 0) {
-    throw new RecipeResolutionError(
-      packageErrors.map((finding) => finding.message).join("\n")
-    );
-  }
-
-  const agentErrors = validateRecipeAgentDefinitions(recipeDir).filter(
-    (finding) => finding.severity !== "warning"
-  );
-  if (agentErrors.length > 0) {
-    throw new RecipeResolutionError(
-      [
-        `Recipe "${manifest.name}" has invalid agents.`,
-        ...agentErrors.map((finding) => `- ${finding.message}`),
-        "Add the missing required fields to each agent.",
-      ].join("\n")
-    );
-  }
-
-  const agents = loadRecipeAgentDefinitions(recipeDir);
-  const { agentName, agent } = selectAgent(agents, opts.agentName);
-  const subagents = selectSubagents(agents, agent);
+function buildResolvedRecipeAgent(
+  recipeDir: string,
+  manifest: PiPackageManifest,
+  definitions: ReadonlyMap<string, RecipeAgentDefinition>,
+  agent: RecipeAgentDefinition,
+  recipeSystemPrompt: string | undefined,
+  skillResourcePaths: string[],
+  promptPaths: string[],
+  extensionPaths: string[]
+): ResolvedRecipeAgent {
+  const agentName = agent.name;
+  const subagents = selectSubagents(definitions, agent);
   const modelSpec = agent.model?.name;
   if (!modelSpec) {
     throw new RecipeResolutionError(
       `Recipe agent "${agentName}" must declare model.name`
     );
   }
-  const recipeSystemPrompt = loadRecipeSystemPrompt(recipeDir);
 
   return {
     recipeDir,
     manifest,
-    agentName,
-    agent,
+    name: agentName,
+    definition: agent,
     subagents,
     modelSpec,
     ...(agent.modelConfig ? { modelConfig: agent.modelConfig } : {}),
@@ -213,13 +209,13 @@ export function resolveRecipe(
     mcp: agent.mcp,
     skillPaths: resolveAgentSkillPaths(
       recipeDir,
-      packageResourcePaths(manifest, "skills"),
+      skillResourcePaths,
       agent.skills
     ),
-    promptPaths: packageResourcePaths(manifest, "prompts"),
+    promptPaths,
     extensionPaths: selectExtensionPaths(
       recipeDir,
-      packageResourcePaths(manifest, "extensions"),
+      extensionPaths,
       agent
     ),
     systemPromptOverride(base) {
@@ -229,4 +225,77 @@ export function resolveRecipe(
       );
     },
   };
+}
+
+/** Parse and resolve every agent in a Recipe package exactly once. */
+export function resolveRecipe(
+  opts: Pick<ResolveRecipeAgentOptions, "recipeDir">
+): ResolvedRecipe {
+  const recipeDir = resolve(opts.recipeDir);
+  const manifest = readPiPackageManifest(recipeDir);
+  const packageErrors = validatePiPackageManifest(manifest).findings.filter(
+    (finding) => finding.severity === "error"
+  );
+  if (packageErrors.length > 0) {
+    throw new RecipeResolutionError(
+      packageErrors.map((finding) => finding.message).join("\n")
+    );
+  }
+
+  const resolvedAgents = loadValidatedRecipeAgentDefinitions(recipeDir);
+  const agentErrors = resolvedAgents.findings.filter(
+    (finding) => finding.severity !== "warning"
+  );
+  if (agentErrors.length > 0) {
+    throw new RecipeResolutionError(
+      [
+        `Recipe "${manifest.name}" has invalid agents.`,
+        ...agentErrors.map((finding) => `- ${finding.message}`),
+        "Add the missing required fields to each agent.",
+      ].join("\n")
+    );
+  }
+
+  const definitions = resolvedAgents.definitions;
+  const recipeSystemPrompt = loadRecipeSystemPrompt(recipeDir);
+  const skillResourcePaths = packageResourcePaths(manifest, "skills");
+  const promptPaths = packageResourcePaths(manifest, "prompts");
+  const extensionPaths = packageResourcePaths(manifest, "extensions");
+  const canonical = new Map<string, ResolvedRecipeAgent>();
+  const agents = new Map<string, ResolvedRecipeAgent>();
+  for (const [key, definition] of definitions) {
+    let resolvedAgent = canonical.get(definition.name);
+    if (!resolvedAgent) {
+      resolvedAgent = buildResolvedRecipeAgent(
+        recipeDir,
+        manifest,
+        definitions,
+        definition,
+        recipeSystemPrompt,
+        skillResourcePaths,
+        promptPaths,
+        extensionPaths
+      );
+      canonical.set(definition.name, resolvedAgent);
+    }
+    agents.set(key, resolvedAgent);
+    agents.set(definition.name, resolvedAgent);
+  }
+
+  return {
+    recipeDir,
+    manifest,
+    agents,
+    selectAgent(agentName) {
+      const selected = selectAgent(definitions, agentName);
+      return agents.get(selected.agentName)!;
+    },
+  };
+}
+
+/** Resolve recipe-owned inputs for one Pi session. */
+export function resolveRecipeAgent(
+  opts: ResolveRecipeAgentOptions
+): ResolvedRecipeAgent {
+  return resolveRecipe({ recipeDir: opts.recipeDir }).selectAgent(opts.agentName);
 }

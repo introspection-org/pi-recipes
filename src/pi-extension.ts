@@ -42,7 +42,12 @@ import {
 import { type RecipeAgentDefinition } from "./recipe-agent.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
+  checkRecipeAtLoad,
+  formatRecipeDiagnostics,
+} from "./recipe-check.js";
+import {
   resolveRecipe,
+  type ResolvedRecipeAgent,
   type ResolvedRecipe,
 } from "./recipe/resolve.js";
 import {
@@ -56,9 +61,6 @@ export interface RecipesExtensionOptions {
   createChildAgentRunner?: CreateRecipeChildAgentRunner;
 }
 
-/** @deprecated Use `RecipesExtensionOptions`. */
-export type PiRecipesExtensionOptions = RecipesExtensionOptions;
-
 interface RecipeChildAgentRunner {
   start(): Promise<void>;
   prompt(prompt: string): Promise<unknown>;
@@ -71,6 +73,7 @@ type CreateRecipeChildAgentRunner = (opts: {
   recipeDir: string;
   workspaceDir: string;
   agentName: string;
+  agent: ResolvedRecipeAgent;
   env?: NodeJS.ProcessEnv;
   modelRegistry?: ModelRegistry;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
@@ -96,7 +99,8 @@ interface ChildRun extends ChildRunSnapshot {
 interface RecipeLaunchState {
   key: string;
   cwd: string;
-  resolved: ResolvedRecipe;
+  resolvedRecipe: ResolvedRecipe;
+  resolved: ResolvedRecipeAgent;
   extensionsLoaded: boolean;
   configured: boolean;
 }
@@ -152,7 +156,7 @@ function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
 }
 
 function scopedMcpSelections(state: RecipeLaunchState) {
-  return [state.resolved.agent, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
+  return [state.resolved.definition, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
 }
 
 function textResult<TDetails>(text: string, details: TDetails) {
@@ -210,7 +214,7 @@ function formatAgentCall(
   return `${themeFg(theme, "toolTitle", themeBold(theme, `agent ${action}`))} ${themeFg(theme, "accent", agent)}${label}`;
 }
 
-// Keep the legacy wire value so resumed transcripts retain their renderer.
+// Stable wire value used by persisted transcripts and the renderer.
 const AGENT_COMPLETIONS_TYPE = "recipe-agent-completions";
 
 interface AgentCompletionsDetails {
@@ -341,9 +345,9 @@ function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string 
     "Active Recipe",
     `Name: ${state.resolved.manifest.name}@${state.resolved.manifest.version}`,
     state.resolved.manifest.description ? `Description: ${state.resolved.manifest.description}` : undefined,
-    `Agent: ${state.resolved.agentName}`,
-    `Model: ${state.resolved.agent.model?.name ?? "(session default)"}`,
-    `Thinking level: ${state.resolved.agent.model?.thinkingLevel ?? "(session default)"}`,
+    `Agent: ${state.resolved.name}`,
+    `Model: ${state.resolved.definition.model?.name ?? "(session default)"}`,
+    `Thinking level: ${state.resolved.definition.model?.thinkingLevel ?? "(session default)"}`,
     `Subagents: ${nameList(subagents)}`,
     "",
     "Active recipe tools:",
@@ -569,6 +573,9 @@ export function createRecipesExtension(
       childRuns.delete(id);
       return controllerSummary(run, "closed");
     },
+    async shutdown() {
+      await closeAllChildRuns();
+    },
   };
 
   async function closeAllChildRuns(): Promise<void> {
@@ -613,12 +620,11 @@ export function createRecipesExtension(
     const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
     if (state?.key === key) return state;
 
-    let resolved: ResolvedRecipe;
+    let resolvedRecipe: ResolvedRecipe;
+    let resolved: ResolvedRecipeAgent;
     try {
-      resolved = resolveRecipe({
-        recipeDir,
-        agentName: requestedAgentName,
-      });
+      resolvedRecipe = resolveRecipe({ recipeDir });
+      resolved = resolvedRecipe.selectAgent(requestedAgentName);
     } catch (err) {
       throw new RecipeLaunchError(
         recipeLoadErrorMessage(flag, err instanceof Error ? err.message : String(err))
@@ -628,11 +634,12 @@ export function createRecipesExtension(
     // recipe-authored instructions. In production `env` is process.env, so
     // built-in shell tools and child agents inherit these resolved values.
     env.PI_RECIPE_DIR = recipeDir;
-    env.PI_AGENT_NAME = resolved.agentName;
+    env.PI_AGENT_NAME = resolved.name;
 
     state = {
       key,
       cwd,
+      resolvedRecipe,
       resolved,
       extensionsLoaded: false,
       configured: false,
@@ -643,18 +650,34 @@ export function createRecipesExtension(
   function safeLoadState(
     pi: Parameters<ExtensionFactory>[0],
     cwd: string,
-    ctx?: Pick<ExtensionContext, "ui">
+    ctx?: Pick<ExtensionContext, "ui" | "mode">
   ): RecipeLaunchState | null {
     try {
       return loadState(pi, cwd);
     } catch (err) {
       if (!(err instanceof RecipeLaunchError)) throw err;
       const key = [cwd, recipeFlag(pi) ?? "", err.message].join("\0");
-      if (ctx && lastLaunchErrorKey !== key) {
-        ctx.ui.notify(err.message, "warning");
+      if (lastLaunchErrorKey !== key) {
+        failRecipeSession(pi, err.message, ctx);
         lastLaunchErrorKey = key;
+      } else {
+        sessionConfigurationError = err.message;
+        pi.setActiveTools([]);
       }
       return null;
+    }
+  }
+
+  function failRecipeSession(
+    pi: Parameters<ExtensionFactory>[0],
+    message: string,
+    ctx?: Pick<ExtensionContext, "ui" | "mode">
+  ): void {
+    sessionConfigurationError = message;
+    pi.setActiveTools([]);
+    ctx?.ui.notify(`Recipe session cannot start: ${message}`, "warning");
+    if (ctx?.mode === "json" || ctx?.mode === "print") {
+      process.exitCode = 1;
     }
   }
 
@@ -696,7 +719,7 @@ export function createRecipesExtension(
 
     const labelParts = [
       `${launchState.resolved.manifest.name}@${launchState.resolved.manifest.version}`,
-      `agent:${launchState.resolved.agentName}`,
+      `agent:${launchState.resolved.name}`,
     ].filter(Boolean);
     pi.setSessionName(labelParts.join(" "));
 
@@ -813,6 +836,7 @@ export function createRecipesExtension(
       workspaceDir: launchState.cwd,
       env,
       agentName,
+      agent: launchState.resolvedRecipe.selectAgent(agentName),
       modelRegistry: ctx.modelRegistry,
       onAssistantMessage(text, stream) {
         if (!run) return;
@@ -1023,6 +1047,34 @@ export function createRecipesExtension(
     pi.on("session_start", async (_event, ctx) => {
       sessionCtx = ctx;
       localAgentContext = ctx;
+      const selectedRecipe = recipeFlag(pi);
+      if (selectedRecipe) {
+        const recipeDir = resolve(ctx.cwd, selectedRecipe);
+        if (existsSync(recipeDir)) {
+          try {
+            const report = await checkRecipeAtLoad(recipeDir, env);
+            const warnings = report.diagnostics.filter(
+              (diagnostic) => diagnostic.severity === "warning"
+            );
+            if (!report.valid) {
+              const message = formatRecipeDiagnostics(report.diagnostics);
+              failRecipeSession(pi, `validation failed\n${message}`, ctx);
+              return;
+            }
+            if (warnings.length > 0) {
+              ctx.ui.notify(
+                `Recipe validation warnings:\n${formatRecipeDiagnostics(warnings)}`,
+                "warning"
+              );
+            }
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            failRecipeSession(pi, `validation failed\n${message}`, ctx);
+            return;
+          }
+        }
+      }
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return;
       visibleAgentDefinitions.clear();
@@ -1046,12 +1098,7 @@ export function createRecipesExtension(
         // A recipe's declared model is part of its behavior contract. Continuing
         // with Pi's previously active model can produce plausible but invalid
         // results, so stop the session instead of silently falling back.
-        sessionConfigurationError = message;
-        pi.setActiveTools([]);
-        ctx.ui.notify(`Recipe session cannot start: ${message}`, "warning");
-        if (ctx.mode === "json" || ctx.mode === "print") {
-          process.exitCode = 1;
-        }
+        failRecipeSession(pi, message, ctx);
         return;
       }
       // Restore run snapshots persisted by a previous Pi process so run ids
@@ -1107,8 +1154,5 @@ export function createRecipesExtension(
     });
   };
 }
-
-/** @deprecated Use `createRecipesExtension`. */
-export const createPiRecipesExtension = createRecipesExtension;
 
 export default createRecipesExtension();

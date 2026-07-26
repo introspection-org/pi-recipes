@@ -3,14 +3,10 @@ node_modules/
 dist/
 .turbo/
 coverage/
-__pycache__/
-.pytest_cache/
-.venv/
 tmp/
 target/
 vendor/recipe-check/
 vendor/mcp-client/
-harbor/jobs/
 .pi/bin/
 .pi/mcp-catalogs/
 .pi/mcp-session.json

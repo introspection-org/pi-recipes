@@ -10,16 +10,14 @@ task lifecycle, protocols, and deployment.
 
 | Goal | Document |
 | --- | --- |
+| Create, validate, and run a Recipe | [Recipe workflow](recipe-flow.md) |
 | Understand the portable artifact contract | [Recipe Format](recipe-format.md) |
-| Embed a Recipe in a host | [Runtime library](runtime-library.md) |
+| Run a Recipe in your host | [Host API](host-api.md) |
 | Run a Recipe in Pi | [Pi extension](pi-extension.md) |
 | Compose agents and subagents | [Agent composition](agent-composition.md) |
 | Ask for user input across hosts | [Interactions](interactions.md) |
 | Declare capability policy and bindings | [MCP configuration](mcp-configuration.md) |
-| Declare portable resource intent | [Deployment configuration](deployment-configuration.md) |
 | Package quality definitions | [Recipe judges](recipe-judges.md) |
-| Declare offline evaluation suites | [Recipe evals](recipe-evals.md) |
-| Move from the previous package | [Migration](migration.md) |
 
 ## Boundary
 
@@ -30,20 +28,19 @@ Recipe source
 resolveRecipe()          format interpretation
     │
     ▼
-createRecipeSession()    complete live Pi agent
+createAgentSession()     complete live Pi agent
     │
-    ├── runRecipe()      one-turn convenience
-    │
-    └── host             tasks, persistence, auth, protocols, deployment
+    ├── createAgentSessionFromRecipe() resolve-and-create convenience
+    ├── runRecipe()           one-turn convenience
+    └── host                  tasks, persistence, auth, protocols, deployment
 ```
 
 Recipes stops at the live session boundary. It does not ship a generic server,
-task store, scheduler, sandbox, or provider-specific deployment adapter.
+task store, scheduler, sandbox, or provider-specific hosting integration.
 
-The first-party hosts are:
+The same contracts power:
 
 - the Pi terminal harness through the Recipes extension;
-- Introspection's managed `runtime-agent`.
+- Node.js hosts through `createAgentSession()`.
 
-Other hosts implement the same session contract and can run the host
-conformance suite.
+Every host can run the exported conformance suite against its integration.

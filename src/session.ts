@@ -44,7 +44,12 @@ import {
   applyRecipeAgentModelConfigToModel,
   applyRecipeAgentModelConfigToSession,
 } from "./recipe-model.js";
-import { resolveRecipe, type ResolvedRecipe } from "./recipe/resolve.js";
+import {
+  resolveRecipeAgent,
+  resolveRecipe,
+  type ResolvedRecipeAgent,
+  type ResolvedRecipe,
+} from "./recipe/resolve.js";
 
 export { expectedProviderEnvVars } from "./provider-env.js";
 
@@ -57,7 +62,7 @@ export { expectedProviderEnvVars } from "./provider-env.js";
  * `required: true` MCP server with no binding throws `McpBindingError`, and a
  * model whose provider has no credential throws `RecipeCredentialError`.
  */
-export interface CreateRecipeSessionOptions {
+export interface CreateAgentSessionFromRecipeOptions {
   recipeDir: string;
   /** Default: `agents/agent.yaml`, else the recipe's single-agent rule. */
   agentName?: string;
@@ -92,13 +97,13 @@ export interface CreateRecipeSessionOptions {
   settingsManager?: SettingsManager;
   /** Host extensions appended after the recipe's own extensions. */
   extensionFactories?: ExtensionFactory[];
-  /** Host event bus shared with the surrounding runtime. */
+  /** Host event bus shared with the surrounding application. */
   eventBus?: EventBus;
   /** Host-owned tools. Recipe tool selection still decides which names are live. */
   customTools?: ToolDefinition[];
   /**
    * Subagent run controller. Default: an in-process controller spawning
-   * children through this same rung. Pass `null` to disable the `agent` tool
+   * child Recipe sessions. Pass `null` to disable the `agent` tool
    * even when the recipe declares subagents.
    */
   runController?: AgentRunController | null;
@@ -138,12 +143,32 @@ export interface RecipeSessionOtelOptions
 export interface RecipeSessionHandle {
   /** The live Pi session: prompt / steer / followUp / abort / subscribe. */
   session: AgentSession;
-  recipe: ResolvedRecipe;
+  /** The selected executable agent plan used to create this session. */
+  agent: ResolvedRecipeAgent;
   /** The subagent run controller serving this session's `agent` tool. */
   runs: AgentRunController;
   /** Abort any in-flight turn, dispose the session, stop session MCP. */
   dispose(): Promise<void>;
 }
+
+/**
+ * Host injections for an already-resolved Recipe.
+ *
+ * Use this with `createAgentSession()` when a host must inspect
+ * the portable definition before materializing credentials, endpoints, or
+ * other host resources. The exact inspected definition is then used for
+ * construction without resolving the package a second time.
+ */
+export type CreateAgentSessionOptions = Omit<
+  CreateAgentSessionFromRecipeOptions,
+  "recipeDir" | "agentName"
+> & {
+  /**
+   * The resolved Recipe that produced `agent`. Required by the default in-process
+   * controller so child sessions use the exact same resolved source.
+   */
+  recipe?: ResolvedRecipe;
+};
 
 /** The session model's provider has no resolvable credential. */
 export class RecipeCredentialError extends Error {
@@ -186,6 +211,46 @@ function parseModelSpec(spec: string): {
   return { provider, modelId, lookupProvider };
 }
 
+type MutableAgentSession = {
+  agent?: { state?: { tools?: Array<{ parameters?: unknown }> } };
+};
+
+function stripAdditionalProperties(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  const clone: object = Array.isArray(value)
+    ? []
+    : Object.create(Object.getPrototypeOf(value));
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === "additionalProperties") continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    if ("value" in descriptor) {
+      descriptor.value = stripAdditionalProperties(descriptor.value);
+    }
+    Object.defineProperty(clone, key, descriptor);
+  }
+  return clone;
+}
+
+/**
+ * Gemini rejects JSON Schema's `additionalProperties` keyword in tool
+ * declarations. Normalize the final Recipe toolset after host tools and the
+ * shared agent tool have been registered so every host gets the same behavior.
+ */
+function normalizeSessionToolsForModel(
+  session: AgentSession,
+  model: Model<any>
+): void {
+  const isGemini = [model.id, model.name].some((value) =>
+    value?.toLowerCase().includes("gemini")
+  );
+  if (!isGemini) return;
+  const mutableSession = session as MutableAgentSession;
+  for (const tool of mutableSession.agent?.state?.tools ?? []) {
+    tool.parameters = stripAdditionalProperties(tool.parameters);
+  }
+}
+
 /**
  * Ambient-credential providers resolve from their own SDK chain (AWS
  * profiles, ADC); `getEnvApiKey` reports them as "<authenticated>".
@@ -198,7 +263,7 @@ const AMBIENT_CREDENTIAL_SENTINEL = "<authenticated>";
  */
 async function resolveCredentialStore(
   lookupProvider: string,
-  opts: CreateRecipeSessionOptions
+  opts: CreateAgentSessionFromRecipeOptions
 ): Promise<CredentialStore> {
   if (opts.credentials) {
     const stored = await opts.credentials.read(lookupProvider);
@@ -233,8 +298,8 @@ async function resolveCredentialStore(
   return store;
 }
 
-function scopedMcpSelections(recipe: ResolvedRecipe): ScopedMcpToolSelection[] {
-  return [recipe.agent, ...recipe.subagents.values()].flatMap((agent) =>
+function scopedMcpSelections(recipe: ResolvedRecipeAgent): ScopedMcpToolSelection[] {
+  return [recipe.definition, ...recipe.subagents.values()].flatMap((agent) =>
     resolveAgentMcpSelections(agent.mcp)
   );
 }
@@ -257,14 +322,14 @@ export class RecipeMcpEnvironmentInUseError extends Error {
 }
 
 /**
- * Everything `createRecipeSession` fail-closes on, without creating a
+ * Everything `createAgentSessionFromRecipe` fail-closes on, without creating a
  * session or starting MCP: recipe resolution, model lookup, credentials.
- * Hosts with a boot phase (the serve layer) run this once to fail fast.
+ * Hosts with a boot phase can run this once to fail fast.
  */
 export async function preflightRecipeSession(
-  opts: CreateRecipeSessionOptions
-): Promise<ResolvedRecipe> {
-  const recipe = resolveRecipe({
+  opts: CreateAgentSessionFromRecipeOptions
+): Promise<ResolvedRecipeAgent> {
+  const recipe = resolveRecipeAgent({
     recipeDir: opts.recipeDir,
     ...(opts.agentName ? { agentName: opts.agentName } : {}),
   });
@@ -290,15 +355,15 @@ export async function preflightRecipeSession(
 
 /**
  * Materialize the session MCP runtime for a recipe scope into `env` at
- * `cwd`. Exposed for hosts that materialize once per process (the serve
- * layer) and create their sessions with `mcpMode: "inherit"`.
+ * `cwd`. Exposed for hosts that materialize once per process and create their
+ * sessions with `mcpMode: "inherit"`.
  */
 export async function materializeRecipeSessionMcp(
-  recipe: ResolvedRecipe,
+  recipe: ResolvedRecipeAgent,
   cwd: string,
   env: NodeJS.ProcessEnv,
   opts: Pick<
-    CreateRecipeSessionOptions,
+    CreateAgentSessionFromRecipeOptions,
     "mcpBindings" | "mcpBindingsPath" | "mcpMode"
   > = {}
 ): Promise<{ materialized: boolean }> {
@@ -309,10 +374,10 @@ export async function materializeRecipeSessionMcp(
 }
 
 async function configureSessionMcp(
-  recipe: ResolvedRecipe,
+  recipe: ResolvedRecipeAgent,
   cwd: string,
   env: NodeJS.ProcessEnv,
-  opts: CreateRecipeSessionOptions,
+  opts: CreateAgentSessionFromRecipeOptions,
   leaseEnvironment: boolean
 ): Promise<MaterializedSessionMcp> {
   const selections = scopedMcpSelections(recipe);
@@ -372,13 +437,10 @@ async function configureSessionMcp(
   }
 }
 
-export async function createRecipeSession(
-  opts: CreateRecipeSessionOptions
+async function createSessionForAgent(
+  recipe: ResolvedRecipeAgent,
+  opts: CreateAgentSessionFromRecipeOptions & { recipe?: ResolvedRecipe }
 ): Promise<RecipeSessionHandle> {
-  const recipe = resolveRecipe({
-    recipeDir: opts.recipeDir,
-    ...(opts.agentName ? { agentName: opts.agentName } : {}),
-  });
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
   const otel = opts.otel
@@ -388,8 +450,8 @@ export async function createRecipeSession(
           conversationId: opts.otel.meta?.conversationId ?? randomUUID(),
           agentId:
             opts.otel.meta?.agentId ??
-            `${recipe.manifest.name}/${recipe.agentName}`,
-          agentName: opts.otel.meta?.agentName ?? recipe.agentName,
+            `${recipe.manifest.name}/${recipe.name}`,
+          agentName: opts.otel.meta?.agentName ?? recipe.name,
         },
       }
     : undefined;
@@ -424,11 +486,7 @@ export async function createRecipeSession(
     unsubscribe = undefined;
     if (runs) {
       try {
-        for (const run of runs.list()) {
-          if (run.status !== "closed") {
-            await runs.close(run.agent_run_id).catch(() => {});
-          }
-        }
+        await runs.shutdown();
       } catch {
         // Child teardown is best-effort; the session still disposes.
       }
@@ -501,7 +559,7 @@ export async function createRecipeSession(
       );
       runs = wantsSubagents
         ? createInProcessRunController({
-            recipeDir: recipe.recipeDir,
+            recipe: opts.recipe!,
             cwd,
             env,
             ...(opts.credentials ? { credentials: opts.credentials } : {}),
@@ -531,6 +589,7 @@ export async function createRecipeSession(
       customTools,
     });
     session = created.session;
+    normalizeSessionToolsForModel(session, model);
     applyRecipeAgentModelConfigToSession(session, recipe.modelConfig);
     await session.bindExtensions({});
 
@@ -544,7 +603,7 @@ export async function createRecipeSession(
     let disposed = false;
     return {
       session: liveSession,
-      recipe,
+      agent: recipe,
       runs: liveRuns,
       async dispose(): Promise<void> {
         if (disposed) return;
@@ -556,4 +615,37 @@ export async function createRecipeSession(
     await cleanup();
     throw error;
   }
+}
+
+export async function createAgentSessionFromRecipe(
+  opts: CreateAgentSessionFromRecipeOptions
+): Promise<RecipeSessionHandle> {
+  const resolvedRecipe = resolveRecipe({ recipeDir: opts.recipeDir });
+  const recipe = resolvedRecipe.selectAgent(opts.agentName);
+  return createSessionForAgent(recipe, { ...opts, recipe: resolvedRecipe });
+}
+
+export async function createAgentSession(
+  agent: ResolvedRecipeAgent,
+  opts: CreateAgentSessionOptions
+): Promise<RecipeSessionHandle> {
+  if (opts.recipe && opts.recipe.selectAgent(agent.name) !== agent) {
+    throw new Error(
+      `Resolved agent "${agent.name}" does not belong to the supplied ResolvedRecipe`
+    );
+  }
+  if (
+    agent.subagents.size > 0 &&
+    opts.runController === undefined &&
+    !opts.recipe
+  ) {
+    throw new Error(
+      "createAgentSession requires its ResolvedRecipe when using the default subagent controller"
+    );
+  }
+  return createSessionForAgent(agent, {
+    ...opts,
+    recipeDir: agent.recipeDir,
+    agentName: agent.name,
+  });
 }

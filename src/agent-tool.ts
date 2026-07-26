@@ -45,6 +45,8 @@ export interface AgentRunController {
   message(id: string, message: string): Promise<AgentRunSummary>;
   interrupt(id: string): Promise<AgentRunSummary>;
   close(id: string): Promise<AgentRunSummary>;
+  /** Release every run and resource owned by this session's controller. */
+  shutdown(): Promise<void>;
 }
 
 const AgentToolParams = Type.Object({

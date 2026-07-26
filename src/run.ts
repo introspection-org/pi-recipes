@@ -1,8 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { promptResultText } from "./child-agent.js";
 import {
-  createRecipeSession,
-  type CreateRecipeSessionOptions,
+  createAgentSessionFromRecipe,
+  type CreateAgentSessionFromRecipeOptions,
 } from "./session.js";
 
 /**
@@ -13,17 +13,17 @@ import {
  * caller mistakes (bad options, unreadable recipe, missing credentials)
  * throw, from session construction.
  */
-export interface RunRecipeOptions extends CreateRecipeSessionOptions {
+export interface RunRecipeOptions extends CreateAgentSessionFromRecipeOptions {
   prompt: string;
   timeoutMs?: number;
   signal?: AbortSignal;
-  /** Session factory; defaults to `createRecipeSession`. Test/DI seam. */
+  /** Session factory; defaults to `createAgentSessionFromRecipe`. Test/DI seam. */
   sessionFactory?: (
-    options: CreateRecipeSessionOptions
+    options: CreateAgentSessionFromRecipeOptions
   ) => Promise<import("./session.js").RecipeSessionHandle>;
 }
 
-export interface RecipeRunResult {
+export interface RunRecipeResult {
   status: "finished" | "failed" | "cancelled";
   /** Final assistant message text ("" if none). */
   text: string;
@@ -54,7 +54,7 @@ function lastAssistantStop(messages: readonly AgentMessage[]): {
 
 export async function runRecipe(
   options: RunRecipeOptions
-): Promise<RecipeRunResult> {
+): Promise<RunRecipeResult> {
   const { prompt, timeoutMs, signal, sessionFactory, ...sessionOptions } =
     options;
   if (typeof prompt !== "string" || !prompt.trim()) {
@@ -64,7 +64,7 @@ export async function runRecipe(
     return { status: "cancelled", text: "", messages: [] };
   }
 
-  const handle = await (sessionFactory ?? createRecipeSession)(sessionOptions);
+  const handle = await (sessionFactory ?? createAgentSessionFromRecipe)(sessionOptions);
   let timedOut = false;
   let aborted = false;
   let timer: NodeJS.Timeout | undefined;

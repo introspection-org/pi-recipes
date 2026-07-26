@@ -1,10 +1,10 @@
 /**
- * Host conformance suite for the recipe engine.
+ * Host conformance suite for Recipe sessions.
  *
- * A host that adopts `createRecipeSession` with its own injected pieces —
+ * A host that adopts `createAgentSessionFromRecipe` with its own injected pieces —
  * credential store, synthesized MCP bindings, run controller — runs these
  * cases in its own CI. Passing the suite is what "supported host" means: the
- * engine's contract cannot drift from its consumers silently.
+ * session contract cannot drift from its consumers silently.
  *
  * The cases are runner-agnostic: each is a `{ name, run }` pair that throws
  * on failure. In vitest:
@@ -19,18 +19,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import type {
-  CreateRecipeSessionOptions,
+  CreateAgentSessionFromRecipeOptions,
   RecipeSessionHandle,
 } from "./session.js";
 
-export interface RecipeEngineHostAdapter {
+export interface RecipeHost {
   /**
-   * Create a session the way the host's runtime does — through its own
-   * engine invocation, with the host's default injections applied. The
-   * options here layer the suite's fixture on top.
+   * Create a session with the host's default injections applied. The options
+   * here layer the suite's fixture on top.
    */
   createSession(
-    options: CreateRecipeSessionOptions
+    options: CreateAgentSessionFromRecipeOptions
   ): Promise<RecipeSessionHandle>;
 }
 
@@ -133,7 +132,7 @@ async function testCredentialStore(): Promise<InMemoryCredentialStore> {
 }
 
 export function hostConformanceCases(
-  host: RecipeEngineHostAdapter
+  host: RecipeHost
 ): HostConformanceCase[] {
   return [
     {
@@ -148,7 +147,7 @@ export function hostConformanceCases(
             env: { ...cleanEnv() },
           });
           try {
-            assert(handle.recipe.agentName === "agent", "agentName resolves");
+            assert(handle.agent.name === "agent", "agentName resolves");
             assert(
               handle.session.systemPrompt.includes("conformance fixture"),
               "SYSTEM.md reaches the system prompt"
@@ -231,6 +230,7 @@ export function hostConformanceCases(
         });
         try {
           const env = { ...cleanEnv() };
+          const originalPath = env.PATH;
           const handle = await host.createSession({
             recipeDir: fixture.recipeDir,
             cwd: fixture.workspaceDir,
@@ -247,6 +247,12 @@ export function hostConformanceCases(
             },
           });
           await handle.dispose();
+          await handle.dispose();
+          assert(
+            env.MCPORTER_CONFIG === undefined,
+            "dispose restores an absent MCPORTER_CONFIG"
+          );
+          assert(env.PATH === originalPath, "dispose restores PATH");
         } finally {
           fixture.cleanup();
         }

@@ -1,65 +1,57 @@
-use std::path::PathBuf;
+use std::io::Read;
 use std::process::ExitCode;
 
-use anyhow::Result;
-use clap::{Parser, ValueEnum};
-use pi_recipe_check::{check_recipe, render_human, CheckProfile};
+use pi_recipe_check::{check_recipe_files, CheckProfile, RecipeFiles};
 
-#[derive(Debug, Parser)]
-#[command(name = "recipe-check", about = "Check a Pi recipe package")]
-struct Cli {
-    /// Recipe directory to check.
-    #[arg(default_value = ".")]
-    recipe_dir: PathBuf,
-
-    /// Emit a machine-readable JSON report.
-    #[arg(long)]
-    json: bool,
-
-    /// Validation profile.
-    #[arg(long, value_enum, default_value = "local")]
-    profile: ProfileArg,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum ProfileArg {
-    Local,
-    Ci,
-    Publish,
-}
-
-impl From<ProfileArg> for CheckProfile {
-    fn from(value: ProfileArg) -> Self {
-        match value {
-            ProfileArg::Local => Self::Local,
-            ProfileArg::Ci => Self::Ci,
-            ProfileArg::Publish => Self::Publish,
-        }
+fn profile(args: &[String]) -> Result<CheckProfile, String> {
+    let value = args
+        .windows(2)
+        .find_map(|pair| (pair[0] == "--profile").then_some(pair[1].as_str()))
+        .unwrap_or("local");
+    match value {
+        "local" => Ok(CheckProfile::Local),
+        "ci" => Ok(CheckProfile::Ci),
+        "publish" => Ok(CheckProfile::Publish),
+        _ => Err(format!("unknown check profile: {value}")),
     }
 }
 
-fn run() -> Result<ExitCode> {
-    let cli = Cli::parse();
-    let report = check_recipe(&cli.recipe_dir, cli.profile.into())?;
-    if cli.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+fn run() -> Result<ExitCode, String> {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if !args.windows(2).any(|pair| pair == ["--snapshot", "-"]) {
+        return Err(
+            "recipe-check is an internal snapshot validator; expected --snapshot -".to_owned(),
+        );
+    }
+    if !args.iter().any(|arg| arg == "--json") {
+        return Err("recipe-check requires --json".to_owned());
+    }
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|error| format!("failed to read recipe snapshot: {error}"))?;
+    let files: RecipeFiles = serde_json::from_str(&input)
+        .map_err(|error| format!("failed to parse recipe snapshot: {error}"))?;
+    let report = check_recipe_files(&files, profile(&args)?);
+    println!(
+        "{}",
+        serde_json::to_string(&report)
+            .map_err(|error| format!("failed to serialize check report: {error}"))?
+    );
+    Ok(if report.valid {
+        ExitCode::SUCCESS
     } else {
-        print!("{}", render_human(&report));
-    }
-
-    if report.valid {
-        Ok(ExitCode::SUCCESS)
-    } else {
-        Ok(ExitCode::from(1))
-    }
+        ExitCode::from(1)
+    })
 }
 
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
-        Err(err) => {
-            eprintln!("{err:#}");
-            ExitCode::from(1)
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::from(2)
         }
     }
 }

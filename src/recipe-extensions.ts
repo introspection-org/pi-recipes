@@ -34,9 +34,6 @@ function recipeExtensionAliases(): Record<string, string> {
       // The self-alias also keeps recipe interaction imports on this package
       // instance, sharing interrupt state with the child-agent runner.
       ["@introspection-ai/recipes", recipesRoot],
-      // Recipes authored before the package rename keep sharing this runtime's
-      // interaction state instead of loading a second legacy package copy.
-      ["@introspection-ai/pi-recipes", recipesRoot],
       ["@earendil-works/pi-coding-agent", resolvePackageModuleRoot("@earendil-works/pi-coding-agent")],
       ["@earendil-works/pi-agent-core", resolvePackageModuleRoot("@earendil-works/pi-agent-core")],
       ["@earendil-works/pi-ai", resolvePackageModuleRoot("@earendil-works/pi-ai")],

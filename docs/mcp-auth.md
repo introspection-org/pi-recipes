@@ -49,13 +49,13 @@ cannot initiate authentication.
 
 ## Hosted bindings
 
-Hosted runtimes adapt their endpoint and credential systems into the same
+Hosts adapt their endpoint and credential systems into the same
 `.pi/mcp.local.json` shape before starting Recipes. Header values remain
 environment references, so credentials are resolved at runtime rather than
 written into the recipe workspace. Deployment-specific bootstrap, token, and
-egress behavior belongs to the hosting adapter, not this package.
+egress behavior belongs to the host, not this package.
 
-Regardless of where a recipe runs, the agent sees one rule: MCP operations are
+Regardless of where a Recipe runs, the agent sees one rule: MCP operations are
 headless. When authentication is missing, it receives a deployment-neutral
 recovery telling it to ask the user to authenticate the connection outside the
 agent session and then retry; `mcp run --json-errors` reports this as
@@ -75,6 +75,6 @@ reads an absolute local path supplied by an MCP result; server output must not
 choose files for an agent session to read.
 
 This command policy prevents accidental escape from the materialized MCP
-surface. It is not an OS or network sandbox: the enclosing local shell or
-managed runtime remains responsible for filesystem, process, and egress
+surface. It is not an OS or network sandbox: the enclosing local shell or host
+remains responsible for filesystem, process, and egress
 isolation.

@@ -14,7 +14,7 @@ import {
   readPiPackageManifest,
   validatePiPackageManifest,
 } from "../src/recipe-package.js";
-import { resolveRecipe } from "../src/recipe/resolve.js";
+import { resolveRecipeAgent } from "../src/recipe/resolve.js";
 
 const cleanups: Array<() => void> = [];
 
@@ -74,8 +74,8 @@ describe("Recipe Format", () => {
       join(recipeDir, "skills", "research", "SKILL.md"),
     ]);
 
-    const recipe = resolveRecipe({ recipeDir });
-    expect(recipe.agentName).toBe("agent");
+    const recipe = resolveRecipeAgent({ recipeDir });
+    expect(recipe.name).toBe("agent");
     expect(recipe.modelSpec).toBe("anthropic/claude-sonnet-4-5");
     expect(recipe.tools).toEqual(["read"]);
     expect(recipe.skillPaths).toEqual([
@@ -93,7 +93,7 @@ describe("Recipe Format", () => {
       })
     );
 
-    expect(() => resolveRecipe({ recipeDir })).toThrow(
+    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
       /declares agents resource outside the package/
     );
   });
@@ -123,8 +123,15 @@ describe("npm package boundary", () => {
     expect(pkg.exports).toHaveProperty("./session");
     expect(pkg.exports).toHaveProperty("./run");
     expect(pkg.exports).toHaveProperty("./test-utils");
-    expect(pkg.files).not.toContain("harbor/pi_recipe_agent.py");
     expect(existsSync(join(root, "src", "cli.ts"))).toBe(false);
     expect(existsSync(join(root, "src", "serve.ts"))).toBe(false);
+    // Internal snapshot bridge used by `pi --recipe`; it is not exposed in
+    // package.json#bin and therefore does not restore a Recipes CLI.
+    expect(
+      existsSync(join(root, "crates", "pi-recipe-check", "src", "main.rs"))
+    ).toBe(true);
+    expect(existsSync(join(root, "bindings"))).toBe(false);
+    expect(existsSync(join(root, "harbor"))).toBe(false);
+    expect(existsSync(join(root, "docs", "recipe-evals.md"))).toBe(false);
   });
 });

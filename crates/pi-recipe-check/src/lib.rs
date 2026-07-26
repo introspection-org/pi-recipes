@@ -1,11 +1,9 @@
-//! Pure validation engine for Pi recipe packages.
+//! Pure validation library for Recipe packages.
 //!
 //! The core API is I/O-free: [`check_recipe_files`] takes an in-memory
 //! [`RecipeFiles`] snapshot of a recipe directory and returns a [`Report`].
-//! Hosts (the bundled `recipe-check` binary, npm wrapper, Python binding, or a
-//! future wasm binding) are responsible for reading files. The `fs` feature
-//! (default) provides [`check_recipe`], a filesystem front-end that walks a
-//! recipe directory and feeds the pure core.
+//! The Introspection CLI owns filesystem discovery and presents snapshots to
+//! this library.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path};
@@ -13,14 +11,9 @@ use std::path::{Component, Path};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-#[cfg(feature = "fs")]
-pub mod fs;
 mod judges;
 pub mod resources;
 pub mod spec;
-
-#[cfg(feature = "fs")]
-pub use fs::check_recipe;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -615,10 +608,19 @@ fn validate_pi_config(
     let Some(JsonValue::Object(pi)) = package.pi.as_ref() else {
         return resolved;
     };
-    let known: HashSet<&str> = ["agents", "extensions", "skills", "prompts", "mcp", "evals"]
+    let known: HashSet<&str> = ["agents", "extensions", "skills", "prompts", "mcp"]
         .into_iter()
         .collect();
     for key in pi.keys() {
+        if key == "evals" {
+            ctx.error(
+                "pi.evals_unsupported",
+                PACKAGE_JSON,
+                "package.json#pi.evals is not supported",
+                Some("keep evaluation configuration outside the Recipe"),
+            );
+            continue;
+        }
         if !known.contains(key.as_str()) {
             ctx.warning(
                 "pi.unknown_key",
@@ -653,7 +655,6 @@ fn validate_pi_config(
     }
 
     validate_mcp_config(pi.get("mcp"), ctx);
-    validate_evals_config(pi.get("evals"), ctx);
 
     resolved
 }
@@ -1763,136 +1764,6 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
     }
 }
 
-fn validate_evals_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
-    let Some(value) = value else {
-        return;
-    };
-    let JsonValue::Object(evals) = value else {
-        ctx.error(
-            "evals.suite_invalid",
-            PACKAGE_JSON,
-            "package.json#pi.evals must be an object with a suites array",
-            Some("remove evals or declare a suites list"),
-        );
-        return;
-    };
-    let Some(suites) = evals.get("suites") else {
-        return;
-    };
-    let JsonValue::Array(suites) = suites else {
-        ctx.error(
-            "evals.suite_invalid",
-            PACKAGE_JSON,
-            "package.json#pi.evals.suites must be an array",
-            Some("use a list of evaluation suite declarations"),
-        );
-        return;
-    };
-
-    let mut seen = HashMap::new();
-    for (index, suite) in suites.iter().enumerate() {
-        let label = format!("pi.evals.suites[{index}]");
-        let JsonValue::Object(suite) = suite else {
-            ctx.error(
-                "evals.suite_invalid",
-                PACKAGE_JSON,
-                format!("{label} must be an object"),
-                Some("remove the entry or make it a suite declaration"),
-            );
-            continue;
-        };
-        let name = string_value(suite.get("name"));
-        if let Some(name) = &name {
-            if let Some(first) = seen.insert(name.clone(), index) {
-                ctx.error(
-                    "evals.name_duplicate",
-                    PACKAGE_JSON,
-                    format!("{label} reuses suite name '{name}' already declared at pi.evals.suites[{first}]"),
-                    Some("give each evaluation suite a unique name"),
-                );
-            }
-        } else {
-            ctx.error(
-                "evals.suite_invalid",
-                PACKAGE_JSON,
-                format!("{label} must declare a non-empty name"),
-                Some("give the evaluation suite a unique non-empty name"),
-            );
-        }
-        let suite_type = string_value(suite.get("type"));
-        match suite_type.as_deref() {
-            Some("registry") => validate_registry_eval_suite(suite, &label, ctx),
-            Some("git") => validate_git_eval_suite(suite, &label, ctx),
-            _ => ctx.error(
-                "evals.suite_invalid",
-                PACKAGE_JSON,
-                format!("{label} must use type 'registry' or 'git'"),
-                Some("choose the suite type that matches the dataset source"),
-            ),
-        }
-    }
-}
-
-fn validate_registry_eval_suite(suite: &JsonMap, label: &str, ctx: &mut CheckContext) {
-    if string_value(suite.get("dataset")).is_none() {
-        ctx.error(
-            "evals.suite_invalid",
-            PACKAGE_JSON,
-            format!("{label} registry suite must declare dataset"),
-            Some("set the registry dataset identifier"),
-        );
-    }
-    match string_value(suite.get("version")) {
-        Some(version) if fixed_registry_tag(&version) => {}
-        Some(version) => ctx.error(
-            "evals.pin_mutable",
-            PACKAGE_JSON,
-            format!("{label} registry version must be an explicit Harbor registry tag, not a mutable alias or range: {version}"),
-            Some("pin the dataset to an immutable registry tag"),
-        ),
-        None => ctx.error(
-            "evals.suite_invalid",
-            PACKAGE_JSON,
-            format!("{label} registry suite must declare version"),
-            Some("pin the dataset to an immutable registry tag"),
-        ),
-    }
-}
-
-fn validate_git_eval_suite(suite: &JsonMap, label: &str, ctx: &mut CheckContext) {
-    if string_value(suite.get("repo")).is_none() {
-        ctx.error(
-            "evals.suite_invalid",
-            PACKAGE_JSON,
-            format!("{label} git suite must declare repo"),
-            Some("set the repository containing the evaluation dataset"),
-        );
-    }
-    match string_value(suite.get("rev")) {
-        Some(rev) if fixed_git_rev(&rev) => {}
-        Some(rev) => ctx.error(
-            "evals.pin_mutable",
-            PACKAGE_JSON,
-            format!("{label} git rev must be a 7-40 character hex commit SHA: {rev}"),
-            Some("pin the repository to an immutable commit"),
-        ),
-        None => ctx.error(
-            "evals.suite_invalid",
-            PACKAGE_JSON,
-            format!("{label} git suite must declare rev"),
-            Some("pin the repository to an immutable commit"),
-        ),
-    }
-    if string_value(suite.get("dataset")).is_none() {
-        ctx.error(
-            "evals.suite_invalid",
-            PACKAGE_JSON,
-            format!("{label} git suite must declare dataset"),
-            Some("set the dataset path within the repository"),
-        );
-    }
-}
-
 fn validate_json_string_array(value: &JsonValue, label: &str, code: &str, ctx: &mut CheckContext) {
     let JsonValue::Array(items) = value else {
         ctx.error(
@@ -2105,23 +1976,6 @@ fn safe_mcp_server_id(value: &str) -> String {
     } else {
         id
     }
-}
-
-fn fixed_registry_tag(value: &str) -> bool {
-    let tag = value.trim();
-    if tag.is_empty() || tag.eq_ignore_ascii_case("latest") {
-        return false;
-    }
-    if tag.chars().any(char::is_whitespace) || tag.chars().any(|ch| "^~<>=*|".contains(ch)) {
-        return false;
-    }
-    !tag.split(['.', '_', '-'])
-        .any(|part| part.eq_ignore_ascii_case("x"))
-}
-
-fn fixed_git_rev(value: &str) -> bool {
-    let len = value.len();
-    (7..=40).contains(&len) && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn has_glob(value: &str) -> bool {
@@ -2447,6 +2301,35 @@ mod tests {
             diagnostic.code == "mcp.local_example_malformed"
                 && diagnostic.severity == Severity::Warning
         }));
+    }
+
+    #[test]
+    fn rejects_recipe_eval_declarations() {
+        let package = json!({
+            "name": "evals-unsupported",
+            "pi": {
+                "agents": ["agents/*.yaml"],
+                "evals": { "suites": [] }
+            }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\n  thinking_level: low\ntools: []\nsystem_instructions:\n  content: Test\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input, CheckProfile::Local);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "pi.evals_unsupported"));
     }
 
     #[test]

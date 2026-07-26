@@ -8,7 +8,7 @@ of agents without making every agent identical.
 
 | Layer | Scope | Use it for |
 | --- | --- | --- |
-| `package.json#pi` | Entire recipe package | Declaring available agents, extensions, skills, prompts, MCP servers, and evals |
+| `package.json#pi` | Entire Recipe package | Declaring available agents, extensions, skills, prompts, and MCP servers |
 | `SYSTEM.md` | Every root and delegated agent in the recipe | Shared mission, terminology, policies, and workflow rules |
 | `agents/*.yaml` | One selected agent | Model, tools, selected skills, visible subagents, extension/MCP selection, and role-specific instructions |
 
@@ -28,7 +28,7 @@ system_instructions:
 - `append` adds the agent-specific content after the shared recipe prompt.
 - `replace` intentionally replaces the current prompt, including `SYSTEM.md`.
 
-When a recipe has no `SYSTEM.md`, Pi's normal base prompt is the starting
+When a Recipe has no `SYSTEM.md`, Pi's normal base prompt is the starting
 prompt. When `SYSTEM.md` exists, it becomes the recipe-wide starting prompt.
 Recipes then applies the selected agent's `system_instructions` mode.
 
@@ -160,8 +160,8 @@ what is active:
 - Prompt templates declared by the package are recipe resources; they are not
   specialized through `from:`.
 
-Skill and subagent selection controls prompt exposure and runtime capability,
-not filesystem isolation. All agents run in the same recipe package and current
+Skill and subagent selection controls prompt exposure and active capability,
+not filesystem isolation. All agents run in the same Recipe package and current
 workspace. Use sandboxing and external authorization for security boundaries.
 
 ## Root Agents and Subagents

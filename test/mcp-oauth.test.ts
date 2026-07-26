@@ -47,7 +47,6 @@ describe("MCP OAuth session configuration", () => {
             },
           ],
         },
-        evals: { suites: [] },
       };
 
       const session = await materializeMcpSession({

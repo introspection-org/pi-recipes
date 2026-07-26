@@ -10,6 +10,8 @@ await build({
   platform: "node",
   format: "esm",
   target: "node22",
+  splitting: true,
+  chunkNames: "mcp-chunks/[name]-[hash]",
   mainFields: ["module", "main"],
   packages: "bundle",
   legalComments: "none",

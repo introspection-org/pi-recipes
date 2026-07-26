@@ -21,7 +21,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createRecipesExtension } from "../src/pi-extension.js";
-import { createMockExtensionAPI, type MockExtensionAPI } from "../src/testing.js";
+import {
+  createMockExtensionAPI,
+  type MockExtensionAPI,
+} from "./helpers/mock-extension.js";
 
 // Shared gate between the mocked store and the test body. Hoisted so the
 // vi.mock factory (also hoisted) can close over it.

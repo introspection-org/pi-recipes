@@ -8,16 +8,17 @@ import type {
 import { autoResolveInteractions } from "./interactions.js";
 import { promptResultText } from "./child-agent.js";
 import type {
-  CreateRecipeSessionOptions,
+  CreateAgentSessionOptions,
   RecipeSessionOtelOptions,
   RecipeSessionHandle,
 } from "./session.js";
+import type { ResolvedRecipe } from "./recipe/resolve.js";
 
 /** Default in-process child concurrency. */
 export const DEFAULT_SUBAGENT_CONCURRENCY = 4;
 
 export interface InProcessRunControllerOptions {
-  recipeDir: string;
+  recipe: ResolvedRecipe;
   cwd: string;
   env?: NodeJS.ProcessEnv;
   credentials?: CredentialStore;
@@ -25,9 +26,10 @@ export interface InProcessRunControllerOptions {
   concurrency?: number;
   /** Root session instrumentation inherited by in-process child sessions. */
   otel?: RecipeSessionOtelOptions;
-  /** Child session factory; defaults to `createRecipeSession`. Test/DI seam. */
+  /** Child session factory; defaults to `createAgentSession`. Test/DI seam. */
   sessionFactory?: (
-    options: CreateRecipeSessionOptions
+    agent: ReturnType<ResolvedRecipe["selectAgent"]>,
+    options: CreateAgentSessionOptions
   ) => Promise<RecipeSessionHandle>;
 }
 
@@ -47,13 +49,13 @@ class RunNotFoundError extends Error {
 }
 
 /**
- * The default rung-3 subagent controller: children are recipe sessions
- * created through `createRecipeSession` in this process, with bounded
- * concurrency and delegation depth.
+ * The default in-process subagent controller. Children are Recipe sessions
+ * created through `createAgentSession`, with bounded concurrency and
+ * one-level delegation.
  *
  * Recovery rule every controller must honor: a child whose agent profile no
  * longer exists errors the parent's `agent` tool call — it never wedges it.
- * Here that falls out of resolution: `createRecipeSession` throws for an
+ * Here that falls out of Recipe selection: selecting an
  * unknown agent name, the run settles as `failed`, and `start`/`wait`
  * resolve with that failure.
  */
@@ -109,10 +111,10 @@ export function createInProcessRunController(
       if (!run.handle) {
         const sessionFactory =
           opts.sessionFactory ??
-          (await import("./session.js")).createRecipeSession;
-        run.handle = await sessionFactory({
-          recipeDir: opts.recipeDir,
-          agentName: run.summary.agent_name,
+          (await import("./session.js")).createAgentSession;
+        const childAgent = opts.recipe.selectAgent(run.summary.agent_name);
+        run.handle = await sessionFactory(childAgent, {
+          recipe: opts.recipe,
           cwd: opts.cwd,
           env,
           ...(opts.credentials ? { credentials: opts.credentials } : {}),
@@ -152,19 +154,17 @@ export function createInProcessRunController(
       // Children never own the root interaction lifecycle: their asks resolve
       // internally so a child cannot strand the parent waiting on a user.
       await autoResolveInteractions(() => run.handle!.session.prompt(prompt));
+      if (run.summary.status !== "running") return;
       const output = promptResultText({
         messages: [...run.handle.session.messages],
       });
-      // The prompt await can race an external interrupt even though the run
-      // was "running" before it began.
-      const interrupted =
-        (run.summary.status as AgentRunStatus) === "interrupted";
       touch(run, {
-        status: interrupted ? "interrupted" : "completed",
+        status: "completed",
         output,
         completed_at: Date.now(),
       });
     } catch (err) {
+      if (run.summary.status !== "running") return;
       touch(run, {
         status: "failed",
         error: err instanceof Error ? err.message : String(err),
@@ -268,15 +268,25 @@ export function createInProcessRunController(
 
     async close(id: string): Promise<AgentRunSummary> {
       const run = requireRun(id);
-      if (run.summary.status === "running") {
+      if (run.summary.status !== "closed") {
+        touch(run, {
+          status: "closed",
+          completed_at: run.summary.completed_at ?? Date.now(),
+        });
         await run.handle?.session.abort().catch(() => {});
       }
       await run.handle?.dispose().catch(() => {});
       run.handle = null;
-      if (run.summary.status === "running" || run.summary.status !== "closed") {
-        touch(run, { status: "closed", completed_at: run.summary.completed_at ?? Date.now() });
-      }
+      await run.settled.catch(() => {});
       return run.summary;
+    },
+
+    async shutdown(): Promise<void> {
+      await Promise.all(
+        [...runs.values()]
+          .filter((run) => run.summary.status !== "closed")
+          .map((run) => this.close(run.summary.agent_run_id).then(() => undefined))
+      );
     },
   };
 }
@@ -301,5 +311,6 @@ export function inertRunController(): AgentRunController {
     async close(id: string) {
       throw new RunNotFoundError(id);
     },
+    async shutdown() {},
   };
 }

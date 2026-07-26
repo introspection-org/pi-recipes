@@ -19,6 +19,19 @@ import {
   type RecipeMcpToolSelection,
 } from "./recipe-package.js";
 import { generatedBindingEnvVars } from "./recipe-mcp-config.js";
+import {
+  mcpSelectionAllowsTool,
+  type ScopedMcpToolSelection,
+} from "./mcp-policy.js";
+
+export { preloadMcpCatalogs } from "./mcp-catalog.js";
+export {
+  executableRecipeToolNames,
+  mcpSelectionAllowsTool,
+  normalizeMcpServerId,
+  resolveAgentMcpSelections,
+  type ScopedMcpToolSelection,
+} from "./mcp-policy.js";
 
 export interface McpToolCatalogEntry {
   name: string;
@@ -386,10 +399,6 @@ function safeServerId(value: string): string {
   return id || "mcp";
 }
 
-export function normalizeMcpServerId(value: string): string {
-  return safeServerId(value);
-}
-
 function hostForUrl(value: string): string {
   try {
     return new URL(value).hostname.toLowerCase();
@@ -482,24 +491,6 @@ function endpointBindings(
   return bindings;
 }
 
-export interface ScopedMcpToolSelection {
-  serverId: string;
-  tools: RecipeMcpToolSelection;
-}
-
-export function resolveAgentMcpSelections(
-  mcp: Readonly<Record<string, RecipeMcpToolSelection>> | undefined
-): ScopedMcpToolSelection[] {
-  return Object.entries(mcp ?? {}).map(([serverId, selection]) => ({
-    serverId: safeServerId(serverId),
-    tools: selection,
-  }));
-}
-
-export function executableRecipeToolNames(tools: readonly string[]): string[] {
-  return [...tools];
-}
-
 export function formatMcpConfigurationDiagnostics(
   diagnostics: readonly McpConfigurationDiagnostic[],
   limit = 3
@@ -527,18 +518,6 @@ function recipeMcpPolicy(mcp: RecipePackageMcpConfig): {
       mcp.servers.map((server) => [safeServerId(server.id), server.tools])
     ),
   };
-}
-
-export function mcpSelectionAllowsTool(
-  selection: RecipeMcpToolSelection,
-  toolName: string
-): boolean {
-  const included = selection.include?.some((selector) => {
-    const trimmed = selector.trim();
-    return trimmed === "*" || trimmed === toolName;
-  }) ?? false;
-  if (!included) return false;
-  return !(selection.exclude ?? []).some((selector) => selector.trim() === toolName);
 }
 
 export function mcpSessionAllowsTool(

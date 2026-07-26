@@ -12,6 +12,8 @@ import {
   askUserApproval,
   askUserQuestion,
   autoResolveInteractions,
+  formatInteractionOutcome,
+  formatInteractionResume,
   type AskUserOutcome,
 } from "../src/interactions.js";
 
@@ -649,6 +651,34 @@ describe("askUser", () => {
         interactive: async () => entry.outcome,
       });
       expect(result.content).toEqual([{ type: "text", text: entry.text }]);
+      expect(formatInteractionOutcome(entry.outcome)).toBe(entry.text);
     }
+  });
+
+  it("formats host resume records into the frozen interaction envelope", () => {
+    expect(
+      formatInteractionResume({
+        status: "resumed",
+        payload: { answer: "  Tea  " },
+      })
+    ).toBe("Answer: Tea");
+    expect(
+      formatInteractionResume({
+        status: "resumed",
+        payload: { approved: true, feedback: "  Ship it  " },
+      })
+    ).toBe("Approved. Feedback: Ship it");
+    expect(
+      formatInteractionResume({
+        status: "resumed",
+        payload: { approved: false },
+      })
+    ).toBe("Revision requested.");
+    expect(formatInteractionResume({ status: "cancelled" })).toBe(
+      "User declined to answer. Proceed with your best judgment."
+    );
+    expect(formatInteractionResume({ status: "expired" })).toBe(
+      "Interrupt response: expired"
+    );
   });
 });
