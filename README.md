@@ -90,12 +90,12 @@ npm install @introspection-ai/recipes
 Choose the lowest useful layer:
 
 ```ts
-import { resolveRecipe } from "@introspection-ai/recipes/recipe";
+import { resolveRecipeGraph } from "@introspection-ai/recipes/recipe";
 
-const recipe = resolveRecipe({
+const graph = resolveRecipeGraph({
   recipeDir: "./my-recipe",
-  agentName: "agent",
 });
+const recipe = graph.select("agent");
 ```
 
 ```ts

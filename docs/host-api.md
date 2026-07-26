@@ -6,15 +6,18 @@ defines the boundary between the portable agent and the system operating it.
 ## API layers
 
 ```text
-resolveRecipe()          read and resolve the portable package
+resolveRecipeGraph()     parse every agent in the portable package once
+    │
+    ├── graph.select()   select root and child execution plans
     │
     ▼
-createRecipeSession()    resolve and construct the complete live Pi session
+createRecipeSessionFromResolved()
+                          construct one selected plan
     │
-    ├── createRecipeSessionFromResolved()
-    │                         construct the exact definition already inspected
+    ├── createRecipeSession()
+    │                     resolve one plan and construct it
     │
-    └── runRecipe()      execute one turn and dispose
+    └── runRecipe()       execute one turn and dispose
 ```
 
 Hosts choose the lowest layer they need.
@@ -34,25 +37,30 @@ The result contains the selected agent, visible subagents, model settings,
 tools, MCP policy, skills, prompts, extensions, and system-prompt composition.
 It does not create a model client or start a session.
 
-When host provisioning depends on the resolved requirements, construct the
-session from that same object rather than resolving the package again:
+Long-lived hosts and hosts with persistent subagents should resolve the package
+graph once, then select root and child plans from it:
 
 ```ts
-import { resolveRecipe } from "@introspection-ai/recipes/recipe";
+import { resolveRecipeGraph } from "@introspection-ai/recipes/recipe";
 import {
   createRecipeSessionFromResolved,
 } from "@introspection-ai/recipes/session";
 
-const recipe = resolveRecipe({ recipeDir, agentName });
-const credentials = await credentialsFor(recipe.model.provider);
+const graph = resolveRecipeGraph({ recipeDir });
+const recipe = graph.select(agentName);
+const credentials = await credentialsFor(recipe.modelSpec);
 
 const handle = await createRecipeSessionFromResolved(recipe, {
   cwd: workspaceDir,
   credentials,
 });
+
+const childRecipe = graph.select("researcher");
 ```
 
-This keeps inspection and construction on one immutable resolution result.
+This keeps inspection and construction on the same resolution results and
+avoids reparsing the package for every child session. `resolveRecipe()` remains
+the convenience API for selecting one plan.
 
 ## `createRecipeSession`
 

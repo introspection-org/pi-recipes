@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   RecipeResolutionError,
   resolveRecipe,
+  resolveRecipeGraph,
 } from "../src/recipe/resolve.js";
 
 const roots: string[] = [];
@@ -98,6 +99,30 @@ describe("resolveRecipe", () => {
     const recipeDir = makeRecipe();
     const resolved = resolveRecipe({ recipeDir, agentName: "agent" });
     expect(resolved.agentName).toBe("researcher");
+  });
+
+  it("resolves the package graph once for root and child session plans", () => {
+    const recipeDir = makeRecipe();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: researcher",
+        "from: base",
+        "description: Researcher",
+        "subagents: [base]",
+      ].join("\n")
+    );
+
+    const graph = resolveRecipeGraph({ recipeDir });
+    const root = graph.select();
+    const alias = graph.select("agent");
+    const child = graph.select("base");
+
+    expect(alias).toBe(root);
+    expect(root.agentName).toBe("researcher");
+    expect(root.subagents.get("base")).toBe(child.agent);
+    expect(child.agentName).toBe("base");
+    expect(child.tools).not.toContain("agent");
   });
 
   it("uses safe defaults for omitted optional agent fields", () => {

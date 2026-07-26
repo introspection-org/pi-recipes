@@ -294,19 +294,15 @@ function readRecipeAgentSources(
   return sources;
 }
 
-export function loadRecipeAgentDefinitions(
-  recipeDir: string
+function definitionsFromSources(
+  sources: RecipeAgentSource[],
+  warnOnInvalidInheritance: boolean
 ): Map<string, RecipeAgentDefinition> {
   const rawDefinitions = new Map<string, ParsedRecipeAgentDefinition>();
   const aliases = new Map<string, string>();
   const resolvedDefinitions = new Map<string, RecipeAgentDefinition>();
   const definitions = new Map<string, RecipeAgentDefinition>();
 
-  const sources = readRecipeAgentSources(recipeDir, {
-    onInvalidFile: (path, error) => {
-      console.warn(`[recipes] skipping ${path}: ${error.message}`);
-    },
-  });
   for (const source of sources) {
     rawDefinitions.set(source.definition.name, source.definition);
     aliases.set(source.fallbackName, source.definition.name);
@@ -371,13 +367,15 @@ export function loadRecipeAgentDefinitions(
   for (const name of rawDefinitions.keys()) {
     const definition = resolveDefinition(name);
     if (!definition) {
-      console.warn(
-        `[recipes] skipping agent "${name}": ${fromChainSkipReason(
-          name,
-          rawDefinitions,
-          resolveName
-        )}`
-      );
+      if (warnOnInvalidInheritance) {
+        console.warn(
+          `[recipes] skipping agent "${name}": ${fromChainSkipReason(
+            name,
+            rawDefinitions,
+            resolveName
+          )}`
+        );
+      }
       continue;
     }
     definitions.set(name, definition);
@@ -389,6 +387,17 @@ export function loadRecipeAgentDefinitions(
   }
 
   return definitions;
+}
+
+export function loadRecipeAgentDefinitions(
+  recipeDir: string
+): Map<string, RecipeAgentDefinition> {
+  const sources = readRecipeAgentSources(recipeDir, {
+    onInvalidFile: (path, error) => {
+      console.warn(`[recipes] skipping ${path}: ${error.message}`);
+    },
+  });
+  return definitionsFromSources(sources, true);
 }
 
 /** Explain why an agent's from: chain failed to resolve (cycle or missing base). */
@@ -426,16 +435,19 @@ function recipeAgentFieldProvided(
   return definition.systemInstructions !== undefined;
 }
 
-export function validateResolvedRecipeAgentDefinition(opts: {
-  recipeDir: string;
-  agentName: string;
-  requireExplicitName?: boolean;
-  requiredFields?: RequiredResolvedRecipeAgentField[];
-}): RecipeAgentValidationFinding[] {
+function validateResolvedRecipeAgentSource(
+  opts: {
+    recipeDir: string;
+    agentName: string;
+    requireExplicitName?: boolean;
+    requiredFields?: RequiredResolvedRecipeAgentField[];
+  },
+  sources: RecipeAgentSource[]
+): RecipeAgentValidationFinding[] {
   const rawDefinitions = new Map<string, ParsedRecipeAgentDefinition>();
   const aliases = new Map<string, string>();
   const explicitNames = new Map<string, boolean>();
-  for (const source of readRecipeAgentSources(opts.recipeDir)) {
+  for (const source of sources) {
     rawDefinitions.set(source.definition.name, source.definition);
     aliases.set(source.fallbackName, source.definition.name);
     explicitNames.set(source.definition.name, source.explicitName);
@@ -605,6 +617,18 @@ export function validateResolvedRecipeAgentDefinition(opts: {
   return findings;
 }
 
+export function validateResolvedRecipeAgentDefinition(opts: {
+  recipeDir: string;
+  agentName: string;
+  requireExplicitName?: boolean;
+  requiredFields?: RequiredResolvedRecipeAgentField[];
+}): RecipeAgentValidationFinding[] {
+  return validateResolvedRecipeAgentSource(
+    opts,
+    readRecipeAgentSources(opts.recipeDir)
+  );
+}
+
 function isValidRecipeModelSpec(spec: string): boolean {
   const slash = spec.indexOf("/");
   if (slash <= 0 || slash === spec.length - 1) return false;
@@ -670,7 +694,44 @@ function validateRecipeAgentNames(
   return findings;
 }
 
-export function validateRecipeAgentDefinitions(recipeDir: string): RecipeAgentValidationFinding[] {
+function validateRecipeAgentSources(
+  recipeDir: string,
+  sources: RecipeAgentSource[],
+  invalidFileFindings: RecipeAgentValidationFinding[]
+): RecipeAgentValidationFinding[] {
+  const agentNames = [
+    ...new Set(sources.map((source) => source.definition.name)),
+  ].sort();
+  return [
+    ...invalidFileFindings,
+    ...validateRecipeAgentNames(sources),
+    ...validateRecipeAgentModelSpecs(sources),
+    ...agentNames.flatMap((agentName) =>
+      validateResolvedRecipeAgentSource(
+        {
+          recipeDir,
+          agentName,
+          requireExplicitName: true,
+          requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
+        },
+        sources
+      )
+    ),
+  ];
+}
+
+export interface ValidatedRecipeAgentDefinitions {
+  definitions: Map<string, RecipeAgentDefinition>;
+  findings: RecipeAgentValidationFinding[];
+}
+
+/**
+ * Parse agent YAML once, then validate and resolve the complete inheritance
+ * graph from that exact source snapshot.
+ */
+export function loadValidatedRecipeAgentDefinitions(
+  recipeDir: string
+): ValidatedRecipeAgentDefinitions {
   const invalidFileFindings: RecipeAgentValidationFinding[] = [];
   const sources = readRecipeAgentSources(recipeDir, {
     onInvalidFile: (path, error) => {
@@ -681,20 +742,20 @@ export function validateRecipeAgentDefinitions(recipeDir: string): RecipeAgentVa
       });
     },
   });
-  const agentNames = [...new Set(sources.map((source) => source.definition.name))].sort();
-  return [
-    ...invalidFileFindings,
-    ...validateRecipeAgentNames(sources),
-    ...validateRecipeAgentModelSpecs(sources),
-    ...agentNames.flatMap((agentName) =>
-      validateResolvedRecipeAgentDefinition({
-        recipeDir,
-        agentName,
-        requireExplicitName: true,
-        requiredFields: REQUIRED_RECIPE_AGENT_FIELDS,
-      })
+  return {
+    definitions: definitionsFromSources(sources, false),
+    findings: validateRecipeAgentSources(
+      recipeDir,
+      sources,
+      invalidFileFindings
     ),
-  ];
+  };
+}
+
+export function validateRecipeAgentDefinitions(
+  recipeDir: string
+): RecipeAgentValidationFinding[] {
+  return loadValidatedRecipeAgentDefinitions(recipeDir).findings;
 }
 
 export function resolveRecipeAgentName(opts: {
