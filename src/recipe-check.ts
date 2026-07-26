@@ -1,5 +1,15 @@
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,12 +56,36 @@ function executableName(): string {
   return process.platform === "win32" ? "recipe-check.exe" : "recipe-check";
 }
 
+function executablePath(path: string): string {
+  if (process.platform === "win32") return path;
+  try {
+    accessSync(path, constants.X_OK);
+    return path;
+  } catch {
+    // npm preserves executable mode only for package.json#bin entries. Recipes
+    // intentionally exposes no CLI, so a packed native helper arrives as 0644.
+  }
+  try {
+    chmodSync(path, 0o755);
+    accessSync(path, constants.X_OK);
+    return path;
+  } catch {
+    // Some package stores are immutable. Materialize the private helper in a
+    // process-owned temporary directory rather than requiring an install hook.
+    const directory = mkdtempSync(join(tmpdir(), "pi-recipe-check-"));
+    const target = join(directory, executableName());
+    copyFileSync(path, target);
+    chmodSync(target, 0o755);
+    return target;
+  }
+}
+
 function validatorCommand(env: NodeJS.ProcessEnv): {
   command: string;
   args: string[];
 } {
   if (env.PI_RECIPE_CHECK_BIN) {
-    return { command: env.PI_RECIPE_CHECK_BIN, args: [] };
+    return { command: executablePath(env.PI_RECIPE_CHECK_BIN), args: [] };
   }
   const root = packageRoot();
   const packaged = resolve(
@@ -61,11 +95,15 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
     `${process.platform}-${process.arch}`,
     executableName()
   );
-  if (existsSync(packaged)) return { command: packaged, args: [] };
+  if (existsSync(packaged)) {
+    return { command: executablePath(packaged), args: [] };
+  }
 
   for (const profile of ["release", "debug"]) {
     const candidate = resolve(root, "target", profile, executableName());
-    if (existsSync(candidate)) return { command: candidate, args: [] };
+    if (existsSync(candidate)) {
+      return { command: executablePath(candidate), args: [] };
+    }
   }
   const manifest = resolve(root, "crates", "pi-recipe-check", "Cargo.toml");
   if (existsSync(manifest)) {

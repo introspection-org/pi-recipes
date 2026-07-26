@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -75,5 +82,25 @@ describe("shared Recipe validator bridge", () => {
       valid: true,
       profile: "local",
     });
+  });
+
+  it("runs a validator whose npm package mode was normalized to 0644", async () => {
+    const root = recipe(
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/claude-haiku-4-5",
+        "tools: []",
+      ].join("\n")
+    );
+    const binDir = mkdtempSync(join(tmpdir(), "recipe-check-mode-"));
+    roots.push(binDir);
+    const validator = join(binDir, "recipe-check");
+    copyFileSync(env.PI_RECIPE_CHECK_BIN, validator);
+    chmodSync(validator, 0o644);
+
+    await expect(
+      checkRecipeAtLoad(root, { PI_RECIPE_CHECK_BIN: validator })
+    ).resolves.toMatchObject({ valid: true });
   });
 });
