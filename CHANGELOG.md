@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.14.0](https://github.com/introspection-org/recipes/compare/v0.13.0...v0.14.0) (2026-07-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* define the portable Recipe session boundary ([#132](https://github.com/introspection-org/recipes/issues/132))
+
+### Bug Fixes
+
+* keep releases on pre-1 feature increments ([#135](https://github.com/introspection-org/recipes/issues/135)) ([e165fd8](https://github.com/introspection-org/recipes/commit/e165fd8899498a733f97e2c4ea5f69f3865c5180))
+
+
+### Code Refactoring
+
+* define the portable Recipe session boundary ([#132](https://github.com/introspection-org/recipes/issues/132)) ([86de676](https://github.com/introspection-org/recipes/commit/86de67668d9066dcf00303cf394d752a7c67a427))
+
 ## [0.13.0](https://github.com/introspection-org/pi-recipes/compare/v0.12.0...v0.13.0) (2026-07-26)
 
 
