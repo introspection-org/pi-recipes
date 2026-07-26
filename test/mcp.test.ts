@@ -887,11 +887,13 @@ describe("lazy MCP CLI discovery", () => {
         ],
       });
 
+      const startedAt = Date.now();
       const catalogs = await preloadMcpCatalogs({
         env,
         allowPartial: true,
         timeoutMs: 250,
       });
+      expect(Date.now() - startedAt).toBeLessThan(1_500);
       expect(catalogs.find((server) => server.id === "stub")?.error).toBeFalsy();
       expect(catalogs.find((server) => server.id === "offline")?.error).toBeTruthy();
       const listAttempts = stub.stats.list;

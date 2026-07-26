@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -119,6 +125,7 @@ describe("Recipe child agent runner", () => {
     });
     await runner.start();
 
+    const sessionOptions = mocks.createAgentSession.mock.calls[0]?.[1];
     expect(mocks.createAgentSession).toHaveBeenCalledWith(
       resolved,
       expect.objectContaining({
@@ -131,11 +138,14 @@ describe("Recipe child agent runner", () => {
         runController: null,
       })
     );
+    expect(sessionOptions.mcpRuntimeDir).not.toBe(workspaceDir);
+    expect(existsSync(sessionOptions.mcpRuntimeDir)).toBe(true);
 
     expect(await runner.prompt("inspect")).toBe("done");
     expect(handle.session.prompt).toHaveBeenCalledWith("inspect");
     await runner.shutdown();
     expect(handle.dispose).toHaveBeenCalledOnce();
+    expect(existsSync(sessionOptions.mcpRuntimeDir)).toBe(false);
   });
 
   it("uses each resolved child's own MCP mode", async () => {
@@ -147,7 +157,8 @@ describe("Recipe child agent runner", () => {
       "  servers:",
       "    contacts:",
       '      include: ["search_contacts"]',
-      "  initial_tools: {}",
+      "  initial_tools:",
+      '    contacts: [" search_contacts "]',
     ]);
     const resolved = resolveRecipe({ recipeDir }).selectAgent("worker");
     mockHandle();
@@ -162,6 +173,9 @@ describe("Recipe child agent runner", () => {
     await runner.start();
 
     expect(resolved.mcp?.mode).toBe("tools");
+    expect(resolved.mcp?.initialTools).toEqual({
+      contacts: ["search_contacts"],
+    });
     expect(mocks.createAgentSession.mock.calls[0]?.[0]).toBe(resolved);
     expect(mocks.createAgentSession.mock.calls[0]?.[1]).not.toHaveProperty(
       "mcpProvisioning"

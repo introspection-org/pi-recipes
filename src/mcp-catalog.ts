@@ -33,7 +33,14 @@ export function preloadMcpCatalogs(options: {
     let catalogs: McpCatalogServer[] | undefined;
     let daemonError: string | undefined;
     await exchangeMcpDaemon(
-      { type: "catalog", id, token, fingerprint, timeoutMs },
+      {
+        type: "catalog",
+        id,
+        token,
+        fingerprint,
+        timeoutMs,
+        ...(options.allowPartial ? { allowPartial: true } : {}),
+      },
       (envelope, socket) => {
         if ("catalogs" in envelope) {
           catalogs = envelope.catalogs;

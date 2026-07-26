@@ -43,6 +43,7 @@ export interface McpDaemonCatalogRequest {
   token: string;
   fingerprint: string;
   timeoutMs: number;
+  allowPartial?: boolean;
 }
 
 export interface McpDaemonCallRequest {

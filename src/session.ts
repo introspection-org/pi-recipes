@@ -86,6 +86,8 @@ export interface CreateAgentSessionFromRecipeOptions {
   mcpBindingsPath?: string;
   /** Inline MCP bindings, for hosts that synthesize them instead of reading a file. */
   mcpBindings?: McpLocalConfig;
+  /** @internal Private MCP state root used by in-process child sessions. */
+  mcpRuntimeDir?: string;
   /**
    * MCP provisioning owner. "session" (default) resolves bindings and
    * prepares the session MCP runtime in `env`; "host" trusts that the host
@@ -439,6 +441,7 @@ async function configureSessionMcp(
   if (selections.length === 0) return { materialized: false };
   const mode = recipe.mcp?.mode ?? "cli";
   const hostProvisioned = opts.mcpProvisioning === "host";
+  const mcpCwd = opts.mcpRuntimeDir ?? cwd;
   const snapshot =
     !hostProvisioned && mode === "cli"
       ? snapshotMcpEnvironment(env)
@@ -490,10 +493,10 @@ async function configureSessionMcp(
         });
       }
       if (mode === "cli") {
-        await materializeSessionMcpCli({ cwd, env: runtimeEnv });
+        await materializeSessionMcpCli({ cwd: mcpCwd, env: runtimeEnv });
       }
       session = await materializeMcpSession({
-        cwd,
+        cwd: mcpCwd,
         manifest: recipe.manifest,
         agentMcp: selections,
         env: runtimeEnv,

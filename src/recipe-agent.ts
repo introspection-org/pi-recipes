@@ -226,7 +226,7 @@ function parseMcp(data: Record<string, unknown>): RecipeAgentMcp | undefined {
     ? Object.fromEntries(
         Object.entries(rawInitialTools).map(([serverId, selectors]) => [
           normalizedMcpServerId(serverId),
-          stringArray(selectors),
+          stringArray(selectors).map((selector) => selector.trim()),
         ])
       )
     : undefined;

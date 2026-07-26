@@ -167,6 +167,11 @@ export async function callMcpDaemonTool(
     );
   }
   await ensureMcpDaemon(env);
+  if (signal?.aborted) {
+    throw new Error(
+      `MCP tool call '${server}.${tool}' was cancelled before execution.`
+    );
+  }
   const { token, fingerprint } = mcpDaemonEnvironment(env);
   const id = randomUUID();
   const timeoutMs = options.timeoutMs ?? 120_000;

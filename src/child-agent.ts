@@ -1,4 +1,7 @@
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   InMemoryCredentialStore,
   type CredentialStore,
@@ -178,6 +181,7 @@ function messageFromEvent(event: AgentSessionEvent): Record<string, unknown> | n
 class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   private session: AgentSession | null = null;
   private handle: RecipeSessionHandle | null = null;
+  private mcpRuntimeDir: string | null = null;
   private assistantStreamedText = false;
 
   constructor(private readonly opts: CreateRecipeChildAgentRunnerOptions) {}
@@ -265,14 +269,22 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       resolved.modelConfig
     );
     const credentials = await credentialsForChildAgent(model, this.opts);
-    this.handle = await createAgentSession(resolved, {
-      cwd: this.opts.workspaceDir,
-      env: this.opts.env ?? process.env,
-      credentials,
-      modelOverride: model,
-      runController: null,
-      onEvent: (event) => this.handleSessionEvent(event),
-    });
+    this.mcpRuntimeDir = await mkdtemp(join(tmpdir(), "recipes-child-mcp-"));
+    try {
+      this.handle = await createAgentSession(resolved, {
+        cwd: this.opts.workspaceDir,
+        env: { ...(this.opts.env ?? process.env) },
+        mcpRuntimeDir: this.mcpRuntimeDir,
+        credentials,
+        modelOverride: model,
+        runController: null,
+        onEvent: (event) => this.handleSessionEvent(event),
+      });
+    } catch (error) {
+      await rm(this.mcpRuntimeDir, { recursive: true, force: true });
+      this.mcpRuntimeDir = null;
+      throw error;
+    }
     this.session = this.handle.session;
   }
 
@@ -300,6 +312,10 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     await this.handle?.dispose();
     this.handle = null;
     this.session = null;
+    if (this.mcpRuntimeDir) {
+      await rm(this.mcpRuntimeDir, { recursive: true, force: true });
+      this.mcpRuntimeDir = null;
+    }
   }
 }
 

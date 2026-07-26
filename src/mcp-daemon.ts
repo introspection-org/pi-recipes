@@ -389,7 +389,18 @@ function handle(request: McpDaemonRequest, socket: Socket): void {
     return;
   }
   if (request.type === "catalog") {
-    void preloadCatalogs(request.timeoutMs)
+    const catalogs = request.allowPartial
+      ? runtime()
+          .then((value) => discoverMcpCatalogs(value, request.timeoutMs))
+          .then((result) => {
+            catalogPreloadResult = result;
+            if (!catalogHealthy(result)) {
+              void preloadCatalogs(request.timeoutMs).catch(() => {});
+            }
+            return result;
+          })
+      : preloadCatalogs(request.timeoutMs);
+    void catalogs
       .then(
         (catalogs) => send(socket, { id: request.id, catalogs }),
         (error) =>
