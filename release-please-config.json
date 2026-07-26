@@ -7,7 +7,9 @@
   "packages": {
     ".": {
       "release-type": "node",
-      "package-name": ""
+      "package-name": "",
+      "bump-minor-pre-major": true
     }
-  }
+  },
+  "bump-minor-pre-major": true
 }

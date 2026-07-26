@@ -9,7 +9,8 @@
     "crates/pi-recipe-check": {
       "release-type": "rust",
       "component": "pi-recipe-check",
-      "include-component-in-tag": true
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
     }
   },
   "plugins": [
@@ -17,5 +18,6 @@
       "type": "cargo-workspace",
       "merge": false
     }
-  ]
+  ],
+  "bump-minor-pre-major": true
 }
