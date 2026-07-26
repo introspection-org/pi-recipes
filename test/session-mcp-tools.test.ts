@@ -14,7 +14,6 @@ vi.mock("../src/mcp-catalog.js", () => ({
 import { piMcpToolName } from "../src/mcp-tools.js";
 import {
   resolveRecipe,
-  resolveRecipeAgent,
 } from "../src/recipe/resolve.js";
 import {
   createAgentSession,
@@ -214,7 +213,7 @@ describe("canonical Recipe session MCP tools mode", () => {
       ],
     };
     await materializeRecipeSessionMcp(
-      resolveRecipeAgent({ recipeDir: fixture.recipeDir }),
+      resolveRecipe({ recipeDir: fixture.recipeDir }).selectAgent(),
       fixture.workspaceDir,
       env,
       { mcpBindings }

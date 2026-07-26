@@ -110,6 +110,7 @@ const handle = await createAgentSession({
 });
 
 await handle.session.prompt("Start the task");
+await handle.session.prompt("/review src/auth.ts");
 await handle.dispose();
 ```
 
@@ -125,7 +126,8 @@ tests.
 
 ## Public exports
 
-- `@introspection-ai/recipes` — full convenience barrel
+- `@introspection-ai/recipes` — the two primary operations:
+  `resolveRecipe` and `createAgentSession`
 - `@introspection-ai/recipes/recipe` — resolve a Recipe into session inputs
 - `@introspection-ai/recipes/session` — create a live Pi Recipe session
 - `@introspection-ai/recipes/mcp` — MCP declarations, bindings, and selection

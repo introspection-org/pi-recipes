@@ -12,15 +12,16 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpBindingError } from "../src/mcp.js";
 import {
-  resolveRecipeAgent,
   resolveRecipe,
 } from "../src/recipe/resolve.js";
 import { createInProcessRunController } from "../src/run-controller.js";
 import {
   createAgentSession,
+  createAgentSessionInternal,
   RecipeCredentialError,
   RecipeMcpEnvironmentInUseError,
   RecipeModelError,
+  RecipeModelTransportError,
   type RecipeSessionHandle,
 } from "../src/session.js";
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
@@ -264,8 +265,30 @@ describe("createAgentSession", () => {
     expect(onDiagnostics).toHaveBeenCalledOnce();
   });
 
+  it("rejects a host transport for a different Recipe model", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const modelOverride = {
+      ...getModel("openai", "gpt-5.5")!,
+      baseUrl: "https://managed-gateway.example/v1",
+    };
+
+    await expect(
+      open({ recipeDir, cwd: workspaceDir, modelOverride })
+    ).rejects.toBeInstanceOf(RecipeModelTransportError);
+  });
+
   it("normalizes Gemini tool schemas for every host", async () => {
     const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/gemini-2.5-flash",
+        "tools: [read]",
+        "",
+      ].join("\n")
+    );
     const base = getModel("anthropic", "claude-sonnet-4-5");
     expect(base).toBeDefined();
     const parameters = Type.Object({
@@ -357,8 +380,18 @@ describe("createAgentSession", () => {
 
   it("fails closed on an unknown model spec", async () => {
     const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/not-a-model",
+        "tools: [read]",
+        "",
+      ].join("\n")
+    );
     await expect(
-      open({ recipeDir, cwd: workspaceDir, model: "anthropic/not-a-model" })
+      open({ recipeDir, cwd: workspaceDir })
     ).rejects.toBeInstanceOf(RecipeModelError);
   });
 
@@ -530,7 +563,7 @@ describe("createAgentSession", () => {
     await expect(
       createAgentSession({
         ...baseOptions,
-        systemPrompt: () => {
+        transformSystemPrompt: () => {
           throw new Error("prompt construction failed");
         },
       })
@@ -668,7 +701,7 @@ describe("in-process run controller", () => {
     const parentEnv = cleanEnv();
     let scripted: RecipeSessionHandle | null = null;
     let childOptions:
-      | Parameters<typeof createAgentSession>[0]
+      | Parameters<typeof createAgentSessionInternal>[0]
       | undefined;
     const tracer = {} as never;
     const controller = createInProcessRunController({
@@ -685,7 +718,7 @@ describe("in-process run controller", () => {
       },
       sessionFactory: async (options) => {
         childOptions = options;
-        const handle = await createAgentSession({
+        const handle = await createAgentSessionInternal({
           ...options,
           credentials: await credentialStore(),
         });
@@ -722,7 +755,7 @@ describe("in-process run controller", () => {
       env: cleanEnv(),
       concurrency: 1,
       sessionFactory: async (options) => {
-        const handle = await createAgentSession({
+        const handle = await createAgentSessionInternal({
           ...options,
           credentials: await credentialStore(),
         });
@@ -760,7 +793,7 @@ describe("in-process run controller", () => {
       sessionFactory: async (options) => {
         factoryCalls += 1;
         await factoryGate.promise;
-        const handle = await createAgentSession({
+        const handle = await createAgentSessionInternal({
           ...options,
           credentials: await credentialStore(),
         });

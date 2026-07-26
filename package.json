@@ -38,12 +38,12 @@
 			"import": "./dist/interactions.js"
 		},
 		"./extensions": {
-			"types": "./dist/extensions.d.ts",
-			"import": "./dist/extensions.js"
+			"types": "./dist/api/extensions.d.ts",
+			"import": "./dist/api/extensions.js"
 		},
 		"./mcp": {
-			"types": "./dist/mcp.d.ts",
-			"import": "./dist/mcp.js"
+			"types": "./dist/api/mcp.d.ts",
+			"import": "./dist/api/mcp.js"
 		},
 		"./pi-extension": {
 			"types": "./dist/pi-extension.d.ts",
@@ -58,8 +58,8 @@
 			"import": "./dist/recipe/resolve.js"
 		},
 		"./session": {
-			"types": "./dist/session.d.ts",
-			"import": "./dist/session.js"
+			"types": "./dist/api/session.d.ts",
+			"import": "./dist/api/session.js"
 		},
 		"./test-utils": {
 			"types": "./dist/test-utils.d.ts",

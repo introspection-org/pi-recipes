@@ -1,6 +1,7 @@
 import {
   chmodSync,
   copyFileSync,
+  readFileSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -41,6 +42,45 @@ describe("shared Recipe validator bridge", () => {
     writeFileSync(join(root, "agents", "agent.yaml"), agentYaml);
     return root;
   }
+
+  it("keeps the native checker and TypeScript resolver aligned on shared fixtures", async () => {
+    const fixtures = JSON.parse(
+      readFileSync(
+        resolve("test/fixtures/format-conformance.json"),
+        "utf8"
+      )
+    ) as Array<{
+      name: string;
+      valid: boolean;
+      files: Record<string, string>;
+    }>;
+
+    for (const fixture of fixtures) {
+      const root = mkdtempSync(join(tmpdir(), "recipe-conformance-"));
+      roots.push(root);
+      for (const [path, content] of Object.entries(fixture.files)) {
+        const absolute = join(root, path);
+        mkdirSync(join(absolute, ".."), { recursive: true });
+        writeFileSync(absolute, content);
+      }
+
+      const report = await checkRecipeAtLoad(root, env);
+      expect(report.valid, `${fixture.name}: native checker`).toBe(
+        fixture.valid
+      );
+      if (fixture.valid) {
+        expect(
+          () => resolveRecipe({ recipeDir: root }),
+          `${fixture.name}: TypeScript resolver`
+        ).not.toThrow();
+      } else {
+        expect(
+          () => resolveRecipe({ recipeDir: root }),
+          `${fixture.name}: TypeScript resolver`
+        ).toThrow();
+      }
+    }
+  });
 
   it("returns the same stable Rust diagnostics through Node", async () => {
     const root = recipe(

@@ -21,7 +21,7 @@ vi.mock("@earendil-works/pi-ai/compat", () => ({
 }));
 
 vi.mock("../src/session.js", () => ({
-  createAgentSession: mocks.createAgentSession,
+  createAgentSessionInternal: mocks.createAgentSession,
 }));
 
 import { createRecipeChildAgentRunner } from "../src/child-agent.js";

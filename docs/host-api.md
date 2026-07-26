@@ -36,17 +36,16 @@ const handle = await createAgentSession({
 This keeps inspection and construction on the same resolution results and
 avoids reparsing the package for every root or child session.
 
-`inspectRecipe(recipeDir)` exposes the canonical resolved view used for setup
-and review. In addition to provider, credential, MCP, and resource summaries,
+`inspectRecipe(recipe)` projects the exact immutable graph used for execution;
+it never reparses the package or reads host-local bindings. In addition to
+provider, credential, MCP, and resource summaries,
 it returns:
 
 - effective model and prompt provenance;
 - fields declared at each point in the `from:` chain;
 - authored tools versus root and delegated-session tools;
 - selected skills, visible subagents, and MCP policy;
-- the ordered package extension and prompt closure;
-- explicit host-boundary markers for ambient interactive Pi resources and
-  embedded host overrides.
+- the ordered package extension and prompt closure.
 
 ## `createAgentSession`
 
@@ -70,8 +69,8 @@ const handle = await createAgentSession({
   settingsManager,
   sessionManager,
   additionalSkillPaths,
-  skillPaths,
-  systemPrompt,
+  materializedSkillPaths,
+  transformSystemPrompt,
   onDiagnostics,
   onEvent,
   otel: {
@@ -137,11 +136,25 @@ shell tools. A host that provisions MCP separately passes
 ```ts
 import { inspectRecipe } from "@introspection-ai/recipes/inspect";
 
-const requirements = inspectRecipe(recipeDir);
+const requirements = inspectRecipe(recipe);
 ```
 
 Inspection derives agents, providers, expected credential variables, required
 and optional MCP servers, and resource counts without creating a session.
+Concrete binding files remain host state and are intentionally excluded.
+
+## Pi prompt templates
+
+Recipe prompt templates are ordinary Pi prompt templates. No Recipes-specific
+invocation API is added:
+
+```ts
+const names = handle.session.promptTemplates.map((template) => template.name);
+await handle.session.prompt("/review src/auth.ts");
+```
+
+Pi expands the slash command and its arguments through the standard
+`AgentSession.prompt()` behavior.
 
 ## OpenTelemetry
 

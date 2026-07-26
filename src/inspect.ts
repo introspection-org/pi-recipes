@@ -1,16 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { resolveRecipe } from "./recipe/resolve.js";
-import {
-  generatedBindingEnvVars,
-  placeholderEnvVars,
-  recipeMcpLocalConfigPath,
-  recipeMcpLocalExamplePath,
-} from "./recipe-mcp-config.js";
-import {
-  packageResourcePaths,
-  readPiPackageManifest,
-} from "./recipe-package.js";
+import { generatedBindingEnvVars } from "./recipe-mcp-config.js";
 import { expectedProviderEnvVars } from "./provider-env.js";
 import type { RecipeAgentConfigField } from "./recipe-agent.js";
 import type { ResolvedRecipe, ResolvedRecipeAgent } from "./recipe/resolve.js";
@@ -18,16 +6,16 @@ import type { ResolvedRecipe, ResolvedRecipeAgent } from "./recipe/resolve.js";
 export interface RecipeAgentInspection {
   name: string;
   from?: string;
-  declared_fields: RecipeAgentConfigField[];
+  declaredFields: RecipeAgentConfigField[];
   provenance: Partial<Record<RecipeAgentConfigField, string[]>>;
   model: {
     name: string;
-    thinking_level?: string;
+    thinkingLevel?: string;
     config?: ResolvedRecipeAgent["modelConfig"];
   };
   prompt: {
     base: "SYSTEM.md" | "pi";
-    agent_instructions?: {
+    agentInstructions?: {
       mode: "append" | "replace";
       source: string;
     };
@@ -53,24 +41,20 @@ export interface RecipeInspection {
   description?: string;
   agents: string[];
   providers: string[];
-  credential_env: string[];
+  credentialEnv: string[];
   mcp: { required: string[]; optional: string[] };
-  mcp_env: string[];
+  mcpEnv: string[];
   resources: {
     agents: number;
     skills: number;
     extensions: number;
     prompts: number;
   };
-  package_closure: {
+  packageClosure: {
     extensions: string[];
     prompts: string[];
   };
-  resolved_agents: RecipeAgentInspection[];
-  host_boundary: {
-    interactive_pi_may_add_ambient_resources: true;
-    embedded_host_overrides_are_not_recipe_source: true;
-  };
+  resolvedAgents: RecipeAgentInspection[];
 }
 
 function agentChain(
@@ -123,12 +107,12 @@ function inspectAgent(
   return {
     name: agent.name,
     ...(agent.definition.from ? { from: agent.definition.from } : {}),
-    declared_fields: [...(agent.definition.declaredFields ?? [])],
+    declaredFields: [...(agent.definition.declaredFields ?? [])],
     provenance,
     model: {
       name: agent.modelSpec,
       ...(agent.thinkingLevel
-        ? { thinking_level: agent.thinkingLevel }
+        ? { thinkingLevel: agent.thinkingLevel }
         : {}),
       ...(agent.modelConfig ? { config: agent.modelConfig } : {}),
     },
@@ -136,7 +120,7 @@ function inspectAgent(
       base: hasSystemPrompt ? "SYSTEM.md" : "pi",
       ...(agent.definition.systemInstructions && instructionSource
         ? {
-            agent_instructions: {
+            agentInstructions: {
               mode: agent.definition.systemInstructions.mode,
               source: instructionSource,
             },
@@ -154,10 +138,8 @@ function inspectAgent(
   };
 }
 
-export function inspectRecipe(recipeDir: string): RecipeInspection {
-  const dir = resolve(recipeDir);
-  const manifest = readPiPackageManifest(dir);
-  const resolvedRecipe = resolveRecipe({ recipeDir: dir });
+export function inspectRecipe(resolvedRecipe: ResolvedRecipe): RecipeInspection {
+  const manifest = resolvedRecipe.manifest;
   const definitions = [...resolvedRecipe.agents.values()].map(
     (agent) => agent.definition
   );
@@ -167,8 +149,8 @@ export function inspectRecipe(recipeDir: string): RecipeInspection {
       [...resolvedRecipe.agents.values()].map((agent) => [agent.name, agent])
     ).values(),
   ];
-  const extensionPaths = packageResourcePaths(manifest, "extensions");
-  const promptPaths = packageResourcePaths(manifest, "prompts");
+  const extensionPaths = resolvedRecipe.resources.extensions;
+  const promptPaths = resolvedRecipe.resources.prompts;
 
   const providers = [
     ...new Set(
@@ -196,38 +178,13 @@ export function inspectRecipe(recipeDir: string): RecipeInspection {
     .filter((server) => !server.required)
     .map((server) => server.id);
 
-  // Binding env vars: prefer the recipe's own binding file (or its example)
-  // when present; otherwise the generated-binding convention per server.
-  let mcpEnv: string[];
-  const bindingSource = [
-    recipeMcpLocalConfigPath(dir),
-    recipeMcpLocalExamplePath(dir),
-  ].find((path) => existsSync(path));
-  if (bindingSource) {
-    const content = readFileSync(bindingSource, "utf8");
-    const parsed = JSON.parse(content) as {
-      servers?: Array<{ oauthClientSecretEnv?: unknown }>;
-    };
-    mcpEnv = [
-      ...new Set([
-        ...placeholderEnvVars(content),
-        ...(parsed.servers ?? []).flatMap((server) =>
-          typeof server.oauthClientSecretEnv === "string" &&
-          server.oauthClientSecretEnv
-            ? [server.oauthClientSecretEnv]
-            : []
-        ),
-      ]),
-    ].sort();
-  } else {
-    mcpEnv = [
-      ...new Set(
-        manifest.mcp.servers.flatMap((server) =>
-          generatedBindingEnvVars(server.id)
-        )
-      ),
-    ].sort();
-  }
+  const mcpEnv = [
+    ...new Set(
+      manifest.mcp.servers.flatMap((server) =>
+        generatedBindingEnvVars(server.id)
+      )
+    ),
+  ].sort();
 
   return {
     name: manifest.name,
@@ -235,29 +192,25 @@ export function inspectRecipe(recipeDir: string): RecipeInspection {
     ...(manifest.description ? { description: manifest.description } : {}),
     agents,
     providers,
-    credential_env: credentialEnv,
+    credentialEnv,
     mcp: { required, optional },
-    mcp_env: mcpEnv,
+    mcpEnv,
     resources: {
       agents: agents.length,
-      skills: packageResourcePaths(manifest, "skills").length,
+      skills: resolvedRecipe.resources.skills.length,
       extensions: extensionPaths.length,
       prompts: promptPaths.length,
     },
-    package_closure: {
-      extensions: extensionPaths,
-      prompts: promptPaths,
+    packageClosure: {
+      extensions: [...extensionPaths],
+      prompts: [...promptPaths],
     },
-    resolved_agents: uniqueResolvedAgents.map((agent) =>
+    resolvedAgents: uniqueResolvedAgents.map((agent) =>
       inspectAgent(
         resolvedRecipe,
         agent,
-        existsSync(resolve(dir, "SYSTEM.md"))
+        resolvedRecipe.resources.hasSystemPrompt
       )
     ),
-    host_boundary: {
-      interactive_pi_may_add_ambient_resources: true,
-      embedded_host_overrides_are_not_recipe_source: true,
-    },
   };
 }

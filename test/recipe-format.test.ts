@@ -15,7 +15,7 @@ import {
   readPiPackageManifest,
   validatePiPackageManifest,
 } from "../src/recipe-package.js";
-import { resolveRecipeAgent } from "../src/recipe/resolve.js";
+import { resolveRecipe } from "../src/recipe/resolve.js";
 
 const cleanups: Array<() => void> = [];
 
@@ -80,7 +80,7 @@ describe("Recipe Format", () => {
     expect(packageResourcePaths(manifest, "agents")).toEqual([
       join(recipeDir, "agents"),
     ]);
-    expect(resolveRecipeAgent({ recipeDir })).toMatchObject({
+    expect(resolveRecipe({ recipeDir }).selectAgent()).toMatchObject({
       name: "agent",
       modelSpec: "anthropic/claude-sonnet-4-5",
       tools: [],
@@ -96,7 +96,7 @@ describe("Recipe Format", () => {
       JSON.stringify({ name: "empty-agent", version: "1.0.0", pi: {} })
     );
 
-    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
       'Recipe "empty-agent" does not define any agents'
     );
   });
@@ -127,7 +127,7 @@ describe("Recipe Format", () => {
       })
     );
 
-    const resolved = resolveRecipeAgent({ recipeDir });
+    const resolved = resolveRecipe({ recipeDir }).selectAgent();
     expect(resolved.skillPaths).toEqual([]);
     expect(resolved.promptPaths).toEqual([]);
 
@@ -138,7 +138,7 @@ describe("Recipe Format", () => {
         pi: { agents: [] },
       })
     );
-    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
       'Recipe "explicit-empty" does not define any agents'
     );
   });
@@ -153,7 +153,7 @@ describe("Recipe Format", () => {
       })
     );
 
-    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
       "package.json#pi.agents must be an array of non-empty strings"
     );
   });
@@ -171,7 +171,7 @@ describe("Recipe Format", () => {
       })
     );
 
-    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
       "declares extensions glob with no matches"
     );
   });
@@ -188,7 +188,7 @@ describe("Recipe Format", () => {
       join(recipeDir, "skills", "research", "SKILL.md"),
     ]);
 
-    const recipe = resolveRecipeAgent({ recipeDir });
+    const recipe = resolveRecipe({ recipeDir }).selectAgent();
     expect(recipe.name).toBe("agent");
     expect(recipe.modelSpec).toBe("anthropic/claude-sonnet-4-5");
     expect(recipe.tools).toEqual(["read"]);
@@ -207,7 +207,7 @@ describe("Recipe Format", () => {
       })
     );
 
-    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
       /declares agents resource outside the package/
     );
   });
@@ -238,7 +238,7 @@ describe("Recipe Format", () => {
     );
 
     expect(
-      resolveRecipeAgent({ recipeDir }).extensionPaths
+      resolveRecipe({ recipeDir }).selectAgent().extensionPaths
     ).toEqual([
       join(recipeDir, "extensions", "second.ts"),
       join(recipeDir, "extensions", "first.ts"),
@@ -254,7 +254,7 @@ describe("Recipe Format", () => {
         },
       })
     );
-    expect(resolveRecipeAgent({ recipeDir }).extensionPaths).toEqual([
+    expect(resolveRecipe({ recipeDir }).selectAgent().extensionPaths).toEqual([
       join(recipeDir, "extensions", "first.ts"),
       join(recipeDir, "extensions", "second.ts"),
     ]);
@@ -280,7 +280,7 @@ describe("Recipe Format", () => {
       })
     );
 
-    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
       "Recipe extensions resource resolves outside the package"
     );
     }
@@ -299,7 +299,7 @@ describe("Recipe Format", () => {
       cleanups.push(() => rmSync(outside, { force: true }));
       symlinkSync(outside, join(recipeDir, "SYSTEM.md"));
 
-      expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
+      expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
         "Recipe SYSTEM.md resolves outside the package"
       );
     }
@@ -307,6 +307,19 @@ describe("Recipe Format", () => {
 });
 
 describe("npm package boundary", () => {
+  it("keeps the root API to resolution and session construction", async () => {
+    const api = await import("../src/index.js");
+    expect(Object.keys(api).sort()).toEqual([
+      "RecipeCredentialError",
+      "RecipeMcpEnvironmentInUseError",
+      "RecipeModelError",
+      "RecipeModelTransportError",
+      "RecipeResolutionError",
+      "createAgentSession",
+      "resolveRecipe",
+    ]);
+  });
+
   it("ships a library and Pi extension without a standalone CLI or server", () => {
     const root = join(import.meta.dirname, "..");
     const pkg = JSON.parse(
@@ -329,6 +342,15 @@ describe("npm package boundary", () => {
     expect(pkg.exports).not.toHaveProperty("./tracing");
     expect(pkg.exports).toHaveProperty("./session");
     expect(pkg.exports).toHaveProperty("./extensions");
+    expect(pkg.exports["./session"]).toMatchObject({
+      import: "./dist/api/session.js",
+    });
+    expect(pkg.exports["./extensions"]).toMatchObject({
+      import: "./dist/api/extensions.js",
+    });
+    expect(pkg.exports["./mcp"]).toMatchObject({
+      import: "./dist/api/mcp.js",
+    });
     expect(pkg.exports).not.toHaveProperty("./run");
     expect(pkg.exports).toHaveProperty("./test-utils");
     expect(existsSync(join(root, "src", "cli.ts"))).toBe(false);

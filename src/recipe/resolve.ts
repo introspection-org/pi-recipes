@@ -51,11 +51,6 @@ export interface ResolvedRecipeAgent {
   systemPromptOverride(base: string | undefined): string | undefined;
 }
 
-export interface ResolveRecipeAgentOptions {
-  recipeDir: string;
-  agentName?: string;
-}
-
 /**
  * One parsed Recipe package with every agent compiled into an executable plan.
  *
@@ -65,6 +60,13 @@ export interface ResolveRecipeAgentOptions {
 export interface ResolvedRecipe {
   readonly recipeDir: string;
   readonly manifest: PiPackageManifest;
+  /** Complete package resource closure, before per-agent skill selection. */
+  readonly resources: {
+    readonly skills: readonly string[];
+    readonly prompts: readonly string[];
+    readonly extensions: readonly string[];
+    readonly hasSystemPrompt: boolean;
+  };
   /** Stable authored names are the only agent identifiers. */
   readonly agents: ReadonlyMap<string, ResolvedRecipeAgent>;
   selectAgent(agentName?: string): ResolvedRecipeAgent;
@@ -298,7 +300,7 @@ function buildResolvedRecipeAgent(
 
 /** Parse and resolve every agent in a Recipe package exactly once. */
 export function resolveRecipe(
-  opts: Pick<ResolveRecipeAgentOptions, "recipeDir">
+  opts: { recipeDir: string }
 ): ResolvedRecipe {
   const recipeDir = resolve(opts.recipeDir);
   const manifest = deepFreeze(readPiPackageManifest(recipeDir));
@@ -335,12 +337,11 @@ export function resolveRecipe(
   const promptPaths = packageResourcePaths(manifest, "prompts");
   const extensionPaths = packageResourcePaths(manifest, "extensions");
   validatePackageExtensionPaths(recipeDir, extensionPaths);
-  const canonical = new Map<string, ResolvedRecipeAgent>();
   const agents = new Map<string, ResolvedRecipeAgent>();
-  for (const [key, definition] of definitions) {
-    let resolvedAgent = canonical.get(definition.name);
-    if (!resolvedAgent) {
-      resolvedAgent = buildResolvedRecipeAgent(
+  for (const definition of definitions.values()) {
+    agents.set(
+      definition.name,
+      buildResolvedRecipeAgent(
         recipeDir,
         manifest,
         definitions,
@@ -349,28 +350,24 @@ export function resolveRecipe(
         skillResourcePaths,
         promptPaths,
         extensionPaths
-      );
-      canonical.set(definition.name, resolvedAgent);
-    }
-    agents.set(key, resolvedAgent);
-    agents.set(definition.name, resolvedAgent);
+      )
+    );
   }
 
   const readonlyAgents = readonlyMap(agents);
   return deepFreeze({
     recipeDir,
     manifest,
+    resources: {
+      skills: [...skillResourcePaths],
+      prompts: [...promptPaths],
+      extensions: [...extensionPaths],
+      hasSystemPrompt: recipeSystemPrompt !== undefined,
+    },
     agents: readonlyAgents,
     selectAgent(agentName) {
       const selected = selectAgent(definitions, agentName);
       return agents.get(selected.agentName)!;
     },
   });
-}
-
-/** Resolve recipe-owned inputs for one Pi session. */
-export function resolveRecipeAgent(
-  opts: ResolveRecipeAgentOptions
-): ResolvedRecipeAgent {
-  return resolveRecipe({ recipeDir: opts.recipeDir }).selectAgent(opts.agentName);
 }

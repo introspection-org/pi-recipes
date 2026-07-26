@@ -1,7 +1,4 @@
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   InMemoryCredentialStore,
   type CredentialStore,
@@ -12,14 +9,12 @@ import {
   type ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import { autoResolveInteractions } from "./interactions.js";
+import { createIsolatedChildSession } from "./child-session.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
   type ResolvedRecipe,
 } from "./recipe/resolve.js";
-import {
-  createAgentSession,
-  type RecipeSessionHandle,
-} from "./session.js";
+import type { RecipeSessionHandle } from "./session.js";
 
 export interface CreateRecipeChildAgentRunnerOptions {
   /** Immutable Recipe graph shared with the root Pi session. */
@@ -182,7 +177,6 @@ function messageFromEvent(event: AgentSessionEvent): Record<string, unknown> | n
 class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   private session: AgentSession | null = null;
   private handle: RecipeSessionHandle | null = null;
-  private mcpRuntimeDir: string | null = null;
   private assistantStreamedText = false;
 
   constructor(private readonly opts: CreateRecipeChildAgentRunnerOptions) {}
@@ -265,25 +259,15 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
       resolved.modelConfig
     );
     const credentials = await credentialsForChildAgent(model, this.opts);
-    this.mcpRuntimeDir = await mkdtemp(join(tmpdir(), "recipes-child-mcp-"));
-    try {
-      this.handle = await createAgentSession({
-        recipe: this.opts.recipe,
-        agentName: resolved.name,
-        cwd: this.opts.workspaceDir,
-        env: { ...(this.opts.env ?? process.env) },
-        mcpRuntimeDir: this.mcpRuntimeDir,
-        credentials,
-        modelOverride: model,
-        runController: null,
-        sessionRole: "subagent",
-        onEvent: (event) => this.handleSessionEvent(event),
-      });
-    } catch (error) {
-      await rm(this.mcpRuntimeDir, { recursive: true, force: true });
-      this.mcpRuntimeDir = null;
-      throw error;
-    }
+    this.handle = await createIsolatedChildSession({
+      recipe: this.opts.recipe,
+      agentName: resolved.name,
+      cwd: this.opts.workspaceDir,
+      env: this.opts.env ?? process.env,
+      credentials,
+      modelOverride: model,
+      onEvent: (event) => this.handleSessionEvent(event),
+    });
     this.session = this.handle.session;
   }
 
@@ -311,10 +295,6 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     await this.handle?.dispose();
     this.handle = null;
     this.session = null;
-    if (this.mcpRuntimeDir) {
-      await rm(this.mcpRuntimeDir, { recursive: true, force: true });
-      this.mcpRuntimeDir = null;
-    }
   }
 }
 

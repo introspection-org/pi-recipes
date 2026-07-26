@@ -7,7 +7,7 @@ The checker validates the portable authored contract:
 - the `package.json#pi` manifest and its resource paths;
 - agent YAML shape, names, and `from` inheritance;
 - each agent's explicit stable `name`, required resolved `model.name`, and any
-  declared skill, subagent, or extension references;
+  declared skill or subagent references;
 - package and agent MCP authorization policy.
 
 It deliberately does not validate host manifests, compute resources,

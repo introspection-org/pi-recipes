@@ -133,7 +133,9 @@ and are selected from the resources declared by `pi.skills`. A skill is named
 by its `SKILL.md` frontmatter `name`, then by its containing directory; a
 root-level unnamed `SKILL.md` uses the portable fallback name `skill`.
 
-Prompt templates are declared by `pi.prompts`.
+Prompt templates are declared by `pi.prompts`. They retain Pi's normal SDK and
+TUI behavior: hosts expose them through `AgentSession.promptTemplates`, and a
+caller invokes one by prompting with its slash command and arguments.
 
 Recipe-owned Pi extensions are declared by `pi.extensions`. The deterministically
 resolved set forms the package's executable trust boundary and loads for every

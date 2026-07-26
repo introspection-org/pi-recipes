@@ -1005,9 +1005,7 @@ fn validate_agent_string_array(
     path: &str,
     ctx: &mut CheckContext,
 ) -> Option<Vec<String>> {
-    let Some(value) = map.get(key) else {
-        return None;
-    };
+    let value = map.get(key)?;
     match string_array(value) {
         Ok(()) => {
             let values: Vec<String> = value
@@ -2147,7 +2145,39 @@ fn span_from_message(message: &str) -> Option<Span> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use serde_json::json;
+
+    #[derive(Deserialize)]
+    struct ConformanceFixture {
+        name: String,
+        valid: bool,
+        files: BTreeMap<String, String>,
+    }
+
+    #[test]
+    fn shared_format_conformance_fixtures() {
+        let fixtures: Vec<ConformanceFixture> = serde_json::from_str(include_str!(
+            "../../../test/fixtures/format-conformance.json"
+        ))
+        .expect("shared conformance fixtures must parse");
+        for fixture in fixtures {
+            let input = RecipeFiles {
+                files: fixture
+                    .files
+                    .into_iter()
+                    .map(|(path, content)| RecipeFile::new(path, content))
+                    .collect(),
+                directories: Vec::new(),
+            };
+            let report = check_recipe_files(&input);
+            assert_eq!(
+                report.valid, fixture.valid,
+                "{}: {:?}",
+                fixture.name, report.diagnostics
+            );
+        }
+    }
 
     fn recipe_files(files: &[(&str, &str)]) -> RecipeFiles {
         RecipeFiles {
