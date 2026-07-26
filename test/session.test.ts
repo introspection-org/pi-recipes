@@ -10,10 +10,12 @@ import {
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpBindingError } from "../src/mcp.js";
+import { resolveRecipe } from "../src/recipe/resolve.js";
 import { runRecipe } from "../src/run.js";
 import { createInProcessRunController } from "../src/run-controller.js";
 import {
   createRecipeSession,
+  createRecipeSessionFromResolved,
   RecipeCredentialError,
   RecipeMcpEnvironmentInUseError,
   RecipeModelError,
@@ -182,6 +184,20 @@ describe("createRecipeSession", () => {
     expect(handle.session.model?.id).toBe("claude-sonnet-4-5");
     expect(handle.session.systemPrompt).toContain("conformance fixture");
     expect(handle.session.systemPrompt).toContain("Conformance agent");
+  });
+
+  it("creates the exact Recipe definition already inspected by the host", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const recipe = resolveRecipe({ recipeDir });
+    const handle = await createRecipeSessionFromResolved(recipe, {
+      cwd: workspaceDir,
+      credentials: await credentialStore(),
+      env: cleanEnv(),
+    });
+    handles.push(handle);
+
+    expect(handle.recipe).toBe(recipe);
+    expect(handle.recipe.agentName).toBe("agent");
   });
 
   it("accepts host model wiring and reports construction diagnostics", async () => {

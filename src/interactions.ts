@@ -515,7 +515,11 @@ function localDialogMessage(request: AskUserRequest): string {
   return lines.join("\n");
 }
 
-function envelopeText(outcome: AskUserOutcome): string {
+/**
+ * Render the byte-exact text a Recipe tool receives for an interaction
+ * outcome. Hosts use this when replacing a paused tool result on resume.
+ */
+export function formatInteractionOutcome(outcome: AskUserOutcome): string {
   switch (outcome.type) {
     case "answered":
       return `Answer: ${outcome.answer}`;
@@ -534,6 +538,59 @@ function envelopeText(outcome: AskUserOutcome): string {
     case "unavailable":
       return UNAVAILABLE_ENVELOPE;
   }
+}
+
+/**
+ * Host-neutral shape for a response to a paused Recipe interaction.
+ * Protocol adapters can pass their resume record without depending on AG-UI
+ * or another transport package.
+ */
+export interface InteractionResumeResponse {
+  status?: string;
+  payload?: unknown;
+}
+
+/**
+ * Convert a host resume response into the frozen Recipe interaction envelope.
+ */
+export function formatInteractionResume(
+  response: InteractionResumeResponse
+): string {
+  if (response.status === "cancelled") {
+    return formatInteractionOutcome({ type: "declined" });
+  }
+
+  const payload =
+    response.payload &&
+    typeof response.payload === "object" &&
+    !Array.isArray(response.payload)
+      ? (response.payload as Record<string, unknown>)
+      : undefined;
+  const answer =
+    typeof payload?.answer === "string" ? payload.answer.trim() : "";
+  if (answer) {
+    return formatInteractionOutcome({ type: "answered", answer });
+  }
+
+  if (typeof payload?.approved === "boolean") {
+    const feedback =
+      typeof payload.feedback === "string" ? payload.feedback.trim() : "";
+    return formatInteractionOutcome(
+      payload.approved
+        ? {
+            type: "approved",
+            ...(feedback ? { feedback } : {}),
+          }
+        : {
+            type: "revision_requested",
+            ...(feedback ? { feedback } : {}),
+          }
+    );
+  }
+
+  return response.status
+    ? `Interrupt response: ${response.status}`
+    : "Interrupt response received.";
 }
 
 function normalizeOptions(
@@ -582,7 +639,7 @@ function finishedResult(
 ): AskUserResult {
   return {
     outcome,
-    content: [{ type: "text", text: envelopeText(outcome) }],
+    content: [{ type: "text", text: formatInteractionOutcome(outcome) }],
     details: interruptDetails(request, outcome),
   };
 }
@@ -594,7 +651,7 @@ function awaitingUserResult(
   const outcome: AskUserOutcome = { type: "awaiting_user" };
   return {
     outcome,
-    content: [{ type: "text", text: envelopeText(outcome) }],
+    content: [{ type: "text", text: formatInteractionOutcome(outcome) }],
     details: interruptDetails(request, outcome),
   };
 }

@@ -230,6 +230,7 @@ export function hostConformanceCases(
         });
         try {
           const env = { ...cleanEnv() };
+          const originalPath = env.PATH;
           const handle = await host.createSession({
             recipeDir: fixture.recipeDir,
             cwd: fixture.workspaceDir,
@@ -246,6 +247,12 @@ export function hostConformanceCases(
             },
           });
           await handle.dispose();
+          await handle.dispose();
+          assert(
+            env.MCPORTER_CONFIG === undefined,
+            "dispose restores an absent MCPORTER_CONFIG"
+          );
+          assert(env.PATH === originalPath, "dispose restores PATH");
         } finally {
           fixture.cleanup();
         }

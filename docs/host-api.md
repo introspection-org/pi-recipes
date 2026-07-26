@@ -9,7 +9,10 @@ defines the boundary between the portable agent and the system operating it.
 resolveRecipe()          read and resolve the portable package
     │
     ▼
-createRecipeSession()    construct the complete live Pi session
+createRecipeSession()    resolve and construct the complete live Pi session
+    │
+    ├── createRecipeSessionFromResolved()
+    │                         construct the exact definition already inspected
     │
     └── runRecipe()      execute one turn and dispose
 ```
@@ -30,6 +33,26 @@ const recipe = resolveRecipe({
 The result contains the selected agent, visible subagents, model settings,
 tools, MCP policy, skills, prompts, extensions, and system-prompt composition.
 It does not create a model client or start a session.
+
+When host provisioning depends on the resolved requirements, construct the
+session from that same object rather than resolving the package again:
+
+```ts
+import { resolveRecipe } from "@introspection-ai/recipes/recipe";
+import {
+  createRecipeSessionFromResolved,
+} from "@introspection-ai/recipes/session";
+
+const recipe = resolveRecipe({ recipeDir, agentName });
+const credentials = await credentialsFor(recipe.model.provider);
+
+const handle = await createRecipeSessionFromResolved(recipe, {
+  cwd: workspaceDir,
+  credentials,
+});
+```
+
+This keeps inspection and construction on one immutable resolution result.
 
 ## `createRecipeSession`
 
@@ -88,6 +111,12 @@ extensions, its own settings, an event bus, host tools, and a
 gateway-decorated model without reimplementing Recipe semantics. The Recipe
 continues to own model configuration and tool selection; host seams replace
 transport and materialized resources, not the portable definition.
+
+Recipes are trusted application code, not untrusted data. A package can contain
+TypeScript extensions that execute in the Pi process with that process's
+filesystem, environment, and network authority. Hosts accepting third-party
+Recipes must provide their own review, sandbox, and tenant-isolation boundary
+before session construction.
 
 Default MCP materialization leases the supplied `env` object until the handle
 is disposed and restores its prior MCP/PATH state afterward. Concurrent

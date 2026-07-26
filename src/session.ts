@@ -145,6 +145,19 @@ export interface RecipeSessionHandle {
   dispose(): Promise<void>;
 }
 
+/**
+ * Host injections for an already-resolved Recipe.
+ *
+ * Use this with `createRecipeSessionFromResolved()` when a host must inspect
+ * the portable definition before materializing credentials, endpoints, or
+ * other host resources. The exact inspected definition is then used for
+ * construction without resolving the package a second time.
+ */
+export type ResolvedRecipeSessionOptions = Omit<
+  CreateRecipeSessionOptions,
+  "recipeDir" | "agentName"
+>;
+
 /** The session model's provider has no resolvable credential. */
 export class RecipeCredentialError extends Error {
   override readonly name = "RecipeCredentialError";
@@ -372,13 +385,10 @@ async function configureSessionMcp(
   }
 }
 
-export async function createRecipeSession(
+async function createResolvedRecipeSession(
+  recipe: ResolvedRecipe,
   opts: CreateRecipeSessionOptions
 ): Promise<RecipeSessionHandle> {
-  const recipe = resolveRecipe({
-    recipeDir: opts.recipeDir,
-    ...(opts.agentName ? { agentName: opts.agentName } : {}),
-  });
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
   const otel = opts.otel
@@ -556,4 +566,25 @@ export async function createRecipeSession(
     await cleanup();
     throw error;
   }
+}
+
+export async function createRecipeSession(
+  opts: CreateRecipeSessionOptions
+): Promise<RecipeSessionHandle> {
+  const recipe = resolveRecipe({
+    recipeDir: opts.recipeDir,
+    ...(opts.agentName ? { agentName: opts.agentName } : {}),
+  });
+  return createResolvedRecipeSession(recipe, opts);
+}
+
+export async function createRecipeSessionFromResolved(
+  recipe: ResolvedRecipe,
+  opts: ResolvedRecipeSessionOptions
+): Promise<RecipeSessionHandle> {
+  return createResolvedRecipeSession(recipe, {
+    ...opts,
+    recipeDir: recipe.recipeDir,
+    agentName: recipe.agentName,
+  });
 }

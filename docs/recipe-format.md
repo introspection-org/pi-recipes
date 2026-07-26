@@ -155,6 +155,11 @@ The host owns:
 
 Those host concerns MUST NOT become mandatory Recipe source fields.
 
+Recipe packages are trusted application code. In particular, authored
+TypeScript extensions execute inside the Pi process with its authority. A host
+that accepts third-party Recipes MUST review or isolate them before execution;
+the format and Host API are not a sandbox boundary.
+
 ## Conformance
 
 There are two conformance layers:
