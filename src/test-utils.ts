@@ -1,7 +1,7 @@
 /**
  * Host conformance suite for Recipe sessions.
  *
- * A host that adopts `createRecipeSession` with its own injected pieces —
+ * A host that adopts `createAgentSessionFromRecipe` with its own injected pieces —
  * credential store, synthesized MCP bindings, run controller — runs these
  * cases in its own CI. Passing the suite is what "supported host" means: the
  * session contract cannot drift from its consumers silently.
@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import type {
-  CreateRecipeSessionOptions,
+  CreateAgentSessionFromRecipeOptions,
   RecipeSessionHandle,
 } from "./session.js";
 
@@ -29,7 +29,7 @@ export interface RecipeHost {
    * here layer the suite's fixture on top.
    */
   createSession(
-    options: CreateRecipeSessionOptions
+    options: CreateAgentSessionFromRecipeOptions
   ): Promise<RecipeSessionHandle>;
 }
 
@@ -147,7 +147,7 @@ export function hostConformanceCases(
             env: { ...cleanEnv() },
           });
           try {
-            assert(handle.agent.agentName === "agent", "agentName resolves");
+            assert(handle.agent.name === "agent", "agentName resolves");
             assert(
               handle.session.systemPrompt.includes("conformance fixture"),
               "SYSTEM.md reaches the system prompt"

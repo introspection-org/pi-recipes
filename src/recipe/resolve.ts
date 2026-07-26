@@ -1,6 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { basename, extname, relative, resolve } from "node:path";
-import { executableRecipeToolNames } from "../mcp.js";
+import { executableRecipeToolNames } from "../mcp-policy.js";
 import {
   loadValidatedRecipeAgentDefinitions,
   loadRecipeSystemPrompt,
@@ -22,8 +22,8 @@ export type { RecipeAgentMcp } from "../recipe-agent.js";
 export interface ResolvedRecipeAgent {
   recipeDir: string;
   manifest: PiPackageManifest;
-  agentName: string;
-  agent: RecipeAgentDefinition;
+  name: string;
+  definition: RecipeAgentDefinition;
   subagents: ReadonlyMap<string, RecipeAgentDefinition>;
   modelSpec: string;
   modelConfig?: RecipeAgentModelConfig;
@@ -44,15 +44,15 @@ export interface ResolveRecipeAgentOptions {
 /**
  * One parsed Recipe package with every agent compiled into an executable plan.
  *
- * Hosts should keep this graph for the lifetime of a materialized Recipe and
+ * Hosts should keep this snapshot for the lifetime of a materialized Recipe and
  * select root/child sessions from it instead of reparsing YAML per session.
  */
-export interface ResolvedRecipeGraph {
+export interface ResolvedRecipe {
   recipeDir: string;
   manifest: PiPackageManifest;
   /** Canonical names and authored aliases both resolve to the same plan. */
   agents: ReadonlyMap<string, ResolvedRecipeAgent>;
-  select(agentName?: string): ResolvedRecipeAgent;
+  selectAgent(agentName?: string): ResolvedRecipeAgent;
 }
 
 export class RecipeResolutionError extends Error {
@@ -192,8 +192,8 @@ function buildResolvedRecipeAgent(
   return {
     recipeDir,
     manifest,
-    agentName,
-    agent,
+    name: agentName,
+    definition: agent,
     subagents,
     modelSpec,
     ...(agent.modelConfig ? { modelConfig: agent.modelConfig } : {}),
@@ -228,9 +228,9 @@ function buildResolvedRecipeAgent(
 }
 
 /** Parse and resolve every agent in a Recipe package exactly once. */
-export function resolveRecipeGraph(
+export function resolveRecipe(
   opts: Pick<ResolveRecipeAgentOptions, "recipeDir">
-): ResolvedRecipeGraph {
+): ResolvedRecipe {
   const recipeDir = resolve(opts.recipeDir);
   const manifest = readPiPackageManifest(recipeDir);
   const packageErrors = validatePiPackageManifest(manifest).findings.filter(
@@ -286,7 +286,7 @@ export function resolveRecipeGraph(
     recipeDir,
     manifest,
     agents,
-    select(agentName) {
+    selectAgent(agentName) {
       const selected = selectAgent(definitions, agentName);
       return agents.get(selected.agentName)!;
     },
@@ -297,5 +297,5 @@ export function resolveRecipeGraph(
 export function resolveRecipeAgent(
   opts: ResolveRecipeAgentOptions
 ): ResolvedRecipeAgent {
-  return resolveRecipeGraph({ recipeDir: opts.recipeDir }).select(opts.agentName);
+  return resolveRecipe({ recipeDir: opts.recipeDir }).selectAgent(opts.agentName);
 }

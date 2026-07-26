@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   RecipeResolutionError,
   resolveRecipeAgent,
-  resolveRecipeGraph,
+  resolveRecipe,
 } from "../src/recipe/resolve.js";
 
 const roots: string[] = [];
@@ -79,7 +79,7 @@ describe("resolveRecipeAgent", () => {
     const recipeDir = makeRecipe();
     const resolved = resolveRecipeAgent({ recipeDir });
 
-    expect(resolved.agentName).toBe("researcher");
+    expect(resolved.name).toBe("researcher");
     expect(resolved.modelSpec).toBe("openai/gpt-5");
     expect(resolved.thinkingLevel).toBe("high");
     expect(resolved.tools).toEqual(["read", "mcp__search"]);
@@ -98,10 +98,10 @@ describe("resolveRecipeAgent", () => {
   it("selects aliases and returns the canonical agent name", () => {
     const recipeDir = makeRecipe();
     const resolved = resolveRecipeAgent({ recipeDir, agentName: "agent" });
-    expect(resolved.agentName).toBe("researcher");
+    expect(resolved.name).toBe("researcher");
   });
 
-  it("resolves the package graph once for root and child session plans", () => {
+  it("resolves the Recipe once for root and child sessions", () => {
     const recipeDir = makeRecipe();
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
@@ -113,15 +113,15 @@ describe("resolveRecipeAgent", () => {
       ].join("\n")
     );
 
-    const graph = resolveRecipeGraph({ recipeDir });
-    const root = graph.select();
-    const alias = graph.select("agent");
-    const child = graph.select("base");
+    const recipe = resolveRecipe({ recipeDir });
+    const root = recipe.selectAgent();
+    const alias = recipe.selectAgent("agent");
+    const child = recipe.selectAgent("base");
 
     expect(alias).toBe(root);
-    expect(root.agentName).toBe("researcher");
-    expect(root.subagents.get("base")).toBe(child.agent);
-    expect(child.agentName).toBe("base");
+    expect(root.name).toBe("researcher");
+    expect(root.subagents.get("base")).toBe(child.definition);
+    expect(child.name).toBe("base");
     expect(child.tools).not.toContain("agent");
   });
 
@@ -135,7 +135,7 @@ describe("resolveRecipeAgent", () => {
 
     const resolved = resolveRecipeAgent({ recipeDir });
 
-    expect(resolved.agentName).toBe("agent");
+    expect(resolved.name).toBe("agent");
     expect(resolved.thinkingLevel).toBeUndefined();
     expect(resolved.tools).toEqual([]);
     expect(resolved.systemPromptOverride("Pi base prompt")).toBe(

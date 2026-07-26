@@ -25,6 +25,7 @@ function controller(): AgentRunController {
     message: vi.fn(),
     interrupt: vi.fn(),
     close: vi.fn(),
+    shutdown: vi.fn(),
   };
 }
 

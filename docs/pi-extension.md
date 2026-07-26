@@ -75,8 +75,6 @@ loaded relative to the Recipe. Agent-level `extensions.include` and
 `extensions.exclude` select which declared extensions participate.
 
 Recipe extensions can import shared APIs from `@introspection-ai/recipes`.
-The loader also aliases the previous `@introspection-ai/pi-recipes` name during
-the migration period so existing Recipe source shares the same module state.
 
 ## Validation
 

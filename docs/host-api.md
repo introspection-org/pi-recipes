@@ -6,15 +6,15 @@ defines the boundary between the portable agent and the system operating it.
 ## API layers
 
 ```text
-resolveRecipeGraph()     parse every agent in the portable package once
+resolveRecipe()     parse every agent in the portable package once
     │
-    ├── graph.select()   select root and child execution plans
+    ├── recipe.selectAgent() select root and child agents
     │
     ▼
 createAgentSession()
                           construct one selected plan
     │
-    ├── createRecipeSession()
+    ├── createAgentSessionFromRecipe()
     │                     resolve one plan and construct it
     │
     └── runRecipe()       execute one turn and dispose
@@ -37,37 +37,45 @@ The result contains the selected agent, visible subagents, model settings,
 tools, MCP policy, skills, prompts, extensions, and system-prompt composition.
 It does not create a model client or start a session.
 
-Long-lived hosts and hosts with persistent subagents should resolve the package
-graph once, then select root and child plans from it:
+Long-lived hosts and hosts with persistent subagents should resolve the Recipe
+once, then select root and child agents from that immutable snapshot:
 
 ```ts
-import { resolveRecipeGraph } from "@introspection-ai/recipes/recipe";
+import { resolveRecipe } from "@introspection-ai/recipes/recipe";
 import {
   createAgentSession,
 } from "@introspection-ai/recipes/session";
 
-const graph = resolveRecipeGraph({ recipeDir });
-const agent = graph.select(agentName);
+const recipe = resolveRecipe({ recipeDir });
+const agent = recipe.selectAgent(agentName);
 const credentials = await credentialsFor(agent.modelSpec);
 
 const handle = await createAgentSession(agent, {
+  recipe,
   cwd: workspaceDir,
   credentials,
 });
 
-const childAgent = graph.select("researcher");
+const childAgent = recipe.selectAgent("researcher");
 ```
 
 This keeps inspection and construction on the same resolution results and
 avoids reparsing the package for every child session. `resolveRecipeAgent()` remains
 the convenience API for selecting one plan.
 
-## `createRecipeSession`
+## `createAgentSession`
+
+`createAgentSession(agent, options)` is the primary host integration point for
+hosts that inspect a Recipe before constructing it. It consumes the exact
+resolved plan the host inspected. Supply its `ResolvedRecipe` when using
+the default in-process subagent controller.
+
+## `createAgentSessionFromRecipe`
 
 ```ts
-import { createRecipeSession } from "@introspection-ai/recipes/session";
+import { createAgentSessionFromRecipe } from "@introspection-ai/recipes/session";
 
-const handle = await createRecipeSession({
+const handle = await createAgentSessionFromRecipe({
   recipeDir,
   agentName,
   cwd: workspaceDir,
@@ -96,7 +104,7 @@ const handle = await createRecipeSession({
 });
 ```
 
-This is the primary host integration point. It:
+This is the resolve-and-create convenience integration. It:
 
 - resolves the Recipe and selected agent;
 - resolves model credentials fail-closed;
@@ -109,7 +117,7 @@ This is the primary host integration point. It:
 The returned `RecipeSessionHandle` exposes:
 
 - `session` — Pi prompt, steer, follow-up, abort, messages, and events;
-- `recipe` — the resolved portable definition;
+- `agent` — the selected resolved portable definition;
 - `runs` — the subagent run controller;
 - `dispose()` — child, session, instrumentation, and MCP cleanup.
 
@@ -119,6 +127,16 @@ extensions, its own settings, an event bus, host tools, and a
 gateway-decorated model without reimplementing Recipe semantics. The Recipe
 continues to own model configuration and tool selection; host seams replace
 transport and materialized resources, not the portable definition.
+
+The default in-process subagent controller requires the `ResolvedRecipe`
+that produced the selected agent. It uses that same snapshot for every child, so
+no session reparses the package or observes a different source snapshot.
+Injected controllers own child selection and may omit `recipe`.
+
+An injected `runController` is owned by the returned session handle.
+`dispose()` calls the controller's `shutdown()` exactly once; controller
+implementations use it to release all live child sessions and controller-level
+resources. `close(id)` remains the lifecycle operation for one run.
 
 Recipes are trusted application code, not untrusted data. A package can contain
 TypeScript extensions that execute in the Pi process with that process's
@@ -203,4 +221,4 @@ The package does not provide:
 - a deployment CLI;
 - provider-specific hosting integrations.
 
-Those layers compose above `createRecipeSession`.
+Those layers compose above `createAgentSessionFromRecipe`.

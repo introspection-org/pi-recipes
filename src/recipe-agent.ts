@@ -17,7 +17,7 @@ import {
 import {
   mcpSelectionAllowsTool,
   normalizeMcpServerId,
-} from "./mcp.js";
+} from "./mcp-policy.js";
 
 export interface RecipeSystemInstructions {
   mode: "append" | "replace";
@@ -727,7 +727,7 @@ export interface ValidatedRecipeAgentDefinitions {
 
 /**
  * Parse agent YAML once, then validate and resolve the complete inheritance
- * graph from that exact source snapshot.
+ * Recipe snapshot from that exact source.
  */
 export function loadValidatedRecipeAgentDefinitions(
   recipeDir: string

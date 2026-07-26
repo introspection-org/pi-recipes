@@ -18,7 +18,6 @@ task lifecycle, protocols, and deployment.
 | Ask for user input across hosts | [Interactions](interactions.md) |
 | Declare capability policy and bindings | [MCP configuration](mcp-configuration.md) |
 | Package quality definitions | [Recipe judges](recipe-judges.md) |
-| Move from the previous package | [Migration](migration.md) |
 
 ## Boundary
 
@@ -26,14 +25,14 @@ task lifecycle, protocols, and deployment.
 Recipe source
     │
     ▼
-resolveRecipeAgent()          format interpretation
+resolveRecipe()          format interpretation
     │
     ▼
-createRecipeSession()    complete live Pi agent
+createAgentSession()     complete live Pi agent
     │
-    ├── runRecipe()      one-turn convenience
-    │
-    └── host             tasks, persistence, auth, protocols, deployment
+    ├── createAgentSessionFromRecipe() resolve-and-create convenience
+    ├── runRecipe()           one-turn convenience
+    └── host                  tasks, persistence, auth, protocols, deployment
 ```
 
 Recipes stops at the live session boundary. It does not ship a generic server,
@@ -42,6 +41,6 @@ task store, scheduler, sandbox, or provider-specific hosting integration.
 The same contracts power:
 
 - the Pi terminal harness through the Recipes extension;
-- Node.js hosts through `createRecipeSession()`.
+- Node.js hosts through `createAgentSession()`.
 
 Every host can run the exported conformance suite against its integration.

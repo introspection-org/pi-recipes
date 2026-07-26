@@ -42,8 +42,9 @@ import {
 import { type RecipeAgentDefinition } from "./recipe-agent.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
-  resolveRecipeAgent,
+  resolveRecipe,
   type ResolvedRecipeAgent,
+  type ResolvedRecipe,
 } from "./recipe/resolve.js";
 import {
   createAgentTool,
@@ -55,9 +56,6 @@ export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
   createChildAgentRunner?: CreateRecipeChildAgentRunner;
 }
-
-/** @deprecated Use `RecipesExtensionOptions`. */
-export type PiRecipesExtensionOptions = RecipesExtensionOptions;
 
 interface RecipeChildAgentRunner {
   start(): Promise<void>;
@@ -71,6 +69,7 @@ type CreateRecipeChildAgentRunner = (opts: {
   recipeDir: string;
   workspaceDir: string;
   agentName: string;
+  agent: ResolvedRecipeAgent;
   env?: NodeJS.ProcessEnv;
   modelRegistry?: ModelRegistry;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
@@ -96,6 +95,7 @@ interface ChildRun extends ChildRunSnapshot {
 interface RecipeLaunchState {
   key: string;
   cwd: string;
+  resolvedRecipe: ResolvedRecipe;
   resolved: ResolvedRecipeAgent;
   extensionsLoaded: boolean;
   configured: boolean;
@@ -152,7 +152,7 @@ function mcpSelectionsForAgent(agent: RecipeAgentDefinition) {
 }
 
 function scopedMcpSelections(state: RecipeLaunchState) {
-  return [state.resolved.agent, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
+  return [state.resolved.definition, ...visibleSubagents(state)].flatMap(mcpSelectionsForAgent);
 }
 
 function textResult<TDetails>(text: string, details: TDetails) {
@@ -210,7 +210,7 @@ function formatAgentCall(
   return `${themeFg(theme, "toolTitle", themeBold(theme, `agent ${action}`))} ${themeFg(theme, "accent", agent)}${label}`;
 }
 
-// Keep the legacy wire value so resumed transcripts retain their renderer.
+// Stable wire value used by persisted transcripts and the renderer.
 const AGENT_COMPLETIONS_TYPE = "recipe-agent-completions";
 
 interface AgentCompletionsDetails {
@@ -341,9 +341,9 @@ function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string 
     "Active Recipe",
     `Name: ${state.resolved.manifest.name}@${state.resolved.manifest.version}`,
     state.resolved.manifest.description ? `Description: ${state.resolved.manifest.description}` : undefined,
-    `Agent: ${state.resolved.agentName}`,
-    `Model: ${state.resolved.agent.model?.name ?? "(session default)"}`,
-    `Thinking level: ${state.resolved.agent.model?.thinkingLevel ?? "(session default)"}`,
+    `Agent: ${state.resolved.name}`,
+    `Model: ${state.resolved.definition.model?.name ?? "(session default)"}`,
+    `Thinking level: ${state.resolved.definition.model?.thinkingLevel ?? "(session default)"}`,
     `Subagents: ${nameList(subagents)}`,
     "",
     "Active recipe tools:",
@@ -569,6 +569,9 @@ export function createRecipesExtension(
       childRuns.delete(id);
       return controllerSummary(run, "closed");
     },
+    async shutdown() {
+      await closeAllChildRuns();
+    },
   };
 
   async function closeAllChildRuns(): Promise<void> {
@@ -613,12 +616,11 @@ export function createRecipesExtension(
     const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
     if (state?.key === key) return state;
 
+    let resolvedRecipe: ResolvedRecipe;
     let resolved: ResolvedRecipeAgent;
     try {
-      resolved = resolveRecipeAgent({
-        recipeDir,
-        agentName: requestedAgentName,
-      });
+      resolvedRecipe = resolveRecipe({ recipeDir });
+      resolved = resolvedRecipe.selectAgent(requestedAgentName);
     } catch (err) {
       throw new RecipeLaunchError(
         recipeLoadErrorMessage(flag, err instanceof Error ? err.message : String(err))
@@ -628,11 +630,12 @@ export function createRecipesExtension(
     // recipe-authored instructions. In production `env` is process.env, so
     // built-in shell tools and child agents inherit these resolved values.
     env.PI_RECIPE_DIR = recipeDir;
-    env.PI_AGENT_NAME = resolved.agentName;
+    env.PI_AGENT_NAME = resolved.name;
 
     state = {
       key,
       cwd,
+      resolvedRecipe,
       resolved,
       extensionsLoaded: false,
       configured: false,
@@ -696,7 +699,7 @@ export function createRecipesExtension(
 
     const labelParts = [
       `${launchState.resolved.manifest.name}@${launchState.resolved.manifest.version}`,
-      `agent:${launchState.resolved.agentName}`,
+      `agent:${launchState.resolved.name}`,
     ].filter(Boolean);
     pi.setSessionName(labelParts.join(" "));
 
@@ -813,6 +816,7 @@ export function createRecipesExtension(
       workspaceDir: launchState.cwd,
       env,
       agentName,
+      agent: launchState.resolvedRecipe.selectAgent(agentName),
       modelRegistry: ctx.modelRegistry,
       onAssistantMessage(text, stream) {
         if (!run) return;
@@ -1107,8 +1111,5 @@ export function createRecipesExtension(
     });
   };
 }
-
-/** @deprecated Use `createRecipesExtension`. */
-export const createPiRecipesExtension = createRecipesExtension;
 
 export default createRecipesExtension();

@@ -75,7 +75,7 @@ describe("Recipe Format", () => {
     ]);
 
     const recipe = resolveRecipeAgent({ recipeDir });
-    expect(recipe.agentName).toBe("agent");
+    expect(recipe.name).toBe("agent");
     expect(recipe.modelSpec).toBe("anthropic/claude-sonnet-4-5");
     expect(recipe.tools).toEqual(["read"]);
     expect(recipe.skillPaths).toEqual([

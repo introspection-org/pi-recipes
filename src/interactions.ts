@@ -211,10 +211,9 @@ export interface AskUserResult {
 // Recipe extensions and their host may resolve separate physical copies of
 // Recipes (for example, one under the recipe and one under runtime-worker).
 // Keep the async context process-global so either copy can establish the child
-// boundary and every current copy observes it. Retain the pre-rename symbol
-// key so old and new package versions interoperate in the same process.
+// boundary and every current copy observes it.
 const INTERACTION_AUTO_RESOLUTION_KEY = Symbol.for(
-  "@introspection-ai/pi-recipes/interaction-auto-resolution"
+  "@introspection-ai/recipes/interaction-auto-resolution"
 );
 const interactionGlobals = globalThis as typeof globalThis & {
   [key: symbol]: AsyncLocalStorage<boolean> | undefined;
@@ -233,11 +232,6 @@ interactionGlobals[INTERACTION_AUTO_RESOLUTION_KEY] = interactionAutoResolution;
  */
 export function autoResolveInteractions<T>(fn: () => Promise<T>): Promise<T> {
   return interactionAutoResolution.run(true, fn);
-}
-
-/** @deprecated Use `autoResolveInteractions()` for the explicit behavior. */
-export function suppressInterruptResume<T>(fn: () => Promise<T>): Promise<T> {
-  return autoResolveInteractions(fn);
 }
 
 /** Ask the user, resolving the best available interaction channel. */

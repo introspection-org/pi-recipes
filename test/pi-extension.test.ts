@@ -1227,6 +1227,7 @@ describe("Recipes extension for Pi", () => {
         expect.objectContaining({
           recipeDir,
           agentName: "explorer",
+          agent: expect.objectContaining({ name: "explorer" }),
           workspaceDir: projectDir,
           modelRegistry: ctx.modelRegistry,
         })

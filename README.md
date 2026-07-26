@@ -90,21 +90,20 @@ npm install @introspection-ai/recipes
 Choose the lowest useful layer:
 
 ```ts
-import { resolveRecipeGraph } from "@introspection-ai/recipes/recipe";
+import { resolveRecipe } from "@introspection-ai/recipes/recipe";
 
-const graph = resolveRecipeGraph({
+const recipe = resolveRecipe({
   recipeDir: "./my-recipe",
 });
-const agent = graph.select("agent");
+const agent = recipe.selectAgent("agent");
 ```
 
 ```ts
-import { createRecipeSession } from "@introspection-ai/recipes/session";
+import { createAgentSession } from "@introspection-ai/recipes/session";
 
-const handle = await createRecipeSession({
-  recipeDir: "./my-recipe",
+const handle = await createAgentSession(agent, {
+  recipe,
   cwd: "./workspace",
-  agentName: "agent",
   credentials,
   mcpBindings,
   sessionManager,
@@ -125,9 +124,11 @@ const result = await runRecipe({
 });
 ```
 
-`createRecipeSession` is the primary host boundary. It owns Recipe semantics
-and Pi session construction. The host still owns task lifecycle, durable state,
-auth, networking, isolation, protocol translation, and deployment.
+`createAgentSession` is the host boundary for an inspected execution plan.
+`createAgentSessionFromRecipe` is the shorter resolve-and-create convenience API. Both
+own Recipe semantics and Pi session construction. The host still owns task
+lifecycle, durable state, auth, networking, isolation, protocol translation,
+and deployment.
 
 See [Host API](docs/host-api.md) for the complete boundary and
 [host conformance](docs/host-api.md#host-conformance) for compatibility
@@ -135,7 +136,7 @@ tests.
 
 ## Public exports
 
-- `@introspection-ai/recipes` — core Recipe types and APIs
+- `@introspection-ai/recipes` — full convenience barrel
 - `@introspection-ai/recipes/recipe` — resolve a Recipe into session inputs
 - `@introspection-ai/recipes/session` — create a live Pi Recipe session
 - `@introspection-ai/recipes/run` — execute one Recipe turn
@@ -172,7 +173,6 @@ safely. It is not a replacement for the authoring diagnostics in
 - [Interactions](docs/interactions.md)
 - [MCP configuration](docs/mcp-configuration.md)
 - [Recipe judges](docs/recipe-judges.md)
-- [Migration from `@introspection-ai/pi-recipes`](docs/migration.md)
 
 ## Contributing
 

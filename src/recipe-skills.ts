@@ -1,20 +1,39 @@
-import {
-  loadSkills,
-  parseFrontmatter,
-} from "@earendil-works/pi-coding-agent";
-import { readFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { parse } from "yaml";
 
-function diagnosticSkillName(filePath: string): string {
+function skillName(filePath: string): string {
   try {
-    const { frontmatter } = parseFrontmatter(readFileSync(filePath, "utf8"));
-    if (typeof frontmatter.name === "string" && frontmatter.name.trim()) {
-      return frontmatter.name.trim();
+    const content = readFileSync(filePath, "utf8");
+    const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    if (match) {
+      const frontmatter = parse(match[1] ?? "");
+      if (
+        frontmatter &&
+        typeof frontmatter === "object" &&
+        typeof frontmatter.name === "string" &&
+        frontmatter.name.trim()
+      ) {
+        return frontmatter.name.trim();
+      }
     }
   } catch {
-    // Pi's resource loader will report the underlying read or parse failure.
+    // Pi's resource loader reports content and schema diagnostics later.
   }
   return basename(dirname(filePath));
+}
+
+function discoverSkillFiles(path: string): string[] {
+  if (!existsSync(path)) return [];
+  const stat = statSync(path);
+  if (stat.isFile()) return basename(path) === "SKILL.md" ? [path] : [];
+  if (!stat.isDirectory()) return [];
+
+  const direct = join(path, "SKILL.md");
+  if (existsSync(direct) && statSync(direct).isFile()) return [direct];
+  return readdirSync(path, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .flatMap((entry) => discoverSkillFiles(join(path, entry.name)));
 }
 
 /**
@@ -30,30 +49,12 @@ export function resolveAgentSkillPaths(
   if (selectedNames.length === 0 || resourcePaths.length === 0) return [];
 
   const selected = new Set(selectedNames);
-  const { skills, diagnostics } = loadSkills({
-    cwd: recipeDir,
-    agentDir: recipeDir,
-    skillPaths: resourcePaths,
-    includeDefaults: false,
-  });
-  const selectedPaths = new Set(
-    skills
-      .filter((skill) => selected.has(skill.name))
-      .map((skill) => skill.filePath)
-  );
-
-  // Keep selected files that Pi could discover but could not load. Passing the
-  // physical file to Pi's resource loader preserves its validation diagnostic
-  // instead of silently dropping a configured skill. Diagnostics from
-  // unselected skills remain outside the active agent's resource scope.
-  for (const diagnostic of diagnostics) {
-    if (
-      diagnostic.path &&
-      selected.has(diagnosticSkillName(diagnostic.path))
-    ) {
-      selectedPaths.add(diagnostic.path);
-    }
-  }
-
-  return [...selectedPaths];
+  void recipeDir;
+  return [
+    ...new Set(
+      resourcePaths
+        .flatMap(discoverSkillFiles)
+        .filter((path) => selected.has(skillName(path)))
+    ),
+  ].sort();
 }

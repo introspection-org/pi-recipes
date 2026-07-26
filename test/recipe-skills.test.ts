@@ -77,4 +77,43 @@ describe("recipe agent skills", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("matches Pi discovery for named and directory-named skills", () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-agent-skill-conformance-"));
+    try {
+      const skillsDir = join(root, "skills");
+      const named = join(skillsDir, "folder-name", "SKILL.md");
+      const directoryNamed = join(skillsDir, "directory-name", "SKILL.md");
+      mkdirSync(join(skillsDir, "folder-name"), { recursive: true });
+      mkdirSync(join(skillsDir, "directory-name"), { recursive: true });
+      writeFileSync(
+        named,
+        "---\nname: public-name\ndescription: Named guidance\n---\n"
+      );
+      writeFileSync(
+        directoryNamed,
+        "---\ndescription: Directory guidance\n---\n"
+      );
+
+      const selectedPaths = resolveAgentSkillPaths(
+        root,
+        [skillsDir],
+        ["public-name", "directory-name"]
+      );
+      const pi = loadSkills({
+        cwd: root,
+        agentDir: root,
+        skillPaths: selectedPaths,
+        includeDefaults: false,
+      });
+
+      expect(pi.diagnostics).toEqual([]);
+      expect(pi.skills.map((skill) => skill.name).sort()).toEqual([
+        "directory-name",
+        "public-name",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
