@@ -322,10 +322,6 @@ describe("shared Recipe validator bridge", () => {
       "name: ' agent '\nmodel:\n  name: anthropic/claude-haiku-4-5\n",
     ],
     [
-      "blank system instructions",
-      "name: agent\nmodel:\n  name: anthropic/claude-haiku-4-5\nsystem_instructions:\n  mode: replace\n  content: '   '\n",
-    ],
-    [
       "duplicate tools",
       "name: agent\nmodel:\n  name: anthropic/claude-haiku-4-5\ntools: [read, read]\n",
     ],
@@ -341,6 +337,31 @@ describe("shared Recipe validator bridge", () => {
     });
     expect(() => resolveRecipe({ recipeDir: root })).toThrow();
   });
+
+  it.each(["append", "replace"] as const)(
+    "keeps Rust and TypeScript acceptance aligned for blank %s system instructions",
+    async (mode) => {
+      const root = recipe(
+        [
+          "name: agent",
+          "model:",
+          "  name: anthropic/claude-haiku-4-5",
+          "system_instructions:",
+          `  mode: ${mode}`,
+          "  content: '   '",
+        ].join("\n")
+      );
+
+      await expect(checkRecipeAtLoad(root, env)).resolves.toMatchObject({
+        valid: true,
+      });
+      expect(
+        resolveRecipe({ recipeDir: root }).selectAgent().systemPromptOverride(
+          "shared instructions"
+        )
+      ).toBe(mode === "append" ? "shared instructions" : "");
+    }
+  );
 
   it("keeps filenames out of agent reference resolution", async () => {
     const root = recipe(
