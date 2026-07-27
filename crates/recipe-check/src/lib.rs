@@ -1473,13 +1473,7 @@ fn validate_agent_system_instructions(map: &JsonMap, path: &str, ctx: &mut Check
         );
     }
     match system.get("content") {
-        Some(JsonValue::String(value)) if !value.trim().is_empty() => {}
-        Some(JsonValue::String(_)) => ctx.error(
-            "agent.system_instructions_invalid",
-            path,
-            "Agent system_instructions.content must be non-empty",
-            None::<String>,
-        ),
+        Some(JsonValue::String(_)) => {}
         Some(_) => ctx.error(
             "agent.system_instructions_invalid",
             path,

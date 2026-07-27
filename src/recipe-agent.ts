@@ -196,9 +196,6 @@ function invalidAgentField(
     if (typeof instructions.content !== "string") {
       return "system_instructions.content must be a string";
     }
-    if (!instructions.content.trim()) {
-      return "system_instructions.content must be non-empty";
-    }
     if (
       Object.hasOwn(instructions, "mode") &&
       instructions.mode !== "append" &&

@@ -217,6 +217,29 @@ describe("recipe agent model config loading", () => {
     });
   });
 
+  it.each(["append", "replace"] as const)(
+    "accepts explicitly blank %s system instructions",
+    (mode) => {
+      writeFileSync(
+        join(recipeDir, "agents", "agent.yaml"),
+        [
+          "name: agent",
+          "model:",
+          "  name: openai/gpt-5.5",
+          "system_instructions:",
+          `  mode: ${mode}`,
+          "  content: '   '",
+        ].join("\n")
+      );
+
+      expect(validateRecipeAgentDefinitions(recipeDir)).toEqual([]);
+      expect(
+        loadValidatedRecipeAgentDefinitions(recipeDir).definitions.get("agent")
+          ?.systemInstructions
+      ).toEqual({ mode, content: "" });
+    }
+  );
+
   it("rejects legacy agent instruction keys", () => {
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
