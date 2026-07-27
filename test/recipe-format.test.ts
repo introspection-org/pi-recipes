@@ -482,7 +482,7 @@ describe("npm package boundary", () => {
 
     expect(pkg.name).toBe("@introspection-ai/recipes");
     expect(pkg.description).toBe(
-      "The open package format for complete, portable Pi agents."
+      "The open format for vertical agents, built on Pi."
     );
     expect(pkg.bin).toBeUndefined();
     expect(pkg.exports).not.toHaveProperty("./serve");
