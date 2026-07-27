@@ -469,6 +469,11 @@ function listPackageEntries(
   const scanRoots = new Set<string>();
   for (const glob of globs) {
     if (!glob.trim() || !hasGlob(glob)) continue;
+    if (isAbsolute(glob) || hasTraversalSegment(glob)) {
+      throw new RecipePackageError(
+        `Recipe resource glob resolves outside the package: ${glob}`
+      );
+    }
     scanRoots.add(globScanRoot(glob));
   }
   if (scanRoots.size === 0) return [];

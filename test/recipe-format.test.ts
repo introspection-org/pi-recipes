@@ -289,7 +289,22 @@ describe("Recipe Format", () => {
     );
 
     expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
-      /declares agents resource outside the package/
+      /outside the package/
+    );
+  });
+
+  it("rejects traversal glob roots before scanning", () => {
+    const recipeDir = fixture();
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "escaping-agent",
+        pi: { agents: ["../../**/*.yaml"] },
+      })
+    );
+
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+      /resource glob resolves outside the package/
     );
   });
 

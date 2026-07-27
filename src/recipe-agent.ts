@@ -156,7 +156,7 @@ function invalidAgentField(
     if (
       Object.hasOwn(data, key) &&
       typeof data[key] === "string" &&
-      !PORTABLE_AGENT_NAME.test(data[key].trim())
+      !PORTABLE_AGENT_NAME.test(data[key])
     ) {
       return `${key} must use lowercase kebab-case`;
     }
@@ -446,7 +446,7 @@ function readRecipeAgentSources(
       );
       continue;
     }
-    const name = (data.name as string).trim();
+    const name = data.name as string;
 
     let modelConfig: RecipeAgentModelConfig | undefined;
     try {
@@ -460,7 +460,7 @@ function readRecipeAgentSources(
     sources.push({
       definition: {
         name,
-        from: typeof data.from === "string" && data.from.trim() ? data.from.trim() : undefined,
+        from: typeof data.from === "string" ? data.from : undefined,
         description:
           typeof data.description === "string" ? data.description : undefined,
         model: modelProjection(modelConfig),

@@ -214,6 +214,10 @@ describe("shared Recipe validator bridge", () => {
       "name: Agent One\nmodel:\n  name: anthropic/claude-haiku-4-5\n",
     ],
     [
+      "agent name with surrounding whitespace",
+      "name: ' agent '\nmodel:\n  name: anthropic/claude-haiku-4-5\n",
+    ],
+    [
       "blank system instructions",
       "name: agent\nmodel:\n  name: anthropic/claude-haiku-4-5\nsystem_instructions:\n  mode: replace\n  content: '   '\n",
     ],
