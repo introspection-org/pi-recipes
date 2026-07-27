@@ -551,9 +551,16 @@ fn validate_pi_config(
     let Some(JsonValue::Object(pi)) = package.pi.as_ref() else {
         return resolved;
     };
-    let known: HashSet<&str> = ["agents", "extensions", "skills", "prompts", "mcp"]
-        .into_iter()
-        .collect();
+    let known: HashSet<&str> = [
+        "agents",
+        "extensions",
+        "skills",
+        "prompts",
+        "mcp",
+        "runtime",
+    ]
+    .into_iter()
+    .collect();
     for key in pi.keys() {
         if !known.contains(key.as_str()) {
             ctx.error(
@@ -589,8 +596,125 @@ fn validate_pi_config(
     }
 
     validate_mcp_config(pi.get("mcp"), ctx);
+    validate_runtime_config(pi.get("runtime"), ctx);
 
     resolved
+}
+
+fn validate_runtime_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
+    let Some(value) = value else { return };
+    let Some(runtime) = value.as_object() else {
+        ctx.error(
+            "pi.runtime_invalid",
+            PACKAGE_JSON,
+            "package.json#pi.runtime must be an object",
+            None::<String>,
+        );
+        return;
+    };
+    for key in runtime.keys() {
+        if !matches!(key.as_str(), "python" | "system") {
+            ctx.error(
+                "pi.runtime_invalid",
+                PACKAGE_JSON,
+                format!("package.json#pi.runtime contains unknown field '{key}'"),
+                None::<String>,
+            );
+        }
+    }
+    if let Some(python_value) = runtime.get("python") {
+        let Some(python) = python_value.as_object() else {
+            ctx.error(
+                "pi.runtime_invalid",
+                PACKAGE_JSON,
+                "package.json#pi.runtime.python must be an object",
+                None::<String>,
+            );
+            return;
+        };
+        for key in python.keys() {
+            if !matches!(key.as_str(), "project" | "lockfile" | "version" | "imports") {
+                ctx.error(
+                    "pi.runtime_invalid",
+                    PACKAGE_JSON,
+                    format!("package.json#pi.runtime.python contains unknown field '{key}'"),
+                    None::<String>,
+                );
+            }
+        }
+        for key in ["project", "lockfile"] {
+            let Some(path) = string_value(python.get(key)) else {
+                ctx.error(
+                    "pi.runtime_invalid",
+                    PACKAGE_JSON,
+                    format!(
+                        "package.json#pi.runtime.python.{key} must be a non-empty relative path"
+                    ),
+                    None::<String>,
+                );
+                continue;
+            };
+            let normalized = normalize_relative(&path);
+            if normalized.is_empty()
+                || normalized != path
+                || (!ctx.has_file(&normalized) && key == "lockfile")
+                || (!ctx.has_dir(&normalized) && key == "project")
+            {
+                ctx.error("pi.runtime_path_invalid", PACKAGE_JSON, format!("package.json#pi.runtime.python.{key} must resolve inside the recipe: {path}"), None::<String>);
+            }
+        }
+        if let Some(imports) = python.get("imports") {
+            let valid = imports
+                .as_array()
+                .is_some_and(|items| items.iter().all(|item| string_value(Some(item)).is_some()));
+            if !valid {
+                ctx.error("pi.runtime_invalid", PACKAGE_JSON, "package.json#pi.runtime.python.imports must be an array of non-empty module names", None::<String>);
+            }
+        }
+    }
+    if let Some(system_value) = runtime.get("system") {
+        let Some(system) = system_value.as_object() else {
+            ctx.error(
+                "pi.runtime_invalid",
+                PACKAGE_JSON,
+                "package.json#pi.runtime.system must be an object",
+                None::<String>,
+            );
+            return;
+        };
+        for key in system.keys() {
+            if key != "packages" {
+                ctx.error(
+                    "pi.runtime_invalid",
+                    PACKAGE_JSON,
+                    format!("package.json#pi.runtime.system contains unknown field '{key}'"),
+                    None::<String>,
+                );
+            }
+        }
+        let valid = system
+            .get("packages")
+            .and_then(JsonValue::as_array)
+            .is_some_and(|items| {
+                items.iter().all(|item| {
+                    item.as_object().is_some_and(|entry| {
+                        entry
+                            .keys()
+                            .all(|key| matches!(key.as_str(), "id" | "version"))
+                            && string_value(entry.get("id")).is_some()
+                            && string_value(entry.get("version")).is_some()
+                    })
+                })
+            });
+        if !valid {
+            ctx.error(
+                "pi.runtime_invalid",
+                PACKAGE_JSON,
+                "package.json#pi.runtime.system.packages must contain only { id, version } objects",
+                None::<String>,
+            );
+        }
+    }
 }
 
 fn resource_patterns(
@@ -3190,6 +3314,45 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "pi.unknown_key"));
+    }
+
+    #[test]
+    fn validates_runtime_requirement_paths_and_shapes() {
+        let package = json!({
+            "name": "runtime-requirements",
+            "pi": {
+                "agents": ["agents/*.yaml"],
+                "runtime": {
+                    "python": {
+                        "project": "python",
+                        "lockfile": "python/uv.lock",
+                        "version": ">=3.12,<3.15",
+                        "imports": ["pandas", "openpyxl"]
+                    },
+                    "system": {
+                        "packages": [
+                            { "id": "document.pdf-tools", "version": "1" }
+                        ]
+                    }
+                }
+            }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\n",
+            ),
+            ("python/pyproject.toml", "[project]\nname='controls'\n"),
+            ("python/uv.lock", "version = 1\n"),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
     }
 
     #[test]

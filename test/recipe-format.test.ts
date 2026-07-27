@@ -63,15 +63,46 @@ function fixture(): string {
 }
 
 describe("Recipe Format", () => {
+  it("resolves locked Python and approved system runtime requirements", () => {
+    const recipeDir = fixture();
+    mkdirSync(join(recipeDir, "python"), { recursive: true });
+    writeFileSync(join(recipeDir, "python", "pyproject.toml"), "[project]\nname='controls'\n");
+    writeFileSync(join(recipeDir, "python", "uv.lock"), "version = 1\n");
+    const pkg = JSON.parse(readFileSync(join(recipeDir, "package.json"), "utf8"));
+    pkg.pi.runtime = {
+      python: {
+        project: "python",
+        lockfile: "python/uv.lock",
+        version: ">=3.12,<3.15",
+        imports: ["pandas", "openpyxl"],
+      },
+      system: {
+        packages: [{ id: "document.pdf-tools", version: "1" }],
+      },
+    };
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+
+    expect(readPiPackageManifest(recipeDir).runtime).toEqual({
+      python: {
+        project: "python",
+        lockfile: "python/uv.lock",
+        version: ">=3.12,<3.15",
+        imports: ["pandas", "openpyxl"],
+      },
+      system: {
+        packages: [{ id: "document.pdf-tools", version: "1" }],
+      },
+    });
+  });
+
   it("scopes resource globs and skips installed dependency trees", () => {
     const recipeDir = mkdtempSync(join(tmpdir(), "recipe-format-globs-"));
     cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));
     mkdirSync(join(recipeDir, "agents"), { recursive: true });
     mkdirSync(join(recipeDir, "skills", "research"), { recursive: true });
-    mkdirSync(
-      join(recipeDir, "skills", "research", "node_modules", "decoy"),
-      { recursive: true }
-    );
+    mkdirSync(join(recipeDir, "skills", "research", "node_modules", "decoy"), {
+      recursive: true,
+    });
     mkdirSync(join(recipeDir, "node_modules", "decoy", "skills"), {
       recursive: true,
     });
@@ -89,25 +120,12 @@ describe("Recipe Format", () => {
       join(recipeDir, "agents", "agent.yaml"),
       "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-5\n"
     );
+    writeFileSync(join(recipeDir, "skills", "research", "SKILL.md"), "---\nname: research\n---\n");
     writeFileSync(
-      join(recipeDir, "skills", "research", "SKILL.md"),
-      "---\nname: research\n---\n"
-    );
-    writeFileSync(
-      join(
-        recipeDir,
-        "skills",
-        "research",
-        "node_modules",
-        "decoy",
-        "SKILL.md"
-      ),
+      join(recipeDir, "skills", "research", "node_modules", "decoy", "SKILL.md"),
       "decoy\n"
     );
-    writeFileSync(
-      join(recipeDir, "node_modules", "decoy", "skills", "SKILL.md"),
-      "decoy\n"
-    );
+    writeFileSync(join(recipeDir, "node_modules", "decoy", "skills", "SKILL.md"), "decoy\n");
 
     const manifest = readPiPackageManifest(recipeDir);
     expect(packageResourcePaths(manifest, "skills")).toEqual([
@@ -116,9 +134,7 @@ describe("Recipe Format", () => {
   });
 
   it("keeps root-anchored resource globs package-wide", () => {
-    const recipeDir = mkdtempSync(
-      join(tmpdir(), "recipe-format-root-glob-")
-    );
+    const recipeDir = mkdtempSync(join(tmpdir(), "recipe-format-root-glob-"));
     cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));
     mkdirSync(join(recipeDir, "agents"), { recursive: true });
     mkdirSync(join(recipeDir, "nested"), { recursive: true });
@@ -158,9 +174,7 @@ describe("Recipe Format", () => {
     );
 
     const manifest = readPiPackageManifest(recipeDir);
-    expect(packageResourcePaths(manifest, "agents")).toEqual([
-      join(recipeDir, "agents"),
-    ]);
+    expect(packageResourcePaths(manifest, "agents")).toEqual([join(recipeDir, "agents")]);
     expect(resolveRecipe({ recipeDir }).selectAgent()).toMatchObject({
       name: "agent",
       modelSpec: "anthropic/claude-sonnet-4-5",
@@ -192,10 +206,7 @@ describe("Recipe Format", () => {
       join(recipeDir, "agents", "agent.yaml"),
       "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-5\n"
     );
-    writeFileSync(
-      join(recipeDir, "skills", "ambient", "SKILL.md"),
-      "---\nname: ambient\n---\n"
-    );
+    writeFileSync(join(recipeDir, "skills", "ambient", "SKILL.md"), "---\nname: ambient\n---\n");
     writeFileSync(join(recipeDir, "prompts", "ambient.md"), "ambient\n");
     writeFileSync(
       join(recipeDir, "package.json"),
@@ -273,9 +284,7 @@ describe("Recipe Format", () => {
     expect(recipe.name).toBe("agent");
     expect(recipe.modelSpec).toBe("anthropic/claude-sonnet-4-5");
     expect(recipe.tools).toEqual(["read"]);
-    expect(recipe.skillPaths).toEqual([
-      join(recipeDir, "skills", "research", "SKILL.md"),
-    ]);
+    expect(recipe.skillPaths).toEqual([join(recipeDir, "skills", "research", "SKILL.md")]);
   });
 
   it("rejects resources that escape the package", () => {
@@ -288,9 +297,7 @@ describe("Recipe Format", () => {
       })
     );
 
-    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
-      /outside the package/
-    );
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(/outside the package/);
   });
 
   it("rejects traversal glob roots before scanning", () => {
@@ -311,31 +318,20 @@ describe("Recipe Format", () => {
   it("resolves the package extension closure deterministically", () => {
     const recipeDir = fixture();
     mkdirSync(join(recipeDir, "extensions"), { recursive: true });
-    writeFileSync(
-      join(recipeDir, "extensions", "first.ts"),
-      "export default () => {};\n"
-    );
-    writeFileSync(
-      join(recipeDir, "extensions", "second.ts"),
-      "export default () => {};\n"
-    );
+    writeFileSync(join(recipeDir, "extensions", "first.ts"), "export default () => {};\n");
+    writeFileSync(join(recipeDir, "extensions", "second.ts"), "export default () => {};\n");
     writeFileSync(
       join(recipeDir, "package.json"),
       JSON.stringify({
         name: "complete-agent",
         pi: {
           agents: ["agents/*.yaml"],
-          extensions: [
-            "extensions/second.ts",
-            "extensions/first.ts",
-          ],
+          extensions: ["extensions/second.ts", "extensions/first.ts"],
         },
       })
     );
 
-    expect(
-      resolveRecipe({ recipeDir }).selectAgent().extensionPaths
-    ).toEqual([
+    expect(resolveRecipe({ recipeDir }).selectAgent().extensionPaths).toEqual([
       join(recipeDir, "extensions", "second.ts"),
       join(recipeDir, "extensions", "first.ts"),
     ]);
@@ -362,14 +358,8 @@ describe("Recipe Format", () => {
     mkdirSync(join(recipeDir, "extensions", "without-index"), {
       recursive: true,
     });
-    writeFileSync(
-      join(recipeDir, "extensions", "z-last.ts"),
-      "export default () => {};\n"
-    );
-    writeFileSync(
-      join(recipeDir, "extensions", "a-first.js"),
-      "export default () => {};\n"
-    );
+    writeFileSync(join(recipeDir, "extensions", "z-last.ts"), "export default () => {};\n");
+    writeFileSync(join(recipeDir, "extensions", "a-first.js"), "export default () => {};\n");
     writeFileSync(
       join(recipeDir, "extensions", "nested", "index.ts"),
       "export default () => {};\n"
@@ -395,14 +385,8 @@ describe("Recipe Format", () => {
       join(recipeDir, "extensions", "z-last.ts"),
     ]);
 
-    writeFileSync(
-      join(recipeDir, "extensions", "index.js"),
-      "export default () => {};\n"
-    );
-    writeFileSync(
-      join(recipeDir, "extensions", "index.ts"),
-      "export default () => {};\n"
-    );
+    writeFileSync(join(recipeDir, "extensions", "index.js"), "export default () => {};\n");
+    writeFileSync(join(recipeDir, "extensions", "index.ts"), "export default () => {};\n");
     expect(resolveRecipe({ recipeDir }).selectAgent().extensionPaths).toEqual([
       join(recipeDir, "extensions", "index.ts"),
     ]);
@@ -411,26 +395,26 @@ describe("Recipe Format", () => {
   it.skipIf(process.platform === "win32")(
     "rejects extension symlinks that execute outside the package",
     () => {
-    const recipeDir = fixture();
-    const outside = join(recipeDir, "..", `${basename(recipeDir)}-outside.ts`);
-    writeFileSync(outside, "export default () => {};\n");
-    cleanups.push(() => rmSync(outside, { force: true }));
-    mkdirSync(join(recipeDir, "extensions"), { recursive: true });
-    symlinkSync(outside, join(recipeDir, "extensions", "outside.ts"));
-    writeFileSync(
-      join(recipeDir, "package.json"),
-      JSON.stringify({
-        name: "complete-agent",
-        pi: {
-          agents: ["agents/*.yaml"],
-          extensions: ["extensions/outside.ts"],
-        },
-      })
-    );
+      const recipeDir = fixture();
+      const outside = join(recipeDir, "..", `${basename(recipeDir)}-outside.ts`);
+      writeFileSync(outside, "export default () => {};\n");
+      cleanups.push(() => rmSync(outside, { force: true }));
+      mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+      symlinkSync(outside, join(recipeDir, "extensions", "outside.ts"));
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        JSON.stringify({
+          name: "complete-agent",
+          pi: {
+            agents: ["agents/*.yaml"],
+            extensions: ["extensions/outside.ts"],
+          },
+        })
+      );
 
-    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
-      "Recipe extensions resource resolves outside the package"
-    );
+      expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+        "Recipe extensions resource resolves outside the package"
+      );
     }
   );
 
@@ -438,11 +422,7 @@ describe("Recipe Format", () => {
     "rejects SYSTEM.md symlinks that resolve outside the package",
     () => {
       const recipeDir = fixture();
-      const outside = join(
-        recipeDir,
-        "..",
-        `${basename(recipeDir)}-outside-system.md`
-      );
+      const outside = join(recipeDir, "..", `${basename(recipeDir)}-outside-system.md`);
       writeFileSync(outside, "outside prompt\n");
       cleanups.push(() => rmSync(outside, { force: true }));
       symlinkSync(outside, join(recipeDir, "SYSTEM.md"));
@@ -470,9 +450,7 @@ describe("npm package boundary", () => {
 
   it("ships a library and Pi extension without a standalone CLI or server", () => {
     const root = join(import.meta.dirname, "..");
-    const pkg = JSON.parse(
-      readFileSync(join(root, "package.json"), "utf8")
-    ) as {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
       name: string;
       description: string;
       bin?: unknown;
@@ -481,9 +459,7 @@ describe("npm package boundary", () => {
     };
 
     expect(pkg.name).toBe("@introspection-ai/recipes");
-    expect(pkg.description).toBe(
-      "The open format for vertical agents, built on Pi."
-    );
+    expect(pkg.description).toBe("The open format for vertical agents, built on Pi.");
     expect(pkg.bin).toBeUndefined();
     expect(pkg.exports).not.toHaveProperty("./serve");
     expect(pkg.exports).not.toHaveProperty("./agui");
@@ -505,9 +481,7 @@ describe("npm package boundary", () => {
     expect(existsSync(join(root, "src", "serve.ts"))).toBe(false);
     // Internal snapshot bridge used by `pi --recipe`; it is not exposed in
     // package.json#bin and therefore does not restore a Recipes CLI.
-    expect(
-      existsSync(join(root, "crates", "recipe-check", "src", "main.rs"))
-    ).toBe(true);
+    expect(existsSync(join(root, "crates", "recipe-check", "src", "main.rs"))).toBe(true);
     expect(existsSync(join(root, "bindings"))).toBe(false);
     expect(existsSync(join(root, "harbor"))).toBe(false);
     expect(existsSync(join(root, "docs", "recipe-evals.md"))).toBe(false);
