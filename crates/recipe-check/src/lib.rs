@@ -705,7 +705,7 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
 
     let from = match map.get("from") {
         Some(JsonValue::String(value)) if !value.trim().is_empty() => {
-            let value = value.trim().to_owned();
+            let value = value.to_owned();
             if !portable_agent_name(&value) {
                 ctx.error(
                     "agent.from_invalid",
@@ -2664,6 +2664,33 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.key_unknown"));
+    }
+
+    #[test]
+    fn rejects_whitespace_around_inherited_agent_names() {
+        let package = json!({ "name": "canonical", "pi": {} });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/base.yaml",
+                "name: base\nmodel:\n  name: test/provider-model\n",
+            ),
+            (
+                "agents/child.yaml",
+                "name: child\nfrom: \" base \"\nmodel:\n  name: test/provider-model\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.from_invalid"));
     }
 
     #[test]
