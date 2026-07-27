@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/introspection-org/recipes/compare/v0.14.0...v0.14.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **recipe-check:** restore portable validation contracts ([#143](https://github.com/introspection-org/recipes/issues/143)) ([fdb065e](https://github.com/introspection-org/recipes/commit/fdb065e6967781742965670e1aba3e3a864b0ca6))
+
 ## [0.14.0](https://github.com/introspection-org/recipes/compare/v0.13.0...v0.14.0) (2026-07-27)
 
 
