@@ -26,6 +26,7 @@ export interface RecipeCheckDiagnostic {
 export interface RecipeCheckReport {
   valid: boolean;
   diagnostics: RecipeCheckDiagnostic[];
+  resources?: Record<string, number>;
 }
 
 // Skip large generated trees unless package.json explicitly declares a
@@ -144,6 +145,9 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
 function needsContent(path: string): boolean {
   return (
     path === "package.json" ||
+    path === "package-lock.json" ||
+    path === "npm-shrinkwrap.json" ||
+    path === ".pi/mcp.local.example.json" ||
     path === "SKILL.md" ||
     path.endsWith("/SKILL.md") ||
     path.endsWith(".yaml") ||

@@ -4,6 +4,10 @@
 //! [`RecipeFiles`] snapshot of a recipe directory and returns a [`Report`].
 //! Hosts own filesystem discovery and any environment-specific policy.
 
+mod judges;
+pub mod resources;
+pub mod spec;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path};
 
@@ -51,6 +55,9 @@ impl RecipeFile {
 pub struct Report {
     pub valid: bool,
     pub diagnostics: Vec<Diagnostic>,
+    /// Discovered portable Recipe resources, keyed by resource kind.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resources: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,7 +83,9 @@ type JsonMap = serde_json::Map<String, JsonValue>;
 #[derive(Debug, Clone)]
 struct Package {
     name: Option<String>,
+    version: Option<String>,
     pi: Option<JsonValue>,
+    runtime_dependencies: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -248,11 +257,14 @@ impl CheckContext {
 /// publication policy.
 pub fn check_recipe_files(input: &RecipeFiles) -> Report {
     let mut ctx = CheckContext::new(input);
+    let mut resource_counts = BTreeMap::new();
 
     let package = read_package(&mut ctx);
     if let Some(package) = package {
         validate_package_identity(&package, &mut ctx);
+        validate_dependency_package(&package, &mut ctx);
         let resources = validate_pi_config(&package, &mut ctx);
+        validate_mcp_local_example(&mut ctx);
 
         let mcp_tool_policy = package
             .pi
@@ -260,13 +272,25 @@ pub fn check_recipe_files(input: &RecipeFiles) -> Report {
             .and_then(JsonValue::as_object)
             .and_then(|pi| mcp_tool_policy(pi.get("mcp")));
         let agent_paths = resolve_agents(&resources, &ctx);
+        resource_counts.insert("agents".to_owned(), agent_paths.len());
+        for key in ["extensions", "skills", "prompts"] {
+            if let Some(paths) = resources.get(key) {
+                resource_counts.insert(key.to_owned(), paths.len());
+            }
+        }
         validate_agents(&agent_paths, &resources, mcp_tool_policy.as_ref(), &mut ctx);
+    }
+
+    let judge_count = judges::validate_judges(&mut ctx);
+    if judge_count > 0 {
+        resource_counts.insert("judges".to_owned(), judge_count);
     }
 
     let valid = ctx.diagnostics.is_empty();
     Report {
         valid,
         diagnostics: ctx.diagnostics,
+        resources: resource_counts,
     }
 }
 
@@ -335,7 +359,10 @@ fn read_package(ctx: &mut CheckContext) -> Option<Package> {
 
     Some(Package {
         name: string_value(object.get("name")),
+        version: string_value(object.get("version")),
         pi,
+        runtime_dependencies: has_non_empty_object(object.get("dependencies"))
+            || has_non_empty_object(object.get("optionalDependencies")),
     })
 }
 
@@ -347,6 +374,172 @@ fn validate_package_identity(package: &Package, ctx: &mut CheckContext) {
             "Package is missing name",
             Some("set package.json#name to the recipe identifier"),
         );
+    }
+}
+
+fn validate_dependency_package(package: &Package, ctx: &mut CheckContext) {
+    if package.runtime_dependencies && !has_dependency_lockfile(ctx) {
+        ctx.error(
+            "package.lockfile_missing",
+            PACKAGE_JSON,
+            "Recipe declares runtime dependencies but has no lockfile",
+            Some("commit package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, or yarn.lock"),
+        );
+    }
+
+    if ctx.has_file(".pi/mcp.local.json") {
+        ctx.error(
+            "package.local_config_present",
+            ".pi/mcp.local.json",
+            "Local capability configuration must not be distributed with a Recipe",
+            Some("remove .pi/mcp.local.json and keep only a redacted example when needed"),
+        );
+    }
+
+    for lockfile in ["package-lock.json", "npm-shrinkwrap.json"] {
+        let Some(content) = ctx.content(lockfile).map(str::to_owned) else {
+            continue;
+        };
+        let parsed: JsonValue = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(err) => {
+                ctx.error(
+                    "package.lockfile_malformed",
+                    lockfile,
+                    format!("{lockfile} is not valid JSON: {err}"),
+                    Some("regenerate the lockfile from the current package.json"),
+                );
+                continue;
+            }
+        };
+        let Some(root) = parsed.as_object() else {
+            continue;
+        };
+        let package_root = root
+            .get("packages")
+            .and_then(JsonValue::as_object)
+            .and_then(|packages| packages.get(""))
+            .and_then(JsonValue::as_object);
+        for (location, entry) in [("top-level", Some(root)), ("packages[\"\"]", package_root)] {
+            let Some(entry) = entry else {
+                continue;
+            };
+            for (field, expected) in [
+                ("name", package.name.as_deref()),
+                ("version", package.version.as_deref()),
+            ] {
+                if let (Some(expected), Some(actual)) = (expected, string_value(entry.get(field))) {
+                    if expected != actual {
+                        ctx.error(
+                            format!("package.lockfile_{field}_mismatch"),
+                            lockfile,
+                            format!(
+                                "{lockfile} {location} {field} '{actual}' does not match package.json '{expected}'"
+                            ),
+                            Some("regenerate the lockfile after changing Recipe identity"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+const MCP_LOCAL_EXAMPLE: &str = ".pi/mcp.local.example.json";
+
+fn validate_mcp_local_example(ctx: &mut CheckContext) {
+    if !ctx.has_file(MCP_LOCAL_EXAMPLE) {
+        return;
+    }
+    let Some(content) = ctx.content(MCP_LOCAL_EXAMPLE).map(str::to_owned) else {
+        ctx.error(
+            "mcp.local_example_unreadable",
+            MCP_LOCAL_EXAMPLE,
+            "MCP local example content was not provided",
+            Some("supply .pi/mcp.local.example.json content to the validator"),
+        );
+        return;
+    };
+    let parsed: JsonValue = match serde_json::from_str(&content) {
+        Ok(value) => value,
+        Err(err) => {
+            ctx.error_at(
+                "mcp.local_example_malformed",
+                MCP_LOCAL_EXAMPLE,
+                Some(Span {
+                    line: err.line(),
+                    column: err.column(),
+                }),
+                format!(".pi/mcp.local.example.json is not valid JSON: {err}"),
+                Some("fix the local MCP config template JSON"),
+            );
+            return;
+        }
+    };
+    let JsonValue::Object(map) = parsed else {
+        ctx.error(
+            "mcp.local_example_invalid",
+            MCP_LOCAL_EXAMPLE,
+            ".pi/mcp.local.example.json must be an object",
+            Some("fix the file structure or remove the optional example"),
+        );
+        return;
+    };
+    let Some(servers) = map.get("servers") else {
+        return;
+    };
+    let JsonValue::Array(servers) = servers else {
+        ctx.error(
+            "mcp.local_example_invalid",
+            MCP_LOCAL_EXAMPLE,
+            ".pi/mcp.local.example.json servers must be an array",
+            Some("fix the server list or remove the optional example"),
+        );
+        return;
+    };
+    for (index, server) in servers.iter().enumerate() {
+        let JsonValue::Object(server) = server else {
+            ctx.error(
+                "mcp.local_example_invalid",
+                MCP_LOCAL_EXAMPLE,
+                format!("servers[{index}] must be an object"),
+                Some("fix the server entry or remove it"),
+            );
+            continue;
+        };
+        for key in ["id", "name", "transport", "url"] {
+            if let Some(value) = server.get(key) {
+                if string_value(Some(value)).is_none() {
+                    ctx.error(
+                        "mcp.local_example_invalid",
+                        MCP_LOCAL_EXAMPLE,
+                        format!("servers[{index}].{key} must be a non-empty string"),
+                        Some("remove the field or provide a non-empty value"),
+                    );
+                }
+            }
+        }
+        if let Some(headers) = server.get("headers") {
+            let JsonValue::Object(headers) = headers else {
+                ctx.error(
+                    "mcp.local_example_invalid",
+                    MCP_LOCAL_EXAMPLE,
+                    format!("servers[{index}].headers must be an object"),
+                    Some("remove headers or make it a string-valued mapping"),
+                );
+                continue;
+            };
+            for (key, value) in headers {
+                if !matches!(value, JsonValue::String(_)) {
+                    ctx.error(
+                        "mcp.local_example_invalid",
+                        MCP_LOCAL_EXAMPLE,
+                        format!("servers[{index}].headers.{key} must be a string"),
+                        Some("remove the header or provide a string value"),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -2040,6 +2233,21 @@ fn string_value(value: Option<&JsonValue>) -> Option<String> {
     }
 }
 
+fn has_dependency_lockfile(ctx: &CheckContext) -> bool {
+    [
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+    ]
+    .iter()
+    .any(|name| ctx.path_exists(name))
+}
+
+fn has_non_empty_object(value: Option<&JsonValue>) -> bool {
+    matches!(value, Some(JsonValue::Object(map)) if !map.is_empty())
+}
+
 fn obj_string(map: &JsonMap, key: &str) -> Option<String> {
     match map.get(key) {
         Some(JsonValue::String(value)) if !value.trim().is_empty() => Some(value.trim().to_owned()),
@@ -2506,8 +2714,7 @@ mod tests {
 
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "agent.mcp_server_undeclared"
-                && diagnostic.message.contains("ghost")
+            diagnostic.code == "agent.mcp_server_undeclared" && diagnostic.message.contains("ghost")
         }));
     }
 
@@ -3115,5 +3322,142 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.yaml_malformed"));
+    }
+
+    #[test]
+    fn runtime_dependencies_require_a_committed_lockfile() {
+        let package = json!({
+            "name": "dependency-recipe",
+            "pi": {},
+            "dependencies": { "example": "1.0.0" }
+        });
+        let mut input = recipe_files(&[(
+            "package.json",
+            &serde_json::to_string_pretty(&package).expect("serialize package"),
+        )]);
+
+        let missing = check_recipe_files(&input);
+        assert!(missing
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "package.lockfile_missing"));
+
+        input.files.push(RecipeFile::new(
+            "pnpm-lock.yaml",
+            "lockfileVersion: '9.0'\n",
+        ));
+        let locked = check_recipe_files(&input);
+        assert!(!locked
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "package.lockfile_missing"));
+    }
+
+    #[test]
+    fn rejects_local_capability_configuration_in_the_recipe_snapshot() {
+        let package = json!({ "name": "local-config-recipe", "pi": {} });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (".pi/mcp.local.json", r#"{"servers":[]}"#),
+        ]);
+
+        let report = check_recipe_files(&input);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "package.local_config_present"));
+    }
+
+    #[test]
+    fn validates_the_redacted_local_mcp_example() {
+        let package = json!({ "name": "local-example-recipe", "pi": {} });
+        let valid = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                ".pi/mcp.local.example.json",
+                r#"{"servers":[{"id":"search","url":"https://example.test/mcp","headers":{"Authorization":"Bearer ${TOKEN}"}}]}"#,
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/model\n",
+            ),
+        ]);
+        let valid_report = check_recipe_files(&valid);
+        assert!(valid_report.valid, "{:?}", valid_report.diagnostics);
+
+        let invalid = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                ".pi/mcp.local.example.json",
+                r#"{"servers":[{"id":"","headers":{"Authorization":42}}]}"#,
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/model\n",
+            ),
+        ]);
+        let report = check_recipe_files(&invalid);
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "mcp.local_example_invalid"));
+    }
+
+    #[test]
+    fn validates_npm_lockfile_identity_and_json() {
+        let package = json!({
+            "name": "owned-recipe",
+            "version": "0.2.0",
+            "pi": {}
+        });
+        let mismatched_lock = json!({
+            "name": "upstream-recipe",
+            "version": "0.1.0",
+            "lockfileVersion": 3,
+            "packages": {
+                "": { "name": "upstream-recipe", "version": "0.1.0" }
+            }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "package-lock.json",
+                &serde_json::to_string_pretty(&mismatched_lock).expect("serialize lockfile"),
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+        let codes = report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(codes.contains("package.lockfile_name_mismatch"));
+        assert!(codes.contains("package.lockfile_version_mismatch"));
+
+        let malformed = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("package-lock.json", "{"),
+        ]);
+        assert!(check_recipe_files(&malformed)
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "package.lockfile_malformed"));
     }
 }
