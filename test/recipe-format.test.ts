@@ -63,6 +63,87 @@ function fixture(): string {
 }
 
 describe("Recipe Format", () => {
+  it("scopes resource globs and skips installed dependency trees", () => {
+    const recipeDir = mkdtempSync(join(tmpdir(), "recipe-format-globs-"));
+    cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(join(recipeDir, "skills", "research"), { recursive: true });
+    mkdirSync(
+      join(recipeDir, "skills", "research", "node_modules", "decoy"),
+      { recursive: true }
+    );
+    mkdirSync(join(recipeDir, "node_modules", "decoy", "skills"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "scoped-globs",
+        pi: {
+          agents: ["agents/*.yaml"],
+          skills: ["skills/**/SKILL.md"],
+        },
+      })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-5\n"
+    );
+    writeFileSync(
+      join(recipeDir, "skills", "research", "SKILL.md"),
+      "---\nname: research\n---\n"
+    );
+    writeFileSync(
+      join(
+        recipeDir,
+        "skills",
+        "research",
+        "node_modules",
+        "decoy",
+        "SKILL.md"
+      ),
+      "decoy\n"
+    );
+    writeFileSync(
+      join(recipeDir, "node_modules", "decoy", "skills", "SKILL.md"),
+      "decoy\n"
+    );
+
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(packageResourcePaths(manifest, "skills")).toEqual([
+      join(recipeDir, "skills", "research", "SKILL.md"),
+    ]);
+  });
+
+  it("keeps root-anchored resource globs package-wide", () => {
+    const recipeDir = mkdtempSync(
+      join(tmpdir(), "recipe-format-root-glob-")
+    );
+    cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(join(recipeDir, "nested"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "root-glob",
+        pi: {
+          agents: ["agents/*.yaml"],
+          prompts: ["**/*.md"],
+        },
+      })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-5\n"
+    );
+    writeFileSync(join(recipeDir, "nested", "review.md"), "Review\n");
+
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(packageResourcePaths(manifest, "prompts")).toEqual([
+      join(recipeDir, "nested", "review.md"),
+    ]);
+  });
+
   it("accepts an empty pi manifest with conventional resources and a minimal agent", () => {
     const recipeDir = mkdtempSync(join(tmpdir(), "recipe-format-minimal-"));
     cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));

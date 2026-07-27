@@ -450,17 +450,65 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(pattern);
 }
 
-function listPackageEntries(root: string): string[] {
+const UNSCANNED_PACKAGE_DIRS = new Set(["node_modules", ".git"]);
+
+function globScanRoot(glob: string): string {
+  const segments = normalizeResourcePath(glob).split("/");
+  const staticSegments: string[] = [];
+  for (const segment of segments) {
+    if (hasGlob(segment)) break;
+    staticSegments.push(segment);
+  }
+  return staticSegments.join("/");
+}
+
+function listPackageEntries(
+  root: string,
+  globs: readonly string[]
+): string[] {
+  const scanRoots = new Set<string>();
+  for (const glob of globs) {
+    if (!glob.trim() || !hasGlob(glob)) continue;
+    scanRoots.add(globScanRoot(glob));
+  }
+  if (scanRoots.size === 0) return [];
+
   const entries: string[] = [];
-  function visit(dir: string, relativeDir = ""): void {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const relative = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+  const seen = new Set<string>();
+  function visit(dir: string, relativeDir: string): void {
+    let directoryEntries;
+    try {
+      directoryEntries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of directoryEntries) {
+      const relative = relativeDir
+        ? `${relativeDir}/${entry.name}`
+        : entry.name;
       const fullPath = join(dir, entry.name);
-      entries.push(relative);
+      if (
+        entry.isDirectory() &&
+        UNSCANNED_PACKAGE_DIRS.has(entry.name)
+      ) {
+        continue;
+      }
+      if (!seen.has(relative)) {
+        seen.add(relative);
+        entries.push(relative);
+      }
       if (entry.isDirectory()) visit(fullPath, relative);
     }
   }
-  visit(root);
+
+  const roots = scanRoots.has("") ? [""] : [...scanRoots];
+  for (const scanRoot of roots) {
+    if (scanRoot && !seen.has(scanRoot)) {
+      seen.add(scanRoot);
+      entries.push(scanRoot);
+    }
+    visit(scanRoot ? join(root, scanRoot) : root, scanRoot);
+  }
   return entries;
 }
 
@@ -601,7 +649,7 @@ export function resolvePiPackageMcpManifestPaths(
     seen.add(path);
     resolved.push(path);
   };
-  const entries = globs.some(hasGlob) ? listPackageEntries(pkg.path) : [];
+  const entries = listPackageEntries(pkg.path, globs);
 
   for (const glob of globs) {
     if (!glob.trim()) continue;
@@ -663,7 +711,7 @@ export function resolvePiPackageResourcePaths(
     seen.add(path);
     resolved.push(path);
   };
-  const entries = globs.some(hasGlob) ? listPackageEntries(pkg.path) : [];
+  const entries = listPackageEntries(pkg.path, globs);
 
   for (const glob of globs) {
     if (!glob.trim()) continue;
