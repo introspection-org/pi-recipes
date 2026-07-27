@@ -8,7 +8,7 @@
   </a>
 </div>
 
-<h4 align="center">The open package format for complete, portable Pi agents.</h4>
+<h4 align="center">The open format for vertical agents, built on Pi.</h4>
 
 <div align="center">
   <a href="https://pi.recipes"><img src="https://img.shields.io/badge/website-pi.recipes-blue" alt="Website"></a>
@@ -19,7 +19,7 @@
 
 <br>
 
-**Everything that makes your agent yours, in one portable package.**
+**The model is interchangeable. Your definition of good is not.**
 
 A Recipe keeps a complete Pi agent—its instructions, models, tools, skills,
 package-wide executable extensions, subagents, and capability policy together as

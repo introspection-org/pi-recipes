@@ -1,6 +1,6 @@
 # Recipes documentation
 
-**Recipes is the open package format for complete, portable Pi agents.**
+**Recipes is the open format for vertical agents, built on Pi.**
 
 A Recipe keeps the agent-owned layer together as inspectable source. Pi runs
 the agent; a compatible host supplies credentials, isolation, persistence,
