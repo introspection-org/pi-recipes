@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.2](https://github.com/introspection-org/recipes/compare/v0.14.1...v0.14.2) (2026-07-27)
+
+
+### Bug Fixes
+
+* allow blank agent system instructions ([#148](https://github.com/introspection-org/recipes/issues/148)) ([b279365](https://github.com/introspection-org/recipes/commit/b2793651b7e3830f38b5959e0c3f948eda6b92be))
+
 ## [0.14.1](https://github.com/introspection-org/recipes/compare/v0.14.0...v0.14.1) (2026-07-27)
 
 
