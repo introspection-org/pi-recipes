@@ -101,6 +101,87 @@ describe("shared Recipe validator bridge", () => {
     );
   });
 
+  it("validates and inventories portable judge definitions at Pi load time", async () => {
+    const root = recipe(
+      "name: agent\nmodel:\n  name: anthropic/claude-haiku-4-5\n"
+    );
+    mkdirSync(join(root, "judges"), { recursive: true });
+    writeFileSync(
+      join(root, "judges", "helpful.yaml"),
+      [
+        "judge: helpful",
+        "instructions: Grade the answer.",
+        "llm:",
+        "  model: gpt-5",
+      ].join("\n")
+    );
+
+    await expect(checkRecipeAtLoad(root, env)).resolves.toMatchObject({
+      valid: true,
+      resources: { judges: 1 },
+    });
+
+    writeFileSync(
+      join(root, "judges", "helpful.yaml"),
+      "judge: helpful\nllm:\n  model: gpt-5\n"
+    );
+    await expect(checkRecipeAtLoad(root, env)).resolves.toMatchObject({
+      valid: false,
+      diagnostics: [
+        expect.objectContaining({
+          code: "judge.instructions_missing",
+          path: "judges/helpful.yaml",
+        }),
+      ],
+    });
+  });
+
+  it("reads npm lockfiles when validating package identity", async () => {
+    const root = recipe(
+      "name: agent\nmodel:\n  name: anthropic/claude-haiku-4-5\n"
+    );
+    writeFileSync(
+      join(root, "package-lock.json"),
+      JSON.stringify({
+        name: "different-recipe",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "different-recipe", version: "1.0.0" },
+        },
+      })
+    );
+
+    const report = await checkRecipeAtLoad(root, env);
+    expect(report.valid).toBe(false);
+    expect(report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "package.lockfile_name_mismatch",
+          path: "package-lock.json",
+        }),
+      ])
+    );
+  });
+
+  it("reads and validates the local MCP example without loading secrets", async () => {
+    const root = recipe(
+      "name: agent\nmodel:\n  name: anthropic/claude-haiku-4-5\n"
+    );
+    mkdirSync(join(root, ".pi"), { recursive: true });
+    writeFileSync(join(root, ".pi", "mcp.local.example.json"), "{");
+
+    await expect(checkRecipeAtLoad(root, env)).resolves.toMatchObject({
+      valid: false,
+      diagnostics: [
+        expect.objectContaining({
+          code: "mcp.local_example_malformed",
+          path: ".pi/mcp.local.example.json",
+        }),
+      ],
+    });
+  });
+
   it("accepts a valid local Recipe snapshot", async () => {
     const root = recipe(
       [

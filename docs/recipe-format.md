@@ -76,6 +76,11 @@ Unknown top-level `package.json` fields retain normal npm semantics. Unknown
 Recipe fields inside supported `pi` structures are validation errors unless a
 later format version explicitly defines them.
 
+When a Recipe declares non-empty `dependencies` or `optionalDependencies`, it
+MUST commit one supported dependency lockfile: `package-lock.json`,
+`npm-shrinkwrap.json`, `pnpm-lock.yaml`, or `yarn.lock`. npm lockfiles MUST
+carry the same package name and version as `package.json`.
+
 ## Agents
 
 `pi.agents` may declare YAML agent definitions explicitly. When omitted,
@@ -121,6 +126,17 @@ tool for a root session whose effective `subagents` list is non-empty.
 The default agent is named `agent`. If no `agent` exists, a host MAY select the
 only declared agent. When multiple agents exist without `agent`, the caller
 MUST select one explicitly.
+
+## Judges
+
+A Recipe MAY include portable LLM grading definitions as direct `.yaml` or
+`.yml` children of `judges/`. Nested files are not judge sources. Judge names
+MUST be unique within the package.
+
+The authored schema, defaults, applicability gates, and model configuration are
+defined in [Recipe judges](recipe-judges.md). The Recipe Format owns this
+declarative evaluation contract; hosts own transcript assembly, execution,
+credentials, retries, persistence, and result processing.
 
 ## Instructions, skills, prompts, and extensions
 

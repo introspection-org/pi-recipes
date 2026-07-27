@@ -131,7 +131,7 @@ export CONTACTS_MCP_TOKEN='...'
 pi --recipe . --agent agent
 ```
 
-Do not commit or distribute `.pi/mcp.local.json`; publish validation rejects
+Do not commit or distribute `.pi/mcp.local.json`; Recipe validation rejects
 local configuration. Commit `.pi/mcp.local.example.json` when a binding template
 is helpful. A host binds its own endpoint and credential system to the same
 shape. A binding overrides a package-manifest endpoint with the same id,

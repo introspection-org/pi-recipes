@@ -50,6 +50,7 @@ my-recipe/
 ├── agents/*.yaml         # models, tools, skills, subagents, policy
 ├── skills/**/SKILL.md    # reusable domain workflows
 ├── extensions/*.ts       # optional Recipe-owned Pi extensions
+├── judges/*.yaml         # optional portable evaluation definitions
 └── .pi/mcp.local.example.json # optional binding template
 ```
 
@@ -161,6 +162,7 @@ for manual and CI validation.
 - [Agent composition](docs/agent-composition.md)
 - [Interactions](docs/interactions.md)
 - [MCP configuration](docs/mcp-configuration.md)
+- [Recipe judges](docs/recipe-judges.md)
 
 ## Contributing
 

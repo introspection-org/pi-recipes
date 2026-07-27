@@ -8,11 +8,15 @@ The checker validates the portable authored contract:
 - agent YAML shape, names, and `from` inheritance;
 - each agent's explicit stable `name`, required resolved `model.name`, and any
   declared skill or subagent references;
-- package and agent MCP authorization policy.
+- package and agent MCP authorization policy;
+- direct-child `judges/*.yaml` definitions and their typed authored schema;
+- dependency lockfile presence and npm lockfile identity;
+- exclusion of local capability configuration from distributable snapshots.
 
-It deliberately does not validate host manifests, compute resources,
-package-manager policy, publication metadata, licenses, or local endpoint
-bindings.
+It deliberately does not validate host manifests, credentials, deployment
+resources, licenses, or local endpoint bindings. The exported `resources`
+module separately provides the shared, pure Kubernetes-style quantity checker
+used by hosts; those values are not part of the Recipe Format.
 
 ## I/O-free API
 
@@ -41,6 +45,9 @@ not a user-facing filesystem CLI.
 
 Diagnostics include a stable code, Recipe-relative path, optional 1-based
 source span, message, and optional help text.
+
+`recipe_check::spec` exports the normalized judge types and, with the optional
+`schema` feature, their JSON Schema. Judge execution remains host-owned.
 
 ## License
 
