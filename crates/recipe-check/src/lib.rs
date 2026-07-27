@@ -662,15 +662,26 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
         );
     }
 
-    let explicit_name = obj_string(map, "name").filter(|value| !value.trim().is_empty());
-    let Some(name) = explicit_name else {
-        ctx.error(
-            "agent.name_missing",
-            path,
-            "Agent must declare a non-empty name",
-            Some("set name to the stable identity used by references and telemetry"),
-        );
-        return None;
+    let name = match map.get("name") {
+        Some(JsonValue::String(name)) if !name.trim().is_empty() => name.clone(),
+        Some(JsonValue::String(_)) | None => {
+            ctx.error(
+                "agent.name_missing",
+                path,
+                "Agent must declare a non-empty name",
+                Some("set name to the stable identity used by references and telemetry"),
+            );
+            return None;
+        }
+        Some(_) => {
+            ctx.error(
+                "agent.name_invalid",
+                path,
+                "Agent name must be a string",
+                Some("set name to the stable identity used by references and telemetry"),
+            );
+            return None;
+        }
     };
     if !portable_agent_name(&name) {
         ctx.error(
@@ -2591,6 +2602,22 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.name_missing"));
+
+        let non_string = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: 7\nmodel:\n  name: test/provider-model\n",
+            ),
+        ]);
+        let non_string_report = check_recipe_files(&non_string);
+        assert!(non_string_report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.name_invalid"));
     }
 
     #[test]
