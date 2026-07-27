@@ -1,5 +1,11 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import {
+  existsSync,
+  realpathSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export interface RecipePackageResources {
   agents: string[];
@@ -52,7 +58,7 @@ export function parseRecipeMcpToolSelection(
   return selection;
 }
 
-/** Minimal session guard; `introspection check` owns authoring diagnostics. */
+/** Minimal session guard; the Recipe checker owns authoring diagnostics. */
 export function isValidRecipeMcpToolSelection(
   selection: RecipeMcpToolSelection
 ): boolean {
@@ -79,16 +85,15 @@ export interface RecipePackageManifest {
   description?: string;
   path: string;
   resources: RecipePackageResources;
+  /** Whether each resource key was explicitly authored in package.json#pi. */
+  resourceDeclarations?: Record<keyof RecipePackageResources, boolean>;
   mcp: RecipePackageMcpConfig;
 }
 
 export type PiPackageResources = RecipePackageResources;
 export type PiPackageManifest = RecipePackageManifest;
 
-export type RecipeValidationSeverity = "error" | "warning";
-
 export interface RecipeValidationFinding {
-  severity: RecipeValidationSeverity;
   code: string;
   message: string;
   packageName?: string;
@@ -113,6 +118,12 @@ const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "prompts",
 ];
 
+const PI_KEYS = new Set([...RESOURCE_KEYS, "mcp"]);
+const SOURCE_FINDINGS = Symbol("recipeSourceFindings");
+type ParsedRecipePackageManifest = RecipePackageManifest & {
+  [SOURCE_FINDINGS]?: RecipeValidationFinding[];
+};
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
@@ -126,6 +137,202 @@ function emptyResources(): RecipePackageResources {
     skills: [],
     prompts: [],
   };
+}
+
+function resourceDeclarations(
+  pi: Record<string, unknown>
+): Record<keyof RecipePackageResources, boolean> {
+  return Object.fromEntries(
+    RESOURCE_KEYS.map((key) => [key, Object.hasOwn(pi, key)])
+  ) as Record<keyof RecipePackageResources, boolean>;
+}
+
+function sourceShapeFindings(
+  pi: Record<string, unknown>,
+  packageName: string
+): RecipeValidationFinding[] {
+  const findings: RecipeValidationFinding[] = [];
+  for (const key of Object.keys(pi)) {
+    if (!PI_KEYS.has(key as keyof RecipePackageResources | "mcp")) {
+      findings.push(
+        finding(
+          "pi.unknown_key",
+          `package.json#pi contains unknown key '${key}'`,
+          packageName
+        )
+      );
+    }
+  }
+  for (const key of RESOURCE_KEYS) {
+    if (!Object.hasOwn(pi, key)) continue;
+    const value = pi[key];
+    if (
+      !Array.isArray(value) ||
+      value.some(
+        (item) => typeof item !== "string" || item.trim().length === 0
+      )
+    ) {
+      findings.push(
+        finding(
+          `pi.${key}_invalid`,
+          `package.json#pi.${key} must be an array of non-empty strings`,
+          packageName
+        )
+      );
+    } else if (
+      new Set(value.map((item) => String(item).trim())).size !== value.length
+    ) {
+      findings.push(
+        finding(
+          `pi.${key}_duplicate`,
+          `package.json#pi.${key} must not contain duplicate entries`,
+          packageName
+        )
+      );
+    }
+  }
+  findings.push(...mcpSourceShapeFindings(pi.mcp, packageName));
+  return findings;
+}
+
+function mcpSourceShapeFindings(
+  value: unknown,
+  packageName: string
+): RecipeValidationFinding[] {
+  if (value === undefined) return [];
+  const invalid = (message: string) =>
+    finding("pi.mcp_invalid", message, packageName);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [invalid("package.json#pi.mcp must be an object")];
+  }
+  const data = value as Record<string, unknown>;
+  const findings: RecipeValidationFinding[] = [];
+  const unknown = Object.keys(data).filter(
+    (key) => !["manifests", "servers"].includes(key)
+  );
+  if (unknown.length > 0) {
+    findings.push(
+      invalid(
+        `package.json#pi.mcp contains unknown field(s): ${unknown.join(", ")}`
+      )
+    );
+  }
+  const manifests = Array.isArray(data.manifests) ? data.manifests : [];
+  if (
+    Object.hasOwn(data, "manifests") &&
+      (!Array.isArray(data.manifests) ||
+        data.manifests.some(
+          (item) => typeof item !== "string" || !item.trim()
+        ))
+  ) {
+    findings.push(
+      invalid("package.json#pi.mcp manifests must be non-empty strings")
+    );
+  }
+  if (
+    manifests.every((item): item is string => typeof item === "string") &&
+    new Set(manifests.map((item) => item.trim())).size !== manifests.length
+  ) {
+    findings.push(
+      invalid("package.json#pi.mcp manifests must not contain duplicates")
+    );
+  }
+  if (
+    Object.hasOwn(data, "servers") &&
+    !Array.isArray(data.servers)
+  ) {
+    findings.push(
+      invalid("package.json#pi.mcp.servers must be an array")
+    );
+    return findings;
+  }
+  const ids = new Set<string>();
+  const normalizedIds = new Set<string>();
+  for (const [index, raw] of (
+    Array.isArray(data.servers) ? data.servers : []
+  ).entries()) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      findings.push(
+        invalid(`package.json#pi.mcp.servers[${index}] must be an object`)
+      );
+      continue;
+    }
+    const server = raw as Record<string, unknown>;
+    const serverUnknown = Object.keys(server).filter(
+      (key) => !["id", "required", "tools"].includes(key)
+    );
+    if (serverUnknown.length > 0) {
+      findings.push(
+        invalid(
+          `package.json#pi.mcp.servers[${index}] contains unknown field(s): ${serverUnknown.join(", ")}`
+        )
+      );
+    }
+    const id =
+      typeof server.id === "string" && server.id.trim()
+        ? server.id.trim()
+        : undefined;
+    if (!id) {
+      findings.push(
+        invalid(`package.json#pi.mcp.servers[${index}].id must be non-empty`)
+      );
+    } else if (ids.has(id)) {
+      findings.push(
+        invalid(`package.json#pi.mcp contains duplicate server id '${id}'`)
+      );
+    } else {
+      ids.add(id);
+      const normalized = id
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "mcp";
+      if (normalizedIds.has(normalized)) {
+        findings.push(
+          invalid(
+            `package.json#pi.mcp server id '${id}' collides after normalization`
+          )
+        );
+      }
+      normalizedIds.add(normalized);
+    }
+    if (
+      Object.hasOwn(server, "required") &&
+      typeof server.required !== "boolean"
+    ) {
+      findings.push(
+        invalid(
+          `package.json#pi.mcp.servers[${index}].required must be boolean`
+        )
+      );
+    }
+    if (Object.hasOwn(server, "tools")) {
+      if (
+        !server.tools ||
+        typeof server.tools !== "object" ||
+        Array.isArray(server.tools)
+      ) {
+        findings.push(
+          invalid(
+            `package.json#pi.mcp.servers[${index}].tools must be an object`
+          )
+        );
+      } else {
+        const tools = server.tools as Record<string, unknown>;
+        const toolsUnknown = Object.keys(tools).filter(
+          (key) => !["include", "exclude"].includes(key)
+        );
+        if (toolsUnknown.length > 0) {
+          findings.push(
+            invalid(
+              `package.json#pi.mcp.servers[${index}].tools contains unknown field(s): ${toolsUnknown.join(", ")}`
+            )
+          );
+        }
+      }
+    }
+  }
+  return findings;
 }
 
 function emptyMcpConfig(): RecipePackageMcpConfig {
@@ -169,6 +376,45 @@ function assertPackageResourcePath(
   }
 }
 
+export function assertRecipePathContained(
+  packageDir: string,
+  path: string,
+  label: string
+): void {
+  const root = realpathSync(packageDir);
+  const target = realpathSync(path);
+  const relativePath = relative(root, target);
+  if (
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new RecipePackageError(
+      `Recipe ${label} resolves outside the package: ${path}`
+    );
+  }
+}
+
+function assertResourceTreeContained(
+  packageDir: string,
+  path: string,
+  label: string,
+  seen = new Set<string>()
+): void {
+  assertRecipePathContained(packageDir, path, label);
+  const realPath = realpathSync(path);
+  if (seen.has(realPath)) return;
+  seen.add(realPath);
+  if (!statSync(path).isDirectory()) return;
+  for (const entry of readdirSync(path, { withFileTypes: true })) {
+    const child = join(path, entry.name);
+    assertRecipePathContained(packageDir, child, label);
+    if (statSync(child).isDirectory()) {
+      assertResourceTreeContained(packageDir, child, label, seen);
+    }
+  }
+}
+
 function hasGlob(value: string): boolean {
   return /[*?[\]{}]/.test(value);
 }
@@ -204,28 +450,79 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(pattern);
 }
 
-function listPackageEntries(root: string): string[] {
+const UNSCANNED_PACKAGE_DIRS = new Set(["node_modules", ".git"]);
+
+function globScanRoot(glob: string): string {
+  const segments = normalizeResourcePath(glob).split("/");
+  const staticSegments: string[] = [];
+  for (const segment of segments) {
+    if (hasGlob(segment)) break;
+    staticSegments.push(segment);
+  }
+  return staticSegments.join("/");
+}
+
+function listPackageEntries(
+  root: string,
+  globs: readonly string[]
+): string[] {
+  const scanRoots = new Set<string>();
+  for (const glob of globs) {
+    if (!glob.trim() || !hasGlob(glob)) continue;
+    if (isAbsolute(glob) || hasTraversalSegment(glob)) {
+      throw new RecipePackageError(
+        `Recipe resource glob resolves outside the package: ${glob}`
+      );
+    }
+    scanRoots.add(globScanRoot(glob));
+  }
+  if (scanRoots.size === 0) return [];
+
   const entries: string[] = [];
-  function visit(dir: string, relativeDir = ""): void {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const relative = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+  const seen = new Set<string>();
+  function visit(dir: string, relativeDir: string): void {
+    let directoryEntries;
+    try {
+      directoryEntries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of directoryEntries) {
+      const relative = relativeDir
+        ? `${relativeDir}/${entry.name}`
+        : entry.name;
       const fullPath = join(dir, entry.name);
-      entries.push(relative);
+      if (
+        entry.isDirectory() &&
+        UNSCANNED_PACKAGE_DIRS.has(entry.name)
+      ) {
+        continue;
+      }
+      if (!seen.has(relative)) {
+        seen.add(relative);
+        entries.push(relative);
+      }
       if (entry.isDirectory()) visit(fullPath, relative);
     }
   }
-  visit(root);
+
+  const roots = scanRoots.has("") ? [""] : [...scanRoots];
+  for (const scanRoot of roots) {
+    if (scanRoot && !seen.has(scanRoot)) {
+      seen.add(scanRoot);
+      entries.push(scanRoot);
+    }
+    visit(scanRoot ? join(root, scanRoot) : root, scanRoot);
+  }
   return entries;
 }
 
 function finding(
-  severity: RecipeValidationSeverity,
   code: string,
   message: string,
   packageName?: string
 ): RecipeValidationFinding {
   return {
-    severity,
     code,
     message,
     packageName,
@@ -265,19 +562,10 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
-  if (typeof value === "string") {
-    return { ...emptyMcpConfig(), manifests: stringArray([value]).map(normalizeResourcePath) };
-  }
-  if (Array.isArray(value)) {
-    return { ...emptyMcpConfig(), manifests: stringArray(value).map(normalizeResourcePath) };
-  }
   if (!value || typeof value !== "object" || Array.isArray(value)) return emptyMcpConfig();
 
   const data = value as Record<string, unknown>;
-  const manifests = [
-    ...(stringValue(data.manifest) ? [stringValue(data.manifest)!] : []),
-    ...stringArray(data.manifests),
-  ].map(normalizeResourcePath);
+  const manifests = stringArray(data.manifests).map(normalizeResourcePath);
 
   const seen = new Set<string>();
   const servers: RecipePackageMcpServer[] = [];
@@ -306,8 +594,9 @@ function packageJsonPath(packageDir: string): string | undefined {
 }
 
 function piPackageManifestBlock(raw: PackageJson): Record<string, unknown> | undefined {
-  const pi = asRecord(raw.pi);
-  return Object.keys(pi).length > 0 ? pi : undefined;
+  return raw.pi && typeof raw.pi === "object" && !Array.isArray(raw.pi)
+    ? (raw.pi as Record<string, unknown>)
+    : undefined;
 }
 
 function piPackageManifestPath(packageDir: string): string | undefined {
@@ -338,23 +627,34 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
     resources[key] = stringArray(pi[key]).map(normalizeResourcePath);
   }
 
-  return {
+  const manifest: ParsedRecipePackageManifest = {
     name: stringValue(raw.name) ?? "",
     version: stringValue(raw.version) ?? "0.0.0",
     ...(stringValue(raw.description) ? { description: stringValue(raw.description) } : {}),
     path: packageDir,
     resources,
+    resourceDeclarations: resourceDeclarations(pi),
     mcp: parseMcpConfig(pi.mcp),
   };
+  Object.defineProperty(manifest, SOURCE_FINDINGS, {
+    value: sourceShapeFindings(pi, manifest.name),
+    enumerable: false,
+  });
+  return manifest;
 }
 
 export function resolvePiPackageMcpManifestPaths(
-  pkg: RecipePackageManifest,
-  opts: { allowEmptyGlobMatches?: boolean } = {}
+  pkg: RecipePackageManifest
 ): string[] {
   const globs = pkg.mcp.manifests;
-  const resolved = new Set<string>();
-  const entries = globs.some(hasGlob) ? listPackageEntries(pkg.path) : [];
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+  const add = (path: string) => {
+    if (seen.has(path)) return;
+    seen.add(path);
+    resolved.push(path);
+  };
+  const entries = listPackageEntries(pkg.path, globs);
 
   for (const glob of globs) {
     if (!glob.trim()) continue;
@@ -381,7 +681,8 @@ export function resolvePiPackageMcpManifestPaths(
           `Recipe ${pkg.name} declares missing mcp manifest: ${glob}`
         );
       }
-      resolved.add(target);
+      assertResourceTreeContained(pkg.path, target, "mcp manifest");
+      add(target);
       continue;
     }
 
@@ -390,25 +691,32 @@ export function resolvePiPackageMcpManifestPaths(
       .filter((entry) => matcher.test(normalizeResourcePath(entry)))
       .map((entry) => resolve(pkg.path, entry));
     if (matches.length === 0) {
-      if (opts.allowEmptyGlobMatches) continue;
       throw new RecipePackageError(
         `Recipe ${pkg.name} declares mcp manifest glob with no matches: ${glob}`
       );
     }
-    for (const match of matches) resolved.add(match);
+    for (const match of matches.sort()) {
+      assertResourceTreeContained(pkg.path, match, "mcp manifest");
+      add(match);
+    }
   }
 
-  return [...resolved].sort();
+  return resolved;
 }
 
 export function resolvePiPackageResourcePaths(
   pkg: RecipePackageManifest,
-  key: keyof RecipePackageResources,
-  opts: { allowEmptyGlobMatches?: boolean } = {}
+  key: keyof RecipePackageResources
 ): string[] {
   const globs = pkg.resources[key];
-  const resolved = new Set<string>();
-  const entries = globs.some(hasGlob) ? listPackageEntries(pkg.path) : [];
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+  const add = (path: string) => {
+    if (seen.has(path)) return;
+    seen.add(path);
+    resolved.push(path);
+  };
+  const entries = listPackageEntries(pkg.path, globs);
 
   for (const glob of globs) {
     if (!glob.trim()) continue;
@@ -420,7 +728,8 @@ export function resolvePiPackageResourcePaths(
           `Recipe ${pkg.name} declares missing ${key} resource: ${glob}`
         );
       }
-      resolved.add(direct);
+      assertResourceTreeContained(pkg.path, direct, `${key} resource`);
+      add(direct);
       continue;
     }
 
@@ -429,15 +738,17 @@ export function resolvePiPackageResourcePaths(
       .filter((entry) => matcher.test(normalizeResourcePath(entry)))
       .map((entry) => resolve(pkg.path, entry));
     if (matches.length === 0) {
-      if (opts.allowEmptyGlobMatches) continue;
       throw new RecipePackageError(
         `Recipe ${pkg.name} declares ${key} glob with no matches: ${glob}`
       );
     }
-    for (const match of matches) resolved.add(match);
+    for (const match of matches.sort()) {
+      assertResourceTreeContained(pkg.path, match, `${key} resource`);
+      add(match);
+    }
   }
 
-  return [...resolved].sort();
+  return resolved;
 }
 
 export function defaultPiPackageResourcePaths(
@@ -456,13 +767,8 @@ export function packageResourcePaths(
   pkg: RecipePackageManifest,
   key: keyof RecipePackageResources
 ): string[] {
-  if (pkg.resources[key].length > 0) {
-    return resolvePiPackageResourcePaths(pkg, key, {
-      allowEmptyGlobMatches:
-        key === "extensions" ||
-        key === "skills" ||
-        key === "prompts",
-    });
+  if (pkg.resourceDeclarations?.[key] || pkg.resources[key].length > 0) {
+    return resolvePiPackageResourcePaths(pkg, key);
   }
   return defaultPiPackageResourcePaths(pkg, key);
 }
@@ -470,16 +776,17 @@ export function packageResourcePaths(
 export function validatePiPackageManifest(
   pkg: RecipePackageManifest
 ): RecipeValidationReport {
-  const findings: RecipeValidationFinding[] = [];
+  const findings: RecipeValidationFinding[] = [
+    ...((pkg as ParsedRecipePackageManifest)[SOURCE_FINDINGS] ?? []),
+  ];
   if (!pkg.name.trim()) {
     findings.push(
-      finding("error", "package.name_missing", "Package is missing name")
+      finding("package.name_missing", "Package is missing name")
     );
   }
   if (!piPackageManifestPath(pkg.path)) {
     findings.push(
       finding(
-        "error",
         "package.manifest_missing",
         "Package is missing package.json with a pi manifest",
         pkg.name
@@ -487,12 +794,12 @@ export function validatePiPackageManifest(
     );
   }
   if (
+    !pkg.resourceDeclarations?.agents &&
     pkg.resources.agents.length === 0 &&
     !existsSync(join(pkg.path, "agents"))
   ) {
     findings.push(
       finding(
-        "warning",
         "package.no_agents",
         "Package declares no agents and has no agents directory",
         pkg.name
@@ -505,15 +812,14 @@ export function validatePiPackageManifest(
   if (invalidMcpServer) {
     findings.push(
       finding(
-        "error",
         "pi.mcp_invalid",
-        `MCP server "${invalidMcpServer.id}" has an invalid tool policy; run introspection check for details`,
+        `MCP server "${invalidMcpServer.id}" has an invalid tool policy`,
         pkg.name
       )
     );
   }
   return {
-    valid: findings.every((item) => item.severity !== "error"),
+    valid: findings.length === 0,
     findings,
   };
 }

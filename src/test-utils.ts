@@ -1,7 +1,7 @@
 /**
  * Host conformance suite for Recipe sessions.
  *
- * A host that adopts `createAgentSessionFromRecipe` with its own injected pieces —
+ * A host that adopts `createAgentSession` with its own injected pieces —
  * credential store, synthesized MCP bindings, run controller — runs these
  * cases in its own CI. Passing the suite is what "supported host" means: the
  * session contract cannot drift from its consumers silently.
@@ -18,8 +18,9 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { resolveRecipe } from "./recipe/resolve.js";
 import type {
-  CreateAgentSessionFromRecipeOptions,
+  CreateAgentSessionOptions,
   RecipeSessionHandle,
 } from "./session.js";
 
@@ -29,7 +30,7 @@ export interface RecipeHost {
    * here layer the suite's fixture on top.
    */
   createSession(
-    options: CreateAgentSessionFromRecipeOptions
+    options: CreateAgentSessionOptions
   ): Promise<RecipeSessionHandle>;
 }
 
@@ -142,7 +143,7 @@ export function hostConformanceCases(
         const fixture = writeFixtureRecipe();
         try {
           const handle = await host.createSession({
-            recipeDir: fixture.recipeDir,
+            recipe: resolveRecipe({ recipeDir: fixture.recipeDir }),
             cwd: fixture.workspaceDir,
             credentials: await testCredentialStore(),
             env: { ...cleanEnv() },
@@ -153,7 +154,7 @@ export function hostConformanceCases(
               handle.session.systemPrompt.includes("conformance fixture"),
               "SYSTEM.md reaches the system prompt"
             );
-            assert(handle.runs, "handle exposes a run controller");
+            assert(handle.agentRuns, "handle exposes an agent run controller");
           } finally {
             await handle.dispose();
           }
@@ -169,7 +170,7 @@ export function hostConformanceCases(
         try {
           const err = await expectRejection(
             host.createSession({
-              recipeDir: fixture.recipeDir,
+              recipe: resolveRecipe({ recipeDir: fixture.recipeDir }),
               cwd: fixture.workspaceDir,
               env: { ...cleanEnv() },
             }),
@@ -206,7 +207,7 @@ export function hostConformanceCases(
         try {
           const err = await expectRejection(
             host.createSession({
-              recipeDir: fixture.recipeDir,
+              recipe: resolveRecipe({ recipeDir: fixture.recipeDir }),
               cwd: fixture.workspaceDir,
               credentials: await testCredentialStore(),
               env: { ...cleanEnv() },
@@ -245,7 +246,7 @@ export function hostConformanceCases(
           const env = { ...cleanEnv() };
           const originalPath = env.PATH;
           const handle = await host.createSession({
-            recipeDir: fixture.recipeDir,
+            recipe: resolveRecipe({ recipeDir: fixture.recipeDir }),
             cwd: fixture.workspaceDir,
             credentials: await testCredentialStore(),
             env,
@@ -277,7 +278,7 @@ export function hostConformanceCases(
         const fixture = writeFixtureRecipe({ subagents: ["helper"] });
         try {
           const handle = await host.createSession({
-            recipeDir: fixture.recipeDir,
+            recipe: resolveRecipe({ recipeDir: fixture.recipeDir }),
             cwd: fixture.workspaceDir,
             credentials: await testCredentialStore(),
             env: { ...cleanEnv() },
@@ -286,12 +287,12 @@ export function hostConformanceCases(
             const settled = await Promise.race([
               (async () => {
                 try {
-                  const run = await handle.runs.start({
+                  const run = await handle.agentRuns.start({
                     name: "ghost",
                     prompt: "hello",
                   });
                   if (run.status === "running") {
-                    return await handle.runs.wait(run.agent_run_id);
+                    return await handle.agentRuns.wait(run.agent_run_id);
                   }
                   return run;
                 } catch (err) {

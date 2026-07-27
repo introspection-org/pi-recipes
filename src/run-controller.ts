@@ -4,11 +4,12 @@ import type {
   AgentRunController,
   AgentRunStatus,
   AgentRunSummary,
-} from "./agent-tool.js";
+} from "./agents.js";
 import { autoResolveInteractions } from "./interactions.js";
 import { promptResultText } from "./child-agent.js";
+import { createIsolatedChildSession } from "./child-session.js";
 import type {
-  CreateAgentSessionOptions,
+  CreateAgentSessionInternalOptions,
   RecipeSessionOtelOptions,
   RecipeSessionHandle,
 } from "./session.js";
@@ -28,8 +29,7 @@ export interface InProcessRunControllerOptions {
   otel?: RecipeSessionOtelOptions;
   /** Child session factory; defaults to `createAgentSession`. Test/DI seam. */
   sessionFactory?: (
-    agent: ReturnType<ResolvedRecipe["selectAgent"]>,
-    options: CreateAgentSessionOptions
+    options: CreateAgentSessionInternalOptions
   ) => Promise<RecipeSessionHandle>;
 }
 
@@ -109,17 +109,14 @@ export function createInProcessRunController(
     try {
       if (run.summary.status !== "running") return;
       if (!run.handle) {
-        const sessionFactory =
-          opts.sessionFactory ??
-          (await import("./session.js")).createAgentSession;
-        const childAgent = opts.recipe.selectAgent(run.summary.agent_name);
-        run.handle = await sessionFactory(childAgent, {
+        run.handle = await createIsolatedChildSession({
           recipe: opts.recipe,
+          agentName: run.summary.agent_name,
           cwd: opts.cwd,
           // Every in-process child owns a private MCP environment. Sharing the
           // root object would either collide with its lease or expose its CLI
           // runtime to the child.
-          env: { ...env },
+          env,
           ...(opts.credentials ? { credentials: opts.credentials } : {}),
           ...(opts.otel
             ? {
@@ -133,8 +130,7 @@ export function createInProcessRunController(
                 },
               }
             : {}),
-          // Delegation is one level deep by the Recipe format contract.
-          runController: null,
+          ...(opts.sessionFactory ? { sessionFactory: opts.sessionFactory } : {}),
           onEvent: (event) => {
             const record = event as { type?: string; toolName?: unknown };
             if (record.type === "tool_execution_start") {

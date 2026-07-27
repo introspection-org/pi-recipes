@@ -12,17 +12,16 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpBindingError } from "../src/mcp.js";
 import {
-  resolveRecipeAgent,
   resolveRecipe,
 } from "../src/recipe/resolve.js";
-import { runRecipe } from "../src/run.js";
 import { createInProcessRunController } from "../src/run-controller.js";
 import {
-  createAgentSessionFromRecipe,
   createAgentSession,
+  createAgentSessionInternal,
   RecipeCredentialError,
   RecipeMcpEnvironmentInUseError,
   RecipeModelError,
+  RecipeModelTransportError,
   type RecipeSessionHandle,
 } from "../src/session.js";
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
@@ -89,44 +88,6 @@ function scriptReply(handle: RecipeSessionHandle, text: string): void {
   };
 }
 
-function scriptHangUntilAbort(handle: RecipeSessionHandle): void {
-  handle.session.agent.streamFunction = (_model, _context, options) => {
-    const stream = new MockAssistantStream();
-    const signal = options?.signal;
-    queueMicrotask(() => {
-      stream.push({ type: "start", partial: assistantMessage("") });
-      const checkAbort = () => {
-        if (signal?.aborted) {
-          stream.push({
-            type: "error",
-            reason: "aborted",
-            error: assistantMessage("Aborted", "aborted"),
-          });
-        } else {
-          setTimeout(checkAbort, 5);
-        }
-      };
-      checkAbort();
-    });
-    return stream;
-  };
-}
-
-function scriptError(handle: RecipeSessionHandle): void {
-  handle.session.agent.streamFunction = () => {
-    const stream = new MockAssistantStream();
-    queueMicrotask(() => {
-      stream.push({ type: "start", partial: assistantMessage("") });
-      stream.push({
-        type: "error",
-        reason: "error",
-        error: assistantMessage("provider exploded", "error"),
-      });
-    });
-    return stream;
-  };
-}
-
 async function credentialStore(): Promise<InMemoryCredentialStore> {
   const store = new InMemoryCredentialStore();
   await store.modify("anthropic", async () => ({
@@ -146,7 +107,7 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-describe("createAgentSessionFromRecipe", () => {
+describe("createAgentSession", () => {
   const cleanups: Array<() => void> = [];
   const handles: RecipeSessionHandle[] = [];
 
@@ -166,15 +127,17 @@ describe("createAgentSessionFromRecipe", () => {
   }
 
   async function open(
-    options: Partial<Parameters<typeof createAgentSessionFromRecipe>[0]> & {
+    options: Omit<Partial<Parameters<typeof createAgentSession>[0]>, "recipe"> & {
       recipeDir: string;
       cwd: string;
     }
   ): Promise<RecipeSessionHandle> {
-    const handle = await createAgentSessionFromRecipe({
+    const { recipeDir, ...sessionOptions } = options;
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir }),
       credentials: await credentialStore(),
       env: cleanEnv(),
-      ...options,
+      ...sessionOptions,
     });
     handles.push(handle);
     return handle;
@@ -190,17 +153,92 @@ describe("createAgentSessionFromRecipe", () => {
     expect(handle.session.systemPrompt).toContain("Conformance agent");
   });
 
+  it("fails closed when a package extension cannot load", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      manifestPi: { extensions: ["extensions/fail.ts"] },
+    });
+    mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "extensions", "fail.ts"),
+      "export default () => { throw new Error('extension exploded'); };\n"
+    );
+
+    await expect(
+      open({ recipeDir, cwd: workspaceDir })
+    ).rejects.toThrow("extension exploded");
+  });
+
+  it("fails closed when an agent declares an unavailable tool", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      tools: ["missing_tool"],
+    });
+
+    await expect(
+      open({ recipeDir, cwd: workspaceDir })
+    ).rejects.toThrow(
+      'Recipe agent "agent" declares unavailable tool(s): missing_tool'
+    );
+  });
+
+  it("prevents package extensions from activating undeclared tools", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      manifestPi: { extensions: ["extensions/policy.ts"] },
+      tools: ["read"],
+    });
+    mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "extensions", "policy.ts"),
+      [
+        "export default (pi) => {",
+        '  pi.setActiveTools(["bash"]);',
+        "};",
+      ].join("\n")
+    );
+
+    await expect(
+      open({ recipeDir, cwd: workspaceDir })
+    ).rejects.toThrow(
+      "Recipe extension attempted to activate undeclared tool(s): bash"
+    );
+  });
+
+  it("does not auto-load ambient Recipe-directory extensions", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      tools: ["ambient_tool"],
+    });
+    mkdirSync(join(recipeDir, ".pi", "extensions"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, ".pi", "extensions", "ambient.ts"),
+      [
+        "export default (pi) => {",
+        "  pi.registerTool({",
+        "    name: 'ambient_tool',",
+        "    description: 'Must not load',",
+        "    parameters: { type: 'object', properties: {} },",
+        "    async execute() { return { content: [], details: {} }; }",
+        "  });",
+        "};",
+      ].join("\n")
+    );
+
+    await expect(
+      open({ recipeDir, cwd: workspaceDir })
+    ).rejects.toThrow("declares unavailable tool(s): ambient_tool");
+  });
+
   it("creates the exact Recipe definition already inspected by the host", async () => {
     const { recipeDir, workspaceDir } = fixture();
-    const recipe = resolveRecipeAgent({ recipeDir });
-    const handle = await createAgentSession(recipe, {
+    const recipe = resolveRecipe({ recipeDir });
+    const agent = recipe.selectAgent();
+    const handle = await createAgentSession({
+      recipe,
       cwd: workspaceDir,
       credentials: await credentialStore(),
       env: cleanEnv(),
     });
     handles.push(handle);
 
-    expect(handle.agent).toBe(recipe);
+    expect(handle.agent).toBe(agent);
     expect(handle.agent.name).toBe("agent");
   });
 
@@ -227,8 +265,52 @@ describe("createAgentSessionFromRecipe", () => {
     expect(onDiagnostics).toHaveBeenCalledOnce();
   });
 
+  it("accepts gateway-authenticated model wiring without provider credentials", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const base = getModel("anthropic", "claude-sonnet-4-5");
+    expect(base).toBeDefined();
+
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir }),
+      cwd: workspaceDir,
+      env: cleanEnv(),
+      modelOverride: {
+        ...base!,
+        baseUrl: "https://managed-gateway.example/v1",
+        headers: { authorization: "Bearer gateway-token" },
+      },
+    });
+    handles.push(handle);
+
+    expect(handle.session.model?.baseUrl).toBe(
+      "https://managed-gateway.example/v1"
+    );
+  });
+
+  it("rejects a host transport for a different Recipe model", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const modelOverride = {
+      ...getModel("openai", "gpt-5.5")!,
+      baseUrl: "https://managed-gateway.example/v1",
+    };
+
+    await expect(
+      open({ recipeDir, cwd: workspaceDir, modelOverride })
+    ).rejects.toBeInstanceOf(RecipeModelTransportError);
+  });
+
   it("normalizes Gemini tool schemas for every host", async () => {
     const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/gemini-2.5-flash",
+        "tools: [read]",
+        "",
+      ].join("\n")
+    );
     const base = getModel("anthropic", "claude-sonnet-4-5");
     expect(base).toBeDefined();
     const parameters = Type.Object({
@@ -294,8 +376,8 @@ describe("createAgentSessionFromRecipe", () => {
 
   it("resolves credentials from provider env keys when no store is given", async () => {
     const { recipeDir, workspaceDir } = fixture();
-    const handle = await createAgentSessionFromRecipe({
-      recipeDir,
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       env: { ...cleanEnv(), ANTHROPIC_API_KEY: "env-key" },
     });
@@ -306,7 +388,11 @@ describe("createAgentSessionFromRecipe", () => {
   it("fails closed when the provider has no credential", async () => {
     const { recipeDir, workspaceDir } = fixture();
     await expect(
-      createAgentSessionFromRecipe({ recipeDir, cwd: workspaceDir, env: cleanEnv() })
+      createAgentSession({
+        recipe: resolveRecipe({ recipeDir }),
+        cwd: workspaceDir,
+        env: cleanEnv(),
+      })
     ).rejects.toSatisfy((err: unknown) => {
       expect(err).toBeInstanceOf(RecipeCredentialError);
       expect((err as Error).message).toContain("ANTHROPIC_API_KEY");
@@ -316,8 +402,18 @@ describe("createAgentSessionFromRecipe", () => {
 
   it("fails closed on an unknown model spec", async () => {
     const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/not-a-model",
+        "tools: [read]",
+        "",
+      ].join("\n")
+    );
     await expect(
-      open({ recipeDir, cwd: workspaceDir, model: "anthropic/not-a-model" })
+      open({ recipeDir, cwd: workspaceDir })
     ).rejects.toBeInstanceOf(RecipeModelError);
   });
 
@@ -471,7 +567,7 @@ describe("createAgentSessionFromRecipe", () => {
       MCPORTER_CONFIG: hostMcporter,
     };
     const baseOptions = {
-      recipeDir,
+      recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       env,
       credentials: await credentialStore(),
@@ -487,9 +583,9 @@ describe("createAgentSessionFromRecipe", () => {
     };
 
     await expect(
-      createAgentSessionFromRecipe({
+      createAgentSession({
         ...baseOptions,
-        systemPrompt: () => {
+        transformSystemPrompt: () => {
           throw new Error("prompt construction failed");
         },
       })
@@ -497,7 +593,7 @@ describe("createAgentSessionFromRecipe", () => {
     expect(env.PI_RECIPES_MCP_SESSION).toBe(hostSession);
     expect(env.MCPORTER_CONFIG).toBe(hostMcporter);
 
-    const recovered = await createAgentSessionFromRecipe(baseOptions);
+    const recovered = await createAgentSession(baseOptions);
     handles.push(recovered);
     await recovered.dispose();
   });
@@ -596,124 +692,6 @@ describe("createAgentSessionFromRecipe", () => {
   });
 });
 
-describe("runRecipe", () => {
-  const cleanups: Array<() => void> = [];
-
-  afterEach(() => {
-    for (const cleanup of cleanups.splice(0)) cleanup();
-  });
-
-  function fixture() {
-    const created = writeFixtureRecipe();
-    cleanups.push(created.cleanup);
-    return created;
-  }
-
-  function scriptedFactory(script: (handle: RecipeSessionHandle) => void) {
-    return async (
-      options: Parameters<typeof createAgentSessionFromRecipe>[0]
-    ): Promise<RecipeSessionHandle> => {
-      const handle = await createAgentSessionFromRecipe(options);
-      script(handle);
-      return handle;
-    };
-  }
-
-  it("returns finished with the assistant text", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      sessionFactory: scriptedFactory((handle) =>
-        scriptReply(handle, "one-shot reply")
-      ),
-    });
-    expect(result.status).toBe("finished");
-    expect(result.text).toBe("one-shot reply");
-    expect(result.messages.length).toBeGreaterThan(0);
-  });
-
-  it("returns failed, never throws, on agent-level error", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      sessionFactory: scriptedFactory(scriptError),
-    });
-    expect(result.status).toBe("failed");
-    expect(result.error).toBeTruthy();
-  });
-
-  it("returns cancelled on timeout, and always disposes", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      timeoutMs: 100,
-      sessionFactory: scriptedFactory(scriptHangUntilAbort),
-    });
-    expect(result.status).toBe("cancelled");
-  });
-
-  it("throws on caller mistakes (empty prompt)", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    await expect(
-      runRecipe({
-        recipeDir,
-        cwd: workspaceDir,
-        credentials: await credentialStore(),
-        env: cleanEnv(),
-        prompt: "   ",
-      })
-    ).rejects.toBeInstanceOf(TypeError);
-  });
-
-  it("returns cancelled when the signal is already aborted", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const controller = new AbortController();
-    controller.abort();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      signal: controller.signal,
-    });
-    expect(result.status).toBe("cancelled");
-  });
-
-  it("returns cancelled when the signal aborts during session construction", async () => {
-    const { recipeDir, workspaceDir } = fixture();
-    const controller = new AbortController();
-    const result = await runRecipe({
-      recipeDir,
-      cwd: workspaceDir,
-      credentials: await credentialStore(),
-      env: cleanEnv(),
-      prompt: "hi",
-      signal: controller.signal,
-      sessionFactory: async (options) => {
-        const handle = await createAgentSessionFromRecipe(options);
-        controller.abort();
-        return handle;
-      },
-    });
-
-    expect(result.status).toBe("cancelled");
-    expect(result.messages).toEqual([]);
-  });
-});
-
 describe("in-process run controller", () => {
   const cleanups: Array<() => void> = [];
 
@@ -745,7 +723,7 @@ describe("in-process run controller", () => {
     const parentEnv = cleanEnv();
     let scripted: RecipeSessionHandle | null = null;
     let childOptions:
-      | Parameters<typeof createAgentSession>[1]
+      | Parameters<typeof createAgentSessionInternal>[0]
       | undefined;
     const tracer = {} as never;
     const controller = createInProcessRunController({
@@ -760,9 +738,9 @@ describe("in-process run controller", () => {
           agentName: "root",
         },
       },
-      sessionFactory: async (agent, options) => {
+      sessionFactory: async (options) => {
         childOptions = options;
-        const handle = await createAgentSession(agent, {
+        const handle = await createAgentSessionInternal({
           ...options,
           credentials: await credentialStore(),
         });
@@ -782,6 +760,7 @@ describe("in-process run controller", () => {
     expect(childOptions?.otel?.meta?.agentId).toBeUndefined();
     expect(childOptions?.otel?.meta?.agentName).toBeUndefined();
     expect(childOptions?.runController).toBeNull();
+    expect(childOptions?.sessionRole).toBe("subagent");
     expect(childOptions?.env).not.toBe(parentEnv);
     expect(childOptions?.env).toEqual(parentEnv);
     await controller.close(run.agent_run_id);
@@ -797,8 +776,8 @@ describe("in-process run controller", () => {
       cwd: workspaceDir,
       env: cleanEnv(),
       concurrency: 1,
-      sessionFactory: async (agent, options) => {
-        const handle = await createAgentSession(agent, {
+      sessionFactory: async (options) => {
+        const handle = await createAgentSessionInternal({
           ...options,
           credentials: await credentialStore(),
         });
@@ -833,10 +812,10 @@ describe("in-process run controller", () => {
       recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       env: cleanEnv(),
-      sessionFactory: async (agent, options) => {
+      sessionFactory: async (options) => {
         factoryCalls += 1;
         await factoryGate.promise;
-        const handle = await createAgentSession(agent, {
+        const handle = await createAgentSessionInternal({
           ...options,
           credentials: await credentialStore(),
         });
@@ -959,7 +938,7 @@ describe("in-process run controller", () => {
       recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       env: cleanEnv(),
-      sessionFactory: async (_agent, options) => {
+      sessionFactory: async (options) => {
         onEvent = options.onEvent as typeof onEvent;
         return {
           session: {

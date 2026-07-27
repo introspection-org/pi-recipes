@@ -37,29 +37,29 @@
 			"types": "./dist/interactions.d.ts",
 			"import": "./dist/interactions.js"
 		},
+		"./extensions": {
+			"types": "./dist/api/extensions.d.ts",
+			"import": "./dist/api/extensions.js"
+		},
 		"./mcp": {
-			"types": "./dist/mcp.d.ts",
-			"import": "./dist/mcp.js"
+			"types": "./dist/api/mcp.d.ts",
+			"import": "./dist/api/mcp.js"
 		},
 		"./pi-extension": {
 			"types": "./dist/pi-extension.d.ts",
 			"import": "./dist/pi-extension.js"
 		},
-		"./pi": {
-			"types": "./dist/agent-tool.d.ts",
-			"import": "./dist/agent-tool.js"
+		"./agents": {
+			"types": "./dist/agents.d.ts",
+			"import": "./dist/agents.js"
 		},
 		"./recipe": {
 			"types": "./dist/recipe/resolve.d.ts",
 			"import": "./dist/recipe/resolve.js"
 		},
 		"./session": {
-			"types": "./dist/session.d.ts",
-			"import": "./dist/session.js"
-		},
-		"./run": {
-			"types": "./dist/run.d.ts",
-			"import": "./dist/run.js"
+			"types": "./dist/api/session.d.ts",
+			"import": "./dist/api/session.js"
 		},
 		"./test-utils": {
 			"types": "./dist/test-utils.d.ts",

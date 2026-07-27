@@ -17,7 +17,7 @@ introspection local
 and the Recipes extension are present. `introspection check` runs the Recipe
 Format validator. `introspection local` resolves the repository's project
 manifest and launches Pi with the Recipe path. Pi automatically runs the same
-validator with its local profile whenever `--recipe` is present.
+validator whenever `--recipe` is present.
 
 The local path requires no login or Introspection cloud service.
 
@@ -36,8 +36,6 @@ publish command.
 
 The Recipe remains unchanged across hosts. A long-lived host resolves the Recipe
 once, calls `createAgentSession()`, and supplies its own credentials, task
-lifecycle, persistence, isolation, and protocol surface. Short-lived hosts can
-use `createAgentSessionFromRecipe()` as the resolve-and-create convenience.
+lifecycle, persistence, isolation, and protocol surface.
 
-Use Introspection when you want the managed host. Otherwise, integrate the Host
-API with the platform that will operate the Recipe.
+Integrate the Host API with the platform that will operate the Recipe.

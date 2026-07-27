@@ -2,26 +2,13 @@
 //!
 //! The core API is I/O-free: [`check_recipe_files`] takes an in-memory
 //! [`RecipeFiles`] snapshot of a recipe directory and returns a [`Report`].
-//! The Introspection CLI owns filesystem discovery and presents snapshots to
-//! this library.
+//! Hosts own filesystem discovery and any environment-specific policy.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-
-mod judges;
-pub mod resources;
-pub mod spec;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CheckProfile {
-    Local,
-    Ci,
-    Publish,
-}
 
 /// In-memory snapshot of a recipe directory.
 ///
@@ -63,17 +50,11 @@ impl RecipeFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
     pub valid: bool,
-    pub profile: CheckProfile,
-    pub recipe_dir: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub package_name: Option<String>,
     pub diagnostics: Vec<Diagnostic>,
-    pub resources: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
-    pub severity: Severity,
     pub code: String,
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -90,29 +71,12 @@ pub struct Span {
     pub column: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Severity {
-    Error,
-    Warning,
-}
-
-impl Severity {
-    pub const fn is_error(self) -> bool {
-        matches!(self, Self::Error)
-    }
-}
-
 type JsonMap = serde_json::Map<String, JsonValue>;
 
 #[derive(Debug, Clone)]
 struct Package {
     name: Option<String>,
-    version: Option<String>,
-    description: Option<String>,
-    license: Option<String>,
     pi: Option<JsonValue>,
-    runtime_dependencies: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -124,11 +88,11 @@ struct ResourcePatterns {
 #[derive(Debug, Clone)]
 struct RawAgent {
     name: String,
-    fallback_name: String,
-    explicit_name: bool,
     path: String,
     from: Option<String>,
     fields: HashSet<AgentField>,
+    skills: Option<Vec<String>>,
+    subagents: Option<Vec<String>>,
     mcp: Option<AgentMcpConfig>,
 }
 
@@ -157,55 +121,32 @@ struct AgentMcpConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AgentField {
     ModelName,
-    ModelThinkingLevel,
-    Tools,
-    Skills,
-    Subagents,
-    SystemInstructions,
 }
 
 impl AgentField {
-    const REQUIRED: [Self; 4] = [
-        Self::ModelName,
-        Self::ModelThinkingLevel,
-        Self::Tools,
-        Self::SystemInstructions,
-    ];
+    const REQUIRED: [Self; 1] = [Self::ModelName];
 
     const fn label(self) -> &'static str {
         match self {
             Self::ModelName => "model.name",
-            Self::ModelThinkingLevel => "model.thinkingLevel",
-            Self::Tools => "tools",
-            Self::Skills => "skills",
-            Self::Subagents => "subagents",
-            Self::SystemInstructions => "systemInstructions",
         }
     }
 
     const fn help(self) -> Option<&'static str> {
         match self {
             Self::ModelName => Some("set a model or inherit one from a base agent"),
-            Self::ModelThinkingLevel => {
-                Some("omit this field to preserve the provider or session default")
-            }
-            Self::Tools => Some("omit this field for no tools, or declare the intended tools"),
-            Self::Skills | Self::Subagents | Self::SystemInstructions => None,
         }
     }
 }
 
 struct CheckContext {
-    profile: CheckProfile,
     files: BTreeMap<String, Option<String>>,
     directories: BTreeSet<String>,
-    package_name: Option<String>,
     diagnostics: Vec<Diagnostic>,
-    resources: BTreeMap<String, usize>,
 }
 
 impl CheckContext {
-    fn new(input: &RecipeFiles, profile: CheckProfile) -> Self {
+    fn new(input: &RecipeFiles) -> Self {
         let mut files = BTreeMap::new();
         let mut directories = BTreeSet::new();
         for file in &input.files {
@@ -229,12 +170,9 @@ impl CheckContext {
             directories.insert(path);
         }
         Self {
-            profile,
             files,
             directories,
-            package_name: None,
             diagnostics: Vec::new(),
-            resources: BTreeMap::new(),
         }
     }
 
@@ -267,7 +205,6 @@ impl CheckContext {
 
     fn push(
         &mut self,
-        severity: Severity,
         code: impl Into<String>,
         path: impl Into<String>,
         span: Option<Span>,
@@ -275,7 +212,6 @@ impl CheckContext {
         help: Option<impl Into<String>>,
     ) {
         self.diagnostics.push(Diagnostic {
-            severity,
             code: code.into(),
             path: path.into(),
             span,
@@ -291,7 +227,7 @@ impl CheckContext {
         message: impl Into<String>,
         help: Option<impl Into<String>>,
     ) {
-        self.push(Severity::Error, code, path, None, message, help);
+        self.push(code, path, None, message, help);
     }
 
     fn error_at(
@@ -302,43 +238,21 @@ impl CheckContext {
         message: impl Into<String>,
         help: Option<impl Into<String>>,
     ) {
-        self.push(Severity::Error, code, path, span, message, help);
-    }
-
-    fn warning(
-        &mut self,
-        code: impl Into<String>,
-        path: impl Into<String>,
-        message: impl Into<String>,
-        help: Option<impl Into<String>>,
-    ) {
-        self.push(Severity::Warning, code, path, None, message, help);
-    }
-
-    fn warning_at(
-        &mut self,
-        code: impl Into<String>,
-        path: impl Into<String>,
-        span: Option<Span>,
-        message: impl Into<String>,
-        help: Option<impl Into<String>>,
-    ) {
-        self.push(Severity::Warning, code, path, span, message, help);
+        self.push(code, path, span, message, help);
     }
 }
 
-/// Validate an in-memory recipe snapshot. Pure: no filesystem access.
-pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report {
-    let mut ctx = CheckContext::new(input, profile);
+/// Validate the portable structure of an in-memory Recipe snapshot.
+///
+/// This function does not apply host, deployment, package-manager, or
+/// publication policy.
+pub fn check_recipe_files(input: &RecipeFiles) -> Report {
+    let mut ctx = CheckContext::new(input);
 
     let package = read_package(&mut ctx);
     if let Some(package) = package {
-        ctx.package_name = package.name.clone();
         validate_package_identity(&package, &mut ctx);
-        validate_runtime_dependencies(&package, &mut ctx);
-        validate_publish_metadata(&package, &mut ctx);
         let resources = validate_pi_config(&package, &mut ctx);
-        validate_mcp_local_example(&mut ctx);
 
         let mcp_tool_policy = package
             .pi
@@ -346,76 +260,18 @@ pub fn check_recipe_files(input: &RecipeFiles, profile: CheckProfile) -> Report 
             .and_then(JsonValue::as_object)
             .and_then(|pi| mcp_tool_policy(pi.get("mcp")));
         let agent_paths = resolve_agents(&resources, &ctx);
-        ctx.resources.insert("agents".to_owned(), agent_paths.len());
-        validate_agents(&agent_paths, mcp_tool_policy.as_ref(), &mut ctx);
-        for key in ["extensions", "skills", "prompts"] {
-            if let Some(paths) = resources.get(key) {
-                ctx.resources.insert(key.to_owned(), paths.len());
-            }
-        }
+        validate_agents(&agent_paths, &resources, mcp_tool_policy.as_ref(), &mut ctx);
     }
 
-    let judge_count = judges::validate_judges(&mut ctx);
-    if judge_count > 0 {
-        ctx.resources.insert("judges".to_owned(), judge_count);
-    }
-
-    let valid = !ctx
-        .diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.severity.is_error());
+    let valid = ctx.diagnostics.is_empty();
     Report {
         valid,
-        profile,
-        recipe_dir: ".".to_owned(),
-        package_name: ctx.package_name,
         diagnostics: ctx.diagnostics,
-        resources: ctx.resources,
     }
-}
-
-pub fn render_human(report: &Report) -> String {
-    let name = report.package_name.as_deref().unwrap_or("<unknown>");
-    let mut out = String::new();
-    out.push_str(name);
-    out.push('\n');
-    for diagnostic in &report.diagnostics {
-        out.push_str(&format!(
-            "{}: {}: {}",
-            match diagnostic.severity {
-                Severity::Error => "error",
-                Severity::Warning => "warning",
-            },
-            diagnostic.code,
-            diagnostic.message
-        ));
-        if !diagnostic.path.is_empty() {
-            match diagnostic.span {
-                Some(span) => out.push_str(&format!(
-                    " ({}:{}:{})",
-                    diagnostic.path, span.line, span.column
-                )),
-                None => out.push_str(&format!(" ({})", diagnostic.path)),
-            }
-        }
-        out.push('\n');
-        if let Some(help) = &diagnostic.help {
-            out.push_str(&format!("  help: {help}\n"));
-        }
-    }
-    if report.diagnostics.is_empty() {
-        out.push_str("ok\n");
-    }
-    if !report.resources.is_empty() {
-        out.push_str("\nResources:\n");
-        for (key, count) in &report.resources {
-            out.push_str(&format!("  {key}: {count}\n"));
-        }
-    }
-    out
 }
 
 const PACKAGE_JSON: &str = "package.json";
+const MAX_INHERITANCE_DEPTH: usize = 128;
 
 fn read_package(ctx: &mut CheckContext) -> Option<Package> {
     if !ctx.has_file(PACKAGE_JSON) {
@@ -423,7 +279,7 @@ fn read_package(ctx: &mut CheckContext) -> Option<Package> {
             "package.manifest_missing",
             PACKAGE_JSON,
             "Recipe is missing package.json",
-            Some("add package.json with a non-empty pi object"),
+            Some("add package.json with a pi object"),
         );
         return None;
     }
@@ -466,23 +322,20 @@ fn read_package(ctx: &mut CheckContext) -> Option<Package> {
     };
 
     let pi = object.get("pi").cloned();
-    if !matches!(pi.as_ref(), Some(JsonValue::Object(map)) if !map.is_empty()) {
+    if !matches!(pi.as_ref(), Some(JsonValue::Object(_))) {
         ctx.error(
             "package.pi_missing",
             PACKAGE_JSON,
-            "package.json is missing a non-empty pi object",
-            Some("add package.json#pi with recipe resources"),
+            "package.json is missing a pi object",
+            Some(
+                "add package.json#pi; it may be empty when using conventional resource directories",
+            ),
         );
     }
 
     Some(Package {
         name: string_value(object.get("name")),
-        version: string_value(object.get("version")),
-        description: string_value(object.get("description")),
-        license: string_value(object.get("license")),
         pi,
-        runtime_dependencies: has_non_empty_object(object.get("dependencies"))
-            || has_non_empty_object(object.get("optionalDependencies")),
     })
 }
 
@@ -494,123 +347,6 @@ fn validate_package_identity(package: &Package, ctx: &mut CheckContext) {
             "Package is missing name",
             Some("set package.json#name to the recipe identifier"),
         );
-    }
-    if package.description.is_none() {
-        ctx.warning(
-            "package.description_missing",
-            PACKAGE_JSON,
-            "Package is missing description",
-            Some("add a short package.json#description for humans browsing recipes"),
-        );
-    }
-}
-
-fn validate_runtime_dependencies(package: &Package, ctx: &mut CheckContext) {
-    if !package.runtime_dependencies || has_dependency_lockfile(ctx) {
-        return;
-    }
-    let severity = match ctx.profile {
-        CheckProfile::Local => Severity::Warning,
-        CheckProfile::Ci | CheckProfile::Publish => Severity::Error,
-    };
-    ctx.push(
-        severity,
-        "package.lockfile_missing",
-        PACKAGE_JSON,
-        None,
-        "Recipe declares runtime dependencies but has no lockfile",
-        Some("commit package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, or yarn.lock"),
-    );
-}
-
-fn validate_publish_metadata(package: &Package, ctx: &mut CheckContext) {
-    if ctx.profile != CheckProfile::Publish {
-        return;
-    }
-
-    if let Some(license) = package.license.as_deref() {
-        let normalized = license.trim().to_ascii_uppercase();
-        let has_license_text = if normalized.starts_with("SEE LICENSE IN ") {
-            let path = license["SEE LICENSE IN ".len()..].trim();
-            validate_relative_pattern(path).is_ok() && ctx.has_file(path)
-        } else {
-            ctx.files.keys().any(|path| {
-                if path.contains('/') {
-                    return false;
-                }
-                let upper = path.to_ascii_uppercase();
-                ["LICENSE", "LICENCE", "COPYING"]
-                    .iter()
-                    .any(|base| upper == *base || upper.starts_with(&format!("{base}.")))
-            })
-        };
-        if normalized != "UNLICENSED" && !has_license_text {
-            ctx.error(
-                "package.license_file_missing",
-                PACKAGE_JSON,
-                format!("Package declares license '{license}' but no root license file exists"),
-                Some("add the matching license text at the recipe root before distribution"),
-            );
-        }
-    }
-
-    if ctx.has_file(".pi/mcp.local.json") {
-        ctx.error(
-            "package.local_config_present",
-            ".pi/mcp.local.json",
-            "Local capability configuration must not be distributed with a recipe",
-            Some("remove .pi/mcp.local.json and keep only a redacted example when needed"),
-        );
-    }
-
-    for lockfile in ["package-lock.json", "npm-shrinkwrap.json"] {
-        let Some(content) = ctx.content(lockfile).map(str::to_owned) else {
-            continue;
-        };
-        let parsed: JsonValue = match serde_json::from_str(&content) {
-            Ok(value) => value,
-            Err(err) => {
-                ctx.error(
-                    "package.lockfile_malformed",
-                    lockfile,
-                    format!("{lockfile} is not valid JSON: {err}"),
-                    Some("regenerate the lockfile from the current package.json"),
-                );
-                continue;
-            }
-        };
-        let Some(root) = parsed.as_object() else {
-            continue;
-        };
-        let package_root = root
-            .get("packages")
-            .and_then(JsonValue::as_object)
-            .and_then(|packages| packages.get(""))
-            .and_then(JsonValue::as_object);
-        for (location, entry) in [("top-level", Some(root)), ("packages[\"\"]", package_root)] {
-            let Some(entry) = entry else {
-                continue;
-            };
-            for (field, package_value) in [
-                ("name", package.name.as_deref()),
-                ("version", package.version.as_deref()),
-            ] {
-                if let (Some(expected), Some(actual)) =
-                    (package_value, string_value(entry.get(field)))
-                {
-                    if expected != actual {
-                        ctx.error(
-                            format!("package.lockfile_{field}_mismatch"),
-                            lockfile,
-                            format!(
-                                "{lockfile} {location} {field} '{actual}' does not match package.json '{expected}'"
-                            ),
-                            Some("regenerate the lockfile after changing recipe identity"),
-                        );
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -626,17 +362,8 @@ fn validate_pi_config(
         .into_iter()
         .collect();
     for key in pi.keys() {
-        if key == "evals" {
-            ctx.error(
-                "pi.evals_unsupported",
-                PACKAGE_JSON,
-                "package.json#pi.evals is not supported",
-                Some("keep evaluation configuration outside the Recipe"),
-            );
-            continue;
-        }
         if !known.contains(key.as_str()) {
-            ctx.warning(
+            ctx.error(
                 "pi.unknown_key",
                 PACKAGE_JSON,
                 format!("package.json#pi contains unknown key '{key}'"),
@@ -682,9 +409,22 @@ fn resource_patterns(
     match value {
         Some(JsonValue::Array(items)) => {
             let mut patterns = Vec::with_capacity(items.len());
+            let mut seen = BTreeSet::new();
             for (index, item) in items.iter().enumerate() {
                 match string_value(Some(item)) {
-                    Some(pattern) => patterns.push(pattern),
+                    Some(pattern) => {
+                        if !seen.insert(pattern.clone()) {
+                            ctx.error(
+                                format!("pi.{key}_duplicate"),
+                                PACKAGE_JSON,
+                                format!(
+                                    "package.json#pi.{key} contains duplicate entry '{pattern}'"
+                                ),
+                                Some("remove duplicate entries"),
+                            );
+                        }
+                        patterns.push(pattern);
+                    }
                     None => ctx.error(
                         format!("pi.{key}_invalid"),
                         PACKAGE_JSON,
@@ -747,33 +487,33 @@ fn resolve_resource_patterns(
         }
 
         let matches = match_paths(ctx, pattern);
-        if matches.is_empty() {
-            let severity = if required {
-                Severity::Error
-            } else {
-                Severity::Warning
-            };
-            ctx.push(
-                severity,
+        if matches.is_empty() && (required || patterns.explicit) {
+            ctx.error(
                 format!("package.{key}_unmatched"),
                 PACKAGE_JSON,
-                None,
                 format!("package.json#pi.{key} pattern '{pattern}' matched no files"),
                 Some("update or remove the unmatched resource pattern"),
             );
         }
         for path in matches {
-            if key == "extensions" && !is_loadable_extension_file(ctx, &path) {
-                ctx.warning(
-                    "package.extensions_non_loadable",
-                    path.clone(),
-                    format!(
-                        "package.json#pi.extensions pattern '{pattern}' matched a file that is not a loadable extension module"
-                    ),
-                    Some("point extension patterns at .ts, .tsx, .js, .jsx, .mjs, or .cjs files"),
-                );
+            if key == "extensions" {
+                let entries = resolve_extension_entry(ctx, &path);
+                if entries.is_empty() {
+                    ctx.error(
+                        "package.extensions_non_loadable",
+                        path.clone(),
+                        format!(
+                            "package.json#pi.extensions pattern '{pattern}' matched no loadable extension modules"
+                        ),
+                        Some(
+                            "point extension patterns at modules or directories with an index, direct modules, or indexed child directories",
+                        ),
+                    );
+                }
+                resolved.extend(entries);
+            } else {
+                resolved.insert(path);
             }
-            resolved.insert(path);
         }
     }
 
@@ -812,6 +552,7 @@ fn resolve_agents(
 
 fn validate_agents(
     agent_paths: &[String],
+    resources: &HashMap<&'static str, Vec<String>>,
     mcp_tool_policy: Option<&McpToolPolicy>,
     ctx: &mut CheckContext,
 ) {
@@ -828,34 +569,30 @@ fn validate_agents(
     validate_agent_names(&sources, ctx);
 
     let mut raw_by_name = HashMap::new();
-    let mut aliases = HashMap::new();
     for source in &sources {
         raw_by_name.insert(source.name.clone(), source);
-        aliases.insert(source.fallback_name.clone(), source.name.clone());
     }
 
     let mut unique_names: Vec<String> = raw_by_name.keys().cloned().collect();
     unique_names.sort();
+    let skill_names = packaged_skill_names(
+        resources
+            .get("skills")
+            .map(Vec::as_slice)
+            .unwrap_or_default(),
+        ctx,
+    );
     for name in unique_names {
-        validate_agent_inheritance(&name, &raw_by_name, &aliases, ctx);
+        validate_agent_inheritance(&name, &raw_by_name, ctx);
         for field in AgentField::REQUIRED {
-            if !resolved_field_provided(&name, field, &raw_by_name, &aliases, &mut Vec::new()) {
+            if !resolved_field_provided(&name, field, &raw_by_name, &mut Vec::new()) {
                 let path = raw_by_name
                     .get(&name)
                     .map(|agent| agent.path.clone())
                     .unwrap_or_default();
-                let severity = match field {
-                    AgentField::ModelName => Severity::Error,
-                    AgentField::ModelThinkingLevel
-                    | AgentField::Tools
-                    | AgentField::SystemInstructions => Severity::Warning,
-                    AgentField::Skills | AgentField::Subagents => continue,
-                };
-                ctx.push(
-                    severity,
+                ctx.error(
                     format!("agent.{}_missing", field.label()),
                     path,
-                    None,
                     format!(
                         "Recipe agent '{name}' must declare {} directly or inherit it with from",
                         field.label()
@@ -864,7 +601,10 @@ fn validate_agents(
                 );
             }
         }
-        validate_resolved_agent_mcp(&name, &raw_by_name, &aliases, mcp_tool_policy, ctx);
+        if let Some(agent) = raw_by_name.get(&name) {
+            validate_declared_agent_references(agent, &raw_by_name, &skill_names, ctx);
+        }
+        validate_resolved_agent_mcp(&name, &raw_by_name, mcp_tool_policy, ctx);
     }
 }
 
@@ -902,40 +642,80 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
         );
         return None;
     };
-
-    let fallback_name = file_stem(path).unwrap_or("agent").to_owned();
-    let explicit_name = obj_string(map, "name").filter(|value| !value.trim().is_empty());
-    let name = explicit_name
-        .clone()
-        .unwrap_or_else(|| fallback_name.clone());
-    if !map.contains_key("name") {
-        ctx.warning(
-            "agent.name_missing",
+    const AGENT_KEYS: &[&str] = &[
+        "name",
+        "from",
+        "description",
+        "model",
+        "tools",
+        "mcp",
+        "skills",
+        "subagents",
+        "system_instructions",
+    ];
+    for key in map.keys().filter(|key| !AGENT_KEYS.contains(&key.as_str())) {
+        ctx.error(
+            "agent.key_unknown",
             path,
-            format!("Recipe agent '{name}' must declare name"),
-            Some("add a non-empty name field to the agent YAML"),
+            format!("Agent contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", AGENT_KEYS.join(", "))),
         );
     }
-    if map.contains_key("name") && explicit_name.is_none() {
+
+    let name = match map.get("name") {
+        Some(JsonValue::String(name)) if !name.trim().is_empty() => name.clone(),
+        Some(JsonValue::String(_)) | None => {
+            ctx.error(
+                "agent.name_missing",
+                path,
+                "Agent must declare a non-empty name",
+                Some("set name to the stable identity used by references and telemetry"),
+            );
+            return None;
+        }
+        Some(_) => {
+            ctx.error(
+                "agent.name_invalid",
+                path,
+                "Agent name must be a string",
+                Some("set name to the stable identity used by references and telemetry"),
+            );
+            return None;
+        }
+    };
+    if !portable_agent_name(&name) {
         ctx.error(
             "agent.name_invalid",
             path,
-            "Agent name must be a non-empty string",
-            Some("remove the field to use the filename, or set a non-empty name"),
+            "Agent name must use lowercase kebab-case",
+            Some("use lowercase letters and numbers separated by single hyphens"),
         );
     }
 
-    if obj_string(map, "description").is_none() {
-        ctx.warning(
-            "agent.description_missing",
+    if map.contains_key("description")
+        && !matches!(map.get("description"), Some(JsonValue::String(_)))
+    {
+        ctx.error(
+            "agent.description_invalid",
             path,
-            format!("Recipe agent '{name}' is missing description"),
-            Some("add a short description to explain when this agent should be used"),
+            "Agent description must be a string",
+            Some("remove description or provide a string"),
         );
     }
 
     let from = match map.get("from") {
-        Some(JsonValue::String(value)) if !value.trim().is_empty() => Some(value.trim().to_owned()),
+        Some(JsonValue::String(value)) if !value.trim().is_empty() => {
+            let value = value.to_owned();
+            if !portable_agent_name(&value) {
+                ctx.error(
+                    "agent.from_invalid",
+                    path,
+                    "Agent from must use lowercase kebab-case",
+                    Some("reference an agent by its portable name"),
+                );
+            }
+            Some(value)
+        }
         Some(_) => {
             ctx.error(
                 "agent.from_invalid",
@@ -950,27 +730,32 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
 
     let mut fields = HashSet::new();
     validate_agent_model(map, path, &name, &mut fields, ctx);
-    validate_agent_string_array(map, "tools", AgentField::Tools, path, &mut fields, ctx);
+    let tools = validate_agent_string_array(map, "tools", path, ctx);
+    if tools
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .any(|tool| tool == "agent")
+    {
+        ctx.error(
+            "agent.tools_reserved",
+            path,
+            "Agent tools must not declare the session-generated agent tool",
+            Some("declare subagents to enable delegation"),
+        );
+    }
     let mcp = validate_agent_mcp(map, path, ctx);
-    validate_agent_string_array(map, "skills", AgentField::Skills, path, &mut fields, ctx);
-    validate_agent_string_array(
-        map,
-        "subagents",
-        AgentField::Subagents,
-        path,
-        &mut fields,
-        ctx,
-    );
-    validate_agent_system_instructions(map, path, &mut fields, ctx);
-    validate_agent_extensions(map, path, ctx);
+    let skills = validate_agent_string_array(map, "skills", path, ctx);
+    let subagents = validate_agent_string_array(map, "subagents", path, ctx);
+    validate_agent_system_instructions(map, path, ctx);
 
     Some(RawAgent {
         name,
-        fallback_name,
-        explicit_name: explicit_name.is_some(),
         path: path.to_owned(),
         from,
         fields,
+        skills,
+        subagents,
         mcp,
     })
 }
@@ -994,6 +779,28 @@ fn validate_agent_model(
         );
         return;
     };
+    const MODEL_KEYS: &[&str] = &[
+        "name",
+        "thinking_level",
+        "temperature",
+        "max_tokens",
+        "cache_retention",
+        "timeout_ms",
+        "max_retries",
+        "max_retry_delay_ms",
+        "providers",
+    ];
+    for key in model
+        .keys()
+        .filter(|key| !MODEL_KEYS.contains(&key.as_str()))
+    {
+        ctx.error(
+            "agent.model_key_unknown",
+            path,
+            format!("Agent model contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", MODEL_KEYS.join(", "))),
+        );
+    }
 
     if let Some(model_name) = obj_string(model, "name") {
         fields.insert(AgentField::ModelName);
@@ -1016,15 +823,196 @@ fn validate_agent_model(
         );
     }
 
-    if obj_string(model, "thinking_level").is_some() || obj_string(model, "thinkingLevel").is_some()
-    {
-        fields.insert(AgentField::ModelThinkingLevel);
-    } else if model.contains_key("thinking_level") || model.contains_key("thinkingLevel") {
+    if let Some(value) = model.get("thinking_level") {
+        let valid = value.as_str().is_some_and(|level| {
+            matches!(
+                level,
+                "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+            )
+        });
+        if !valid {
+            ctx.error(
+                "agent.model.thinking_level_invalid",
+                path,
+                "Agent model.thinking_level is unsupported",
+                Some("use off, minimal, low, medium, high, or xhigh"),
+            );
+        }
+    }
+    validate_non_negative_number(model, "temperature", false, path, ctx);
+    validate_non_negative_number(model, "max_tokens", true, path, ctx);
+    validate_non_negative_number(model, "timeout_ms", true, path, ctx);
+    validate_non_negative_number(model, "max_retries", false, path, ctx);
+    validate_non_negative_number(model, "max_retry_delay_ms", false, path, ctx);
+    if let Some(value) = model.get("cache_retention") {
+        if !value
+            .as_str()
+            .is_some_and(|retention| matches!(retention, "none" | "short" | "long"))
+        {
+            ctx.error(
+                "agent.model.cache_retention_invalid",
+                path,
+                "Agent model.cache_retention is unsupported",
+                Some("use none, short, or long"),
+            );
+        }
+    }
+    validate_model_providers(model.get("providers"), path, ctx);
+}
+
+fn validate_non_negative_number(
+    model: &JsonMap,
+    key: &str,
+    strictly_positive: bool,
+    path: &str,
+    ctx: &mut CheckContext,
+) {
+    let Some(value) = model.get(key) else {
+        return;
+    };
+    let valid = value.as_f64().is_some_and(|number| {
+        number.is_finite()
+            && if strictly_positive {
+                number >= 1.0 && number.fract() == 0.0
+            } else if key == "temperature" {
+                number >= 0.0
+            } else {
+                number >= 0.0 && number.fract() == 0.0
+            }
+    });
+    if !valid {
         ctx.error(
-            "agent.model.thinkingLevel_invalid",
+            format!("agent.model.{key}_invalid"),
             path,
-            "Agent model thinking level must be a string",
-            Some("remove the field to preserve the default, or set a supported level"),
+            format!(
+                "Agent model.{key} must be {}",
+                if strictly_positive {
+                    "an integer >= 1"
+                } else if key == "temperature" {
+                    "a number >= 0"
+                } else {
+                    "an integer >= 0"
+                }
+            ),
+            None::<String>,
+        );
+    }
+}
+
+fn validate_model_providers(value: Option<&JsonValue>, path: &str, ctx: &mut CheckContext) {
+    let Some(value) = value else {
+        return;
+    };
+    let Some(providers) = value.as_object() else {
+        ctx.error(
+            "agent.model.providers_invalid",
+            path,
+            "Agent model.providers must be an object",
+            None::<String>,
+        );
+        return;
+    };
+    for key in providers
+        .keys()
+        .filter(|key| !matches!(key.as_str(), "openrouter" | "anthropic"))
+    {
+        ctx.error(
+            "agent.model.providers_key_unknown",
+            path,
+            format!("Agent model.providers contains unknown field '{key}'"),
+            Some("use only openrouter and anthropic"),
+        );
+    }
+    if let Some(value) = providers.get("openrouter") {
+        let Some(openrouter) = value.as_object() else {
+            ctx.error(
+                "agent.model.providers.openrouter_invalid",
+                path,
+                "Agent model.providers.openrouter must be an object",
+                None::<String>,
+            );
+            return;
+        };
+        for key in openrouter.keys().filter(|key| key.as_str() != "routing") {
+            ctx.error(
+                "agent.model.providers.openrouter_key_unknown",
+                path,
+                format!("Agent model.providers.openrouter contains unknown field '{key}'"),
+                Some("use only routing"),
+            );
+        }
+        if let Some(value) = openrouter.get("routing") {
+            validate_openrouter_routing(value, path, ctx);
+        }
+    }
+    if let Some(value) = providers.get("anthropic") {
+        let Some(anthropic) = value.as_object() else {
+            ctx.error(
+                "agent.model.providers.anthropic_invalid",
+                path,
+                "Agent model.providers.anthropic must be an object",
+                None::<String>,
+            );
+            return;
+        };
+        for key in anthropic
+            .keys()
+            .filter(|key| !matches!(key.as_str(), "betas" | "context_management"))
+        {
+            ctx.error(
+                "agent.model.providers.anthropic_key_unknown",
+                path,
+                format!("Agent model.providers.anthropic contains unknown field '{key}'"),
+                Some("use only betas and context_management"),
+            );
+        }
+        if let Some(value) = anthropic.get("betas") {
+            if string_array(value).is_err() {
+                ctx.error(
+                    "agent.model.providers.anthropic_betas_invalid",
+                    path,
+                    "Agent model.providers.anthropic.betas must be an array of non-empty strings",
+                    None::<String>,
+                );
+            }
+        }
+    }
+}
+
+fn validate_openrouter_routing(value: &JsonValue, path: &str, ctx: &mut CheckContext) {
+    const ROUTING_KEYS: &[&str] = &[
+        "allow_fallbacks",
+        "require_parameters",
+        "data_collection",
+        "zdr",
+        "enforce_distillable_text",
+        "order",
+        "only",
+        "ignore",
+        "quantizations",
+        "sort",
+        "max_price",
+        "preferred_min_throughput",
+        "preferred_max_latency",
+    ];
+    let Some(routing) = value.as_object() else {
+        ctx.error(
+            "agent.model.providers.openrouter.routing_invalid",
+            path,
+            "Agent model.providers.openrouter.routing must be an object",
+            None::<String>,
+        );
+        return;
+    };
+    for key in routing
+        .keys()
+        .filter(|key| !ROUTING_KEYS.contains(&key.as_str()))
+    {
+        ctx.error(
+            "agent.model.providers.openrouter.routing_key_unknown",
+            path,
+            format!("Agent OpenRouter routing contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", ROUTING_KEYS.join(", "))),
         );
     }
 }
@@ -1032,24 +1020,40 @@ fn validate_agent_model(
 fn validate_agent_string_array(
     map: &JsonMap,
     key: &'static str,
-    field: AgentField,
     path: &str,
-    fields: &mut HashSet<AgentField>,
     ctx: &mut CheckContext,
-) {
-    let Some(value) = map.get(key) else {
-        return;
-    };
+) -> Option<Vec<String>> {
+    let value = map.get(key)?;
     match string_array(value) {
         Ok(()) => {
-            fields.insert(field);
+            let values: Vec<String> = value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(JsonValue::as_str)
+                .map(str::trim)
+                .map(str::to_owned)
+                .collect();
+            let unique: BTreeSet<&str> = values.iter().map(String::as_str).collect();
+            if unique.len() != values.len() {
+                ctx.error(
+                    format!("agent.{key}_duplicate"),
+                    path,
+                    format!("Agent {key} must not contain duplicate entries"),
+                    Some("remove duplicate entries"),
+                );
+            }
+            Some(values)
         }
-        Err(message) => ctx.error(
-            format!("agent.{key}_invalid"),
-            path,
-            message,
-            Some("use a list containing only non-empty strings"),
-        ),
+        Err(message) => {
+            ctx.error(
+                format!("agent.{key}_invalid"),
+                path,
+                message,
+                Some("use a list containing only non-empty strings"),
+            );
+            None
+        }
     }
 }
 
@@ -1135,6 +1139,17 @@ fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Opti
             );
             continue;
         };
+        for key in server
+            .keys()
+            .filter(|key| !matches!(key.as_str(), "include" | "exclude" | "defer" | "eager"))
+        {
+            ctx.error(
+                "agent.mcp_key_unknown",
+                path,
+                format!("Agent mcp server '{server_id}' contains unknown field '{key}'"),
+                Some("use only include, exclude, defer, and eager"),
+            );
+        }
         let mut selectors = McpToolSelectors::default();
         for key in ["include", "exclude", "defer", "eager"] {
             let Some(value) = server.get(key) else {
@@ -1162,6 +1177,19 @@ fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Opti
             let Some(items) = value.as_array() else {
                 continue;
             };
+            let authored_values = items
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .map(str::trim)
+                .collect::<Vec<_>>();
+            if authored_values.iter().collect::<BTreeSet<_>>().len() != authored_values.len() {
+                ctx.error(
+                    "agent.mcp_selector_duplicate",
+                    path,
+                    format!("Agent mcp server '{server_id}' {key} must not contain duplicates"),
+                    Some("remove duplicate selectors"),
+                );
+            }
             let values = items
                 .iter()
                 .filter_map(JsonValue::as_str)
@@ -1227,52 +1255,46 @@ fn validate_agent_mcp(map: &JsonMap, path: &str, ctx: &mut CheckContext) -> Opti
     })
 }
 
-fn validate_agent_system_instructions(
-    map: &JsonMap,
-    path: &str,
-    fields: &mut HashSet<AgentField>,
-    ctx: &mut CheckContext,
-) {
-    if let Some(prompt) = map.get("prompt") {
-        if matches!(prompt, JsonValue::String(value) if !value.trim().is_empty()) {
-            fields.insert(AgentField::SystemInstructions);
-        } else {
-            ctx.error(
-                "agent.prompt_invalid",
-                path,
-                "Agent prompt must be a non-empty string",
-                None::<String>,
-            );
-        }
-    }
-
-    let Some(value) = map
-        .get("system_instructions")
-        .or_else(|| map.get("systemInstructions"))
-    else {
+fn validate_agent_system_instructions(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
+    let Some(value) = map.get("system_instructions") else {
         return;
     };
     let Some(system) = value.as_object() else {
         ctx.error(
-            "agent.systemInstructions_invalid",
+            "agent.system_instructions_invalid",
             path,
             "Agent system_instructions must be an object",
             None::<String>,
         );
         return;
     };
+    for key in system
+        .keys()
+        .filter(|key| !matches!(key.as_str(), "mode" | "content"))
+    {
+        ctx.error(
+            "agent.system_instructions_key_unknown",
+            path,
+            format!("Agent system_instructions contains unknown field '{key}'"),
+            Some("use only mode and content"),
+        );
+    }
     match system.get("content") {
-        Some(JsonValue::String(_)) => {
-            fields.insert(AgentField::SystemInstructions);
-        }
+        Some(JsonValue::String(value)) if !value.trim().is_empty() => {}
+        Some(JsonValue::String(_)) => ctx.error(
+            "agent.system_instructions_invalid",
+            path,
+            "Agent system_instructions.content must be non-empty",
+            None::<String>,
+        ),
         Some(_) => ctx.error(
-            "agent.systemInstructions_invalid",
+            "agent.system_instructions_invalid",
             path,
             "Agent system_instructions.content must be a string",
             None::<String>,
         ),
         None => ctx.error(
-            "agent.systemInstructions_invalid",
+            "agent.system_instructions_invalid",
             path,
             "Agent system_instructions must declare content",
             None::<String>,
@@ -1282,13 +1304,13 @@ fn validate_agent_system_instructions(
         match mode {
             JsonValue::String(value) if value == "append" || value == "replace" => {}
             JsonValue::String(_) => ctx.error(
-                "agent.systemInstructions_invalid",
+                "agent.system_instructions_invalid",
                 path,
                 "Agent system_instructions.mode must be append or replace",
                 None::<String>,
             ),
             _ => ctx.error(
-                "agent.systemInstructions_invalid",
+                "agent.system_instructions_invalid",
                 path,
                 "Agent system_instructions.mode must be a string",
                 None::<String>,
@@ -1297,43 +1319,12 @@ fn validate_agent_system_instructions(
     }
 }
 
-fn validate_agent_extensions(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
-    let Some(value) = map.get("extensions") else {
-        return;
-    };
-    let Some(extensions) = value.as_object() else {
-        ctx.error(
-            "agent.extensions_invalid",
-            path,
-            "Agent extensions must be an object",
-            None::<String>,
-        );
-        return;
-    };
-    for key in ["include", "exclude"] {
-        if let Some(value) = extensions.get(key) {
-            if let Err(message) = string_array(value) {
-                ctx.error(
-                    "agent.extensions_invalid",
-                    path,
-                    format!("extensions.{key}: {message}"),
-                    None::<String>,
-                );
-            }
-        }
-    }
-}
-
 fn validate_agent_names(sources: &[RawAgent], ctx: &mut CheckContext) {
-    let mut explicit_counts: HashMap<&str, usize> = HashMap::new();
-    let mut explicit_names = HashSet::new();
+    let mut name_counts: HashMap<&str, usize> = HashMap::new();
     for source in sources {
-        if source.explicit_name {
-            explicit_names.insert(source.name.as_str());
-            *explicit_counts.entry(source.name.as_str()).or_default() += 1;
-        }
+        *name_counts.entry(source.name.as_str()).or_default() += 1;
     }
-    for (name, count) in explicit_counts {
+    for (name, count) in name_counts {
         if count > 1 {
             ctx.error(
                 "agent.name_duplicate",
@@ -1343,39 +1334,38 @@ fn validate_agent_names(sources: &[RawAgent], ctx: &mut CheckContext) {
             );
         }
     }
-    for source in sources {
-        if source.fallback_name != source.name
-            && explicit_names.contains(source.fallback_name.as_str())
-        {
-            ctx.error(
-                "agent.name_alias_conflict",
-                source.path.clone(),
-                format!(
-                    "Recipe agent file alias '{}' conflicts with an explicit agent name",
-                    source.fallback_name
-                ),
-                Some("rename the file or choose a non-conflicting agent name"),
-            );
-        }
-    }
 }
 
 fn validate_agent_inheritance(
     name: &str,
     raw_by_name: &HashMap<String, &RawAgent>,
-    aliases: &HashMap<String, String>,
     ctx: &mut CheckContext,
 ) {
     let mut stack = Vec::new();
-    let mut current = resolve_agent_name(name, raw_by_name, aliases);
+    let mut current = name.to_owned();
     loop {
+        if stack.len() >= MAX_INHERITANCE_DEPTH {
+            let path = raw_by_name
+                .get(&current)
+                .map(|agent| agent.path.clone())
+                .unwrap_or_else(|| "agents".to_owned());
+            ctx.error(
+                "agent.from_depth",
+                path,
+                format!(
+                    "Recipe agent '{name}' exceeds the maximum from depth of {MAX_INHERITANCE_DEPTH}"
+                ),
+                Some("flatten the inheritance chain"),
+            );
+            return;
+        }
         let Some(agent) = raw_by_name.get(&current) else {
             return;
         };
         let Some(from) = &agent.from else {
             return;
         };
-        let parent = resolve_agent_name(from, raw_by_name, aliases);
+        let parent = from.to_owned();
         if stack.contains(&parent) || parent == current {
             ctx.error(
                 "agent.from_cycle",
@@ -1406,75 +1396,146 @@ fn resolved_field_provided(
     name: &str,
     field: AgentField,
     raw_by_name: &HashMap<String, &RawAgent>,
-    aliases: &HashMap<String, String>,
     stack: &mut Vec<String>,
 ) -> bool {
-    let resolved = resolve_agent_name(name, raw_by_name, aliases);
-    if stack.contains(&resolved) {
+    if stack.iter().any(|item| item == name) || stack.len() >= MAX_INHERITANCE_DEPTH {
         return false;
     }
-    let Some(agent) = raw_by_name.get(&resolved) else {
+    let Some(agent) = raw_by_name.get(name) else {
         return false;
     };
     if agent.fields.contains(&field) {
         return true;
     }
     if let Some(parent) = &agent.from {
-        stack.push(resolved);
-        return resolved_field_provided(parent, field, raw_by_name, aliases, stack);
+        stack.push(name.to_owned());
+        return resolved_field_provided(parent, field, raw_by_name, stack);
     }
     false
+}
+
+fn packaged_skill_names(
+    resource_paths: &[String],
+    ctx: &CheckContext,
+) -> BTreeMap<String, Vec<String>> {
+    let mut skill_files = BTreeSet::new();
+    for resource in resource_paths {
+        if ctx.has_file(resource) {
+            if resource.ends_with("/SKILL.md") || resource == "SKILL.md" {
+                skill_files.insert(resource.clone());
+            }
+            continue;
+        }
+        discover_skill_files(resource, ctx, &mut skill_files);
+    }
+    let mut names = BTreeMap::<String, Vec<String>>::new();
+    for path in skill_files {
+        let name = skill_frontmatter_name(&path, ctx).unwrap_or_else(|| {
+            Path::new(&path)
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .unwrap_or("skill")
+                .to_owned()
+        });
+        names.entry(name).or_default().push(path);
+    }
+    names
+}
+
+fn discover_skill_files(resource: &str, ctx: &CheckContext, skill_files: &mut BTreeSet<String>) {
+    if !ctx.has_dir(resource) {
+        return;
+    }
+    let direct = format!("{}/SKILL.md", resource.trim_end_matches('/'));
+    if ctx.has_file(&direct) {
+        skill_files.insert(direct);
+        return;
+    }
+    let prefix = format!("{}/", resource.trim_end_matches('/'));
+    let children = ctx
+        .directories
+        .iter()
+        .filter(|path| path.starts_with(&prefix) && !path[prefix.len()..].contains('/'))
+        .cloned()
+        .collect::<Vec<_>>();
+    for child in children {
+        discover_skill_files(&child, ctx, skill_files);
+    }
+}
+
+fn skill_frontmatter_name(path: &str, ctx: &CheckContext) -> Option<String> {
+    let content = ctx.content(path)?;
+    let normalized = content.replace("\r\n", "\n");
+    let rest = normalized.strip_prefix("---\n")?;
+    let end = rest
+        .find("\n---\n")
+        .or_else(|| rest.strip_suffix("\n---").map(str::len))?;
+    let frontmatter = &rest[..end];
+    let parsed: JsonValue = serde_saphyr::from_str(frontmatter).ok()?;
+    obj_string(parsed.as_object()?, "name")
+}
+
+fn validate_declared_agent_references(
+    agent: &RawAgent,
+    raw_by_name: &HashMap<String, &RawAgent>,
+    skill_names: &BTreeMap<String, Vec<String>>,
+    ctx: &mut CheckContext,
+) {
+    let name = &agent.name;
+    let path = &agent.path;
+    for skill in agent.skills.as_deref().unwrap_or_default() {
+        match skill_names.get(skill).map(Vec::len).unwrap_or_default() {
+            0 => ctx.error(
+                "agent.skill_missing",
+                path,
+                format!("Recipe agent '{name}' references missing packaged skill '{skill}'"),
+                Some("declare the skill under package.json#pi.skills or remove the reference"),
+            ),
+            1 => {}
+            count => ctx.error(
+                "agent.skill_ambiguous",
+                path,
+                format!(
+                    "Recipe agent '{name}' skill '{skill}' resolves to {count} packaged SKILL.md files"
+                ),
+                Some("give packaged skills unique frontmatter names"),
+            ),
+        }
+    }
+    for subagent in agent.subagents.as_deref().unwrap_or_default() {
+        if !raw_by_name.contains_key(subagent) {
+            ctx.error(
+                "agent.subagent_missing",
+                path,
+                format!("Recipe agent '{name}' references missing subagent '{subagent}'"),
+                Some("add the agent definition or remove the reference"),
+            );
+        }
+    }
 }
 
 fn resolved_agent_mcp(
     name: &str,
     raw_by_name: &HashMap<String, &RawAgent>,
-    aliases: &HashMap<String, String>,
     stack: &mut Vec<String>,
 ) -> Option<AgentMcpConfig> {
-    let resolved = resolve_agent_name(name, raw_by_name, aliases);
-    if stack.contains(&resolved) {
+    if stack.iter().any(|item| item == name) || stack.len() >= MAX_INHERITANCE_DEPTH {
         return None;
     }
-    let agent = raw_by_name.get(&resolved)?;
-    stack.push(resolved);
-    let mut merged = agent
+    let agent = raw_by_name.get(name)?;
+    stack.push(name.to_owned());
+    let inherited = agent
         .from
         .as_deref()
-        .and_then(|parent| resolved_agent_mcp(parent, raw_by_name, aliases, stack))
+        .and_then(|parent| resolved_agent_mcp(parent, raw_by_name, stack))
         .unwrap_or_default();
     stack.pop();
 
     let Some(child) = &agent.mcp else {
-        return (!merged.servers.is_empty() || merged.mode.is_some()).then_some(merged);
+        return (!inherited.servers.is_empty() || inherited.mode.is_some()).then_some(inherited);
     };
-    for (server_id, child_tools) in &child.servers {
-        let base_tools = merged.servers.get(server_id);
-        merged.servers.insert(
-            server_id.clone(),
-            McpToolSelectors {
-                include: child_tools
-                    .include
-                    .clone()
-                    .or_else(|| base_tools.and_then(|tools| tools.include.clone())),
-                exclude: child_tools
-                    .exclude
-                    .clone()
-                    .or_else(|| base_tools.and_then(|tools| tools.exclude.clone())),
-                defer: child_tools
-                    .defer
-                    .clone()
-                    .or_else(|| base_tools.and_then(|tools| tools.defer.clone())),
-                eager: child_tools
-                    .eager
-                    .clone()
-                    .or_else(|| base_tools.and_then(|tools| tools.eager.clone())),
-            },
-        );
-    }
-    if child.mode.is_some() {
-        merged.mode = child.mode;
-    }
+    let mut merged = child.clone();
     if merged.mode == Some(AgentMcpMode::Cli) {
         for selection in merged.servers.values_mut() {
             selection.defer = None;
@@ -1484,18 +1545,28 @@ fn resolved_agent_mcp(
     Some(merged)
 }
 
+fn portable_agent_name(value: &str) -> bool {
+    let mut parts = value.split('-');
+    let valid_part = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    };
+    parts.all(valid_part)
+}
+
 fn validate_resolved_agent_mcp(
     name: &str,
     raw_by_name: &HashMap<String, &RawAgent>,
-    aliases: &HashMap<String, String>,
     mcp_tool_policy: Option<&McpToolPolicy>,
     ctx: &mut CheckContext,
 ) {
-    let Some(mcp) = resolved_agent_mcp(name, raw_by_name, aliases, &mut Vec::new()) else {
+    let Some(mcp) = resolved_agent_mcp(name, raw_by_name, &mut Vec::new()) else {
         return;
     };
     let path = raw_by_name
-        .get(&resolve_agent_name(name, raw_by_name, aliases))
+        .get(name)
         .map(|agent| agent.path.clone())
         .unwrap_or_default();
 
@@ -1516,9 +1587,6 @@ fn validate_resolved_agent_mcp(
     }
 
     for (server_id, selection) in &mcp.servers {
-        let Some(include) = &selection.include else {
-            continue;
-        };
         let Some(server_policy) = mcp_tool_policy.and_then(|policy| policy.get(server_id)) else {
             ctx.error(
                 "agent.mcp_server_undeclared",
@@ -1526,6 +1594,9 @@ fn validate_resolved_agent_mcp(
                 format!("Recipe agent '{name}' references undeclared MCP server '{server_id}'"),
                 Some("add the server to package.json#pi.mcp.servers or remove it from the agent"),
             );
+            continue;
+        };
+        let Some(include) = &selection.include else {
             continue;
         };
         for tool in include.iter().filter(|tool| tool.as_str() != "*") {
@@ -1569,59 +1640,40 @@ fn validate_resolved_agent_mcp(
     }
 }
 
-fn resolve_agent_name(
-    name: &str,
-    raw_by_name: &HashMap<String, &RawAgent>,
-    aliases: &HashMap<String, String>,
-) -> String {
-    if raw_by_name.contains_key(name) {
-        name.to_owned()
-    } else {
-        aliases
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| name.to_owned())
-    }
-}
-
 fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
     let Some(value) = value else {
         return;
     };
     match value {
-        JsonValue::String(path) => validate_mcp_manifest_pattern(path, ctx),
-        JsonValue::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
-                if let Some(path) = string_value(Some(item)) {
-                    validate_mcp_manifest_pattern(&path, ctx);
-                } else {
-                    ctx.error(
-                        "pi.mcp_invalid",
-                        PACKAGE_JSON,
-                        format!("package.json#pi.mcp[{index}] must be a non-empty string"),
-                        Some("remove the entry or provide a relative manifest path"),
-                    );
-                }
-            }
-        }
         JsonValue::Object(map) => {
-            if let Some(manifest) = map.get("manifest") {
-                if let Some(path) = string_value(Some(manifest)) {
-                    validate_mcp_manifest_pattern(&path, ctx);
-                } else {
-                    ctx.error(
-                        "pi.mcp_invalid",
-                        PACKAGE_JSON,
-                        "package.json#pi.mcp.manifest must be a non-empty string",
-                        Some("remove manifest or provide a relative manifest path"),
-                    );
-                }
+            for key in map
+                .keys()
+                .filter(|key| !matches!(key.as_str(), "manifests" | "servers"))
+            {
+                ctx.error(
+                    "pi.mcp_invalid",
+                    PACKAGE_JSON,
+                    format!("package.json#pi.mcp contains unknown field '{key}'"),
+                    Some("use only manifests and servers"),
+                );
             }
             if let Some(manifests) = map.get("manifests") {
                 match manifests {
                     JsonValue::Array(items) => {
+                        let mut seen = BTreeSet::new();
                         for (index, item) in items.iter().enumerate() {
                             if let Some(path) = string_value(Some(item)) {
+                                if !seen.insert(path.clone()) {
+                                    ctx.error(
+                                        "pi.mcp_invalid",
+                                        PACKAGE_JSON,
+                                        format!(
+                                            "package.json#pi.mcp.manifests contains duplicate entry '{path}'"
+                                        ),
+                                        Some("remove duplicate MCP manifest declarations"),
+                                    );
+                                    continue;
+                                }
                                 validate_mcp_manifest_pattern(&path, ctx);
                             } else {
                                 ctx.error(
@@ -1646,8 +1698,8 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
         _ => ctx.error(
             "pi.mcp_invalid",
             PACKAGE_JSON,
-            "package.json#pi.mcp must be an object, string, or string array",
-            Some("remove mcp for no access, or use a supported MCP declaration"),
+            "package.json#pi.mcp must be an object",
+            Some("remove mcp for no access, or use manifests and servers"),
         ),
     }
 }
@@ -1665,6 +1717,8 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
         );
         return;
     };
+    let mut seen_ids = BTreeSet::new();
+    let mut seen_normalized_ids = BTreeSet::new();
     for (index, server) in servers.iter().enumerate() {
         let JsonValue::Object(server) = server else {
             ctx.error(
@@ -1675,13 +1729,45 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             );
             continue;
         };
-        if string_value(server.get("id")).is_none() {
+        for key in server
+            .keys()
+            .filter(|key| !matches!(key.as_str(), "id" | "required" | "tools"))
+        {
+            ctx.error(
+                "pi.mcp_invalid",
+                PACKAGE_JSON,
+                format!("package.json#pi.mcp.servers[{index}] contains unknown field '{key}'"),
+                Some("use only id, required, and tools"),
+            );
+        }
+        let server_id = string_value(server.get("id"));
+        if server_id.is_none() {
             ctx.error(
                 "pi.mcp_invalid",
                 PACKAGE_JSON,
                 format!("package.json#pi.mcp.servers[{index}].id must be a non-empty string"),
                 Some("give the server a non-empty identifier"),
             );
+        } else if let Some(server_id) = server_id {
+            let normalized = safe_mcp_server_id(&server_id);
+            if !seen_ids.insert(server_id.clone()) {
+                ctx.error(
+                    "pi.mcp_invalid",
+                    PACKAGE_JSON,
+                    format!("package.json#pi.mcp contains duplicate server id '{server_id}'"),
+                    Some("remove the duplicate server"),
+                );
+            }
+            if !seen_normalized_ids.insert(normalized) {
+                ctx.error(
+                    "pi.mcp_invalid",
+                    PACKAGE_JSON,
+                    format!(
+                        "package.json#pi.mcp server id '{server_id}' collides after normalization"
+                    ),
+                    Some("use server ids that remain unique after normalization"),
+                );
+            }
         }
         if let Some(required) = server.get("required") {
             if !required.is_boolean() {
@@ -1703,14 +1789,17 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                 );
                 continue;
             };
-            if !tools.contains_key("include") {
-                ctx.warning(
-                    "pi.mcp_include_missing",
+            for key in tools
+                .keys()
+                .filter(|key| !matches!(key.as_str(), "include" | "exclude"))
+            {
+                ctx.error(
+                    "pi.mcp_invalid",
                     PACKAGE_JSON,
                     format!(
-                        "package.json#pi.mcp.servers[{index}].tools must declare include; use ['*'] for all tools or [] for none"
+                        "package.json#pi.mcp.servers[{index}].tools contains unknown field '{key}'"
                     ),
-                    Some("declare an explicit allowlist or omit the server"),
+                    Some("use only include and exclude"),
                 );
             }
             for key in ["include", "exclude"] {
@@ -1752,15 +1841,6 @@ fn validate_mcp_servers(value: Option<&JsonValue>, ctx: &mut CheckContext) {
                     }
                 }
             }
-        } else {
-            ctx.warning(
-                "pi.mcp_include_missing",
-                PACKAGE_JSON,
-                format!(
-                    "package.json#pi.mcp.servers[{index}] must declare tools.include; use ['*'] for all tools or [] for none"
-                ),
-                Some("declare an explicit allowlist or omit the server"),
-            );
         }
     }
 }
@@ -1821,105 +1901,6 @@ fn validate_mcp_manifest_pattern(pattern: &str, ctx: &mut CheckContext) {
     }
 }
 
-const MCP_LOCAL_EXAMPLE: &str = ".pi/mcp.local.example.json";
-
-fn validate_mcp_local_example(ctx: &mut CheckContext) {
-    if !ctx.has_file(MCP_LOCAL_EXAMPLE) {
-        return;
-    }
-    let Some(content) = ctx.content(MCP_LOCAL_EXAMPLE).map(str::to_owned) else {
-        ctx.warning(
-            "mcp.local_example_unreadable",
-            MCP_LOCAL_EXAMPLE,
-            "MCP local example content was not provided",
-            Some("supply .pi/mcp.local.example.json content to the validator"),
-        );
-        return;
-    };
-    let parsed: JsonValue = match serde_json::from_str(&content) {
-        Ok(value) => value,
-        Err(err) => {
-            let span = Some(Span {
-                line: err.line(),
-                column: err.column(),
-            });
-            ctx.warning_at(
-                "mcp.local_example_malformed",
-                MCP_LOCAL_EXAMPLE,
-                span,
-                format!(".pi/mcp.local.example.json is not valid JSON: {err}"),
-                Some("fix the local MCP config template JSON"),
-            );
-            return;
-        }
-    };
-    let JsonValue::Object(map) = parsed else {
-        ctx.warning(
-            "mcp.local_example_invalid",
-            MCP_LOCAL_EXAMPLE,
-            ".pi/mcp.local.example.json must be an object",
-            Some("fix the file structure or remove the optional example"),
-        );
-        return;
-    };
-    let Some(servers) = map.get("servers") else {
-        return;
-    };
-    let JsonValue::Array(servers) = servers else {
-        ctx.warning(
-            "mcp.local_example_invalid",
-            MCP_LOCAL_EXAMPLE,
-            ".pi/mcp.local.example.json servers must be an array",
-            Some("fix the server list or remove the optional example"),
-        );
-        return;
-    };
-    for (index, server) in servers.iter().enumerate() {
-        let JsonValue::Object(server) = server else {
-            ctx.warning(
-                "mcp.local_example_invalid",
-                MCP_LOCAL_EXAMPLE,
-                format!("servers[{index}] must be an object"),
-                Some("fix the server entry or remove it"),
-            );
-            continue;
-        };
-        for key in ["id", "name", "transport", "url"] {
-            if let Some(value) = server.get(key) {
-                if string_value(Some(value)).is_none() {
-                    ctx.warning(
-                        "mcp.local_example_invalid",
-                        MCP_LOCAL_EXAMPLE,
-                        format!("servers[{index}].{key} must be a non-empty string"),
-                        Some("remove the field or provide a non-empty value"),
-                    );
-                }
-            }
-        }
-        if let Some(headers) = server.get("headers") {
-            let JsonValue::Object(headers) = headers else {
-                ctx.warning(
-                    "mcp.local_example_invalid",
-                    MCP_LOCAL_EXAMPLE,
-                    format!("servers[{index}].headers must be an object"),
-                    Some("remove headers or make it a string-valued mapping"),
-                );
-                continue;
-            };
-            for (key, value) in headers {
-                if !matches!(value, JsonValue::String(_)) {
-                    ctx.warning(
-                        "mcp.local_example_invalid",
-                        MCP_LOCAL_EXAMPLE,
-                        format!("servers[{index}].headers.{key} must be a string"),
-                        Some("remove the header or provide a string value"),
-                    );
-                }
-            }
-        }
-    }
-}
-
 fn validate_json_string_array(value: &JsonValue, label: &str, code: &str, ctx: &mut CheckContext) {
     let JsonValue::Array(items) = value else {
         ctx.error(
@@ -1930,6 +1911,7 @@ fn validate_json_string_array(value: &JsonValue, label: &str, code: &str, ctx: &
         );
         return;
     };
+    let mut seen = BTreeSet::new();
     for (index, item) in items.iter().enumerate() {
         if string_value(Some(item)).is_none() {
             ctx.error(
@@ -1938,6 +1920,15 @@ fn validate_json_string_array(value: &JsonValue, label: &str, code: &str, ctx: &
                 format!("{label}[{index}] must be a non-empty string"),
                 Some("remove the entry or replace it with a non-empty string"),
             );
+        } else if let Some(value) = string_value(Some(item)) {
+            if !seen.insert(value.clone()) {
+                ctx.error(
+                    code,
+                    PACKAGE_JSON,
+                    format!("{label} contains duplicate entry '{value}'"),
+                    Some("remove duplicate entries"),
+                );
+            }
         }
     }
 }
@@ -2042,21 +2033,6 @@ fn validate_relative_pattern(pattern: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn has_dependency_lockfile(ctx: &CheckContext) -> bool {
-    [
-        "package-lock.json",
-        "npm-shrinkwrap.json",
-        "pnpm-lock.yaml",
-        "yarn.lock",
-    ]
-    .iter()
-    .any(|name| ctx.path_exists(name))
-}
-
-fn has_non_empty_object(value: Option<&JsonValue>) -> bool {
-    matches!(value, Some(JsonValue::Object(map)) if !map.is_empty())
-}
-
 fn string_value(value: Option<&JsonValue>) -> Option<String> {
     match value {
         Some(JsonValue::String(value)) if !value.trim().is_empty() => Some(value.trim().to_owned()),
@@ -2150,21 +2126,53 @@ fn is_loadable_extension_file(ctx: &CheckContext, path: &str) -> bool {
         )
 }
 
+fn resolve_extension_entry(ctx: &CheckContext, path: &str) -> Vec<String> {
+    if is_loadable_extension_file(ctx, path) {
+        return vec![path.to_owned()];
+    }
+    if !ctx.has_dir(path) {
+        return Vec::new();
+    }
+
+    if let Some(index) = extension_index(ctx, path) {
+        return vec![index];
+    }
+
+    let prefix = format!("{path}/");
+    let mut entries = BTreeSet::new();
+    for file in ctx.files.keys() {
+        let Some(relative) = file.strip_prefix(&prefix) else {
+            continue;
+        };
+        if !relative.contains('/') && is_loadable_extension_file(ctx, file) {
+            entries.insert(file.clone());
+            continue;
+        }
+        let Some((child, remainder)) = relative.split_once('/') else {
+            continue;
+        };
+        if !remainder.contains('/')
+            && remainder.starts_with("index.")
+            && is_loadable_extension_file(ctx, file)
+            && extension_index(ctx, &format!("{path}/{child}")).as_deref() == Some(file.as_str())
+        {
+            entries.insert(file.clone());
+        }
+    }
+    entries.into_iter().collect()
+}
+
+fn extension_index(ctx: &CheckContext, directory: &str) -> Option<String> {
+    ["ts", "tsx", "js", "jsx", "mjs", "cjs"]
+        .into_iter()
+        .map(|extension| format!("{directory}/index.{extension}"))
+        .find(|path| ctx.has_file(path))
+}
+
 fn extension(path: &str) -> Option<&str> {
     let name = path.rsplit('/').next()?;
     let (stem, extension) = name.rsplit_once('.')?;
     (!stem.is_empty()).then_some(extension)
-}
-
-fn file_stem(path: &str) -> Option<&str> {
-    let name = path.rsplit('/').next()?;
-    if name.is_empty() {
-        return None;
-    }
-    match name.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => Some(stem),
-        _ => Some(name),
-    }
 }
 
 fn normalize_slashes(value: &str) -> String {
@@ -2210,7 +2218,39 @@ fn span_from_message(message: &str) -> Option<Span> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use serde_json::json;
+
+    #[derive(Deserialize)]
+    struct ConformanceFixture {
+        name: String,
+        valid: bool,
+        files: BTreeMap<String, String>,
+    }
+
+    #[test]
+    fn shared_format_conformance_fixtures() {
+        let fixtures: Vec<ConformanceFixture> = serde_json::from_str(include_str!(
+            "../../../test/fixtures/format-conformance.json"
+        ))
+        .expect("shared conformance fixtures must parse");
+        for fixture in fixtures {
+            let input = RecipeFiles {
+                files: fixture
+                    .files
+                    .into_iter()
+                    .map(|(path, content)| RecipeFile::new(path, content))
+                    .collect(),
+                directories: Vec::new(),
+            };
+            let report = check_recipe_files(&input);
+            assert_eq!(
+                report.valid, fixture.valid,
+                "{}: {:?}",
+                fixture.name, report.diagnostics
+            );
+        }
+    }
 
     fn recipe_files(files: &[(&str, &str)]) -> RecipeFiles {
         RecipeFiles {
@@ -2289,7 +2329,7 @@ mod tests {
             true,
         );
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(report.valid, "{:?}", report.diagnostics);
     }
@@ -2313,7 +2353,7 @@ mod tests {
             true,
         );
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(report.valid, "{:?}", report.diagnostics);
     }
@@ -2334,7 +2374,7 @@ mod tests {
             true,
         );
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(!report.valid);
         for code in ["agent.mcp_mode_invalid", "agent.mcp_key_unknown"] {
@@ -2365,7 +2405,7 @@ mod tests {
             true,
         );
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|diagnostic| {
@@ -2429,7 +2469,7 @@ mod tests {
             ("agents/child.yaml", child),
         ]);
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(report.valid, "{:?}", report.diagnostics);
     }
@@ -2445,12 +2485,56 @@ mod tests {
             true,
         );
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "agent.mcp_tool_undeclared"
                 && diagnostic.message.contains("salesforce/delete_org")
+        }));
+    }
+
+    #[test]
+    fn rejects_agent_server_without_package_policy_or_include() {
+        let input = selector_recipe(
+            json!({ "include": ["*"] }),
+            "  mode: cli\n  servers:\n    ghost: {}\n",
+            true,
+        );
+
+        let report = check_recipe_files(&input);
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.mcp_server_undeclared"
+                && diagnostic.message.contains("ghost")
+        }));
+    }
+
+    #[test]
+    fn rejects_duplicate_mcp_manifest_declarations() {
+        let package = json!({
+            "name": "duplicate-manifests",
+            "pi": {
+                "mcp": {
+                    "manifests": ["mcp.json", "mcp.json"]
+                }
+            }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("mcp.json", "{}"),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "pi.mcp_invalid"
+                && diagnostic.message.contains("duplicate entry 'mcp.json'")
         }));
     }
 
@@ -2462,7 +2546,7 @@ mod tests {
             true,
         );
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(!report.valid);
         assert!(report
@@ -2497,14 +2581,13 @@ mod tests {
             ("agents/agent.yaml", agent),
         ]);
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(!report.valid);
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "agent.mcp_invalid"
-                && diagnostic.severity == Severity::Error));
+            .any(|diagnostic| diagnostic.code == "agent.mcp_invalid"));
     }
 
     #[test]
@@ -2515,14 +2598,13 @@ mod tests {
             true,
         );
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(report.valid, "{:?}", report.diagnostics);
-        assert!(report
+        assert!(!report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "pi.mcp_include_missing"
-                && diagnostic.severity == Severity::Warning));
+            .any(|diagnostic| diagnostic.code == "pi.mcp_include_missing"));
         assert!(!report
             .diagnostics
             .iter()
@@ -2533,7 +2615,7 @@ mod tests {
             "  mode: cli\n  servers: {}\n",
             true,
         );
-        let empty_report = check_recipe_files(&empty_agent_mcp, CheckProfile::Ci);
+        let empty_report = check_recipe_files(&empty_agent_mcp);
         assert!(empty_report.valid, "{:?}", empty_report.diagnostics);
         assert!(!empty_report
             .diagnostics
@@ -2542,7 +2624,7 @@ mod tests {
     }
 
     #[test]
-    fn optional_agent_defaults_are_warnings() {
+    fn minimal_agent_requires_only_name_and_model_without_diagnostics() {
         let package = json!({
             "name": "agent-defaults",
             "description": "Test",
@@ -2553,40 +2635,128 @@ mod tests {
                 "package.json",
                 &serde_json::to_string_pretty(&package).expect("serialize package"),
             ),
-            ("agents/agent.yaml", "model:\n  name: test/provider-model\n"),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\n",
+            ),
         ]);
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(report.valid, "{:?}", report.diagnostics);
-        for code in [
-            "agent.name_missing",
-            "agent.model.thinkingLevel_missing",
-            "agent.tools_missing",
-            "agent.systemInstructions_missing",
-        ] {
-            assert!(
-                report.diagnostics.iter().any(|diagnostic| {
-                    diagnostic.code == code && diagnostic.severity == Severity::Warning
-                }),
-                "missing warning {code}: {:?}",
-                report.diagnostics
-            );
-        }
-        assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "agent.model.thinkingLevel_missing" && diagnostic.help.is_some()
-        }));
-        assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "agent.systemInstructions_missing" && diagnostic.help.is_none()
-        }));
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+
+        let unnamed = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("agents/agent.yaml", "model:\n  name: test/provider-model\n"),
+        ]);
+        let unnamed_report = check_recipe_files(&unnamed);
+        assert!(unnamed_report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.name_missing"));
+
+        let non_string = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: 7\nmodel:\n  name: test/provider-model\n",
+            ),
+        ]);
+        let non_string_report = check_recipe_files(&non_string);
+        assert!(non_string_report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.name_invalid"));
     }
 
     #[test]
-    fn malformed_local_mcp_example_is_only_a_warning() {
+    fn accepts_empty_pi_with_conventional_agents() {
+        let package = json!({ "name": "minimal", "pi": {} });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn rejects_unknown_and_noncanonical_agent_keys() {
+        let package = json!({ "name": "canonical", "pi": {} });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\n  thinkingLevel: low\nprompt: legacy\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.model_key_unknown"));
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.key_unknown"));
+    }
+
+    #[test]
+    fn rejects_whitespace_around_inherited_agent_names() {
+        let package = json!({ "name": "canonical", "pi": {} });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/base.yaml",
+                "name: base\nmodel:\n  name: test/provider-model\n",
+            ),
+            (
+                "agents/child.yaml",
+                "name: child\nfrom: \" base \"\nmodel:\n  name: test/provider-model\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.from_invalid"));
+    }
+
+    #[test]
+    fn validates_only_declared_skill_and_subagent_references() {
         let package = json!({
-            "name": "local-mcp-example",
-            "description": "Test",
-            "pi": { "agents": ["agents/*.yaml"] }
+            "name": "references",
+            "pi": {
+                "skills": ["skills"],
+                "agents": ["agents"]
+            }
         });
         let input = recipe_files(&[
             (
@@ -2595,27 +2765,210 @@ mod tests {
             ),
             (
                 "agents/agent.yaml",
-                "name: agent\nmodel:\n  name: test/provider-model\n  thinking_level: low\ntools: []\nsystem_instructions:\n  content: Test\n",
+                "name: agent\nmodel:\n  name: test/provider-model\nskills: [missing]\nsubagents: [ghost]\n",
             ),
-            (".pi/mcp.local.example.json", "{ invalid"),
+            (
+                "skills/real/SKILL.md",
+                "---\nname: real\ndescription: Real\n---\n",
+            ),
         ]);
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
-        assert!(report.valid, "{:?}", report.diagnostics);
-        assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "mcp.local_example_malformed"
-                && diagnostic.severity == Severity::Warning
-        }));
+        assert!(!report.valid);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.skill_missing"));
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.subagent_missing"));
     }
 
     #[test]
-    fn rejects_recipe_eval_declarations() {
+    fn accepts_resolved_references_and_package_extensions() {
         let package = json!({
-            "name": "evals-unsupported",
+            "name": "references",
+            "pi": {
+                "skills": ["skills"],
+                "agents": ["agents"],
+                "extensions": ["extensions/tools.ts"]
+            }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\nskills: [public-skill]\nsubagents: [helper]\n",
+            ),
+            (
+                "agents/helper.yaml",
+                "name: helper\nmodel:\n  name: test/provider-model\n",
+            ),
+            (
+                "skills/folder/SKILL.md",
+                "---\nname: public-skill\ndescription: Real\n---\n",
+            ),
+            ("extensions/tools.ts", "export default () => {};\n"),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn rejects_unmatched_explicit_resource_patterns() {
+        let package = json!({
+            "name": "optional-resources",
             "pi": {
                 "agents": ["agents/*.yaml"],
-                "evals": { "suites": [] }
+                "skills": ["skills/*"],
+                "prompts": ["prompts/*.md"]
+            }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(!report.valid, "{:?}", report.diagnostics);
+        for code in ["package.skills_unmatched", "package.prompts_unmatched"] {
+            assert!(report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == code));
+        }
+
+        let direct_package = json!({
+            "name": "missing-direct-resource",
+            "pi": {
+                "agents": ["agents/*.yaml"],
+                "skills": ["skills/missing"]
+            }
+        });
+        let direct_input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&direct_package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\n",
+            ),
+        ]);
+        let direct_report = check_recipe_files(&direct_input);
+        assert!(direct_report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "package.skills_unmatched"));
+    }
+
+    #[test]
+    fn skill_discovery_stops_at_the_first_skill_file() {
+        let package = json!({
+            "name": "nested-skills",
+            "pi": { "agents": ["agents"], "skills": ["skills/root"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\nskills: [nested]\n",
+            ),
+            ("skills/root/SKILL.md", "---\nname: root\n---\n"),
+            ("skills/root/nested/SKILL.md", "---\nname: nested\n---\n"),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.skill_missing"));
+    }
+
+    #[test]
+    fn malformed_skill_frontmatter_uses_the_directory_name() {
+        let package = json!({
+            "name": "skill-frontmatter",
+            "pi": { "agents": ["agents"], "skills": ["skills"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\nskills: [fake]\n",
+            ),
+            (
+                "skills/real/SKILL.md",
+                "---\nname: fake\n---garbage\ncontent\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.skill_missing"));
+    }
+
+    #[test]
+    fn inherited_reference_failures_are_reported_once_at_the_declaration() {
+        let package = json!({
+            "name": "inherited-reference",
+            "pi": { "agents": ["agents"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/base.yaml",
+                "name: base\nmodel:\n  name: test/provider-model\nsubagents: [missing]\n",
+            ),
+            ("agents/agent.yaml", "name: agent\nfrom: base\n"),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert_eq!(
+            report
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == "agent.subagent_missing")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_recipe_keys_generically() {
+        let package = json!({
+            "name": "unknown-key",
+            "pi": {
+                "agents": ["agents/*.yaml"],
+                "future_key": {}
             }
         });
         let input = recipe_files(&[
@@ -2629,13 +2982,13 @@ mod tests {
             ),
         ]);
 
-        let report = check_recipe_files(&input, CheckProfile::Local);
+        let report = check_recipe_files(&input);
 
         assert!(!report.valid);
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "pi.evals_unsupported"));
+            .any(|diagnostic| diagnostic.code == "pi.unknown_key"));
     }
 
     #[test]
@@ -2655,7 +3008,7 @@ mod tests {
             serde_json::to_string_pretty(&package).expect("serialize package"),
         );
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|diagnostic| {
@@ -2666,7 +3019,7 @@ mod tests {
 
     #[test]
     fn reports_missing_package_manifest() {
-        let report = check_recipe_files(&RecipeFiles::default(), CheckProfile::Local);
+        let report = check_recipe_files(&RecipeFiles::default());
 
         assert!(!report.valid);
         assert!(report
@@ -2682,7 +3035,7 @@ mod tests {
             directories: Vec::new(),
         };
 
-        let report = check_recipe_files(&input, CheckProfile::Local);
+        let report = check_recipe_files(&input);
 
         assert!(!report.valid);
         assert!(report
@@ -2695,7 +3048,7 @@ mod tests {
     fn malformed_package_json_has_span() {
         let input = recipe_files(&[("package.json", "{\n  \"name\": ,\n}\n")]);
 
-        let report = check_recipe_files(&input, CheckProfile::Local);
+        let report = check_recipe_files(&input);
 
         let diagnostic = report
             .diagnostics
@@ -2704,129 +3057,6 @@ mod tests {
             .expect("malformed diagnostic");
         let span = diagnostic.span.expect("span");
         assert_eq!(span.line, 2);
-    }
-
-    #[test]
-    fn lockfile_requirement_escalates_by_profile() {
-        let package = json!({
-            "name": "lockfile-test",
-            "description": "Test",
-            "dependencies": { "left-pad": "^1.0.0" },
-            "pi": { "agents": ["agents/*.yaml"] }
-        });
-        let agent = concat!(
-            "name: agent\n",
-            "description: Test agent\n",
-            "model:\n",
-            "  name: test/provider-model\n",
-            "  thinking_level: low\n",
-            "tools: []\n",
-            "skills: []\n",
-            "subagents: []\n",
-            "system_instructions:\n",
-            "  content: Test instructions\n",
-        );
-        let input = recipe_files(&[
-            (
-                "package.json",
-                &serde_json::to_string_pretty(&package).expect("serialize package"),
-            ),
-            ("agents/agent.yaml", agent),
-        ]);
-
-        let local = check_recipe_files(&input, CheckProfile::Local);
-        assert!(local.valid, "{:?}", local.diagnostics);
-        assert!(local
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "package.lockfile_missing"
-                && diagnostic.severity == Severity::Warning));
-
-        let ci = check_recipe_files(&input, CheckProfile::Ci);
-        assert!(!ci.valid);
-
-        let mut with_lockfile = input.clone();
-        with_lockfile
-            .files
-            .push(RecipeFile::new("pnpm-lock.yaml", "lockfileVersion: 9\n"));
-        let report = check_recipe_files(&with_lockfile, CheckProfile::Ci);
-        assert!(report.valid, "{:?}", report.diagnostics);
-    }
-
-    #[test]
-    fn publish_requires_declared_license_text_and_current_lock_identity() {
-        let package = json!({
-            "name": "owned-recipe",
-            "version": "0.2.0",
-            "description": "Test",
-            "license": "Apache-2.0",
-            "pi": { "agents": ["agents/*.yaml"] }
-        });
-        let agent = concat!(
-            "name: agent\n",
-            "description: Test agent\n",
-            "model:\n",
-            "  name: test/provider-model\n",
-            "tools: []\n",
-            "system_instructions:\n",
-            "  content: Test instructions\n",
-        );
-        let lockfile = json!({
-            "name": "upstream-recipe",
-            "version": "0.1.0",
-            "lockfileVersion": 3,
-            "packages": { "": { "name": "upstream-recipe", "version": "0.1.0" } }
-        });
-        let mut input = recipe_files(&[
-            (
-                "package.json",
-                &serde_json::to_string_pretty(&package).expect("serialize package"),
-            ),
-            (
-                "package-lock.json",
-                &serde_json::to_string_pretty(&lockfile).expect("serialize lockfile"),
-            ),
-            ("agents/agent.yaml", agent),
-            (".pi/mcp.local.json", "{\"servers\": []}\n"),
-        ]);
-
-        let report = check_recipe_files(&input, CheckProfile::Publish);
-        assert!(!report.valid);
-        for code in [
-            "package.license_file_missing",
-            "package.lockfile_name_mismatch",
-            "package.lockfile_version_mismatch",
-            "package.local_config_present",
-        ] {
-            assert!(
-                report
-                    .diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.code == code),
-                "missing {code}: {:?}",
-                report.diagnostics
-            );
-        }
-
-        input.files.retain(|file| file.path != ".pi/mcp.local.json");
-        input
-            .files
-            .push(RecipeFile::new("LICENSE", "Apache License\n"));
-        let current_lock = json!({
-            "name": "owned-recipe",
-            "version": "0.2.0",
-            "lockfileVersion": 3,
-            "packages": { "": { "name": "owned-recipe", "version": "0.2.0" } }
-        });
-        input
-            .files
-            .iter_mut()
-            .find(|file| file.path == "package-lock.json")
-            .expect("lockfile")
-            .content = Some(serde_json::to_string_pretty(&current_lock).expect("serialize lock"));
-
-        let report = check_recipe_files(&input, CheckProfile::Publish);
-        assert!(report.valid, "{:?}", report.diagnostics);
     }
 
     #[test]
@@ -2858,9 +3088,8 @@ mod tests {
             ("agents/nested/inner.yaml", "name: inner\n"),
         ]);
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
-        assert_eq!(report.resources.get("agents"), Some(&1));
         assert!(report.valid, "{:?}", report.diagnostics);
     }
 
@@ -2879,7 +3108,7 @@ mod tests {
             ("agents/agent.yaml", "name: [unterminated\n"),
         ]);
 
-        let report = check_recipe_files(&input, CheckProfile::Ci);
+        let report = check_recipe_files(&input);
 
         assert!(!report.valid);
         assert!(report

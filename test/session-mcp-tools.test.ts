@@ -12,9 +12,11 @@ vi.mock("../src/mcp-catalog.js", () => ({
 }));
 
 import { piMcpToolName } from "../src/mcp-tools.js";
-import { resolveRecipeAgent } from "../src/recipe/resolve.js";
 import {
-  createAgentSessionFromRecipe,
+  resolveRecipe,
+} from "../src/recipe/resolve.js";
+import {
+  createAgentSession,
   materializeRecipeSessionMcp,
   type RecipeSessionHandle,
 } from "../src/session.js";
@@ -41,7 +43,7 @@ describe("canonical Recipe session MCP tools mode", () => {
     vi.clearAllMocks();
   });
 
-  it("registers deferred MCP tools through createAgentSessionFromRecipe", async () => {
+  it("registers deferred MCP tools through createAgentSession", async () => {
     const fixture = writeFixtureRecipe({
       manifestPi: {
         mcp: {
@@ -87,8 +89,8 @@ describe("canonical Recipe session MCP tools mode", () => {
     ]);
 
     const env = cleanEnv();
-    const handle = await createAgentSessionFromRecipe({
-      recipeDir: fixture.recipeDir,
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir: fixture.recipeDir }),
       cwd: fixture.workspaceDir,
       env,
       credentials: await credentials(),
@@ -145,8 +147,8 @@ describe("canonical Recipe session MCP tools mode", () => {
     });
     cleanups.push(fixture.cleanup);
     const env = { ...cleanEnv(), RECIPE_CHILD_MARKER: "isolated" };
-    const handle = await createAgentSessionFromRecipe({
-      recipeDir: fixture.recipeDir,
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir: fixture.recipeDir }),
       cwd: fixture.workspaceDir,
       env,
       credentials: await credentials(),
@@ -211,13 +213,13 @@ describe("canonical Recipe session MCP tools mode", () => {
       ],
     };
     await materializeRecipeSessionMcp(
-      resolveRecipeAgent({ recipeDir: fixture.recipeDir }),
+      resolveRecipe({ recipeDir: fixture.recipeDir }).selectAgent(),
       fixture.workspaceDir,
       env,
       { mcpBindings }
     );
-    const handle = await createAgentSessionFromRecipe({
-      recipeDir: fixture.recipeDir,
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir: fixture.recipeDir }),
       cwd: fixture.workspaceDir,
       env,
       credentials: await credentials(),

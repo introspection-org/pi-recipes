@@ -1,5 +1,13 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { basename, extname, relative, resolve } from "node:path";
+import { realpathSync, readdirSync, statSync } from "node:fs";
+import {
+  basename,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { executableRecipeToolNames } from "../mcp-policy.js";
 import {
   loadValidatedRecipeAgentDefinitions,
@@ -27,25 +35,20 @@ export interface ResolvedRecipeAgentMcp
 }
 
 export interface ResolvedRecipeAgent {
-  recipeDir: string;
-  manifest: PiPackageManifest;
-  name: string;
-  definition: RecipeAgentDefinition;
-  subagents: ReadonlyMap<string, RecipeAgentDefinition>;
-  modelSpec: string;
-  modelConfig?: RecipeAgentModelConfig;
-  thinkingLevel?: ThinkingLevel;
-  tools: string[];
-  mcp?: ResolvedRecipeAgentMcp;
-  skillPaths: string[];
-  promptPaths: string[];
-  extensionPaths: string[];
+  readonly recipeDir: string;
+  readonly manifest: PiPackageManifest;
+  readonly name: string;
+  readonly definition: RecipeAgentDefinition;
+  readonly subagents: ReadonlyMap<string, RecipeAgentDefinition>;
+  readonly modelSpec: string;
+  readonly modelConfig?: RecipeAgentModelConfig;
+  readonly thinkingLevel?: ThinkingLevel;
+  readonly tools: readonly string[];
+  readonly mcp?: ResolvedRecipeAgentMcp;
+  readonly skillPaths: readonly string[];
+  readonly promptPaths: readonly string[];
+  readonly extensionPaths: readonly string[];
   systemPromptOverride(base: string | undefined): string | undefined;
-}
-
-export interface ResolveRecipeAgentOptions {
-  recipeDir: string;
-  agentName?: string;
 }
 
 /**
@@ -55,10 +58,17 @@ export interface ResolveRecipeAgentOptions {
  * select root/child sessions from it instead of reparsing YAML per session.
  */
 export interface ResolvedRecipe {
-  recipeDir: string;
-  manifest: PiPackageManifest;
-  /** Canonical names and authored aliases both resolve to the same plan. */
-  agents: ReadonlyMap<string, ResolvedRecipeAgent>;
+  readonly recipeDir: string;
+  readonly manifest: PiPackageManifest;
+  /** Complete package resource closure, before per-agent skill selection. */
+  readonly resources: {
+    readonly skills: readonly string[];
+    readonly prompts: readonly string[];
+    readonly extensions: readonly string[];
+    readonly hasSystemPrompt: boolean;
+  };
+  /** Stable authored names are the only agent identifiers. */
+  readonly agents: ReadonlyMap<string, ResolvedRecipeAgent>;
   selectAgent(agentName?: string): ResolvedRecipeAgent;
 }
 
@@ -67,6 +77,168 @@ export class RecipeResolutionError extends Error {
     super(message);
     this.name = "RecipeResolutionError";
   }
+}
+
+const LOADABLE_EXTENSION_SUFFIXES = [
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+] as const;
+
+function isLoadableExtensionPath(path: string): boolean {
+  return LOADABLE_EXTENSION_SUFFIXES.some((suffix) =>
+    path.toLowerCase().endsWith(suffix)
+  );
+}
+
+function assertPackagePath(recipeDir: string, path: string): string {
+  const realRecipeDir = realpathSync(recipeDir);
+  const realPath = realpathSync(path);
+  const relativePath = relative(realRecipeDir, realPath);
+  if (
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new RecipeResolutionError(
+      `Recipe extension resolves outside the package: ${path}`
+    );
+  }
+  return realPath;
+}
+
+function directoryIndex(directory: string): string | undefined {
+  for (const suffix of LOADABLE_EXTENSION_SUFFIXES) {
+    const candidate = join(directory, `index${suffix}`);
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Try the next supported suffix.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Expand explicit extension directories using Pi's shallow discovery model:
+ * an index module owns the directory; otherwise load direct modules and indexes
+ * from immediate child directories. Declaration order remains authoritative.
+ */
+function resolvePackageExtensionPaths(
+  recipeDir: string,
+  paths: readonly string[]
+): string[] {
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+  const addFile = (path: string) => {
+    const realPath = assertPackagePath(recipeDir, path);
+    if (!statSync(realPath).isFile() || !isLoadableExtensionPath(realPath)) {
+      throw new RecipeResolutionError(
+        `Recipe extension is not a loadable module: ${path}`
+      );
+    }
+    if (!seen.has(realPath)) {
+      seen.add(realPath);
+      resolved.push(resolve(path));
+    }
+  };
+
+  for (const path of paths) {
+    const realPath = assertPackagePath(recipeDir, path);
+    if (statSync(realPath).isFile()) {
+      addFile(path);
+      continue;
+    }
+    if (!statSync(realPath).isDirectory()) {
+      throw new RecipeResolutionError(
+        `Recipe extension is neither a file nor directory: ${path}`
+      );
+    }
+
+    const directory = resolve(path);
+    const index = directoryIndex(directory);
+    if (index) {
+      addFile(index);
+      continue;
+    }
+
+    const entries = readdirSync(directory, { withFileTypes: true }).sort(
+      (left, right) =>
+        left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    );
+    let discovered = false;
+    for (const entry of entries) {
+      const candidate = join(directory, entry.name);
+      if (entry.isFile() && isLoadableExtensionPath(candidate)) {
+        discovered = true;
+        addFile(candidate);
+      } else if (entry.isDirectory()) {
+        const childIndex = directoryIndex(candidate);
+        if (childIndex) {
+          discovered = true;
+          addFile(childIndex);
+        }
+      }
+    }
+    if (!discovered) {
+      throw new RecipeResolutionError(
+        `Recipe extension directory has no loadable modules: ${path}`
+      );
+    }
+  }
+  return resolved;
+}
+
+function deepFreeze<T>(value: T, seen = new Set<object>()): T {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    return value;
+  }
+  const object = value as object;
+  if (seen.has(object) || object instanceof Map || object instanceof Set) {
+    return value;
+  }
+  seen.add(object);
+  for (const child of Object.values(object)) {
+    deepFreeze(child, seen);
+  }
+  return Object.freeze(value);
+}
+
+function readonlyMap<K, V>(source: ReadonlyMap<K, V>): ReadonlyMap<K, V> {
+  const map = new Map(source);
+  let facade: ReadonlyMap<K, V>;
+  facade = new Proxy(map, {
+    get(target, property) {
+      if (
+        property === "set" ||
+        property === "delete" ||
+        property === "clear"
+      ) {
+        return () => {
+          throw new TypeError("Resolved Recipe maps are immutable");
+        };
+      }
+      if (property === "forEach") {
+        return (
+          callback: (value: V, key: K, map: ReadonlyMap<K, V>) => void,
+          thisArg?: unknown
+        ) => {
+          target.forEach((value, key) =>
+            callback.call(thisArg, value, key, facade)
+          );
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as ReadonlyMap<K, V>;
+  return facade;
 }
 
 function applySystemInstructions(
@@ -106,7 +278,7 @@ function selectAgent(
     throw new RecipeResolutionError("Recipe has no agents");
   }
   throw new RecipeResolutionError(
-    "Recipe has multiple agents and no default entrypoint; add agents/agent.yaml or select an agent"
+    'Recipe has multiple agents and no default entrypoint; declare an agent named "agent" or select one explicitly'
   );
 }
 
@@ -114,67 +286,17 @@ function selectSubagents(
   definitions: ReadonlyMap<string, RecipeAgentDefinition>,
   agent: RecipeAgentDefinition
 ): Map<string, RecipeAgentDefinition> {
-  return new Map(
-    agent.subagents.flatMap((name) => {
-      const definition = definitions.get(name);
-      return definition ? [[definition.name, definition] as const] : [];
-    })
-  );
-}
-
-function normalizeSelector(value: string): string {
-  return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\.[^/.]+$/, "");
-}
-
-function extensionSelectorSet(
-  recipeDir: string,
-  extensionPath: string
-): Set<string> {
-  const relativePath = relative(recipeDir, extensionPath).replace(/\\/g, "/");
-  const withoutExtension = normalizeSelector(relativePath);
-  const base = basename(extensionPath, extname(extensionPath));
-  const parts = withoutExtension.split("/");
-  const parent = parts.length > 1 ? parts.at(-2) : undefined;
-  return new Set(
-    [
-      relativePath,
-      withoutExtension,
-      base,
-      parent && base === "index" ? parent : undefined,
-    ].filter((value): value is string => Boolean(value))
-  );
-}
-
-function extensionSelectorMatches(
-  recipeDir: string,
-  extensionPath: string,
-  selector: string
-): boolean {
-  const normalized = normalizeSelector(selector.trim());
-  if (!normalized) return false;
-  return normalized === "*" || extensionSelectorSet(recipeDir, extensionPath).has(normalized);
-}
-
-function selectExtensionPaths(
-  recipeDir: string,
-  extensionPaths: string[],
-  agent: RecipeAgentDefinition
-): string[] {
-  const include = agent.extensions?.include;
-  const exclude = agent.extensions?.exclude ?? [];
-  return extensionPaths.filter((extensionPath) => {
-    const included =
-      include === undefined ||
-      include.some((selector) =>
-        extensionSelectorMatches(recipeDir, extensionPath, selector)
+  const selected = new Map<string, RecipeAgentDefinition>();
+  for (const name of agent.subagents) {
+    const definition = definitions.get(name);
+    if (!definition) {
+      throw new RecipeResolutionError(
+        `Recipe agent "${agent.name}" references missing subagent "${name}"`
       );
-    return (
-      included &&
-      !exclude.some((selector) =>
-        extensionSelectorMatches(recipeDir, extensionPath, selector)
-      )
-    );
-  });
+    }
+    selected.set(definition.name, definition);
+  }
+  return selected;
 }
 
 function buildResolvedRecipeAgent(
@@ -188,7 +310,7 @@ function buildResolvedRecipeAgent(
   extensionPaths: string[]
 ): ResolvedRecipeAgent {
   const agentName = agent.name;
-  const subagents = selectSubagents(definitions, agent);
+  const subagents = readonlyMap(selectSubagents(definitions, agent));
   const modelSpec = agent.model?.name;
   if (!modelSpec) {
     throw new RecipeResolutionError(
@@ -196,7 +318,28 @@ function buildResolvedRecipeAgent(
     );
   }
 
-  return {
+  const skillPaths = resolveAgentSkillPaths(
+    recipeDir,
+    skillResourcePaths,
+    agent.skills
+  );
+  for (const skill of agent.skills) {
+    const matches = resolveAgentSkillPaths(recipeDir, skillResourcePaths, [
+      skill,
+    ]);
+    if (matches.length === 0) {
+      throw new RecipeResolutionError(
+        `Recipe agent "${agentName}" references missing packaged skill "${skill}"`
+      );
+    }
+    if (matches.length > 1) {
+      throw new RecipeResolutionError(
+        `Recipe agent "${agentName}" skill "${skill}" resolves to multiple packaged SKILL.md files`
+      );
+    }
+  }
+
+  return deepFreeze({
     recipeDir,
     manifest,
     name: agentName,
@@ -208,43 +351,30 @@ function buildResolvedRecipeAgent(
       ? { thinkingLevel: agent.model.thinkingLevel as ThinkingLevel }
       : {}),
     tools: [
-      ...new Set([
-        ...executableRecipeToolNames(agent.tools),
-        ...(subagents.size > 0 ? ["agent"] : []),
-      ]),
+      ...new Set(executableRecipeToolNames(agent.tools)),
     ],
     ...(agent.mcp
       ? { mcp: { ...agent.mcp, mode: agent.mcp.mode ?? "cli" } }
       : {}),
-    skillPaths: resolveAgentSkillPaths(
-      recipeDir,
-      skillResourcePaths,
-      agent.skills
-    ),
+    skillPaths,
     promptPaths,
-    extensionPaths: selectExtensionPaths(
-      recipeDir,
-      extensionPaths,
-      agent
-    ),
+    extensionPaths: [...extensionPaths],
     systemPromptOverride(base) {
       return applySystemInstructions(
         recipeSystemPrompt ?? base,
         agent.systemInstructions
       );
     },
-  };
+  });
 }
 
 /** Parse and resolve every agent in a Recipe package exactly once. */
 export function resolveRecipe(
-  opts: Pick<ResolveRecipeAgentOptions, "recipeDir">
+  opts: { recipeDir: string }
 ): ResolvedRecipe {
   const recipeDir = resolve(opts.recipeDir);
-  const manifest = readPiPackageManifest(recipeDir);
-  const packageErrors = validatePiPackageManifest(manifest).findings.filter(
-    (finding) => finding.severity === "error"
-  );
+  const manifest = deepFreeze(readPiPackageManifest(recipeDir));
+  const packageErrors = validatePiPackageManifest(manifest).findings;
   if (packageErrors.length > 0) {
     throw new RecipeResolutionError(
       packageErrors.map((finding) => finding.message).join("\n")
@@ -252,30 +382,38 @@ export function resolveRecipe(
   }
 
   const resolvedAgents = loadValidatedRecipeAgentDefinitions(recipeDir);
-  const agentErrors = resolvedAgents.findings.filter(
-    (finding) => finding.severity !== "warning"
-  );
+  const agentErrors = resolvedAgents.findings;
   if (agentErrors.length > 0) {
     throw new RecipeResolutionError(
       [
         `Recipe "${manifest.name}" has invalid agents.`,
         ...agentErrors.map((finding) => `- ${finding.message}`),
-        "Add the missing required fields to each agent.",
+        "Fix the invalid agent definitions.",
       ].join("\n")
     );
   }
 
   const definitions = resolvedAgents.definitions;
+  if (definitions.size === 0) {
+    throw new RecipeResolutionError(
+      `Recipe "${manifest.name}" does not define any agents`
+    );
+  }
+  for (const definition of definitions.values()) {
+    deepFreeze(definition);
+  }
   const recipeSystemPrompt = loadRecipeSystemPrompt(recipeDir);
   const skillResourcePaths = packageResourcePaths(manifest, "skills");
   const promptPaths = packageResourcePaths(manifest, "prompts");
-  const extensionPaths = packageResourcePaths(manifest, "extensions");
-  const canonical = new Map<string, ResolvedRecipeAgent>();
+  const extensionPaths = resolvePackageExtensionPaths(
+    recipeDir,
+    packageResourcePaths(manifest, "extensions")
+  );
   const agents = new Map<string, ResolvedRecipeAgent>();
-  for (const [key, definition] of definitions) {
-    let resolvedAgent = canonical.get(definition.name);
-    if (!resolvedAgent) {
-      resolvedAgent = buildResolvedRecipeAgent(
+  for (const definition of definitions.values()) {
+    agents.set(
+      definition.name,
+      buildResolvedRecipeAgent(
         recipeDir,
         manifest,
         definitions,
@@ -284,27 +422,24 @@ export function resolveRecipe(
         skillResourcePaths,
         promptPaths,
         extensionPaths
-      );
-      canonical.set(definition.name, resolvedAgent);
-    }
-    agents.set(key, resolvedAgent);
-    agents.set(definition.name, resolvedAgent);
+      )
+    );
   }
 
-  return {
+  const readonlyAgents = readonlyMap(agents);
+  return deepFreeze({
     recipeDir,
     manifest,
-    agents,
+    resources: {
+      skills: [...skillResourcePaths],
+      prompts: [...promptPaths],
+      extensions: [...extensionPaths],
+      hasSystemPrompt: recipeSystemPrompt !== undefined,
+    },
+    agents: readonlyAgents,
     selectAgent(agentName) {
       const selected = selectAgent(definitions, agentName);
       return agents.get(selected.agentName)!;
     },
-  };
-}
-
-/** Resolve recipe-owned inputs for one Pi session. */
-export function resolveRecipeAgent(
-  opts: ResolveRecipeAgentOptions
-): ResolvedRecipeAgent {
-  return resolveRecipe({ recipeDir: opts.recipeDir }).selectAgent(opts.agentName);
+  });
 }

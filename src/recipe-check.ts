@@ -16,7 +16,6 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export interface RecipeCheckDiagnostic {
-  severity: "error" | "warning";
   code: string;
   path: string;
   span?: { line: number; column: number };
@@ -26,13 +25,14 @@ export interface RecipeCheckDiagnostic {
 
 export interface RecipeCheckReport {
   valid: boolean;
-  profile: "local" | "ci" | "publish";
   diagnostics: RecipeCheckDiagnostic[];
 }
 
-// Keep Pi startup snapshots aligned with `introspection check`: generated
-// dependency/build trees are not authored Recipe source.
+// Skip large generated trees unless package.json explicitly declares a
+// resource inside them. Explicit declarations are part of the Recipe and must
+// remain visible to the checker exactly as they are to the runtime resolver.
 const BLOCKED_GENERATED_DIRS = new Set([
+  ".git",
   "node_modules",
   "dist",
   "build",
@@ -144,12 +144,76 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
 function needsContent(path: string): boolean {
   return (
     path === "package.json" ||
-    path === "package-lock.json" ||
-    path === "npm-shrinkwrap.json" ||
-    path === ".pi/mcp.local.example.json" ||
+    path === "SKILL.md" ||
+    path.endsWith("/SKILL.md") ||
     path.endsWith(".yaml") ||
     path.endsWith(".yml")
   );
+}
+
+function declaredResourcePatterns(recipeDir: string): string[] {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    ) as { pi?: Record<string, unknown> };
+    if (!raw.pi || typeof raw.pi !== "object" || Array.isArray(raw.pi)) {
+      return [];
+    }
+    return ["agents", "extensions", "skills", "prompts"].flatMap((key) => {
+      const value = raw.pi?.[key];
+      if (!Array.isArray(value)) return [];
+      return value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) =>
+          item.trim().replaceAll("\\", "/").replace(/^\.\/+/, "")
+        );
+    });
+  } catch {
+    // The checker reports malformed or unreadable package.json itself.
+    return [];
+  }
+}
+
+function containsDeclaredResource(
+  directoryPath: string,
+  patterns: readonly string[]
+): boolean {
+  return patterns.some(
+    (pattern) =>
+      pattern === directoryPath ||
+      pattern.startsWith(`${directoryPath}/`) ||
+      globCanMatchDescendant(pattern, directoryPath)
+  );
+}
+
+function globCanMatchDescendant(pattern: string, directoryPath: string): boolean {
+  if (!/[?*]/.test(pattern)) return false;
+  const patternParts = pattern.split("/").filter(Boolean);
+  const directoryParts = directoryPath.split("/").filter(Boolean);
+  const segmentMatches = (glob: string, value: string): boolean => {
+    let source = "^";
+    for (const character of glob) {
+      if (character === "*") source += ".*";
+      else if (character === "?") source += ".";
+      else source += character.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    }
+    return new RegExp(`${source}$`).test(value);
+  };
+  const canMatchPrefix = (patternIndex: number, pathIndex: number): boolean => {
+    if (pathIndex === directoryParts.length) return true;
+    if (patternIndex === patternParts.length) return false;
+    if (patternParts[patternIndex] === "**") {
+      return (
+        canMatchPrefix(patternIndex + 1, pathIndex) ||
+        canMatchPrefix(patternIndex, pathIndex + 1)
+      );
+    }
+    return (
+      segmentMatches(patternParts[patternIndex]!, directoryParts[pathIndex]!) &&
+      canMatchPrefix(patternIndex + 1, pathIndex + 1)
+    );
+  };
+  return canMatchPrefix(0, 0);
 }
 
 function snapshot(recipeDir: string): {
@@ -158,6 +222,7 @@ function snapshot(recipeDir: string): {
 } {
   const files: Array<{ path: string; content?: string }> = [];
   const directories: string[] = [];
+  const resourcePatterns = declaredResourcePatterns(recipeDir);
   const visit = (directory: string, ancestors: ReadonlySet<string>): void => {
     const realDirectory = realpathSync(directory);
     if (ancestors.has(realDirectory)) return;
@@ -181,7 +246,10 @@ function snapshot(recipeDir: string): {
         }
       }
       if (target.isDirectory()) {
-        if (entry.name === ".git" || BLOCKED_GENERATED_DIRS.has(entry.name)) {
+        if (
+          BLOCKED_GENERATED_DIRS.has(entry.name) &&
+          !containsDeclaredResource(path, resourcePatterns)
+        ) {
           continue;
         }
         directories.push(path);
@@ -207,14 +275,7 @@ export async function checkRecipeAtLoad(
   env: NodeJS.ProcessEnv
 ): Promise<RecipeCheckReport> {
   const base = validatorCommand(env);
-  const args = [
-    ...base.args,
-    "--snapshot",
-    "-",
-    "--profile",
-    "local",
-    "--json",
-  ];
+  const args = base.args;
   const input = JSON.stringify(snapshot(recipeDir));
   return await new Promise((resolveReport, rejectReport) => {
     const child = spawn(base.command, args, {
@@ -264,7 +325,7 @@ export function formatRecipeDiagnostics(
         ? `:${diagnostic.span.line}:${diagnostic.span.column}`
         : "";
       const help = diagnostic.help ? `\n  help: ${diagnostic.help}` : "";
-      return `${diagnostic.severity} [${diagnostic.code}] ${diagnostic.path}${location}: ${diagnostic.message}${help}`;
+      return `error [${diagnostic.code}] ${diagnostic.path}${location}: ${diagnostic.message}${help}`;
     })
     .join("\n");
 }

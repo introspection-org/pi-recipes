@@ -24,7 +24,7 @@ tool set available from each one. It can also reference portable MCP manifests.
 {
   "pi": {
     "mcp": {
-      "manifest": "mcp.json",
+      "manifests": ["mcp.json"],
       "servers": [
         {
           "id": "contacts",
@@ -43,11 +43,10 @@ tool set available from each one. It can also reference portable MCP manifests.
 Prefer exact tool names. `"*"` explicitly permits the package-visible tool set,
 including tools a server may add later; patterns such as `search_*` are invalid.
 
-`manifest` accepts a single path; `manifests` accepts an array, and either the
-`mcp` value or a manifest reference may be given as a string shorthand for a
-single path. A server marked `"required": true` must resolve to a bound endpoint
-at session materialization or the session fails closed rather than starting
-without the capability.
+`manifests` is always an array of Recipe-relative paths or globs. Singular
+`manifest` and string shorthand are invalid. A server marked
+`"required": true` must resolve to a bound endpoint at session materialization
+or the session fails closed rather than starting without the capability.
 
 ## 2. Choose an agent mode and narrow access
 
@@ -97,11 +96,11 @@ Recipes registers `mcp_search`; calling it searches only the authorized
 deferred catalog and adds matches to Pi's current active tool set for the next
 model request. It never grants access beyond `servers`.
 
-`defer` and `eager` are invalid in CLI mode. They inherit independently per
-server, so a child can inherit `defer: ["*"]` and declare only
-`eager: [search_contacts]`. Explicitly switching an inherited configuration to
-`mode: cli` clears inherited activation. Every resolved agent owns its mode
-independently.
+`defer` and `eager` are invalid in CLI mode. An omitted agent `mcp` block
+inherits its base policy. Once a child declares `mcp`, the complete block
+replaces the inherited policy; restate its mode, servers, authorization, and
+activation selectors. This makes external capability changes reviewable at the
+derived agent. Every resolved agent owns its mode independently.
 
 ## 3. Supply endpoint configuration
 

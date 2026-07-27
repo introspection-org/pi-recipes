@@ -40,8 +40,8 @@ import {
   snapshotMcpEnvironment,
   stopMcpDaemon,
   type McpSessionConfig,
-  type RecipePackageManifest,
-} from "../src/index.js";
+} from "../src/mcp.js";
+import type { RecipePackageManifest } from "../src/recipe-package.js";
 
 describe("MCP environment leasing", () => {
   it("preserves daemon generation across isolation and restoration", () => {

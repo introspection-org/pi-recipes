@@ -13,9 +13,17 @@ import { Text } from "@earendil-works/pi-tui";
 import {
   createRecipeChildAgentRunner,
   promptResultText,
+  type CreateRecipeChildAgentRunner,
+  type RecipeChildAgentRunner,
   type RecipeChildToolEvent,
 } from "./child-agent.js";
 import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
+import {
+  bindRecipeExtensionFactory,
+  createRecipeExtensionRegistrationRegistry,
+  recipeExtensionToolAllowlist,
+  type RecipeExtensionRegistrationRegistry,
+} from "./extensions.js";
 import {
   ChildAgentRunStore,
   type ChildRunSnapshot,
@@ -45,7 +53,10 @@ import {
 import { type RecipeAgentDefinition } from "./recipe-agent.js";
 import type { RecipeAgentMcpMode } from "./recipe-agent.js";
 import { createMcpToolSet } from "./mcp-tools.js";
-import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
+import {
+  applyRecipeAgentModelConfigToModel,
+  cloneModelForRecipe,
+} from "./recipe-model.js";
 import {
   checkRecipeAtLoad,
   formatRecipeDiagnostics,
@@ -59,31 +70,12 @@ import {
   createAgentTool,
   type AgentRunController,
   type AgentRunSummary,
-} from "./agent-tool.js";
+} from "./agents.js";
 
 export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
   createChildAgentRunner?: CreateRecipeChildAgentRunner;
 }
-
-interface RecipeChildAgentRunner {
-  start(): Promise<void>;
-  prompt(prompt: string): Promise<unknown>;
-  steer(message: string): Promise<void>;
-  cancel(): Promise<void>;
-  shutdown(): Promise<void>;
-}
-
-type CreateRecipeChildAgentRunner = (opts: {
-  recipeDir: string;
-  workspaceDir: string;
-  agentName: string;
-  agent: ResolvedRecipeAgent;
-  env?: NodeJS.ProcessEnv;
-  modelRegistry?: ModelRegistry;
-  onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
-  onToolEvent?: (event: RecipeChildToolEvent) => void;
-}) => RecipeChildAgentRunner;
 
 interface AgentCallParams {
   action?: string;
@@ -106,12 +98,15 @@ interface RecipeLaunchState {
   cwd: string;
   resolvedRecipe: ResolvedRecipe;
   resolved: ResolvedRecipeAgent;
+  extensionRegistrations: RecipeExtensionRegistrationRegistry;
   extensionsLoaded: boolean;
+  extensionFailure?: string;
   configured: boolean;
   mcpConfigured: boolean;
   agentMcpMode: RecipeAgentMcpMode;
   initialMcpToolNames: string[];
   mcpSearchToolName?: string;
+  extensionAllowedToolNames: Set<string>;
   mcpPrivateEnv?: NodeJS.ProcessEnv;
   mcpPrivateDirectory?: string;
   mcpAmbientMcporterConfig?: string;
@@ -345,7 +340,10 @@ function activeRecipeTools(
   activeTools: string[]
 ): string[] {
   const active = new Set(activeTools);
-  const recipeTools = new Set(state.resolved.tools);
+  const recipeTools = new Set([
+    ...state.resolved.tools,
+    ...(state.resolved.subagents.size > 0 ? ["agent"] : []),
+  ]);
   return [...recipeTools]
     .filter((tool) => active.has(tool))
     .sort();
@@ -364,6 +362,10 @@ function recipeSummary(state: RecipeLaunchState, activeTools: string[]): string 
     "",
     "Active recipe tools:",
     ...bulletList(activeRecipeTools(state, activeTools)),
+    "",
+    `Package extensions: ${state.resolved.extensionPaths.length}`,
+    `Package prompts: ${state.resolved.promptPaths.length}`,
+    "Host layer: trusted ambient Pi hooks and settings may also apply",
     "",
     `Directory: ${state.resolved.recipeDir}`,
     `Workspace: ${state.cwd}`,
@@ -631,6 +633,8 @@ export function createRecipesExtension(
   // later session load in the same process.
   const launchRecipeDir = stringFlag(env.PI_RECIPE_DIR);
   const launchAgentName = stringFlag(env.PI_AGENT_NAME);
+  const originalRecipeDirEnv = env.PI_RECIPE_DIR;
+  const originalAgentNameEnv = env.PI_AGENT_NAME;
 
   function recipeFlag(pi: Parameters<ExtensionFactory>[0]): string | undefined {
     return stringFlag(pi.getFlag("recipe")) ?? launchRecipeDir;
@@ -673,11 +677,16 @@ export function createRecipesExtension(
       cwd,
       resolvedRecipe,
       resolved,
+      extensionRegistrations: createRecipeExtensionRegistrationRegistry(),
       extensionsLoaded: false,
       configured: false,
       mcpConfigured: false,
       agentMcpMode: "cli",
       initialMcpToolNames: [],
+      extensionAllowedToolNames: new Set([
+        ...resolved.tools,
+        ...(resolved.subagents.size > 0 ? ["agent"] : []),
+      ]),
     };
     return state;
   }
@@ -721,22 +730,48 @@ export function createRecipesExtension(
     ctx: ExtensionContext,
     launchState: RecipeLaunchState
   ): Promise<void> {
+    if (launchState.extensionFailure) {
+      throw new Error(launchState.extensionFailure);
+    }
     if (launchState.extensionsLoaded) return;
+    // Pi cannot unload registrations made by an earlier factory if a later
+    // factory fails. Mark the closure attempted before execution so the same
+    // live runner never retries a partially installed closure.
+    launchState.extensionsLoaded = true;
+    for (const tool of pi.getAllTools()) {
+      launchState.extensionRegistrations.claim(
+        "tool",
+        tool.name,
+        "<host>"
+      );
+    }
     let loadedCount = 0;
-    for (const extensionPath of launchState.resolved.extensionPaths) {
-      try {
-        const factory = await loadRecipeExtensionFactory(launchState.resolved.recipeDir, extensionPath);
+    try {
+      for (const extensionPath of launchState.resolved.extensionPaths) {
+        const factory = bindRecipeExtensionFactory(
+          await loadRecipeExtensionFactory(
+            launchState.resolved.recipeDir,
+            extensionPath
+          ),
+          Object.freeze({
+            recipe: Object.freeze({ name: launchState.resolved.manifest.name }),
+            agent: Object.freeze({ name: launchState.resolved.name }),
+            session: Object.freeze({
+              role: "root" as const,
+            }),
+          }),
+          launchState.extensionRegistrations,
+          extensionPath,
+          launchState.extensionAllowedToolNames
+        );
         await factory(pi);
         loadedCount += 1;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        ctx.ui.notify(
-          `Recipe extension failed to load: ${extensionPath}\n${message}`,
-          "warning"
-        );
       }
+    } catch (error) {
+      launchState.extensionFailure =
+        error instanceof Error ? error.message : String(error);
+      throw error;
     }
-    launchState.extensionsLoaded = true;
     if (launchState.resolved.extensionPaths.length > 0) {
       ctx.ui.notify(
         `Recipe extensions: ${loadedCount}/${launchState.resolved.extensionPaths.length} loaded`,
@@ -760,12 +795,13 @@ export function createRecipesExtension(
 
     const { provider, model } = modelParts(launchState.resolved.modelSpec);
     const lookupProvider = provider === "gemini" ? "google" : provider;
-    const resolvedModel = ctx.modelRegistry.find(lookupProvider, model);
-    if (!resolvedModel) {
+    const registeredModel = ctx.modelRegistry.find(lookupProvider, model);
+    if (!registeredModel) {
       throw new Error(
         `Recipe model is not available: ${launchState.resolved.modelSpec}`
       );
     }
+    const resolvedModel = cloneModelForRecipe(registeredModel);
     applyRecipeAgentModelConfigToModel(
       resolvedModel,
       launchState.resolved.modelConfig
@@ -783,11 +819,23 @@ export function createRecipesExtension(
 
     const activeTools = new Set([
       ...launchState.resolved.tools,
+      ...(launchState.resolved.subagents.size > 0 ? ["agent"] : []),
       ...launchState.initialMcpToolNames,
       ...(launchState.mcpSearchToolName
         ? [launchState.mcpSearchToolName]
         : []),
     ]);
+    const registeredTools = new Set(
+      pi.getAllTools().map((tool) => tool.name)
+    );
+    const missingTools = [...activeTools].filter(
+      (name) => !registeredTools.has(name)
+    );
+    if (missingTools.length > 0) {
+      throw new Error(
+        `Recipe agent "${launchState.resolved.name}" declares unavailable tool(s): ${missingTools.join(", ")}`
+      );
+    }
     pi.setActiveTools([...activeTools]);
     launchState.configured = true;
     sessionConfigurationError = null;
@@ -940,6 +988,14 @@ export function createRecipesExtension(
       launchState.initialMcpToolNames =
         materialized.initialActiveToolNames;
       launchState.mcpSearchToolName = materialized.searchToolName;
+      for (const toolName of materialized.toolNames) {
+        launchState.extensionAllowedToolNames.add(toolName);
+      }
+      if (materialized.searchToolName) {
+        launchState.extensionAllowedToolNames.add(
+          materialized.searchToolName
+        );
+      }
       ctx.ui.notify(
         `Recipe MCP tools: ${materialized.toolNames.length} registered, ${materialized.initialActiveToolNames.length} initially active${
           materialized.searchToolName ? "; deferred search enabled" : ""
@@ -993,11 +1049,10 @@ export function createRecipesExtension(
       }
     };
     const runner = createChildAgentRunner({
-      recipeDir: launchState.resolved.recipeDir,
+      recipe: launchState.resolvedRecipe,
       workspaceDir: launchState.cwd,
       env,
       agentName,
-      agent: launchState.resolvedRecipe.selectAgent(agentName),
       modelRegistry: ctx.modelRegistry,
       onAssistantMessage(text, stream) {
         if (!run) return;
@@ -1215,19 +1270,10 @@ export function createRecipesExtension(
         if (existsSync(recipeDir)) {
           try {
             const report = await checkRecipeAtLoad(recipeDir, env);
-            const warnings = report.diagnostics.filter(
-              (diagnostic) => diagnostic.severity === "warning"
-            );
             if (!report.valid) {
               const message = formatRecipeDiagnostics(report.diagnostics);
               failRecipeSession(pi, `validation failed\n${message}`, ctx);
               return;
-            }
-            if (warnings.length > 0) {
-              ctx.ui.notify(
-                `Recipe validation warnings:\n${formatRecipeDiagnostics(warnings)}`,
-                "warning"
-              );
             }
           } catch (error) {
             const message =
@@ -1244,7 +1290,13 @@ export function createRecipesExtension(
       for (const [name, definition] of launchState.resolved.subagents) {
         visibleAgentDefinitions.set(name, definition);
       }
-      await loadRecipeExtensions(pi, ctx, launchState);
+      try {
+        await loadRecipeExtensions(pi, ctx, launchState);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        failRecipeSession(pi, `extension startup failed\n${message}`, ctx);
+        return;
+      }
       try {
         await configureMcp(pi, launchState, ctx);
       } catch (err) {
@@ -1294,6 +1346,16 @@ export function createRecipesExtension(
       await closeRootMcpRuntime();
       clearMcpCatalogPreload(env);
       await stopMcpDaemon(env);
+      if (originalRecipeDirEnv === undefined) {
+        delete env.PI_RECIPE_DIR;
+      } else {
+        env.PI_RECIPE_DIR = originalRecipeDirEnv;
+      }
+      if (originalAgentNameEnv === undefined) {
+        delete env.PI_AGENT_NAME;
+      } else {
+        env.PI_AGENT_NAME = originalAgentNameEnv;
+      }
     });
 
     pi.on("agent_start", (_event, ctx) => {
@@ -1308,8 +1370,8 @@ export function createRecipesExtension(
       const launchState = safeLoadState(pi, event.cwd);
       if (!launchState) return {};
       return {
-        skillPaths: launchState.resolved.skillPaths,
-        promptPaths: launchState.resolved.promptPaths,
+        skillPaths: [...launchState.resolved.skillPaths],
+        promptPaths: [...launchState.resolved.promptPaths],
       };
     });
 

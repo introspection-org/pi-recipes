@@ -1,8 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { parse } from "yaml";
+import { assertRecipePathContained } from "./recipe-package.js";
 
-function skillName(filePath: string): string {
+function skillName(filePath: string, recipeDir: string): string {
   try {
     const content = readFileSync(filePath, "utf8");
     const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
@@ -20,7 +21,8 @@ function skillName(filePath: string): string {
   } catch {
     // Pi's resource loader reports content and schema diagnostics later.
   }
-  return basename(dirname(filePath));
+  const directory = dirname(filePath);
+  return directory === recipeDir ? "skill" : basename(directory);
 }
 
 function discoverSkillFiles(path: string): string[] {
@@ -49,12 +51,15 @@ export function resolveAgentSkillPaths(
   if (selectedNames.length === 0 || resourcePaths.length === 0) return [];
 
   const selected = new Set(selectedNames);
-  void recipeDir;
   return [
     ...new Set(
       resourcePaths
         .flatMap(discoverSkillFiles)
-        .filter((path) => selected.has(skillName(path)))
+        .filter((path) => {
+          assertRecipePathContained(recipeDir, path, "skill resource");
+          return true;
+        })
+        .filter((path) => selected.has(skillName(path, recipeDir)))
     ),
   ].sort();
 }

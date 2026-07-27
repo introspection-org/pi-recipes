@@ -1,0 +1,60 @@
+[
+  {
+    "name": "minimal agent",
+    "valid": true,
+    "files": {
+      "package.json": "{\"name\":\"minimal\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-6\n"
+    }
+  },
+  {
+    "name": "inherited model",
+    "valid": true,
+    "files": {
+      "package.json": "{\"name\":\"inheritance\",\"pi\":{}}",
+      "agents/base.yaml": "name: base\nmodel:\n  name: anthropic/claude-sonnet-4-6\ntools: [read, bash]\n",
+      "agents/agent.yaml": "name: agent\nfrom: base\ntools: [read]\n"
+    }
+  },
+  {
+    "name": "extension directory",
+    "valid": true,
+    "files": {
+      "package.json": "{\"name\":\"extension-directory\",\"pi\":{\"extensions\":[\"extensions\"]}}",
+      "agents/agent.yaml": "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-6\n",
+      "extensions/index.ts": "export default () => {};\n"
+    }
+  },
+  {
+    "name": "missing stable name",
+    "valid": false,
+    "files": {
+      "package.json": "{\"name\":\"missing-name\",\"pi\":{}}",
+      "agents/agent.yaml": "model:\n  name: anthropic/claude-sonnet-4-6\n"
+    }
+  },
+  {
+    "name": "unknown agent field",
+    "valid": false,
+    "files": {
+      "package.json": "{\"name\":\"unknown-field\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-6\nextensions: [extensions/tool.ts]\n"
+    }
+  },
+  {
+    "name": "unmatched explicit resource",
+    "valid": false,
+    "files": {
+      "package.json": "{\"name\":\"unmatched\",\"pi\":{\"agents\":[\"agents/*.yaml\"],\"skills\":[\"skills/**/SKILL.md\"]}}",
+      "agents/agent.yaml": "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-6\n"
+    }
+  },
+  {
+    "name": "unauthorized MCP server",
+    "valid": false,
+    "files": {
+      "package.json": "{\"name\":\"mcp-policy\",\"pi\":{\"mcp\":{\"servers\":[]}}}",
+      "agents/agent.yaml": "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-6\nmcp:\n  mode: cli\n  servers:\n    github:\n      include: [search]\n"
+    }
+  }
+]

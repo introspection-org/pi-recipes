@@ -17,7 +17,6 @@ task lifecycle, protocols, and deployment.
 | Compose agents and subagents | [Agent composition](agent-composition.md) |
 | Ask for user input across hosts | [Interactions](interactions.md) |
 | Declare capability policy and bindings | [MCP configuration](mcp-configuration.md) |
-| Package quality definitions | [Recipe judges](recipe-judges.md) |
 
 ## Boundary
 
@@ -30,9 +29,7 @@ resolveRecipe()          format interpretation
     ▼
 createAgentSession()     complete live Pi agent
     │
-    ├── createAgentSessionFromRecipe() resolve-and-create convenience
-    ├── runRecipe()           one-turn convenience
-    └── host                  tasks, persistence, auth, protocols, deployment
+    └── host              tasks, persistence, auth, protocols, deployment
 ```
 
 Recipes stops at the live session boundary. It does not ship a generic server,

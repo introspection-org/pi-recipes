@@ -1,6 +1,7 @@
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
+/** Portable lifecycle contract for Recipe agent runs. */
 export type AgentRunStatus =
   | "running"
   | "completed"

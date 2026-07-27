@@ -21,8 +21,6 @@ const CACHE_RETENTIONS = new Set(["none", "short", "long"]);
 const MODEL_KEYS = new Set([
   "name",
   "thinking_level",
-  "thinkingLevel",
-  "reasoning_effort",
   "temperature",
   "max_tokens",
   "cache_retention",
@@ -266,7 +264,7 @@ function parseProviders(
  * Parse an agent YAML `model:` block into a validated config.
  *
  * Accepts the documented keys only; unknown keys, malformed values, and
- * conflicting `thinking_level`/`reasoning_effort` throw
+ * invalid or unknown fields throw
  * {@link RecipeModelConfigError} so typos fail loudly instead of silently
  * changing model behavior.
  */
@@ -285,22 +283,8 @@ export function parseRecipeAgentModelConfig(
   const thinkingLevel = parseThinkingLevel(
     context,
     "model.thinking_level",
-    value.thinking_level ?? value.thinkingLevel
+    value.thinking_level
   );
-  const reasoningEffort = parseThinkingLevel(
-    context,
-    "model.reasoning_effort",
-    value.reasoning_effort
-  );
-  if (
-    thinkingLevel !== undefined &&
-    reasoningEffort !== undefined &&
-    thinkingLevel !== reasoningEffort
-  ) {
-    throw new RecipeModelConfigError(
-      `${context} sets both model.thinking_level and model.reasoning_effort with different values`
-    );
-  }
 
   const cacheRetention = optionalString(
     context,
@@ -358,8 +342,8 @@ export function parseRecipeAgentModelConfig(
   const providers = parseProviders(context, value.providers);
   return {
     ...(name ? { name } : {}),
-    ...((thinkingLevel ?? reasoningEffort)
-      ? { thinkingLevel: (thinkingLevel ?? reasoningEffort) as ThinkingLevel }
+    ...(thinkingLevel
+      ? { thinkingLevel: thinkingLevel as ThinkingLevel }
       : {}),
     ...(hasKeys(streamOptions) ? { streamOptions } : {}),
     ...(providers ?? {}),
@@ -377,6 +361,9 @@ export function mergeRecipeAgentModelConfig(
 ): RecipeAgentModelConfig | undefined {
   if (!base) return overlay;
   if (!overlay) return base;
+  if (overlay.name !== undefined) {
+    return overlay;
+  }
   const streamOptions = {
     ...(base.streamOptions ?? {}),
     ...(overlay.streamOptions ?? {}),
@@ -395,6 +382,15 @@ export function mergeRecipeAgentModelConfig(
     ...(hasKeys(streamOptions) ? { streamOptions } : {}),
     ...(hasKeys(openrouter) ? { openrouter } : {}),
     ...(hasKeys(anthropic) ? { anthropic } : {}),
+  };
+}
+
+/** Clone mutable model metadata before applying Recipe-local configuration. */
+export function cloneModelForRecipe<T extends Model<any>>(model: T): T {
+  return {
+    ...model,
+    ...(model.headers ? { headers: { ...model.headers } } : {}),
+    ...(model.compat ? { compat: { ...model.compat } } : {}),
   };
 }
 

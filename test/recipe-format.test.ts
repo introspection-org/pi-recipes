@@ -4,17 +4,18 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   packageResourcePaths,
   readPiPackageManifest,
   validatePiPackageManifest,
 } from "../src/recipe-package.js";
-import { resolveRecipeAgent } from "../src/recipe/resolve.js";
+import { resolveRecipe } from "../src/recipe/resolve.js";
 
 const cleanups: Array<() => void> = [];
 
@@ -62,6 +63,200 @@ function fixture(): string {
 }
 
 describe("Recipe Format", () => {
+  it("scopes resource globs and skips installed dependency trees", () => {
+    const recipeDir = mkdtempSync(join(tmpdir(), "recipe-format-globs-"));
+    cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(join(recipeDir, "skills", "research"), { recursive: true });
+    mkdirSync(
+      join(recipeDir, "skills", "research", "node_modules", "decoy"),
+      { recursive: true }
+    );
+    mkdirSync(join(recipeDir, "node_modules", "decoy", "skills"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "scoped-globs",
+        pi: {
+          agents: ["agents/*.yaml"],
+          skills: ["skills/**/SKILL.md"],
+        },
+      })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-5\n"
+    );
+    writeFileSync(
+      join(recipeDir, "skills", "research", "SKILL.md"),
+      "---\nname: research\n---\n"
+    );
+    writeFileSync(
+      join(
+        recipeDir,
+        "skills",
+        "research",
+        "node_modules",
+        "decoy",
+        "SKILL.md"
+      ),
+      "decoy\n"
+    );
+    writeFileSync(
+      join(recipeDir, "node_modules", "decoy", "skills", "SKILL.md"),
+      "decoy\n"
+    );
+
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(packageResourcePaths(manifest, "skills")).toEqual([
+      join(recipeDir, "skills", "research", "SKILL.md"),
+    ]);
+  });
+
+  it("keeps root-anchored resource globs package-wide", () => {
+    const recipeDir = mkdtempSync(
+      join(tmpdir(), "recipe-format-root-glob-")
+    );
+    cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(join(recipeDir, "nested"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "root-glob",
+        pi: {
+          agents: ["agents/*.yaml"],
+          prompts: ["**/*.md"],
+        },
+      })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-5\n"
+    );
+    writeFileSync(join(recipeDir, "nested", "review.md"), "Review\n");
+
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(packageResourcePaths(manifest, "prompts")).toEqual([
+      join(recipeDir, "nested", "review.md"),
+    ]);
+  });
+
+  it("accepts an empty pi manifest with conventional resources and a minimal agent", () => {
+    const recipeDir = mkdtempSync(join(tmpdir(), "recipe-format-minimal-"));
+    cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({ name: "minimal-agent", version: "1.0.0", pi: {} })
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-5\n"
+    );
+
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(packageResourcePaths(manifest, "agents")).toEqual([
+      join(recipeDir, "agents"),
+    ]);
+    expect(resolveRecipe({ recipeDir }).selectAgent()).toMatchObject({
+      name: "agent",
+      modelSpec: "anthropic/claude-sonnet-4-5",
+      tools: [],
+    });
+  });
+
+  it("rejects a Recipe with no agent definitions", () => {
+    const recipeDir = mkdtempSync(join(tmpdir(), "recipe-format-empty-"));
+    cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({ name: "empty-agent", version: "1.0.0", pi: {} })
+    );
+
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+      'Recipe "empty-agent" does not define any agents'
+    );
+  });
+
+  it("distinguishes omitted resource conventions from explicit empty arrays", () => {
+    const recipeDir = mkdtempSync(join(tmpdir(), "recipe-format-explicit-empty-"));
+    cleanups.push(() => rmSync(recipeDir, { recursive: true, force: true }));
+    mkdirSync(join(recipeDir, "agents"), { recursive: true });
+    mkdirSync(join(recipeDir, "skills", "ambient"), { recursive: true });
+    mkdirSync(join(recipeDir, "prompts"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      "name: agent\nmodel:\n  name: anthropic/claude-sonnet-4-5\n"
+    );
+    writeFileSync(
+      join(recipeDir, "skills", "ambient", "SKILL.md"),
+      "---\nname: ambient\n---\n"
+    );
+    writeFileSync(join(recipeDir, "prompts", "ambient.md"), "ambient\n");
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "explicit-empty",
+        pi: {
+          skills: [],
+          prompts: [],
+        },
+      })
+    );
+
+    const resolved = resolveRecipe({ recipeDir }).selectAgent();
+    expect(resolved.skillPaths).toEqual([]);
+    expect(resolved.promptPaths).toEqual([]);
+
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "explicit-empty",
+        pi: { agents: [] },
+      })
+    );
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+      'Recipe "explicit-empty" does not define any agents'
+    );
+  });
+
+  it("rejects malformed manifest resource shapes in direct resolution", () => {
+    const recipeDir = fixture();
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "malformed-resources",
+        pi: { agents: "agents/*.yaml" },
+      })
+    );
+
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+      "package.json#pi.agents must be an array of non-empty strings"
+    );
+  });
+
+  it("rejects unmatched explicitly declared extension patterns", () => {
+    const recipeDir = fixture();
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "missing-extension",
+        pi: {
+          agents: ["agents/*.yaml"],
+          extensions: ["extensions/policy-*.ts"],
+        },
+      })
+    );
+
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+      "declares extensions glob with no matches"
+    );
+  });
+
   it("reads and resolves a complete Recipe from ordinary source", () => {
     const recipeDir = fixture();
     const manifest = readPiPackageManifest(recipeDir);
@@ -74,7 +269,7 @@ describe("Recipe Format", () => {
       join(recipeDir, "skills", "research", "SKILL.md"),
     ]);
 
-    const recipe = resolveRecipeAgent({ recipeDir });
+    const recipe = resolveRecipe({ recipeDir }).selectAgent();
     expect(recipe.name).toBe("agent");
     expect(recipe.modelSpec).toBe("anthropic/claude-sonnet-4-5");
     expect(recipe.tools).toEqual(["read"]);
@@ -93,13 +288,186 @@ describe("Recipe Format", () => {
       })
     );
 
-    expect(() => resolveRecipeAgent({ recipeDir })).toThrow(
-      /declares agents resource outside the package/
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+      /outside the package/
     );
   });
+
+  it("rejects traversal glob roots before scanning", () => {
+    const recipeDir = fixture();
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "escaping-agent",
+        pi: { agents: ["../../**/*.yaml"] },
+      })
+    );
+
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+      /resource glob resolves outside the package/
+    );
+  });
+
+  it("resolves the package extension closure deterministically", () => {
+    const recipeDir = fixture();
+    mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "extensions", "first.ts"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "extensions", "second.ts"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "complete-agent",
+        pi: {
+          agents: ["agents/*.yaml"],
+          extensions: [
+            "extensions/second.ts",
+            "extensions/first.ts",
+          ],
+        },
+      })
+    );
+
+    expect(
+      resolveRecipe({ recipeDir }).selectAgent().extensionPaths
+    ).toEqual([
+      join(recipeDir, "extensions", "second.ts"),
+      join(recipeDir, "extensions", "first.ts"),
+    ]);
+
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "complete-agent",
+        pi: {
+          agents: ["agents/*.yaml"],
+          extensions: ["extensions/*.ts"],
+        },
+      })
+    );
+    expect(resolveRecipe({ recipeDir }).selectAgent().extensionPaths).toEqual([
+      join(recipeDir, "extensions", "first.ts"),
+      join(recipeDir, "extensions", "second.ts"),
+    ]);
+  });
+
+  it("expands declared extension directories with shallow Pi semantics", () => {
+    const recipeDir = fixture();
+    mkdirSync(join(recipeDir, "extensions", "nested"), { recursive: true });
+    mkdirSync(join(recipeDir, "extensions", "without-index"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(recipeDir, "extensions", "z-last.ts"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "extensions", "a-first.js"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "extensions", "nested", "index.ts"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "extensions", "without-index", "ignored.ts"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "complete-agent",
+        pi: {
+          agents: ["agents/*.yaml"],
+          extensions: ["extensions"],
+        },
+      })
+    );
+
+    expect(resolveRecipe({ recipeDir }).selectAgent().extensionPaths).toEqual([
+      join(recipeDir, "extensions", "a-first.js"),
+      join(recipeDir, "extensions", "nested", "index.ts"),
+      join(recipeDir, "extensions", "z-last.ts"),
+    ]);
+
+    writeFileSync(
+      join(recipeDir, "extensions", "index.js"),
+      "export default () => {};\n"
+    );
+    writeFileSync(
+      join(recipeDir, "extensions", "index.ts"),
+      "export default () => {};\n"
+    );
+    expect(resolveRecipe({ recipeDir }).selectAgent().extensionPaths).toEqual([
+      join(recipeDir, "extensions", "index.ts"),
+    ]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects extension symlinks that execute outside the package",
+    () => {
+    const recipeDir = fixture();
+    const outside = join(recipeDir, "..", `${basename(recipeDir)}-outside.ts`);
+    writeFileSync(outside, "export default () => {};\n");
+    cleanups.push(() => rmSync(outside, { force: true }));
+    mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+    symlinkSync(outside, join(recipeDir, "extensions", "outside.ts"));
+    writeFileSync(
+      join(recipeDir, "package.json"),
+      JSON.stringify({
+        name: "complete-agent",
+        pi: {
+          agents: ["agents/*.yaml"],
+          extensions: ["extensions/outside.ts"],
+        },
+      })
+    );
+
+    expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+      "Recipe extensions resource resolves outside the package"
+    );
+    }
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects SYSTEM.md symlinks that resolve outside the package",
+    () => {
+      const recipeDir = fixture();
+      const outside = join(
+        recipeDir,
+        "..",
+        `${basename(recipeDir)}-outside-system.md`
+      );
+      writeFileSync(outside, "outside prompt\n");
+      cleanups.push(() => rmSync(outside, { force: true }));
+      symlinkSync(outside, join(recipeDir, "SYSTEM.md"));
+
+      expect(() => resolveRecipe({ recipeDir }).selectAgent()).toThrow(
+        "Recipe SYSTEM.md resolves outside the package"
+      );
+    }
+  );
 });
 
 describe("npm package boundary", () => {
+  it("keeps the root API to resolution and session construction", async () => {
+    const api = await import("../src/index.js");
+    expect(Object.keys(api).sort()).toEqual([
+      "RecipeCredentialError",
+      "RecipeMcpEnvironmentInUseError",
+      "RecipeModelError",
+      "RecipeModelTransportError",
+      "RecipeResolutionError",
+      "createAgentSession",
+      "resolveRecipe",
+    ]);
+  });
+
   it("ships a library and Pi extension without a standalone CLI or server", () => {
     const root = join(import.meta.dirname, "..");
     const pkg = JSON.parse(
@@ -121,7 +489,17 @@ describe("npm package boundary", () => {
     expect(pkg.exports).not.toHaveProperty("./agui");
     expect(pkg.exports).not.toHaveProperty("./tracing");
     expect(pkg.exports).toHaveProperty("./session");
-    expect(pkg.exports).toHaveProperty("./run");
+    expect(pkg.exports).toHaveProperty("./extensions");
+    expect(pkg.exports["./session"]).toMatchObject({
+      import: "./dist/api/session.js",
+    });
+    expect(pkg.exports["./extensions"]).toMatchObject({
+      import: "./dist/api/extensions.js",
+    });
+    expect(pkg.exports["./mcp"]).toMatchObject({
+      import: "./dist/api/mcp.js",
+    });
+    expect(pkg.exports).not.toHaveProperty("./run");
     expect(pkg.exports).toHaveProperty("./test-utils");
     expect(existsSync(join(root, "src", "cli.ts"))).toBe(false);
     expect(existsSync(join(root, "src", "serve.ts"))).toBe(false);

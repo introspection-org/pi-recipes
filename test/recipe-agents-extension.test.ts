@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createAgentTool,
   type AgentRunController,
-} from "../src/agent-tool.js";
+} from "../src/agents.js";
 import type { RecipeAgentDefinition } from "../src/recipe-agent.js";
 
 function agents(): ReadonlyMap<string, RecipeAgentDefinition> {

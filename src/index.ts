@@ -1,13 +1,21 @@
-export * from "./interactions.js";
-export * from "./agent-tool.js";
-export * from "./inspect.js";
-export * from "./mcp-catalog.js";
-export * from "./mcp.js";
-export * from "./pi-extension.js";
-export * from "./recipe-agent.js";
-export * from "./recipe-model.js";
-export * from "./recipe-package.js";
-export * from "./recipe/resolve.js";
-export * from "./run.js";
-export * from "./run-controller.js";
-export * from "./session.js";
+export {
+  resolveRecipe,
+  RecipeResolutionError,
+} from "./recipe/resolve.js";
+export type {
+  ResolvedRecipe,
+  ResolvedRecipeAgent,
+  ResolvedRecipeAgentMcp,
+} from "./recipe/resolve.js";
+export {
+  createAgentSession,
+  RecipeCredentialError,
+  RecipeMcpEnvironmentInUseError,
+  RecipeModelError,
+  RecipeModelTransportError,
+} from "./api/session.js";
+export type {
+  CreateAgentSessionOptions,
+  RecipeSessionHandle,
+  RecipeSessionOtelOptions,
+} from "./api/session.js";

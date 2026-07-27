@@ -8,9 +8,9 @@ of agents without making every agent identical.
 
 | Layer | Scope | Use it for |
 | --- | --- | --- |
-| `package.json#pi` | Entire Recipe package | Declaring available agents, extensions, skills, prompts, and MCP servers |
+| `package.json#pi` | Entire Recipe package | Declaring agents, the executable extension closure, skills, prompts, and MCP servers |
 | `SYSTEM.md` | Every root and delegated agent in the recipe | Shared mission, terminology, policies, and workflow rules |
-| `agents/*.yaml` | One selected agent | Model, tools, selected skills, visible subagents, extension/MCP selection, and role-specific instructions |
+| `agents/*.yaml` | One selected agent | Model, tools, selected skills, visible subagents, MCP policy, and role-specific instructions |
 
 `SYSTEM.md` is the shared recipe instruction layer. A root agent and every
 delegated subagent start from the same recipe-level content. Put instructions
@@ -48,8 +48,6 @@ model:
 tools: [read, bash]
 skills: [release-policy]
 subagents: [reviewer]
-extensions:
-  include: [release-tools]
 system_instructions:
   mode: append
   content: Coordinate the complete release decision.
@@ -74,9 +72,8 @@ its own specialized instructions. Both agents still receive `SYSTEM.md`.
 
 `from:` chains may contain multiple levels. The referenced name must resolve to
 another agent in the same recipe. Missing bases and cycles are validation
-errors. A filename stem can resolve as an alias for an explicitly named agent,
-but explicit stable `name` values are recommended and required for portable
-child-agent definitions.
+errors. References resolve only against explicit agent `name` values; filenames
+never become agent identities or aliases.
 
 Inheritance and delegation are separate. `from: reviewer-base` inherits a
 definition; it does not expose the derived agent for delegation. A root agent
@@ -90,32 +87,34 @@ Omission means "inherit" for a derived agent. Declaring a field means
 | Field | Derived-agent behavior |
 | --- | --- |
 | `description` | Child value replaces the base; omission inherits it |
-| `model` | Merges by key; nested stream/provider sections also merge by key |
+| `model` | Merges by key when `name` is omitted; declaring `model.name` starts a fresh model configuration |
 | `tools` | Child array replaces the inherited allowlist; `[]` clears it |
 | `skills` | Child array replaces the inherited selection; `[]` clears it |
 | `subagents` | Child array replaces inherited visibility; `[]` clears it |
-| `extensions` | `include` and `exclude` inherit independently; a declared child list replaces that list |
-| `mcp` | `mode` inherits; servers merge by id; each server's `include`, `exclude`, `defer`, and `eager` inherit independently |
-| `system_instructions` | The whole child block replaces the inherited block; omission inherits it |
+| `mcp` | Omission inherits; a declared block replaces the complete inherited policy |
+| `system_instructions` | Omission inherits; `append` composes after inherited instructions; `replace` replaces the complete inherited prompt |
 
-Agent instruction blocks are not concatenated along a `from:` chain. If a
-child declares `system_instructions`, its block replaces the base agent's block.
-The child's `mode: append` applies to the recipe-wide `SYSTEM.md` (or Pi base
-prompt), not to the base agent's instructions. Put truly shared instructions in
-`SYSTEM.md` or a shared skill.
+Agent instruction blocks compose in inheritance order. A child's `append`
+content follows its inherited agent instructions. A child's `replace` discards
+both inherited agent instructions and the recipe or Pi base prompt. Put
+package-wide invariants in `SYSTEM.md`; use `replace` only for an intentionally
+standalone prompt.
 
 Arrays never merge item by item. This makes capability boundaries reviewable:
 a derived agent that declares `tools: [read]` receives only `read`, not the
 base agent's other tools.
 
-For structured MCP configuration, a child can override any server selector
-independently. For example, a base can declare `defer: ["*"]` and a child can
-declare only `eager: [search_contacts]`; the child inherits the deferred set
-and exposes that one exception initially. Switching an inherited configuration
-to `mode: cli` clears inherited `defer` and `eager` selectors because CLI mode
-does not expose MCP tools directly. Each resolved root or child agent may
-select its own mode; each live session receives only that selected agent's MCP
-policy.
+Model settings merge only while the child omits `model.name`. Declaring
+`model.name` starts a fresh model configuration, even when restating the same
+identity, so
+provider routing, headers, retries, cache policy, and transport tuning cannot
+silently cross model boundaries.
+
+For structured MCP configuration, the entire child block is an authorization
+boundary. Restate every server and selector the child may use. `mcp: { servers:
+{} }` clears inherited MCP access, and an omitted `mcp` block inherits it.
+Each resolved root or child agent may select its own mode; each live session
+receives only that selected agent's MCP policy.
 
 ## Model Configuration
 
@@ -125,7 +124,7 @@ transport tuning and provider routing. Set only what a case needs.
 ```yaml
 model:
   name: anthropic/claude-sonnet-4-6
-  thinking_level: medium        # or reasoning_effort (an alias; a conflicting value errors)
+  thinking_level: medium
   temperature: 0.2
   max_tokens: 4096
   cache_retention: short        # none | short | long
@@ -142,32 +141,30 @@ model:
         sort: throughput        # preferred_min_throughput, preferred_max_latency, …
 ```
 
-All keys are optional and merge by key along a `from:` chain. Use `reasoning_effort`
-or `thinking_level`, not both with different values.
-
-## Instruction Shorthand
-
-A top-level `prompt:` string on an agent is shorthand for append-mode
-`system_instructions` — the text is appended to `SYSTEM.md` for that agent. Use
-the explicit `system_instructions` block when you need `mode: replace`.
+All model settings except the fully resolved `name` are optional and merge by
+key along a `from:` chain until a child explicitly declares `model.name`.
 
 ## Resources and Capabilities
 
-The manifest declares what the package can provide; the selected agent narrows
-what is active:
+The manifest declares the package's executable closure and resource inventory;
+the selected agent narrows model-visible capability:
 
 - `package.json#pi.skills` declares physical skill resources. `agent.skills`
   selects the skill names Pi discovers for that agent.
-- `package.json#pi.extensions` declares recipe-owned extensions.
-  `agent.extensions` filters which declared extensions load.
+- `package.json#pi.extensions` declares the executable closure resolved
+  deterministically and loaded for every root and child session.
 - `package.json#pi.mcp` defines the package's upper-bound MCP policy.
   `agent.mcp` narrows tool access per server.
 - `agent.tools` is the exact allowlist for Pi built-ins and tools registered by
-  loaded recipe extensions.
+  the package extension closure.
 - `agent.subagents` controls which other recipe agents are visible through the
   `agent` tool.
 - Prompt templates declared by the package are recipe resources; they are not
   specialized through `from:`.
+
+The `agent` delegation tool is not authored in `tools`. The host adds it only
+to root sessions with visible subagents; delegated children remain one level
+deep.
 
 Skill and subagent selection controls prompt exposure and active capability,
 not filesystem isolation. All agents run in the same Recipe package and current
@@ -182,7 +179,7 @@ named agents.
 A delegated subagent resolves its own complete effective definition:
 
 1. follow its `from:` chain;
-2. apply its model, tools, skills, extensions, MCP, and instruction overrides;
+2. apply its model, tools, skills, MCP, and instruction overrides;
 3. start from the same recipe `SYSTEM.md` as the root agent; and
 4. append or replace with its effective `system_instructions`.
 
@@ -199,7 +196,7 @@ tool while running as a delegated child.
 - Put reusable detailed judgment in skills and select only the skills each
   agent needs.
 - Use `from:` for real variants, not merely to avoid a few repeated lines.
-- Declare narrow tool, extension, MCP, and subagent lists at the point where a
+- Declare narrow tool, MCP, and subagent lists at the point where a
   role's capability boundary changes.
 - Run `introspection check` after changing inheritance, then prove each important
   root agent and delegated path in a fresh Pi session.
