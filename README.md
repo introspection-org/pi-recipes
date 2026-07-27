@@ -86,19 +86,13 @@ Install Recipes in a Node.js host:
 npm install @introspection-ai/recipes
 ```
 
-Choose the lowest useful layer:
-
 ```ts
-import { resolveRecipe } from "@introspection-ai/recipes/recipe";
+import {
+  createAgentSession,
+  resolveRecipe,
+} from "@introspection-ai/recipes";
 
-const recipe = resolveRecipe({
-  recipeDir: "./my-recipe",
-});
-```
-
-```ts
-import { createAgentSession } from "@introspection-ai/recipes/session";
-
+const recipe = resolveRecipe({ recipeDir: "./my-recipe" });
 const handle = await createAgentSession({
   recipe,
   agentName: "agent",
@@ -134,7 +128,8 @@ tests.
 - `@introspection-ai/recipes/pi-extension` — Pi extension entrypoint
 - `@introspection-ai/recipes/extensions` — session identity and conditional
   Recipe extension helpers
-- `@introspection-ai/recipes/pi` — shared subagent tool and controller types
+- `@introspection-ai/recipes/agents` — portable agent-run controller and tool
+  contract
 - `@introspection-ai/recipes/interactions` — portable user-input and approval contract
 - `@introspection-ai/recipes/inspect` — inspect resolved inheritance,
   capabilities, package closure, host requirements, and runtime boundaries

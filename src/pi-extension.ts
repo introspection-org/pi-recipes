@@ -69,7 +69,7 @@ import {
   createAgentTool,
   type AgentRunController,
   type AgentRunSummary,
-} from "./agent-tool.js";
+} from "./agents.js";
 
 export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;

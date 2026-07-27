@@ -49,9 +49,9 @@
 			"types": "./dist/pi-extension.d.ts",
 			"import": "./dist/pi-extension.js"
 		},
-		"./pi": {
-			"types": "./dist/agent-tool.d.ts",
-			"import": "./dist/agent-tool.js"
+		"./agents": {
+			"types": "./dist/agents.d.ts",
+			"import": "./dist/agents.js"
 		},
 		"./recipe": {
 			"types": "./dist/recipe/resolve.d.ts",

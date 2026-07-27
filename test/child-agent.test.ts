@@ -136,6 +136,7 @@ describe("Recipe child agent runner", () => {
           provider: "openai",
           id: "test-model",
         }),
+        credentialsResolved: true,
         runController: null,
         sessionRole: "subagent",
       })

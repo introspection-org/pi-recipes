@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { InMemoryCredentialStore, type CredentialStore } from "@earendil-works/pi-ai";
-import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
+import type { CredentialStore } from "@earendil-works/pi-ai";
+import { getModel, type Model } from "@earendil-works/pi-ai/compat";
 import {
   createBashToolDefinition,
   createAgentSessionFromServices,
@@ -22,7 +22,7 @@ import {
   type AgentMeta,
   type InstrumentSessionOptions,
 } from "@introspection-sdk/introspection-pi";
-import { createAgentTool, type AgentRunController } from "./agent-tool.js";
+import { createAgentTool, type AgentRunController } from "./agents.js";
 import {
   clearMcpCatalogPreload,
   preloadMcpCatalogs,
@@ -42,7 +42,13 @@ import {
   type ScopedMcpToolSelection,
 } from "./mcp.js";
 import { createMcpToolSet } from "./mcp-tools.js";
-import { expectedProviderEnvVars } from "./provider-env.js";
+import {
+  assertRecipeModelTransport,
+  RecipeCredentialError,
+  RecipeModelError,
+  RecipeModelTransportError,
+  resolveRecipeCredentials,
+} from "./model-binding.js";
 import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
 import {
   bindRecipeExtensionFactory,
@@ -139,6 +145,8 @@ export interface CreateAgentSessionOptions {
 /** @internal Construction state owned by Recipes, never by an embedding host. */
 export interface CreateAgentSessionInternalOptions
   extends CreateAgentSessionOptions {
+  /** @internal Credentials already resolved from Pi's authenticated registry. */
+  credentialsResolved?: boolean;
   mcpRuntimeDir?: string;
   sessionRole: RecipeExtensionSessionContext["session"]["role"];
 }
@@ -158,62 +166,16 @@ export interface RecipeSessionHandle {
   /** The selected executable agent plan used to create this session. */
   agent: ResolvedRecipeAgent;
   /** The subagent run controller serving this session's `agent` tool. */
-  runs: AgentRunController;
+  agentRuns: AgentRunController;
   /** Abort any in-flight turn, dispose the session, stop session MCP. */
   dispose(): Promise<void>;
 }
 
-/** The session model's provider has no resolvable credential. */
-export class RecipeCredentialError extends Error {
-  override readonly name = "RecipeCredentialError";
-
-  constructor(
-    readonly provider: string,
-    /** Env vars that would satisfy the provider, most conventional first. */
-    readonly expectedEnvVars: readonly string[]
-  ) {
-    super(
-      `No credential for model provider "${provider}": set ${expectedEnvVars.join(" or ")}, or pass a CredentialStore via credentials`
-    );
-  }
-}
-
-/** The recipe's model spec does not resolve to a known model. */
-export class RecipeModelError extends Error {
-  override readonly name = "RecipeModelError";
-
-  constructor(readonly modelSpec: string) {
-    super(`Recipe model is not available: ${modelSpec}`);
-  }
-}
-
-/** A host transport does not implement the model selected by the Recipe. */
-export class RecipeModelTransportError extends Error {
-  override readonly name = "RecipeModelTransportError";
-
-  constructor(recipeModel: string, provider: string, modelId: string) {
-    super(
-      `Host model transport "${provider}/${modelId}" does not match Recipe model "${recipeModel}"`
-    );
-  }
-}
-
-function parseModelSpec(spec: string): {
-  provider: string;
-  modelId: string;
-  lookupProvider: string;
-} {
-  const slash = spec.indexOf("/");
-  if (slash < 0) {
-    throw new Error(
-      `Invalid recipe model "${spec}" - expected "<provider>/<model_id>"`
-    );
-  }
-  const provider = spec.slice(0, slash);
-  const modelId = spec.slice(slash + 1);
-  const lookupProvider = provider === "gemini" ? "google" : provider;
-  return { provider, modelId, lookupProvider };
-}
+export {
+  RecipeCredentialError,
+  RecipeModelError,
+  RecipeModelTransportError,
+};
 
 type MutableAgentSession = {
   agent?: { state?: { tools?: Array<{ parameters?: unknown }> } };
@@ -287,53 +249,6 @@ function normalizeSessionToolsForModel(
   for (const tool of mutableSession.agent?.state?.tools ?? []) {
     tool.parameters = stripAdditionalProperties(tool.parameters);
   }
-}
-
-/**
- * Ambient-credential providers resolve from their own SDK chain (AWS
- * profiles, ADC); `getEnvApiKey` reports them as "<authenticated>".
- */
-const AMBIENT_CREDENTIAL_SENTINEL = "<authenticated>";
-
-/**
- * Resolve credentials fail-closed against the session's own `env`, never the
- * ambient process env: explicit store → per-provider env keys → error.
- */
-async function resolveCredentialStore(
-  lookupProvider: string,
-  opts: CreateAgentSessionOptions
-): Promise<CredentialStore> {
-  if (opts.credentials) {
-    const stored = await opts.credentials.read(lookupProvider);
-    if (!stored) {
-      throw new RecipeCredentialError(
-        lookupProvider,
-        expectedProviderEnvVars(lookupProvider)
-      );
-    }
-    return opts.credentials;
-  }
-
-  const env = opts.env ?? process.env;
-  const store = new InMemoryCredentialStore();
-  const apiKey =
-    getEnvApiKey(lookupProvider, env as Record<string, string>) ??
-    env[`${lookupProvider.toUpperCase().replace(/-/g, "_")}_API_KEY`];
-  if (!apiKey) {
-    throw new RecipeCredentialError(
-      lookupProvider,
-      expectedProviderEnvVars(lookupProvider)
-    );
-  }
-  if (apiKey !== AMBIENT_CREDENTIAL_SENTINEL) {
-    await store.modify(lookupProvider, async () => ({
-      type: "api_key",
-      key: apiKey,
-    }));
-  }
-  // Ambient-credential providers (Bedrock, Vertex ADC) keep an empty store;
-  // the pi-ai provider resolves its own credential chain at stream time.
-  return store;
 }
 
 function scopedMcpSelections(recipe: ResolvedRecipeAgent): ScopedMcpToolSelection[] {
@@ -547,25 +462,24 @@ async function createSessionForAgent(
 
   // Model + credentials, fail-closed before any MCP runtime starts.
   const modelSpec = recipe.modelSpec;
-  const { lookupProvider, modelId } = parseModelSpec(modelSpec);
-  if (
-    opts.modelOverride &&
-    (opts.modelOverride.provider !== lookupProvider ||
-      opts.modelOverride.id !== modelId)
-  ) {
-    throw new RecipeModelTransportError(
-      modelSpec,
-      opts.modelOverride.provider,
-      opts.modelOverride.id
-    );
-  }
+  const { lookupProvider, modelId } = assertRecipeModelTransport(
+    modelSpec,
+    opts.modelOverride
+  );
   const credentialProvider = opts.modelOverride?.provider ?? lookupProvider;
-  const credentials = await resolveCredentialStore(credentialProvider, opts);
+  const credentials =
+    opts.credentialsResolved && opts.credentials
+      ? opts.credentials
+      : await resolveRecipeCredentials({
+          provider: credentialProvider,
+          env,
+          ...(opts.credentials ? { credentials: opts.credentials } : {}),
+        });
   const modelRuntime = await ModelRuntime.create({ credentials, modelsPath: null });
 
   let model: Model<any> | undefined;
   let session: AgentSession | undefined;
-  let runs: AgentRunController | undefined;
+  let agentRuns: AgentRunController | undefined;
   let unsubscribe: (() => void) | undefined;
   let detachInstrumentation: (() => void) | undefined;
   const mcp = await configureSessionMcp(recipe, cwd, env, opts, {
@@ -580,9 +494,9 @@ async function createSessionForAgent(
       // Continue releasing the remaining session-owned resources.
     }
     unsubscribe = undefined;
-    if (runs) {
+    if (agentRuns) {
       try {
-        await runs.shutdown();
+        await agentRuns.shutdown();
       } catch {
         // Child teardown is best-effort; the session still disposes.
       }
@@ -707,12 +621,12 @@ async function createSessionForAgent(
     const wantsSubagents =
       recipe.subagents.size > 0 && opts.runController !== null;
     if (opts.runController) {
-      runs = opts.runController;
+      agentRuns = opts.runController;
     } else {
       const { createInProcessRunController, inertRunController } = await import(
         "./run-controller.js"
       );
-      runs = wantsSubagents
+      agentRuns = wantsSubagents
         ? createInProcessRunController({
             recipe: opts.recipe!,
             cwd,
@@ -766,7 +680,13 @@ async function createSessionForAgent(
       ...(environmentBash ? [environmentBash] : []),
       ...(opts.customTools ?? []),
       ...(wantsSubagents
-        ? [createAgentTool(runs, recipe.subagents, opts.agentToolOptions)]
+        ? [
+            createAgentTool(
+              agentRuns,
+              recipe.subagents,
+              opts.agentToolOptions
+            ),
+          ]
         : []),
       ...(mcp.tools ?? []),
     ];
@@ -826,12 +746,12 @@ async function createSessionForAgent(
       : undefined;
 
     const liveSession = session;
-    const liveRuns = runs;
+    const liveRuns = agentRuns;
     let disposed = false;
     return {
       session: liveSession,
       agent: recipe,
-      runs: liveRuns,
+      agentRuns: liveRuns,
       async dispose(): Promise<void> {
         if (disposed) return;
         disposed = true;

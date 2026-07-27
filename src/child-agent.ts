@@ -1,8 +1,4 @@
-import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai/compat";
-import {
-  InMemoryCredentialStore,
-  type CredentialStore,
-} from "@earendil-works/pi-ai";
+import type { CredentialStore } from "@earendil-works/pi-ai";
 import {
   type AgentSession,
   type AgentSessionEvent,
@@ -10,6 +6,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { autoResolveInteractions } from "./interactions.js";
 import { createIsolatedChildSession } from "./child-session.js";
+import {
+  resolveRecipeCredentials,
+  resolveRecipeModel,
+} from "./model-binding.js";
 import { applyRecipeAgentModelConfigToModel } from "./recipe-model.js";
 import {
   type ResolvedRecipe,
@@ -62,73 +62,6 @@ export type RecipeChildToolEvent =
       result: unknown;
       isError: boolean;
     };
-
-function parseModelSpec(spec: string): {
-  provider: string;
-  modelId: string;
-  lookupProvider: string;
-} {
-  const slash = spec.indexOf("/");
-  if (slash < 0) {
-    throw new Error(
-      `Invalid recipe model "${spec}" - expected "<provider>/<model_id>"`
-    );
-  }
-  const provider = spec.slice(0, slash);
-  const modelId = spec.slice(slash + 1);
-  const lookupProvider = provider === "gemini" ? "google" : provider;
-  return { provider, modelId, lookupProvider };
-}
-
-function modelFromSpec(
-  spec: string,
-  modelRegistry: ModelRegistry | undefined
-): Model<any> {
-  const { modelId, lookupProvider } = parseModelSpec(spec);
-  return (
-    modelRegistry?.find(lookupProvider, modelId) ??
-    getModel(lookupProvider as never, modelId as never)
-  );
-}
-
-async function credentialsForChildAgent(
-  model: Model<any>,
-  opts: CreateRecipeChildAgentRunnerOptions
-): Promise<CredentialStore> {
-  const credentials = opts.credentials ?? new InMemoryCredentialStore();
-  if (!opts.credentials) {
-    // Resolve the child's API key up front: prefer the host registry (so a
-    // key configured inside Pi flows to children), then provider env keys.
-    let apiKey: string | undefined;
-    let credentialEnv: Record<string, string> | undefined;
-    if (opts.modelRegistry) {
-      const auth = await opts.modelRegistry.getApiKeyAndHeaders(model);
-      if (auth.ok) {
-        apiKey = auth.apiKey;
-        credentialEnv = auth.env;
-        if (auth.headers) {
-          model.headers = { ...(model.headers ?? {}), ...auth.headers };
-        }
-      }
-    }
-    const env = opts.env ?? process.env;
-    apiKey ??=
-      getEnvApiKey(model.provider, env as Record<string, string>) ??
-      env[`${model.provider.toUpperCase()}_API_KEY`];
-    if (!apiKey && Object.keys(model.headers ?? {}).length === 0) {
-      throw new Error(
-        `${model.provider.toUpperCase()}_API_KEY is required when the background agent is not running inside Pi`
-      );
-    }
-    await credentials.modify(model.provider, async () => ({
-      type: "api_key",
-      ...(apiKey ? { key: apiKey } : {}),
-      ...(credentialEnv ? { env: credentialEnv } : {}),
-    }));
-  }
-
-  return credentials;
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -255,16 +188,27 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
 
     const resolved = this.opts.recipe.selectAgent(this.opts.agentName);
     const model = applyRecipeAgentModelConfigToModel(
-      modelFromSpec(resolved.modelSpec, this.opts.modelRegistry),
+      resolveRecipeModel(resolved.modelSpec, this.opts.modelRegistry),
       resolved.modelConfig
     );
-    const credentials = await credentialsForChildAgent(model, this.opts);
+    const credentials = await resolveRecipeCredentials({
+      provider: model.provider,
+      env: this.opts.env ?? process.env,
+      model,
+      ...(this.opts.credentials
+        ? { credentials: this.opts.credentials }
+        : {}),
+      ...(this.opts.modelRegistry
+        ? { modelRegistry: this.opts.modelRegistry }
+        : {}),
+    });
     this.handle = await createIsolatedChildSession({
       recipe: this.opts.recipe,
       agentName: resolved.name,
       cwd: this.opts.workspaceDir,
       env: this.opts.env ?? process.env,
       credentials,
+      credentialsResolved: true,
       modelOverride: model,
       onEvent: (event) => this.handleSessionEvent(event),
     });

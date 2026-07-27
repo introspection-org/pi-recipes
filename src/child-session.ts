@@ -17,6 +17,7 @@ export interface CreateIsolatedChildSessionOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
   credentials?: CredentialStore;
+  credentialsResolved?: boolean;
   modelOverride?: Model<any>;
   otel?: RecipeSessionOtelOptions;
   onEvent?: (event: AgentSessionEvent) => void;
@@ -41,6 +42,7 @@ export async function createIsolatedChildSession(
       cwd: opts.cwd,
       env: { ...opts.env },
       ...(opts.credentials ? { credentials: opts.credentials } : {}),
+      ...(opts.credentialsResolved ? { credentialsResolved: true } : {}),
       ...(opts.modelOverride ? { modelOverride: opts.modelOverride } : {}),
       ...(opts.otel ? { otel: opts.otel } : {}),
       ...(opts.onEvent ? { onEvent: opts.onEvent } : {}),

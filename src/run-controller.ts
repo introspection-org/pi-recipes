@@ -4,7 +4,7 @@ import type {
   AgentRunController,
   AgentRunStatus,
   AgentRunSummary,
-} from "./agent-tool.js";
+} from "./agents.js";
 import { autoResolveInteractions } from "./interactions.js";
 import { promptResultText } from "./child-agent.js";
 import { createIsolatedChildSession } from "./child-session.js";

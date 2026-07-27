@@ -154,7 +154,7 @@ export function hostConformanceCases(
               handle.session.systemPrompt.includes("conformance fixture"),
               "SYSTEM.md reaches the system prompt"
             );
-            assert(handle.runs, "handle exposes a run controller");
+            assert(handle.agentRuns, "handle exposes an agent run controller");
           } finally {
             await handle.dispose();
           }
@@ -287,12 +287,12 @@ export function hostConformanceCases(
             const settled = await Promise.race([
               (async () => {
                 try {
-                  const run = await handle.runs.start({
+                  const run = await handle.agentRuns.start({
                     name: "ghost",
                     prompt: "hello",
                   });
                   if (run.status === "running") {
-                    return await handle.runs.wait(run.agent_run_id);
+                    return await handle.agentRuns.wait(run.agent_run_id);
                   }
                   return run;
                 } catch (err) {
