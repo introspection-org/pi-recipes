@@ -1,10 +1,4 @@
-import {
-  existsSync,
-  realpathSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-} from "node:fs";
+import { existsSync, realpathSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export interface RecipePackageResources {
@@ -34,9 +28,7 @@ type ParsedRecipeMcpToolSelection = RecipeMcpToolSelection & {
 };
 
 /** Parse a selection while preserving whether its source shape was malformed. */
-export function parseRecipeMcpToolSelection(
-  value: unknown
-): RecipeMcpToolSelection {
+export function parseRecipeMcpToolSelection(value: unknown): RecipeMcpToolSelection {
   const validObject = Boolean(value) && typeof value === "object" && !Array.isArray(value);
   const data = asRecord(value);
   const selection: ParsedRecipeMcpToolSelection = {
@@ -46,8 +38,7 @@ export function parseRecipeMcpToolSelection(
   const malformedArray = ["include", "exclude"].some(
     (key) =>
       Object.hasOwn(data, key) &&
-      (!Array.isArray(data[key]) ||
-        data[key].some((item) => typeof item !== "string"))
+      (!Array.isArray(data[key]) || data[key].some((item) => typeof item !== "string"))
   );
   if (!validObject || malformedArray) {
     Object.defineProperty(selection, INVALID_MCP_TOOL_SELECTION, {
@@ -59,24 +50,44 @@ export function parseRecipeMcpToolSelection(
 }
 
 /** Minimal session guard; the Recipe checker owns authoring diagnostics. */
-export function isValidRecipeMcpToolSelection(
-  selection: RecipeMcpToolSelection
-): boolean {
+export function isValidRecipeMcpToolSelection(selection: RecipeMcpToolSelection): boolean {
   if ((selection as ParsedRecipeMcpToolSelection)[INVALID_MCP_TOOL_SELECTION]) {
     return false;
   }
-  return (selection.include ?? []).every((selector) => {
-    const value = selector.trim();
-    return Boolean(value) && (value === "*" || !value.includes("*"));
-  }) && (selection.exclude ?? []).every((selector) => {
-    const value = selector.trim();
-    return Boolean(value) && !value.includes("*");
-  });
+  return (
+    (selection.include ?? []).every((selector) => {
+      const value = selector.trim();
+      return Boolean(value) && (value === "*" || !value.includes("*"));
+    }) &&
+    (selection.exclude ?? []).every((selector) => {
+      const value = selector.trim();
+      return Boolean(value) && !value.includes("*");
+    })
+  );
 }
 
 export interface RecipePackageMcpConfig {
   manifests: string[];
   servers: RecipePackageMcpServer[];
+}
+
+export interface RecipePythonRuntimeRequirement {
+  project: string;
+  lockfile: string;
+  version?: string;
+  imports: string[];
+}
+
+export interface RecipeSystemPackageRequirement {
+  id: string;
+  version: string;
+}
+
+export interface RecipeRuntimeRequirements {
+  python?: RecipePythonRuntimeRequirement;
+  system: {
+    packages: RecipeSystemPackageRequirement[];
+  };
 }
 
 export interface RecipePackageManifest {
@@ -88,6 +99,7 @@ export interface RecipePackageManifest {
   /** Whether each resource key was explicitly authored in package.json#pi. */
   resourceDeclarations?: Record<keyof RecipePackageResources, boolean>;
   mcp: RecipePackageMcpConfig;
+  runtime: RecipeRuntimeRequirements;
 }
 
 export type PiPackageResources = RecipePackageResources;
@@ -118,7 +130,7 @@ const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "prompts",
 ];
 
-const PI_KEYS = new Set([...RESOURCE_KEYS, "mcp"]);
+const PI_KEYS = new Set([...RESOURCE_KEYS, "mcp", "runtime"]);
 const SOURCE_FINDINGS = Symbol("recipeSourceFindings");
 type ParsedRecipePackageManifest = RecipePackageManifest & {
   [SOURCE_FINDINGS]?: RecipeValidationFinding[];
@@ -142,9 +154,10 @@ function emptyResources(): RecipePackageResources {
 function resourceDeclarations(
   pi: Record<string, unknown>
 ): Record<keyof RecipePackageResources, boolean> {
-  return Object.fromEntries(
-    RESOURCE_KEYS.map((key) => [key, Object.hasOwn(pi, key)])
-  ) as Record<keyof RecipePackageResources, boolean>;
+  return Object.fromEntries(RESOURCE_KEYS.map((key) => [key, Object.hasOwn(pi, key)])) as Record<
+    keyof RecipePackageResources,
+    boolean
+  >;
 }
 
 function sourceShapeFindings(
@@ -155,11 +168,7 @@ function sourceShapeFindings(
   for (const key of Object.keys(pi)) {
     if (!PI_KEYS.has(key as keyof RecipePackageResources | "mcp")) {
       findings.push(
-        finding(
-          "pi.unknown_key",
-          `package.json#pi contains unknown key '${key}'`,
-          packageName
-        )
+        finding("pi.unknown_key", `package.json#pi contains unknown key '${key}'`, packageName)
       );
     }
   }
@@ -168,9 +177,7 @@ function sourceShapeFindings(
     const value = pi[key];
     if (
       !Array.isArray(value) ||
-      value.some(
-        (item) => typeof item !== "string" || item.trim().length === 0
-      )
+      value.some((item) => typeof item !== "string" || item.trim().length === 0)
     ) {
       findings.push(
         finding(
@@ -179,9 +186,7 @@ function sourceShapeFindings(
           packageName
         )
       );
-    } else if (
-      new Set(value.map((item) => String(item).trim())).size !== value.length
-    ) {
+    } else if (new Set(value.map((item) => String(item).trim())).size !== value.length) {
       findings.push(
         finding(
           `pi.${key}_duplicate`,
@@ -192,69 +197,137 @@ function sourceShapeFindings(
     }
   }
   findings.push(...mcpSourceShapeFindings(pi.mcp, packageName));
+  findings.push(...runtimeSourceShapeFindings(pi.runtime, packageName));
   return findings;
 }
 
-function mcpSourceShapeFindings(
+function runtimeSourceShapeFindings(
   value: unknown,
   packageName: string
 ): RecipeValidationFinding[] {
   if (value === undefined) return [];
-  const invalid = (message: string) =>
-    finding("pi.mcp_invalid", message, packageName);
+  const invalid = (message: string) => finding("pi.runtime_invalid", message, packageName);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [invalid("package.json#pi.runtime must be an object")];
+  }
+  const runtime = value as Record<string, unknown>;
+  const findings: RecipeValidationFinding[] = [];
+  for (const key of Object.keys(runtime)) {
+    if (!["python", "system"].includes(key)) {
+      findings.push(invalid(`package.json#pi.runtime contains unknown field '${key}'`));
+    }
+  }
+  if (runtime.python !== undefined) {
+    if (!runtime.python || typeof runtime.python !== "object" || Array.isArray(runtime.python)) {
+      findings.push(invalid("package.json#pi.runtime.python must be an object"));
+    } else {
+      const python = runtime.python as Record<string, unknown>;
+      for (const key of Object.keys(python)) {
+        if (!["project", "lockfile", "version", "imports"].includes(key)) {
+          findings.push(invalid(`package.json#pi.runtime.python contains unknown field '${key}'`));
+        }
+      }
+      for (const key of ["project", "lockfile"]) {
+        if (typeof python[key] !== "string" || !python[key].trim()) {
+          findings.push(
+            invalid(`package.json#pi.runtime.python.${key} must be a non-empty relative path`)
+          );
+        }
+      }
+      if (
+        python.version !== undefined &&
+        (typeof python.version !== "string" || !python.version.trim())
+      ) {
+        findings.push(invalid("package.json#pi.runtime.python.version must be a non-empty string"));
+      }
+      if (
+        python.imports !== undefined &&
+        (!Array.isArray(python.imports) ||
+          python.imports.some((item) => typeof item !== "string" || !item.trim()))
+      ) {
+        findings.push(
+          invalid(
+            "package.json#pi.runtime.python.imports must be an array of non-empty module names"
+          )
+        );
+      }
+    }
+  }
+  if (runtime.system !== undefined) {
+    if (!runtime.system || typeof runtime.system !== "object" || Array.isArray(runtime.system)) {
+      findings.push(invalid("package.json#pi.runtime.system must be an object"));
+    } else {
+      const system = runtime.system as Record<string, unknown>;
+      for (const key of Object.keys(system)) {
+        if (key !== "packages") {
+          findings.push(invalid(`package.json#pi.runtime.system contains unknown field '${key}'`));
+        }
+      }
+      if (!Array.isArray(system.packages)) {
+        findings.push(invalid("package.json#pi.runtime.system.packages must be an array"));
+      } else {
+        for (const [index, entry] of system.packages.entries()) {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            findings.push(
+              invalid(`package.json#pi.runtime.system.packages[${index}] must be an object`)
+            );
+            continue;
+          }
+          const pkg = entry as Record<string, unknown>;
+          if (
+            typeof pkg.id !== "string" ||
+            !pkg.id.trim() ||
+            typeof pkg.version !== "string" ||
+            !pkg.version.trim()
+          ) {
+            findings.push(
+              invalid(
+                `package.json#pi.runtime.system.packages[${index}] requires non-empty id and version`
+              )
+            );
+          }
+        }
+      }
+    }
+  }
+  return findings;
+}
+
+function mcpSourceShapeFindings(value: unknown, packageName: string): RecipeValidationFinding[] {
+  if (value === undefined) return [];
+  const invalid = (message: string) => finding("pi.mcp_invalid", message, packageName);
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return [invalid("package.json#pi.mcp must be an object")];
   }
   const data = value as Record<string, unknown>;
   const findings: RecipeValidationFinding[] = [];
-  const unknown = Object.keys(data).filter(
-    (key) => !["manifests", "servers"].includes(key)
-  );
+  const unknown = Object.keys(data).filter((key) => !["manifests", "servers"].includes(key));
   if (unknown.length > 0) {
-    findings.push(
-      invalid(
-        `package.json#pi.mcp contains unknown field(s): ${unknown.join(", ")}`
-      )
-    );
+    findings.push(invalid(`package.json#pi.mcp contains unknown field(s): ${unknown.join(", ")}`));
   }
   const manifests = Array.isArray(data.manifests) ? data.manifests : [];
   if (
     Object.hasOwn(data, "manifests") &&
-      (!Array.isArray(data.manifests) ||
-        data.manifests.some(
-          (item) => typeof item !== "string" || !item.trim()
-        ))
+    (!Array.isArray(data.manifests) ||
+      data.manifests.some((item) => typeof item !== "string" || !item.trim()))
   ) {
-    findings.push(
-      invalid("package.json#pi.mcp manifests must be non-empty strings")
-    );
+    findings.push(invalid("package.json#pi.mcp manifests must be non-empty strings"));
   }
   if (
     manifests.every((item): item is string => typeof item === "string") &&
     new Set(manifests.map((item) => item.trim())).size !== manifests.length
   ) {
-    findings.push(
-      invalid("package.json#pi.mcp manifests must not contain duplicates")
-    );
+    findings.push(invalid("package.json#pi.mcp manifests must not contain duplicates"));
   }
-  if (
-    Object.hasOwn(data, "servers") &&
-    !Array.isArray(data.servers)
-  ) {
-    findings.push(
-      invalid("package.json#pi.mcp.servers must be an array")
-    );
+  if (Object.hasOwn(data, "servers") && !Array.isArray(data.servers)) {
+    findings.push(invalid("package.json#pi.mcp.servers must be an array"));
     return findings;
   }
   const ids = new Set<string>();
   const normalizedIds = new Set<string>();
-  for (const [index, raw] of (
-    Array.isArray(data.servers) ? data.servers : []
-  ).entries()) {
+  for (const [index, raw] of (Array.isArray(data.servers) ? data.servers : []).entries()) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-      findings.push(
-        invalid(`package.json#pi.mcp.servers[${index}] must be an object`)
-      );
+      findings.push(invalid(`package.json#pi.mcp.servers[${index}] must be an object`));
       continue;
     }
     const server = raw as Record<string, unknown>;
@@ -268,55 +341,32 @@ function mcpSourceShapeFindings(
         )
       );
     }
-    const id =
-      typeof server.id === "string" && server.id.trim()
-        ? server.id.trim()
-        : undefined;
+    const id = typeof server.id === "string" && server.id.trim() ? server.id.trim() : undefined;
     if (!id) {
-      findings.push(
-        invalid(`package.json#pi.mcp.servers[${index}].id must be non-empty`)
-      );
+      findings.push(invalid(`package.json#pi.mcp.servers[${index}].id must be non-empty`));
     } else if (ids.has(id)) {
-      findings.push(
-        invalid(`package.json#pi.mcp contains duplicate server id '${id}'`)
-      );
+      findings.push(invalid(`package.json#pi.mcp contains duplicate server id '${id}'`));
     } else {
       ids.add(id);
-      const normalized = id
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]+/g, "-")
-        .replace(/^-+|-+$/g, "") || "mcp";
+      const normalized =
+        id
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]+/g, "-")
+          .replace(/^-+|-+$/g, "") || "mcp";
       if (normalizedIds.has(normalized)) {
         findings.push(
-          invalid(
-            `package.json#pi.mcp server id '${id}' collides after normalization`
-          )
+          invalid(`package.json#pi.mcp server id '${id}' collides after normalization`)
         );
       }
       normalizedIds.add(normalized);
     }
-    if (
-      Object.hasOwn(server, "required") &&
-      typeof server.required !== "boolean"
-    ) {
-      findings.push(
-        invalid(
-          `package.json#pi.mcp.servers[${index}].required must be boolean`
-        )
-      );
+    if (Object.hasOwn(server, "required") && typeof server.required !== "boolean") {
+      findings.push(invalid(`package.json#pi.mcp.servers[${index}].required must be boolean`));
     }
     if (Object.hasOwn(server, "tools")) {
-      if (
-        !server.tools ||
-        typeof server.tools !== "object" ||
-        Array.isArray(server.tools)
-      ) {
-        findings.push(
-          invalid(
-            `package.json#pi.mcp.servers[${index}].tools must be an object`
-          )
-        );
+      if (!server.tools || typeof server.tools !== "object" || Array.isArray(server.tools)) {
+        findings.push(invalid(`package.json#pi.mcp.servers[${index}].tools must be an object`));
       } else {
         const tools = server.tools as Record<string, unknown>;
         const toolsUnknown = Object.keys(tools).filter(
@@ -376,22 +426,12 @@ function assertPackageResourcePath(
   }
 }
 
-export function assertRecipePathContained(
-  packageDir: string,
-  path: string,
-  label: string
-): void {
+export function assertRecipePathContained(packageDir: string, path: string, label: string): void {
   const root = realpathSync(packageDir);
   const target = realpathSync(path);
   const relativePath = relative(root, target);
-  if (
-    relativePath === ".." ||
-    relativePath.startsWith(`..${sep}`) ||
-    isAbsolute(relativePath)
-  ) {
-    throw new RecipePackageError(
-      `Recipe ${label} resolves outside the package: ${path}`
-    );
+  if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    throw new RecipePackageError(`Recipe ${label} resolves outside the package: ${path}`);
   }
 }
 
@@ -462,17 +502,12 @@ function globScanRoot(glob: string): string {
   return staticSegments.join("/");
 }
 
-function listPackageEntries(
-  root: string,
-  globs: readonly string[]
-): string[] {
+function listPackageEntries(root: string, globs: readonly string[]): string[] {
   const scanRoots = new Set<string>();
   for (const glob of globs) {
     if (!glob.trim() || !hasGlob(glob)) continue;
     if (isAbsolute(glob) || hasTraversalSegment(glob)) {
-      throw new RecipePackageError(
-        `Recipe resource glob resolves outside the package: ${glob}`
-      );
+      throw new RecipePackageError(`Recipe resource glob resolves outside the package: ${glob}`);
     }
     scanRoots.add(globScanRoot(glob));
   }
@@ -488,14 +523,9 @@ function listPackageEntries(
       return;
     }
     for (const entry of directoryEntries) {
-      const relative = relativeDir
-        ? `${relativeDir}/${entry.name}`
-        : entry.name;
+      const relative = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
       const fullPath = join(dir, entry.name);
-      if (
-        entry.isDirectory() &&
-        UNSCANNED_PACKAGE_DIRS.has(entry.name)
-      ) {
+      if (entry.isDirectory() && UNSCANNED_PACKAGE_DIRS.has(entry.name)) {
         continue;
       }
       if (!seen.has(relative)) {
@@ -517,11 +547,7 @@ function listPackageEntries(
   return entries;
 }
 
-function finding(
-  code: string,
-  message: string,
-  packageName?: string
-): RecipeValidationFinding {
+function finding(code: string, message: string, packageName?: string): RecipeValidationFinding {
   return {
     code,
     message,
@@ -574,9 +600,7 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
     const server = raw as Record<string, unknown>;
     const id = stringValue(server.id);
     if (!id || seen.has(id)) continue;
-    const tools = parseRecipeMcpToolSelection(
-      Object.hasOwn(server, "tools") ? server.tools : {}
-    );
+    const tools = parseRecipeMcpToolSelection(Object.hasOwn(server, "tools") ? server.tools : {});
     seen.add(id);
     servers.push({
       id,
@@ -586,6 +610,33 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
   }
 
   return { manifests, servers };
+}
+
+function parseRuntimeRequirements(value: unknown): RecipeRuntimeRequirements {
+  const runtime = asRecord(value);
+  const python = asRecord(runtime.python);
+  const system = asRecord(runtime.system);
+  return {
+    ...(stringValue(python.project) && stringValue(python.lockfile)
+      ? {
+          python: {
+            project: normalizeResourcePath(stringValue(python.project)!),
+            lockfile: normalizeResourcePath(stringValue(python.lockfile)!),
+            ...(stringValue(python.version) ? { version: stringValue(python.version) } : {}),
+            imports: stringArray(python.imports).map((item) => item.trim()),
+          },
+        }
+      : {}),
+    system: {
+      packages: (Array.isArray(system.packages) ? system.packages : [])
+        .map(asRecord)
+        .filter((item) => stringValue(item.id) && stringValue(item.version))
+        .map((item) => ({
+          id: stringValue(item.id)!,
+          version: stringValue(item.version)!,
+        })),
+    },
+  };
 }
 
 function packageJsonPath(packageDir: string): string | undefined {
@@ -635,6 +686,7 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
     resources,
     resourceDeclarations: resourceDeclarations(pi),
     mcp: parseMcpConfig(pi.mcp),
+    runtime: parseRuntimeRequirements(pi.runtime),
   };
   Object.defineProperty(manifest, SOURCE_FINDINGS, {
     value: sourceShapeFindings(pi, manifest.name),
@@ -643,9 +695,7 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
   return manifest;
 }
 
-export function resolvePiPackageMcpManifestPaths(
-  pkg: RecipePackageManifest
-): string[] {
+export function resolvePiPackageMcpManifestPaths(pkg: RecipePackageManifest): string[] {
   const globs = pkg.mcp.manifests;
   const resolved: string[] = [];
   const seen = new Set<string>();
@@ -677,9 +727,7 @@ export function resolvePiPackageMcpManifestPaths(
     }
     if (!hasGlob(glob)) {
       if (!existsSync(target)) {
-        throw new RecipePackageError(
-          `Recipe ${pkg.name} declares missing mcp manifest: ${glob}`
-        );
+        throw new RecipePackageError(`Recipe ${pkg.name} declares missing mcp manifest: ${glob}`);
       }
       assertResourceTreeContained(pkg.path, target, "mcp manifest");
       add(target);
@@ -773,16 +821,12 @@ export function packageResourcePaths(
   return defaultPiPackageResourcePaths(pkg, key);
 }
 
-export function validatePiPackageManifest(
-  pkg: RecipePackageManifest
-): RecipeValidationReport {
+export function validatePiPackageManifest(pkg: RecipePackageManifest): RecipeValidationReport {
   const findings: RecipeValidationFinding[] = [
     ...((pkg as ParsedRecipePackageManifest)[SOURCE_FINDINGS] ?? []),
   ];
   if (!pkg.name.trim()) {
-    findings.push(
-      finding("package.name_missing", "Package is missing name")
-    );
+    findings.push(finding("package.name_missing", "Package is missing name"));
   }
   if (!piPackageManifestPath(pkg.path)) {
     findings.push(
@@ -817,6 +861,33 @@ export function validatePiPackageManifest(
         pkg.name
       )
     );
+  }
+  if (pkg.runtime.python) {
+    for (const [key, authored, expected] of [
+      ["project", pkg.runtime.python.project, "directory"],
+      ["lockfile", pkg.runtime.python.lockfile, "file"],
+    ] as const) {
+      const target = resolve(pkg.path, authored);
+      const rel = relative(resolve(pkg.path), target);
+      const outside =
+        isAbsolute(authored) ||
+        hasTraversalSegment(authored) ||
+        rel === ".." ||
+        rel.startsWith(`..${sep}`) ||
+        isAbsolute(rel);
+      const exists =
+        existsSync(target) &&
+        (expected === "directory" ? statSync(target).isDirectory() : statSync(target).isFile());
+      if (outside || !exists) {
+        findings.push(
+          finding(
+            "pi.runtime_path_invalid",
+            `package.json#pi.runtime.python.${key} must resolve to a ${expected} inside the Recipe`,
+            pkg.name
+          )
+        );
+      }
+    }
   }
   return {
     valid: findings.length === 0,

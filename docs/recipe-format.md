@@ -222,6 +222,40 @@ The host owns:
 
 Those host concerns MUST NOT become mandatory Recipe source fields.
 
+## Runtime requirements
+
+A Recipe MAY declare portable runtime requirements under `pi.runtime`. These
+requirements are fail-closed: a host MUST satisfy every declaration before the
+first model call or reject the Recipe with an actionable diagnostic.
+
+```json
+{
+  "pi": {
+    "runtime": {
+      "python": {
+        "project": "python",
+        "lockfile": "python/uv.lock",
+        "version": ">=3.12,<3.15",
+        "imports": ["pandas", "openpyxl"]
+      },
+      "system": {
+        "packages": [{ "id": "document.pdf-tools", "version": "1" }]
+      }
+    }
+  }
+}
+```
+
+`python.project` names a Recipe-relative Python project directory and
+`python.lockfile` names its committed `uv.lock`. Hosts MUST install with frozen
+resolution into a Recipe-local environment. `imports` are optional boot
+preflights. Hosts MUST NOT install into system Python or resolve an unlocked
+dependency graph.
+
+System package ids name versioned, host-approved bundles. They are not apt,
+brew, or shell commands. A host that does not provide a declared bundle MUST
+fail closed; Recipes cannot run privileged installers.
+
 Recipe packages are trusted application code. In particular, authored
 TypeScript extensions execute inside the Pi process with its authority. A host
 that accepts third-party Recipes MUST review or isolate them before execution;
