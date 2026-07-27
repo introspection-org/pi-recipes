@@ -99,7 +99,7 @@ export interface RecipePackageManifest {
   /** Whether each resource key was explicitly authored in package.json#pi. */
   resourceDeclarations?: Record<keyof RecipePackageResources, boolean>;
   mcp: RecipePackageMcpConfig;
-  runtime: RecipeRuntimeRequirements;
+  runtime?: RecipeRuntimeRequirements;
 }
 
 export type PiPackageResources = RecipePackageResources;
@@ -862,7 +862,7 @@ export function validatePiPackageManifest(pkg: RecipePackageManifest): RecipeVal
       )
     );
   }
-  if (pkg.runtime.python) {
+  if (pkg.runtime?.python) {
     for (const [key, authored, expected] of [
       ["project", pkg.runtime.python.project, "directory"],
       ["lockfile", pkg.runtime.python.lockfile, "file"],
