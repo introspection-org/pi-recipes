@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/introspection-org/recipes/compare/v0.14.2...v0.15.0) (2026-07-27)
+
+
+### Features
+
+* declare portable runtime requirements ([#151](https://github.com/introspection-org/recipes/issues/151)) ([ad91ed6](https://github.com/introspection-org/recipes/commit/ad91ed680bace8d059b57c89a364a959f02aa7b1))
+
 ## [0.14.2](https://github.com/introspection-org/recipes/compare/v0.14.1...v0.14.2) (2026-07-27)
 
 
