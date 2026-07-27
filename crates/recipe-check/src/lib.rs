@@ -1587,9 +1587,6 @@ fn validate_resolved_agent_mcp(
     }
 
     for (server_id, selection) in &mcp.servers {
-        let Some(include) = &selection.include else {
-            continue;
-        };
         let Some(server_policy) = mcp_tool_policy.and_then(|policy| policy.get(server_id)) else {
             ctx.error(
                 "agent.mcp_server_undeclared",
@@ -1597,6 +1594,9 @@ fn validate_resolved_agent_mcp(
                 format!("Recipe agent '{name}' references undeclared MCP server '{server_id}'"),
                 Some("add the server to package.json#pi.mcp.servers or remove it from the agent"),
             );
+            continue;
+        };
+        let Some(include) = &selection.include else {
             continue;
         };
         for tool in include.iter().filter(|tool| tool.as_str() != "*") {
@@ -1660,8 +1660,20 @@ fn validate_mcp_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
             if let Some(manifests) = map.get("manifests") {
                 match manifests {
                     JsonValue::Array(items) => {
+                        let mut seen = BTreeSet::new();
                         for (index, item) in items.iter().enumerate() {
                             if let Some(path) = string_value(Some(item)) {
+                                if !seen.insert(path.clone()) {
+                                    ctx.error(
+                                        "pi.mcp_invalid",
+                                        PACKAGE_JSON,
+                                        format!(
+                                            "package.json#pi.mcp.manifests contains duplicate entry '{path}'"
+                                        ),
+                                        Some("remove duplicate MCP manifest declarations"),
+                                    );
+                                    continue;
+                                }
                                 validate_mcp_manifest_pattern(&path, ctx);
                             } else {
                                 ctx.error(
@@ -2479,6 +2491,50 @@ mod tests {
         assert!(report.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "agent.mcp_tool_undeclared"
                 && diagnostic.message.contains("salesforce/delete_org")
+        }));
+    }
+
+    #[test]
+    fn rejects_agent_server_without_package_policy_or_include() {
+        let input = selector_recipe(
+            json!({ "include": ["*"] }),
+            "  mode: cli\n  servers:\n    ghost: {}\n",
+            true,
+        );
+
+        let report = check_recipe_files(&input);
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.mcp_server_undeclared"
+                && diagnostic.message.contains("ghost")
+        }));
+    }
+
+    #[test]
+    fn rejects_duplicate_mcp_manifest_declarations() {
+        let package = json!({
+            "name": "duplicate-manifests",
+            "pi": {
+                "mcp": {
+                    "manifests": ["mcp.json", "mcp.json"]
+                }
+            }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("mcp.json", "{}"),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "pi.mcp_invalid"
+                && diagnostic.message.contains("duplicate entry 'mcp.json'")
         }));
     }
 

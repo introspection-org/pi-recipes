@@ -180,8 +180,40 @@ function containsDeclaredResource(
 ): boolean {
   return patterns.some(
     (pattern) =>
-      pattern === directoryPath || pattern.startsWith(`${directoryPath}/`)
+      pattern === directoryPath ||
+      pattern.startsWith(`${directoryPath}/`) ||
+      globCanMatchDescendant(pattern, directoryPath)
   );
+}
+
+function globCanMatchDescendant(pattern: string, directoryPath: string): boolean {
+  if (!/[?*]/.test(pattern)) return false;
+  const patternParts = pattern.split("/").filter(Boolean);
+  const directoryParts = directoryPath.split("/").filter(Boolean);
+  const segmentMatches = (glob: string, value: string): boolean => {
+    let source = "^";
+    for (const character of glob) {
+      if (character === "*") source += ".*";
+      else if (character === "?") source += ".";
+      else source += character.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    }
+    return new RegExp(`${source}$`).test(value);
+  };
+  const canMatchPrefix = (patternIndex: number, pathIndex: number): boolean => {
+    if (pathIndex === directoryParts.length) return true;
+    if (patternIndex === patternParts.length) return false;
+    if (patternParts[patternIndex] === "**") {
+      return (
+        canMatchPrefix(patternIndex + 1, pathIndex) ||
+        canMatchPrefix(patternIndex, pathIndex + 1)
+      );
+    }
+    return (
+      segmentMatches(patternParts[patternIndex]!, directoryParts[pathIndex]!) &&
+      canMatchPrefix(patternIndex + 1, pathIndex + 1)
+    );
+  };
+  return canMatchPrefix(0, 0);
 }
 
 function snapshot(recipeDir: string): {

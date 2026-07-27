@@ -153,6 +153,29 @@ describe("shared Recipe validator bridge", () => {
     ).toEqual([join(root, "dist", "index.js")]);
   });
 
+  it("retains generated directories matched by wildcard prefixes", async () => {
+    const root = recipe(
+      "name: unused\nmodel:\n  name: anthropic/claude-haiku-4-5\n"
+    );
+    mkdirSync(join(root, "dist", "agents"), { recursive: true });
+    writeFileSync(
+      join(root, "dist", "agents", "agent.yaml"),
+      "name: agent\nmodel:\n  name: anthropic/claude-haiku-4-5\n"
+    );
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "validator-bridge",
+        pi: { agents: ["*/agents/*.yaml"] },
+      })
+    );
+
+    await expect(checkRecipeAtLoad(root, env)).resolves.toMatchObject({
+      valid: true,
+    });
+    expect(resolveRecipe({ recipeDir: root }).selectAgent().name).toBe("agent");
+  });
+
   it("rejects a Recipe with no agents in both implementations", async () => {
     const root = recipe(
       "name: agent\nmodel:\n  name: anthropic/claude-haiku-4-5\n"
