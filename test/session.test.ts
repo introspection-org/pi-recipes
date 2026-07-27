@@ -265,6 +265,28 @@ describe("createAgentSession", () => {
     expect(onDiagnostics).toHaveBeenCalledOnce();
   });
 
+  it("accepts gateway-authenticated model wiring without provider credentials", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const base = getModel("anthropic", "claude-sonnet-4-5");
+    expect(base).toBeDefined();
+
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir }),
+      cwd: workspaceDir,
+      env: cleanEnv(),
+      modelOverride: {
+        ...base!,
+        baseUrl: "https://managed-gateway.example/v1",
+        headers: { authorization: "Bearer gateway-token" },
+      },
+    });
+    handles.push(handle);
+
+    expect(handle.session.model?.baseUrl).toBe(
+      "https://managed-gateway.example/v1"
+    );
+  });
+
   it("rejects a host transport for a different Recipe model", async () => {
     const { recipeDir, workspaceDir } = fixture();
     const modelOverride = {

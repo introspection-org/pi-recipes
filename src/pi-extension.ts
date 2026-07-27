@@ -106,6 +106,7 @@ interface RecipeLaunchState {
   agentMcpMode: RecipeAgentMcpMode;
   initialMcpToolNames: string[];
   mcpSearchToolName?: string;
+  extensionAllowedToolNames: Set<string>;
   mcpPrivateEnv?: NodeJS.ProcessEnv;
   mcpPrivateDirectory?: string;
   mcpAmbientMcporterConfig?: string;
@@ -682,6 +683,10 @@ export function createRecipesExtension(
       mcpConfigured: false,
       agentMcpMode: "cli",
       initialMcpToolNames: [],
+      extensionAllowedToolNames: new Set([
+        ...resolved.tools,
+        ...(resolved.subagents.size > 0 ? ["agent"] : []),
+      ]),
     };
     return state;
   }
@@ -757,10 +762,7 @@ export function createRecipesExtension(
           }),
           launchState.extensionRegistrations,
           extensionPath,
-          recipeExtensionToolAllowlist(
-            launchState.resolved.tools,
-            launchState.resolved.subagents.size > 0
-          )
+          launchState.extensionAllowedToolNames
         );
         await factory(pi);
         loadedCount += 1;
@@ -986,6 +988,14 @@ export function createRecipesExtension(
       launchState.initialMcpToolNames =
         materialized.initialActiveToolNames;
       launchState.mcpSearchToolName = materialized.searchToolName;
+      for (const toolName of materialized.toolNames) {
+        launchState.extensionAllowedToolNames.add(toolName);
+      }
+      if (materialized.searchToolName) {
+        launchState.extensionAllowedToolNames.add(
+          materialized.searchToolName
+        );
+      }
       ctx.ui.notify(
         `Recipe MCP tools: ${materialized.toolNames.length} registered, ${materialized.initialActiveToolNames.length} initially active${
           materialized.searchToolName ? "; deferred search enabled" : ""

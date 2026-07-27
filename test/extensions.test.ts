@@ -124,9 +124,44 @@ describe("Recipe extension context", () => {
     expect(pi.setActiveTools).not.toHaveBeenCalled();
   });
 
+  it("permits tools authorized after an extension factory is loaded", async () => {
+    const pi = api();
+    const allowed = new Set(["read"]);
+    let extensionApi: ExtensionAPI | undefined;
+    const factory = bindRecipeExtensionFactory(
+      (boundApi) => {
+        extensionApi = boundApi;
+      },
+      context(),
+      undefined,
+      "extensions/mcp-policy.ts",
+      allowed
+    );
+    await factory(pi);
+
+    allowed.add("mcp_google_drive_search");
+    extensionApi!.setActiveTools(["read", "mcp_google_drive_search"]);
+
+    expect(pi.setActiveTools).toHaveBeenCalledWith([
+      "read",
+      "mcp_google_drive_search",
+    ]);
+  });
+
   it("permits the session-generated agent tool only for delegated sessions", () => {
-    expect(recipeExtensionToolAllowlist(["read"], true)).toEqual(
-      new Set(["read", "agent"])
+    expect(
+      recipeExtensionToolAllowlist(
+        ["read"],
+        true,
+        ["mcp_google_drive_search", "mcp_search"]
+      )
+    ).toEqual(
+      new Set([
+        "read",
+        "agent",
+        "mcp_google_drive_search",
+        "mcp_search",
+      ])
     );
     expect(recipeExtensionToolAllowlist(["read"], false)).toEqual(
       new Set(["read"])

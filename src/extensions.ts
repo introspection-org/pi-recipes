@@ -25,9 +25,14 @@ export interface RecipeExtensionRegistrationRegistry {
 /** @internal Exact tool names a package extension may keep model-visible. */
 export function recipeExtensionToolAllowlist(
   declaredTools: readonly string[],
-  hasAgentTool: boolean
+  hasAgentTool: boolean,
+  additionalToolNames: readonly string[] = []
 ): ReadonlySet<string> {
-  return new Set([...declaredTools, ...(hasAgentTool ? ["agent"] : [])]);
+  return new Set([
+    ...declaredTools,
+    ...(hasAgentTool ? ["agent"] : []),
+    ...additionalToolNames,
+  ]);
 }
 
 /** @internal Reject ambiguous registrations across the package closure. */

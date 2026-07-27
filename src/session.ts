@@ -474,6 +474,7 @@ async function createSessionForAgent(
       : await resolveRecipeCredentials({
           provider: credentialProvider,
           env,
+          ...(opts.modelOverride ? { model: opts.modelOverride } : {}),
           ...(opts.credentials ? { credentials: opts.credentials } : {}),
         });
   const modelRuntime = await ModelRuntime.create({ credentials, modelsPath: null });
@@ -554,7 +555,11 @@ async function createSessionForAgent(
           extensionPath,
           recipeExtensionToolAllowlist(
             recipe.tools,
-            recipe.subagents.size > 0 && opts.runController !== null
+            recipe.subagents.size > 0 && opts.runController !== null,
+            [
+              ...(mcp.tools?.map((tool) => tool.name) ?? []),
+              ...(mcp.searchToolName ? [mcp.searchToolName] : []),
+            ]
           )
         )
       );
