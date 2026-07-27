@@ -28,9 +28,11 @@ export interface RecipeCheckReport {
   diagnostics: RecipeCheckDiagnostic[];
 }
 
-// Keep Pi startup snapshots aligned with the shared Recipe checker: generated
-// dependency/build trees are not authored Recipe source.
+// Skip large generated trees unless package.json explicitly declares a
+// resource inside them. Explicit declarations are part of the Recipe and must
+// remain visible to the checker exactly as they are to the runtime resolver.
 const BLOCKED_GENERATED_DIRS = new Set([
+  ".git",
   "node_modules",
   "dist",
   "build",
@@ -149,12 +151,46 @@ function needsContent(path: string): boolean {
   );
 }
 
+function declaredResourcePatterns(recipeDir: string): string[] {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    ) as { pi?: Record<string, unknown> };
+    if (!raw.pi || typeof raw.pi !== "object" || Array.isArray(raw.pi)) {
+      return [];
+    }
+    return ["agents", "extensions", "skills", "prompts"].flatMap((key) => {
+      const value = raw.pi?.[key];
+      if (!Array.isArray(value)) return [];
+      return value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) =>
+          item.trim().replaceAll("\\", "/").replace(/^\.\/+/, "")
+        );
+    });
+  } catch {
+    // The checker reports malformed or unreadable package.json itself.
+    return [];
+  }
+}
+
+function containsDeclaredResource(
+  directoryPath: string,
+  patterns: readonly string[]
+): boolean {
+  return patterns.some(
+    (pattern) =>
+      pattern === directoryPath || pattern.startsWith(`${directoryPath}/`)
+  );
+}
+
 function snapshot(recipeDir: string): {
   files: Array<{ path: string; content?: string }>;
   directories: string[];
 } {
   const files: Array<{ path: string; content?: string }> = [];
   const directories: string[] = [];
+  const resourcePatterns = declaredResourcePatterns(recipeDir);
   const visit = (directory: string, ancestors: ReadonlySet<string>): void => {
     const realDirectory = realpathSync(directory);
     if (ancestors.has(realDirectory)) return;
@@ -178,7 +214,10 @@ function snapshot(recipeDir: string): {
         }
       }
       if (target.isDirectory()) {
-        if (entry.name === ".git" || BLOCKED_GENERATED_DIRS.has(entry.name)) {
+        if (
+          BLOCKED_GENERATED_DIRS.has(entry.name) &&
+          !containsDeclaredResource(path, resourcePatterns)
+        ) {
           continue;
         }
         directories.push(path);
