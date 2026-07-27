@@ -53,6 +53,7 @@ import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
 import {
   bindRecipeExtensionFactory,
   createRecipeExtensionRegistrationRegistry,
+  recipeExtensionToolAllowlist,
   type RecipeExtensionSessionContext,
 } from "./extensions.js";
 import {
@@ -551,7 +552,10 @@ async function createSessionForAgent(
           recipeExtensionContext,
           recipeRegistrations,
           extensionPath,
-          new Set(recipe.tools)
+          recipeExtensionToolAllowlist(
+            recipe.tools,
+            recipe.subagents.size > 0 && opts.runController !== null
+          )
         )
       );
     }

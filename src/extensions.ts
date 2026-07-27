@@ -22,6 +22,14 @@ export interface RecipeExtensionRegistrationRegistry {
   release(kind: string, name: string, owner: string): void;
 }
 
+/** @internal Exact tool names a package extension may keep model-visible. */
+export function recipeExtensionToolAllowlist(
+  declaredTools: readonly string[],
+  hasAgentTool: boolean
+): ReadonlySet<string> {
+  return new Set([...declaredTools, ...(hasAgentTool ? ["agent"] : [])]);
+}
+
 /** @internal Reject ambiguous registrations across the package closure. */
 export function createRecipeExtensionRegistrationRegistry(): RecipeExtensionRegistrationRegistry {
   const owners = new Map<string, string>();

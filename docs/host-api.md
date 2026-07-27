@@ -98,7 +98,7 @@ The returned `RecipeSessionHandle` exposes:
 
 - `session` — Pi prompt, steer, follow-up, abort, messages, and events;
 - `agent` — the selected resolved portable definition;
-- `runs` — the subagent run controller;
+- `agentRuns` — the subagent run controller;
 - `dispose()` — child, session, instrumentation, and MCP cleanup.
 
 Host injection is intentional. A managed host can supply durable session state,

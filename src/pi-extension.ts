@@ -21,6 +21,7 @@ import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
 import {
   bindRecipeExtensionFactory,
   createRecipeExtensionRegistrationRegistry,
+  recipeExtensionToolAllowlist,
   type RecipeExtensionRegistrationRegistry,
 } from "./extensions.js";
 import {
@@ -756,7 +757,10 @@ export function createRecipesExtension(
           }),
           launchState.extensionRegistrations,
           extensionPath,
-          new Set(launchState.resolved.tools)
+          recipeExtensionToolAllowlist(
+            launchState.resolved.tools,
+            launchState.resolved.subagents.size > 0
+          )
         );
         await factory(pi);
         loadedCount += 1;

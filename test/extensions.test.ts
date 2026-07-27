@@ -6,6 +6,7 @@ import {
   forAgent,
   forRecipeSession,
   getRecipeSessionContext,
+  recipeExtensionToolAllowlist,
   type RecipeExtensionSessionContext,
 } from "../src/extensions.js";
 
@@ -121,5 +122,14 @@ describe("Recipe extension context", () => {
       "attempted to activate undeclared tool(s): bash"
     );
     expect(pi.setActiveTools).not.toHaveBeenCalled();
+  });
+
+  it("permits the session-generated agent tool only for delegated sessions", () => {
+    expect(recipeExtensionToolAllowlist(["read"], true)).toEqual(
+      new Set(["read", "agent"])
+    );
+    expect(recipeExtensionToolAllowlist(["read"], false)).toEqual(
+      new Set(["read"])
+    );
   });
 });
