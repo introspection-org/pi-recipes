@@ -1,6 +1,6 @@
 [package]
 name = "recipe-check"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Pure validation engine for Recipe packages"
 license = "Apache-2.0"
