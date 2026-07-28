@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/introspection-org/recipes/compare/v0.15.0...v0.16.0) (2026-07-28)
+
+
+### Features
+
+* publish introspection recipe checker ([#153](https://github.com/introspection-org/recipes/issues/153)) ([b8be591](https://github.com/introspection-org/recipes/commit/b8be5914aa05ecb144110cd4f6831222cd79c7b5))
+
 ## [0.15.0](https://github.com/introspection-org/recipes/compare/v0.14.2...v0.15.0) (2026-07-27)
 
 
