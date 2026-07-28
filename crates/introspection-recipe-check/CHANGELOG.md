@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0 (2026-07-28)
+
+
+### Features
+
+* publish introspection recipe checker ([#153](https://github.com/introspection-org/recipes/issues/153)) ([b8be591](https://github.com/introspection-org/recipes/commit/b8be5914aa05ecb144110cd4f6831222cd79c7b5))
+
 ## 0.1.0
 
 - Initial release of `introspection-recipe-check`, continuing the portable
