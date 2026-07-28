@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/introspection-org/recipes/compare/recipe-check-v0.1.1...recipe-check-v0.2.0) (2026-07-27)
+
+
+### Features
+
+* declare portable runtime requirements ([#151](https://github.com/introspection-org/recipes/issues/151)) ([ad91ed6](https://github.com/introspection-org/recipes/commit/ad91ed680bace8d059b57c89a364a959f02aa7b1))
+
+
+### Bug Fixes
+
+* allow blank agent system instructions ([#148](https://github.com/introspection-org/recipes/issues/148)) ([b279365](https://github.com/introspection-org/recipes/commit/b2793651b7e3830f38b5959e0c3f948eda6b92be))
+
 ## [0.1.1](https://github.com/introspection-org/recipes/compare/recipe-check-v0.1.0...recipe-check-v0.1.1) (2026-07-27)
 
 
