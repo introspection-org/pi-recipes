@@ -5,7 +5,7 @@ dist/
 coverage/
 tmp/
 target/
-vendor/recipe-check/
+vendor/introspection-recipe-check/
 vendor/mcp-client/
 .pi/bin/
 .pi/mcp-catalogs/

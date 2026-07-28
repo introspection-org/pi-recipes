@@ -1,6 +1,6 @@
-# recipe-check
+# introspection-recipe-check
 
-Pure structural validation for [Recipe](https://pi.recipes) packages.
+Pure structural validation for portable [Recipe](https://pi.recipes) packages.
 
 The checker validates the portable authored contract:
 
@@ -23,7 +23,7 @@ used by hosts; those values are not part of the Recipe Format.
 The core API accepts an in-memory snapshot and never touches the filesystem:
 
 ```rust
-use recipe_check::{check_recipe_files, RecipeFile, RecipeFiles};
+use introspection_recipe_check::{check_recipe_files, RecipeFile, RecipeFiles};
 
 let input = RecipeFiles {
     files: vec![
@@ -39,14 +39,14 @@ let report = check_recipe_files(&input);
 assert!(!report.valid);
 ```
 
-The `recipe-check` binary is a private snapshot-in/snapshot-out bridge embedded
+The `introspection-recipe-check` binary is a private snapshot-in/snapshot-out bridge embedded
 in the npm package so `pi --recipe` can run the same checker at startup. It is
 not a user-facing filesystem CLI.
 
 Diagnostics include a stable code, Recipe-relative path, optional 1-based
 source span, message, and optional help text.
 
-`recipe_check::spec` exports the normalized judge types and, with the optional
+`introspection_recipe_check::spec` exports the normalized judge types and, with the optional
 `schema` feature, their JSON Schema. Judge execution remains host-owned.
 
 ## License

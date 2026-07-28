@@ -37,7 +37,8 @@ jobs:
       pull-requests: write
     outputs:
       root_release_created: ${{ steps.root_release.outputs.release_created }}
-      crate_release_created: ${{ steps.checker_release.outputs['crates/recipe-check--release_created'] }}
+      crate_release_created: ${{ steps.checker_release.outputs['crates/introspection-recipe-check--release_created'] }}
+      python_release_created: ${{ steps.checker_release.outputs['bindings/python--release_created'] }}
     steps:
       # Each train owns a different manifest. Concurrent release PRs therefore
       # never edit the same version-state file.
@@ -121,7 +122,7 @@ jobs:
       - run: cargo build --release --target ${{ matrix.target }} -p pi-mcp-client
         if: ${{ matrix.package_mcp }}
 
-      - run: cargo build --release --target ${{ matrix.target }} -p recipe-check --bin recipe-check
+      - run: cargo build --release --target ${{ matrix.target }} -p introspection-recipe-check --bin introspection-recipe-check
 
       - run: node scripts/package-mcp-client.mjs
         if: ${{ matrix.package_mcp }}
@@ -130,11 +131,11 @@ jobs:
           MCP_CLIENT_ARCH: ${{ matrix.arch }}
           CARGO_BUILD_TARGET: ${{ matrix.target }}
 
-      - run: node scripts/package-recipe-check.mjs
+      - run: node scripts/package-introspection-recipe-check.mjs
         env:
-          RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
-          RECIPE_CHECK_ARCH: ${{ matrix.arch }}
-          RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
+          INTROSPECTION_RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
+          INTROSPECTION_RECIPE_CHECK_ARCH: ${{ matrix.arch }}
+          INTROSPECTION_RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
           CARGO_BUILD_TARGET: ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
@@ -142,7 +143,7 @@ jobs:
           name: native-tools-${{ matrix.platform_id }}
           path: |
             vendor/mcp-client/${{ matrix.platform }}-${{ matrix.arch }}
-            vendor/recipe-check/${{ matrix.platform_id }}
+            vendor/introspection-recipe-check/${{ matrix.platform_id }}
           if-no-files-found: error
 
   publish:
@@ -186,21 +187,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf vendor/mcp-client vendor/recipe-check
-          mkdir -p vendor/mcp-client vendor/recipe-check
+          rm -rf vendor/mcp-client vendor/introspection-recipe-check
+          mkdir -p vendor/mcp-client vendor/introspection-recipe-check
           for artifact in native-tool-artifacts/native-tools-*; do
             platform_id="${artifact##*/native-tools-}"
             mkdir -p "vendor/mcp-client/${platform_id}"
-            mkdir -p "vendor/recipe-check/${platform_id}"
+            mkdir -p "vendor/introspection-recipe-check/${platform_id}"
             find "$artifact" -type f -name 'mcp-client*' -exec cp {} "vendor/mcp-client/${platform_id}/" \;
-            find "$artifact" -type f -name 'recipe-check*' -exec cp {} "vendor/recipe-check/${platform_id}/" \;
+            find "$artifact" -type f -name 'introspection-recipe-check*' -exec cp {} "vendor/introspection-recipe-check/${platform_id}/" \;
           done
           find vendor/mcp-client -type f -name 'mcp-client*' \
             | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
-          find vendor/recipe-check -type f -name 'recipe-check*' \
+          find vendor/introspection-recipe-check -type f -name 'introspection-recipe-check*' \
             | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
           find vendor/mcp-client -maxdepth 2 -type f -print
-          find vendor/recipe-check -maxdepth 2 -type f -print
+          find vendor/introspection-recipe-check -maxdepth 2 -type f -print
 
       - run: pnpm pack:check
 
@@ -243,7 +244,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - run: cargo test -p recipe-check
+      - run: cargo test -p introspection-recipe-check
 
       - name: Publish to crates.io
         env:
@@ -251,14 +252,93 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(cargo pkgid -p recipe-check | sed 's/.*[@#]//')"
+          version="$(cargo pkgid -p introspection-recipe-check | sed 's/.*[@#]//')"
           if [[ "$version" == "0.0.0" ]]; then
-            echo "recipe-check has not been prepared by its 0.1.0 release PR"
+            echo "introspection-recipe-check has not been prepared by its 0.1.0 release PR"
             exit 1
           fi
           if curl -sfo /dev/null -A "recipes-release (github.com/introspection-org/recipes)" \
-            "https://crates.io/api/v1/crates/recipe-check/${version}"; then
-            echo "recipe-check@${version} is already published"
+            "https://crates.io/api/v1/crates/introspection-recipe-check/${version}"; then
+            echo "introspection-recipe-check@${version} is already published"
           else
-            cargo publish -p recipe-check
+            cargo publish -p introspection-recipe-check
           fi
+
+  build-python-wheels:
+    needs: release-please
+    if: ${{ always() && (needs.release-please.outputs.python_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'checker'))) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2_28"
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: "2_28"
+          - os: macos-14
+            target: aarch64-apple-darwin
+            manylinux: auto
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            manylinux: auto
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: auto
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          maturin-version: v1.11.5
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --locked --compatibility pypi --out dist --manifest-path bindings/python/Cargo.toml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish-python:
+    needs:
+      - release-please
+      - build-python-wheels
+      - publish-crate
+    if: ${{ always() && needs.build-python-wheels.result == 'success' && needs.publish-crate.result == 'success' && (needs.release-please.outputs.python_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'checker'))) }}
+    runs-on: ubuntu-latest
+    environment: publish
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: pypi-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.21"
+
+      - run: uvx --from maturin==1.11.5 maturin sdist --out dist --manifest-path bindings/python/Cargo.toml
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheel-*
+          path: dist
+          merge-multiple: true
+
+      - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true

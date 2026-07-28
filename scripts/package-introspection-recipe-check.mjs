@@ -3,29 +3,29 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const platform = process.env.RECIPE_CHECK_PLATFORM ?? process.platform;
-const arch = process.env.RECIPE_CHECK_ARCH ?? process.arch;
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const platform = process.env.INTROSPECTION_RECIPE_CHECK_PLATFORM ?? process.platform;
+const arch = process.env.INTROSPECTION_RECIPE_CHECK_ARCH ?? process.arch;
 const platformId =
-  process.env.RECIPE_CHECK_PLATFORM_ID ?? `${platform}-${arch}`;
-const executable = platform === "win32" ? "recipe-check.exe" : "recipe-check";
+  process.env.INTROSPECTION_RECIPE_CHECK_PLATFORM_ID ?? `${platform}-${arch}`;
+const executable = platform === "win32" ? "introspection-recipe-check.exe" : "introspection-recipe-check";
 const cargoTarget = process.env.CARGO_BUILD_TARGET;
 const source =
-  process.env.RECIPE_CHECK_BIN ??
+  process.env.INTROSPECTION_RECIPE_CHECK_BIN ??
   resolve(
-    root,
+    repositoryRoot,
     "target",
     ...(cargoTarget ? [cargoTarget] : []),
     "release",
     executable
   );
 if (!existsSync(source)) {
-  throw new Error(`recipe-check build output not found: ${source}`);
+  throw new Error(`introspection-recipe-check build output not found: ${source}`);
 }
 const targetDir = resolve(
-  root,
+  repositoryRoot,
   "vendor",
-  "recipe-check",
+  "introspection-recipe-check",
   platformId
 );
 const target = resolve(targetDir, executable);

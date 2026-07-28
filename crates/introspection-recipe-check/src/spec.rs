@@ -1,4 +1,4 @@
-//! Typed authored judge specification.
+//! Typed specification for authored Recipe judges.
 //!
 //! This module is the exported, typed form of the portable `judges/*.yaml`
 //! contract that [`crate::check_recipe_files`] validates diagnostically. It

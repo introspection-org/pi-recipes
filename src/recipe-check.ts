@@ -56,7 +56,7 @@ function packageRoot(): string {
 }
 
 function executableName(): string {
-  return process.platform === "win32" ? "recipe-check.exe" : "recipe-check";
+  return process.platform === "win32" ? "introspection-recipe-check.exe" : "introspection-recipe-check";
 }
 
 function packagedPlatformIds(): string[] {
@@ -99,15 +99,15 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
   command: string;
   args: string[];
 } {
-  if (env.PI_RECIPE_CHECK_BIN) {
-    return { command: executablePath(env.PI_RECIPE_CHECK_BIN), args: [] };
+  if (env.INTROSPECTION_RECIPE_CHECK_BIN) {
+    return { command: executablePath(env.INTROSPECTION_RECIPE_CHECK_BIN), args: [] };
   }
   const root = packageRoot();
   for (const platformId of packagedPlatformIds()) {
     const packaged = resolve(
       root,
       "vendor",
-      "recipe-check",
+      "introspection-recipe-check",
       platformId,
       executableName()
     );
@@ -122,7 +122,7 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
       return { command: executablePath(candidate), args: [] };
     }
   }
-  const manifest = resolve(root, "crates", "recipe-check", "Cargo.toml");
+  const manifest = resolve(root, "crates", "introspection-recipe-check", "Cargo.toml");
   if (existsSync(manifest)) {
     return {
       command: "cargo",
@@ -132,7 +132,7 @@ function validatorCommand(env: NodeJS.ProcessEnv): {
         "--manifest-path",
         manifest,
         "--bin",
-        "recipe-check",
+        "introspection-recipe-check",
         "--",
       ],
     };

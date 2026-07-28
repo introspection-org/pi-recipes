@@ -1,4 +1,4 @@
-//! Portable validation for authored `judges/*.yaml` definitions.
+//! Portable validation for authored Recipe `judges/*.yaml` definitions.
 //!
 //! This module deliberately stops at the recipe boundary. It validates the
 //! authored, platform-neutral contract but does not calculate project-scoped

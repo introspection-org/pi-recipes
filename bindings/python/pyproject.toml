@@ -1,0 +1,49 @@
+[build-system]
+requires = ["maturin>=1.9.4,<2"]
+build-backend = "maturin"
+
+[project]
+name = "introspection-recipe-check"
+dynamic = ["version"]
+description = "Python bindings for the I/O-free Recipe validation engine"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Introspection" }]
+keywords = ["pi", "recipes", "validation", "lint", "agents"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Rust",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://pi.recipes"
+Repository = "https://github.com/introspection-org/recipes"
+Issues = "https://github.com/introspection-org/recipes/issues"
+
+[dependency-groups]
+dev = [
+  "maturin==1.11.5",
+  "mypy==2.3.0",
+  "pytest>=9,<10",
+  "ruff==0.15.22",
+]
+
+[tool.uv]
+package = false
+required-version = "==0.11.21"
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "introspection_recipe_check._native"
+python-source = "python"
+strip = true
