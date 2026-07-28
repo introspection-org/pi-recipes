@@ -138,6 +138,18 @@ defined in [Recipe judges](recipe-judges.md). The Recipe Format owns this
 declarative evaluation contract; hosts own transcript assembly, execution,
 credentials, retries, persistence, and result processing.
 
+## Task files
+
+A Recipe MAY include task inputs under the conventional `files/` directory.
+Every descendant file is a task-file resource, including binary formats such
+as images, PDFs, and spreadsheets. A validator MUST NOT require task-file
+contents to be UTF-8 text.
+
+The host decides where and how these files are exposed to an agent. A host MAY
+enforce file and aggregate size limits, reject symlinks, make seeded files
+read-only, and define collision behavior with user-provided files. Those limits
+are runtime policy rather than part of the portable Recipe Format.
+
 ## Instructions, skills, prompts, and extensions
 
 `SYSTEM.md`, when present, is package-wide instruction source. Agent

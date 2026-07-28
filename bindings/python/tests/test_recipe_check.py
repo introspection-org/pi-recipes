@@ -38,6 +38,30 @@ def test_invalid_recipe_returns_typed_diagnostics() -> None:
     assert report.to_dict()["valid"] is False
 
 
+def test_accepts_binary_files_without_text_content() -> None:
+    report = introspection_recipe_check.check_recipe_files(
+        {
+            "files": [
+                {
+                    "path": "package.json",
+                    "content": (
+                        '{"name":"binary-files",'
+                        '"pi":{"agents":["agents/*.yaml"]}}'
+                    ),
+                },
+                {
+                    "path": "agents/agent.yaml",
+                    "content": "name: agent\nmodel:\n  name: test/model\n",
+                },
+                {"path": "files/example.xlsx"},
+            ]
+        }
+    )
+
+    assert report.valid
+    assert report.resources["files"] == 1
+
+
 def test_judge_parser_preserves_cloud_compatibility_surface() -> None:
     parsed = introspection_recipe_check.parse_judge_definitions(
         [

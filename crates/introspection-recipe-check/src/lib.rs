@@ -285,6 +285,14 @@ pub fn check_recipe_files(input: &RecipeFiles) -> Report {
     if judge_count > 0 {
         resource_counts.insert("judges".to_owned(), judge_count);
     }
+    let file_count = ctx
+        .files
+        .keys()
+        .filter(|path| path.starts_with("files/"))
+        .count();
+    if file_count > 0 {
+        resource_counts.insert("files".to_owned(), file_count);
+    }
 
     let valid = ctx.diagnostics.is_empty();
     Report {
@@ -3408,6 +3416,26 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "package.manifest_unreadable"));
+    }
+
+    #[test]
+    fn accepts_binary_files_in_the_conventional_files_directory() {
+        let mut input = recipe_files(&[
+            (
+                "package.json",
+                r#"{"name":"binary-files","pi":{"agents":["agents/*.yaml"]}}"#,
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\n",
+            ),
+        ]);
+        input.files.push(RecipeFile::unread("files/example.xlsx"));
+
+        let report = check_recipe_files(&input);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+        assert_eq!(report.resources.get("files"), Some(&1));
     }
 
     #[test]

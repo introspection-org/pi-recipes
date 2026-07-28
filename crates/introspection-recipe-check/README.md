@@ -10,6 +10,8 @@ The checker validates the portable authored contract:
   declared skill or subagent references;
 - package and agent MCP authorization policy;
 - direct-child `judges/*.yaml` definitions and their typed authored schema;
+- conventional `files/` task inputs, including binary files whose text content
+  is intentionally unavailable;
 - dependency lockfile presence and npm lockfile identity;
 - exclusion of local capability configuration from distributable snapshots.
 
