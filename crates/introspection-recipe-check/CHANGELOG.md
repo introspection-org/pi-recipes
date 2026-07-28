@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0
+
+- Initial release of `introspection-recipe-check`, continuing the portable
+  Recipe validation engine previously published as `recipe-check`.
+
 ## [0.2.0](https://github.com/introspection-org/recipes/compare/recipe-check-v0.1.1...recipe-check-v0.2.0) (2026-07-27)
 
 

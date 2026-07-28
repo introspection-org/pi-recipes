@@ -1,4 +1,4 @@
-//! Validation for Kubernetes-style compute resource overrides.
+//! Portable validation for Kubernetes-style Recipe compute resource overrides.
 //!
 //! Recipes may declare sandbox CPU/memory/storage overrides (for example
 //! under an Introspection manifest's `runtime.resources`):

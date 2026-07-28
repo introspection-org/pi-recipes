@@ -1,4 +1,4 @@
-//! Pure validation library for Recipe packages.
+//! Pure validation library for Introspection Recipe packages.
 //!
 //! The core API is I/O-free: [`check_recipe_files`] takes an in-memory
 //! [`RecipeFiles`] snapshot of a recipe directory and returns a [`Report`].
@@ -567,7 +567,9 @@ fn validate_pi_config(
                 "pi.unknown_key",
                 PACKAGE_JSON,
                 format!("package.json#pi contains unknown key '{key}'"),
-                Some("remove unknown pi keys or update recipe-check if this is a new recipe field"),
+                Some(
+                    "remove unknown pi keys or update introspection-recipe-check if this is a new recipe field",
+                ),
             );
         }
     }

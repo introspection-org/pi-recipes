@@ -38,6 +38,37 @@ jobs:
 
       - run: pnpm pack:check
 
+  python-bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.21"
+          enable-cache: true
+          cache-dependency-glob: bindings/python/uv.lock
+
+      - run: uv sync --project bindings/python --locked
+
+      - run: uv run --project bindings/python --locked ruff format --check bindings/python/python bindings/python/tests
+
+      - run: uv run --project bindings/python --locked ruff check bindings/python/python bindings/python/tests
+
+      - run: uv run --project bindings/python --locked mypy --strict bindings/python/python bindings/python/tests
+
+      - run: uv run --project bindings/python --locked maturin build --release --out dist --manifest-path bindings/python/Cargo.toml
+
+      - run: uv pip install --python bindings/python/.venv/bin/python --reinstall dist/*.whl
+
+      - run: uv run --project bindings/python --no-sync pytest bindings/python/tests
+
   pi-minimum:
     runs-on: ubuntu-latest
     steps:
@@ -62,9 +93,9 @@ jobs:
 
       - run: |
           cargo build -p pi-mcp-client
-          cargo build -p recipe-check --bin recipe-check
+          cargo build -p introspection-recipe-check --bin introspection-recipe-check
           MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs
-          RECIPE_CHECK_BIN=target/debug/recipe-check node scripts/package-recipe-check.mjs
+          INTROSPECTION_RECIPE_CHECK_BIN=target/debug/introspection-recipe-check node scripts/package-introspection-recipe-check.mjs
 
       - run: pnpm typecheck
 
@@ -81,26 +112,26 @@ jobs:
         with:
           node-version: 24
 
-      - run: cargo test -p pi-mcp-client -p recipe-check
+      - run: cargo test -p pi-mcp-client -p introspection-recipe-check
 
       - run: cargo build --release -p pi-mcp-client
 
-      - run: cargo build --release -p recipe-check --bin recipe-check
+      - run: cargo build --release -p introspection-recipe-check --bin introspection-recipe-check
 
       - run: node scripts/package-mcp-client.mjs
         env:
           MCP_CLIENT_PLATFORM: linux
           MCP_CLIENT_ARCH: arm64
 
-      - run: node scripts/package-recipe-check.mjs
+      - run: node scripts/package-introspection-recipe-check.mjs
         env:
-          RECIPE_CHECK_PLATFORM: linux
-          RECIPE_CHECK_ARCH: arm64
-          RECIPE_CHECK_PLATFORM_ID: linux-arm64
+          INTROSPECTION_RECIPE_CHECK_PLATFORM: linux
+          INTROSPECTION_RECIPE_CHECK_ARCH: arm64
+          INTROSPECTION_RECIPE_CHECK_PLATFORM_ID: linux-arm64
 
       - run: test -x vendor/mcp-client/linux-arm64/mcp-client
 
-      - run: test -x vendor/recipe-check/linux-arm64/recipe-check
+      - run: test -x vendor/introspection-recipe-check/linux-arm64/introspection-recipe-check
 
   native-validator-portability:
     strategy:
@@ -112,14 +143,14 @@ jobs:
             arch: x64
             platform_id: linux-x64-musl
             target: x86_64-unknown-linux-musl
-            executable: recipe-check
+            executable: introspection-recipe-check
             is_musl: true
           - os: windows-latest
             platform: win32
             arch: x64
             platform_id: win32-x64
             target: x86_64-pc-windows-msvc
-            executable: recipe-check.exe
+            executable: introspection-recipe-check.exe
             is_musl: false
     runs-on: ${{ matrix.os }}
     steps:
@@ -137,18 +168,18 @@ jobs:
         if: ${{ matrix.is_musl }}
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - run: cargo build --release --target ${{ matrix.target }} -p recipe-check --bin recipe-check
+      - run: cargo build --release --target ${{ matrix.target }} -p introspection-recipe-check --bin introspection-recipe-check
 
-      - run: node scripts/package-recipe-check.mjs
+      - run: node scripts/package-introspection-recipe-check.mjs
         env:
-          RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
-          RECIPE_CHECK_ARCH: ${{ matrix.arch }}
-          RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
+          INTROSPECTION_RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
+          INTROSPECTION_RECIPE_CHECK_ARCH: ${{ matrix.arch }}
+          INTROSPECTION_RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
           CARGO_BUILD_TARGET: ${{ matrix.target }}
 
       - name: Verify packaged validator
         shell: node {0}
         run: |
           const { existsSync } = require("node:fs");
-          const path = "vendor/recipe-check/${{ matrix.platform_id }}/${{ matrix.executable }}";
+          const path = "vendor/introspection-recipe-check/${{ matrix.platform_id }}/${{ matrix.executable }}";
           if (!existsSync(path)) throw new Error(`missing ${path}`);

@@ -4,11 +4,17 @@
   "release-type": "rust",
   "always-update": true,
   "separate-pull-requests": true,
-  "group-pull-request-title-pattern": "chore(${branch}): release recipe-check ${version}",
+  "group-pull-request-title-pattern": "chore(${branch}): release introspection-recipe-check ${version}",
   "packages": {
-    "crates/recipe-check": {
+    "crates/introspection-recipe-check": {
       "release-type": "rust",
-      "component": "recipe-check",
+      "component": "introspection-recipe-check",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
+    },
+    "bindings/python": {
+      "release-type": "rust",
+      "component": "introspection-recipe-check-python",
       "include-component-in-tag": true,
       "bump-minor-pre-major": true
     }
@@ -17,6 +23,15 @@
     {
       "type": "cargo-workspace",
       "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "introspection-recipe-check",
+      "components": [
+        "introspection-recipe-check",
+        "introspection-recipe-check-python"
+      ],
+      "merge": true
     }
   ],
   "bump-minor-pre-major": true

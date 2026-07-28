@@ -17,7 +17,9 @@ import { resolveRecipe } from "../src/recipe/resolve.js";
 describe("shared Recipe validator bridge", () => {
   const roots: string[] = [];
   const env = {
-    PI_RECIPE_CHECK_BIN: resolve("target/debug/recipe-check"),
+    INTROSPECTION_RECIPE_CHECK_BIN: resolve(
+      "target/debug/introspection-recipe-check"
+    ),
   };
 
   afterEach(() => {
@@ -532,12 +534,12 @@ describe("shared Recipe validator bridge", () => {
     );
     const binDir = mkdtempSync(join(tmpdir(), "recipe-check-mode-"));
     roots.push(binDir);
-    const validator = join(binDir, "recipe-check");
-    copyFileSync(env.PI_RECIPE_CHECK_BIN, validator);
+    const validator = join(binDir, "introspection-recipe-check");
+    copyFileSync(env.INTROSPECTION_RECIPE_CHECK_BIN, validator);
     chmodSync(validator, 0o644);
 
     await expect(
-      checkRecipeAtLoad(root, { PI_RECIPE_CHECK_BIN: validator })
+      checkRecipeAtLoad(root, { INTROSPECTION_RECIPE_CHECK_BIN: validator })
     ).resolves.toMatchObject({ valid: true });
   });
 });

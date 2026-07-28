@@ -1,12 +1,12 @@
 use std::io::Read;
 use std::process::ExitCode;
 
-use recipe_check::{check_recipe_files, RecipeFiles};
+use introspection_recipe_check::{check_recipe_files, RecipeFiles};
 
-fn run() -> Result<ExitCode, String> {
+fn run_checker() -> Result<ExitCode, String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if !args.is_empty() {
-        return Err("recipe-check does not accept arguments".to_owned());
+        return Err("introspection-recipe-check does not accept arguments".to_owned());
     }
 
     let mut input = String::new();
@@ -29,7 +29,7 @@ fn run() -> Result<ExitCode, String> {
 }
 
 fn main() -> ExitCode {
-    match run() {
+    match run_checker() {
         Ok(code) => code,
         Err(error) => {
             eprintln!("{error}");
