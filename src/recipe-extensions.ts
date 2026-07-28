@@ -1,9 +1,47 @@
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { createRequire, findPackageJSON } from "node:module";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 const require = createRequire(import.meta.url);
+
+export function resolvePackageFromHost(
+  specifier: string,
+  hostEntry: string | undefined = process.argv[1]
+): string | undefined {
+  if (!hostEntry) return undefined;
+  const realHostEntry = realpathSync(hostEntry);
+  try {
+    return createRequire(realHostEntry).resolve(specifier);
+  } catch {
+    // Pi's ESM-only packages expose an `import` condition but no CommonJS
+    // entry, so createRequire cannot resolve them even from the active host.
+  }
+  try {
+    const manifestPath = findPackageJSON(specifier, realHostEntry);
+    if (!manifestPath) return undefined;
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      exports?: string | { "."?: string | { import?: string; default?: string } };
+      module?: string;
+      main?: string;
+    };
+    const rootExport =
+      typeof manifest.exports === "string"
+        ? manifest.exports
+        : manifest.exports?.["."];
+    const entry =
+      typeof rootExport === "string"
+        ? rootExport
+        : rootExport?.import ??
+          rootExport?.default ??
+          manifest.module ??
+          manifest.main;
+    return entry ? resolve(dirname(manifestPath), entry) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function resolvePackage(specifier: string): string | undefined {
   try {
@@ -14,7 +52,7 @@ function resolvePackage(specifier: string): string | undefined {
   try {
     return require.resolve(specifier);
   } catch {
-    return undefined;
+    return resolvePackageFromHost(specifier);
   }
 }
 
