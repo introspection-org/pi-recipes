@@ -490,3 +490,24 @@ describe("npm package boundary", () => {
     expect(existsSync(join(root, "docs", "recipe-evals.md"))).toBe(false);
   });
 });
+
+describe("release train isolation", () => {
+  it("uses distinct release-please labels for root and checker trains", () => {
+    const root = join(import.meta.dirname, "..");
+    const rootConfig = JSON.parse(
+      readFileSync(join(root, "release-please-config.json"), "utf8")
+    ) as { label?: string; "release-label"?: string };
+    const checkerConfig = JSON.parse(
+      readFileSync(join(root, "release-please-checker-config.json"), "utf8")
+    ) as { label?: string; "release-label"?: string };
+
+    expect(rootConfig).toMatchObject({
+      label: "autorelease: pending-root",
+      "release-label": "autorelease: tagged-root",
+    });
+    expect(checkerConfig).toMatchObject({
+      label: "autorelease: pending-checker",
+      "release-label": "autorelease: tagged-checker",
+    });
+  });
+});

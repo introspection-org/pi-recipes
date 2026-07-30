@@ -2,6 +2,8 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "bootstrap-sha": "3e48ebaccb8eadd9672419d517173ac45a02e65d",
   "release-type": "rust",
+  "label": "autorelease: pending-checker",
+  "release-label": "autorelease: tagged-checker",
   "always-update": true,
   "separate-pull-requests": true,
   "group-pull-request-title-pattern": "chore(${branch}): release introspection-recipe-check ${version}",
