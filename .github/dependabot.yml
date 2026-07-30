@@ -6,6 +6,12 @@ version: 2
 #   cargo  -> / (cargo workspace: crates/* + bindings/python)
 #   uv     -> /bindings/python (maturin build + dev toolchain, own uv.lock)
 #
+# Commit messages: `prefix: "chore"` + `include: "scope"` renders
+# `chore(deps): …` / `chore(deps-dev): …` — Dependabot appends the (deps) scope
+# itself, so do NOT put it in the prefix. `prefix: "chore(deps)"` would emit
+# `chore(deps)(deps): …`, which is not a valid Conventional Commit and so cannot
+# be classified by release-please.
+#
 # Grouping convention matches the SDK repos: fleets that move in lockstep land
 # in one PR, everything else comes individually, and security alerts roll up
 # per ecosystem so a batch of advisories is one review rather than one each.
@@ -24,7 +30,7 @@ updates:
       - "dependencies"
       - "javascript"
     commit-message:
-      prefix: "chore(deps)"
+      prefix: "chore"
       include: "scope"
     # The Pi packages are peer + dev dependencies, not runtime `dependencies`,
     # and they are exactly the ones that need to stay current — so watch all
@@ -68,7 +74,7 @@ updates:
       - "dependencies"
       - "rust"
     commit-message:
-      prefix: "chore(deps)"
+      prefix: "chore"
       include: "scope"
     groups:
       # An update-type filter cannot express "compatible" for Cargo. Cargo's
@@ -118,7 +124,7 @@ updates:
       - "dependencies"
       - "python"
     commit-message:
-      prefix: "chore(deps)"
+      prefix: "chore"
       include: "scope"
     groups:
       python-tooling:
