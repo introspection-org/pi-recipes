@@ -105,10 +105,10 @@
 		"@earendil-works/pi-ai": "0.82.0",
 		"@earendil-works/pi-coding-agent": "0.82.0",
 		"@earendil-works/pi-tui": "0.82.0",
-		"@types/node": "^22.10.0",
+		"@types/node": "^26.1.2",
 		"esbuild": "^0.28.1",
 		"typebox": "^1.0.56",
-		"typescript": "^5.7.3",
+		"typescript": "^7.0.2",
 		"vitest": "^4.0.18"
 	}
 }
