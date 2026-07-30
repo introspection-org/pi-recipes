@@ -33,10 +33,17 @@ updates:
       prefix: "chore"
       include: "scope"
     # The Pi packages are peer + dev dependencies, not runtime `dependencies`,
-    # and they are exactly the ones that need to stay current — so watch all
-    # dependency types rather than production only.
+    # and they are exactly the ones that need to stay current — so watch every
+    # declared dependency block, not production only. `direct` covers
+    # dependencies, devDependencies, peerDependencies and optionalDependencies.
+    #
+    # NOT `all`: for npm that also includes indirect/transitive dependencies.
+    # The first run under `all` opened nine PRs for packages declared nowhere in
+    # this repo's package.json — eight lightningcss platform binaries and nanoid.
+    # Transitive packages still get security PRs; they just stop generating
+    # routine version bumps.
     allow:
-      - dependency-type: "all"
+      - dependency-type: "direct"
     groups:
       # Pi runtime and the first-party SDK the recipe format is built on.
       # No update-type filter: majors matter here and should surface promptly.
