@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.1](https://github.com/introspection-org/recipes/compare/v0.16.0...v0.16.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* isolate release please train labels ([#159](https://github.com/introspection-org/recipes/issues/159)) ([280c2c0](https://github.com/introspection-org/recipes/commit/280c2c0b7da5396e456e67feb845d3e481c60baf))
+* preserve string MCP call arguments ([#158](https://github.com/introspection-org/recipes/issues/158)) ([43f8c43](https://github.com/introspection-org/recipes/commit/43f8c43dfb65c4f27d976a8b8e1a25e56da705da))
+
 ## [0.16.0](https://github.com/introspection-org/recipes/compare/v0.15.0...v0.16.0) (2026-07-28)
 
 
