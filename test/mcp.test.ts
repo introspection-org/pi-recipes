@@ -262,6 +262,34 @@ function startStubMcpServer(options: { failListAttempts?: number } = {}): Promis
                     },
                   },
                   {
+                    name: "lookup_profile",
+                    description: "Look up one profile",
+                    inputSchema: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string" },
+                        limit: { type: "number" },
+                      },
+                      required: ["id"],
+                    },
+                  },
+                  {
+                    name: "text_only",
+                    description: "Return plain text",
+                    inputSchema: {
+                      type: "object",
+                      properties: {},
+                    },
+                  },
+                  {
+                    name: "requires_auth",
+                    description: "Return an authentication error",
+                    inputSchema: {
+                      type: "object",
+                      properties: {},
+                    },
+                  },
+                  {
                     name: "hidden_tool",
                     description: "Must not escape policy",
                     inputSchema: { type: "object", properties: {} },
@@ -275,17 +303,31 @@ function startStubMcpServer(options: { failListAttempts?: number } = {}): Promis
       }
       if (message.method === "tools/call") {
         stats.call += 1;
+        if (message.params?.name === "requires_auth") {
+          res.writeHead(401, headers).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: { code: -32001, message: "Unauthorized" },
+            })
+          );
+          return;
+        }
+        const result =
+          message.params?.name === "text_only"
+            ? { content: [{ type: "text", text: "plain output" }] }
+            : {
+                structuredContent: {
+                  tool: message.params?.name,
+                  arguments: message.params?.arguments,
+                },
+                content: [{ type: "text", text: "ok" }],
+              };
         res.writeHead(200, headers).end(
           JSON.stringify({
             jsonrpc: "2.0",
             id: message.id,
-            result: {
-              structuredContent: {
-                tool: message.params?.name,
-                arguments: message.params?.arguments,
-              },
-              content: [{ type: "text", text: "ok" }],
-            },
+            result,
           })
         );
         return;
@@ -492,6 +534,109 @@ describe("static MCP session materialization", () => {
 });
 
 describe("lazy MCP CLI discovery", () => {
+  it("uses the tool schema to preserve numeric-looking string arguments", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-mcp-string-args-"));
+    const stub = await startStubMcpServer();
+    const cwd = join(root, "workspace");
+    const recipeDir = join(root, "recipe");
+    mkdirSync(recipeDir, { recursive: true });
+    const local = writeLocalConfig(cwd, [
+      {
+        id: "stub",
+        transport: "streamable_http",
+        url: stub.url,
+        headers: { Authorization: "Bearer ${STUB_TOKEN}" },
+      },
+    ]);
+    const env: NodeJS.ProcessEnv = {
+      PI_RECIPES_MCP_LOCAL_CONFIG: local,
+      STUB_TOKEN: "test-token",
+    };
+    try {
+      const shim = await materializeSessionMcpCli({ cwd, env });
+      await materializeMcpSession({
+        cwd,
+        env,
+        manifest: recipeManifest(recipeDir, [
+          {
+            id: "stub",
+            required: true,
+            include: ["lookup_profile", "text_only", "requires_auth"],
+          },
+        ]),
+        agentMcp: [
+          {
+            serverId: "stub",
+            tools: {
+              include: ["lookup_profile", "text_only", "requires_auth"],
+            },
+          },
+        ],
+      });
+      await preloadMcpCatalogs({ env });
+      const cliEnv = Object.fromEntries(
+        Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+      );
+
+      const plain = await runMcpShim(
+        shim.shimPath,
+        ["call", "stub.lookup_profile", "id=22688", "limit=5"],
+        cliEnv
+      );
+      expect(plain).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(plain.stdout)).toMatchObject({
+        arguments: { id: "22688", limit: 5 },
+      });
+      const listCallsAfterFirstCall = stub.stats.list;
+
+      const quoted = await runMcpShim(
+        shim.shimPath,
+        ["call", "stub.lookup_profile", 'id="196921652"'],
+        cliEnv
+      );
+      expect(quoted).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(quoted.stdout)).toMatchObject({
+        arguments: { id: "196921652" },
+      });
+
+      const json = await runMcpShim(
+        shim.shimPath,
+        ["call", "stub.lookup_profile", "--json", '{"id":"22688","limit":5}'],
+        cliEnv
+      );
+      expect(json).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(json.stdout)).toMatchObject({
+        arguments: { id: "22688", limit: 5 },
+      });
+      expect(stub.stats.list).toBe(listCallsAfterFirstCall);
+
+      const textAsJson = await runMcpShim(
+        shim.shimPath,
+        ["call", "stub.text_only", "--output", "json"],
+        cliEnv
+      );
+      expect(textAsJson).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(textAsJson.stdout)).toEqual({
+        content: [{ type: "text", text: "plain output" }],
+      });
+
+      const auth = await runMcpShim(
+        shim.shimPath,
+        ["call", "stub.requires_auth", "--timeout", "1000"],
+        cliEnv
+      );
+      expect(auth).toMatchObject({ code: 1, stdout: "" });
+      expect(auth.stderr).toContain(
+        "Ask the user to authenticate this MCP connection outside the agent session"
+      );
+      expect(auth.stderr).not.toContain("mcporter auth");
+    } finally {
+      await clearMcpSession(env, cwd);
+      stub.server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("reuses one daemon runtime across concurrent calls and later commands", async () => {
     const root = mkdtempSync(join(tmpdir(), "recipes-mcp-daemon-"));
     const stub = await startStubMcpServer({ failListAttempts: 1 });

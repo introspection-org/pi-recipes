@@ -4,9 +4,15 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/prom
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { stdin as input, stderr, stdout } from "node:process";
+import { inspect } from "node:util";
 import { isMainThread, Worker } from "node:worker_threads";
 import type { Readable, Writable } from "node:stream";
-import { createCallResult, createRuntime } from "mcporter";
+import {
+  createCallResult,
+  createRuntime,
+  describeConnectionIssue,
+  type CallResult,
+} from "mcporter";
 import {
   currentMcpCommandContext,
   runWithMcpCommandContext,
@@ -43,6 +49,25 @@ const MAX_SEARCH_DESCRIPTION_CHARS = 600;
 const CATALOG_LOCK_POLL_MS = 50;
 const CATALOG_LOCK_INCOMPLETE_GRACE_MS = 1_000;
 const MCP_SESSION_ENV = "PI_RECIPES_MCP_SESSION";
+let mcporterCliPromise: Promise<typeof import("mcporter/cli")> | undefined;
+const callCatalogCache = new WeakMap<
+  McpRuntime,
+  Map<string, Promise<McpToolCatalogEntry[]>>
+>();
+
+function loadMcporterCli(): Promise<typeof import("mcporter/cli")> {
+  if (mcporterCliPromise) return mcporterCliPromise;
+  const previousDisableAutorun = process.env.MCPORTER_DISABLE_AUTORUN;
+  process.env.MCPORTER_DISABLE_AUTORUN = "1";
+  mcporterCliPromise = import("mcporter/cli").finally(() => {
+    if (previousDisableAutorun === undefined) {
+      delete process.env.MCPORTER_DISABLE_AUTORUN;
+    } else {
+      process.env.MCPORTER_DISABLE_AUTORUN = previousDisableAutorun;
+    }
+  });
+  return mcporterCliPromise;
+}
 
 async function acquireRuntime(): Promise<{
   runtime: Awaited<ReturnType<typeof createRuntime>>;
@@ -1819,7 +1844,7 @@ async function callWithMcporter(args: string[]): Promise<number> {
   let owned = false;
   try {
     ({ runtime, owned } = await acquireRuntime());
-    const { handleCall } = await import("mcporter/cli");
+    const { handleCall } = await loadMcporterCli();
     await handleCall(runtime, args);
     return process.exitCode ?? 0;
   } finally {
@@ -1845,70 +1870,45 @@ async function callWithSharedRuntime(
   }
   const server = selector.slice(0, separator);
   const tool = selector.slice(separator + 1);
-  const values: Record<string, unknown> = {};
-  let timeoutMs: number | undefined;
-  let output: "text" | "markdown" | "json" | "raw" | undefined;
-
-  for (let index = 1; index < args.length; index += 1) {
-    const token = args[index]!;
-    if (token === "--no-oauth") continue;
-    if (token === "--json" || token.startsWith("--json=")) {
-      const raw = token === "--json" ? args[++index] : token.slice("--json=".length);
-      const source = raw === "-" ? await readStdin() : raw;
-      if (!source) {
-        stderr.write("mcp call: --json expects an object or -.\n");
-        return 2;
-      }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(source);
-      } catch {
-        stderr.write("mcp call: --json contains invalid JSON.\n");
-        return 2;
-      }
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        stderr.write("mcp call: --json expects a JSON object.\n");
-        return 2;
-      }
-      Object.assign(values, parsed);
-      continue;
-    }
-    if (token === "--timeout" || token.startsWith("--timeout=")) {
-      const raw = token === "--timeout" ? args[++index] : token.slice("--timeout=".length);
-      const parsed = Number(raw);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        stderr.write("mcp call: --timeout expects a positive number.\n");
-        return 2;
-      }
-      timeoutMs = parsed;
-      continue;
-    }
-    if (token === "--output" || token.startsWith("--output=")) {
-      const raw = token === "--output" ? args[++index] : token.slice("--output=".length);
-      if (!raw || !["text", "markdown", "json", "raw"].includes(raw)) {
-        stderr.write("mcp call: --output expects text, markdown, json, or raw.\n");
-        return 2;
-      }
-      output = raw as typeof output;
-      continue;
-    }
+  const normalizedArgs = [...args];
+  for (let index = 1; index < normalizedArgs.length; index += 1) {
+    let token = normalizedArgs[index]!;
     const equals = token.indexOf("=");
-    if (equals <= 0) {
-      stderr.write(`mcp call: invalid argument '${token}'.\n`);
-      return 2;
+    if (equals > 0 && !token.startsWith("--")) {
+      const rawValue = token.slice(equals + 1);
+      try {
+        const decoded = JSON.parse(rawValue);
+        if (typeof decoded === "string") {
+          token = `${token.slice(0, equals + 1)}${decoded}`;
+          normalizedArgs[index] = token;
+        }
+      } catch {
+        // Ordinary key=value text is not JSON and needs no normalization.
+      }
     }
-    const key = token.slice(0, equals).replace(/-([a-zA-Z0-9])/g, (_match, char: string) => char.toUpperCase());
-    let raw = token.slice(equals + 1);
-    if (raw.startsWith("@@")) raw = raw.slice(1);
-    else if (raw.startsWith("@")) raw = await readFile(raw.slice(1), "utf8");
-    try {
-      values[key] = JSON.parse(raw);
-    } catch {
-      values[key] = raw;
+    for (const flag of ["--json", "--timeout", "--output"]) {
+      if (token.startsWith(`${flag}=`)) {
+        normalizedArgs.splice(index, 1, flag, token.slice(flag.length + 1));
+        break;
+      }
+    }
+    if (normalizedArgs[index] === "--json" && normalizedArgs[index + 1] === "-") {
+      normalizedArgs[index + 1] = await readStdin();
     }
   }
 
   try {
+    const { parseCallArguments, resolveCallTimeout } = await loadMcporterCli();
+    const parsed = parseCallArguments(normalizedArgs);
+    const timeoutMs = resolveCallTimeout(parsed.timeoutMs);
+    const values = await restoreSchemaStringArguments(
+      runtime,
+      server,
+      tool,
+      parsed.args,
+      parsed.schemaStringCoercionCandidates,
+      timeoutMs
+    );
     const call = runtime.callTool(server, tool, {
       args: values,
       timeoutMs,
@@ -1929,14 +1929,8 @@ async function callWithSharedRuntime(
         })
       : await call;
     const result = createCallResult(raw);
-    let rendered: unknown;
-    if (output === "raw") rendered = raw;
-    else if (output === "json") rendered = result.json();
-    else if (output === "markdown") rendered = result.markdown();
-    else if (output === "text") rendered = result.text();
-    else rendered = result.json() ?? result.structuredContent() ?? result.text() ?? raw;
-    const serialized =
-      typeof rendered === "string" ? rendered : JSON.stringify(rendered, null, 2);
+    const rendered = selectCallOutput(result, raw, parsed.output);
+    const serialized = serializeCallOutput(rendered, parsed.output);
     const configuredLimit = process.env.PI_RECIPES_MCP_MAX_OUTPUT_BYTES;
     if (configuredLimit !== undefined) {
       const limit = Number(configuredLimit);
@@ -1956,9 +1950,191 @@ async function callWithSharedRuntime(
     stdout.write(`${serialized}\n`);
     return asRecord(raw).isError === true ? 1 : 0;
   } catch (error) {
-    stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    stderr.write(`${describeSharedCallError(error, server, tool)}\n`);
     return 1;
   }
+}
+
+type CallOutputKind = "json" | "markdown" | "text" | "raw";
+type CallOutputFormat = CallOutputKind | "auto";
+
+interface SelectedCallOutput {
+  kind: CallOutputKind;
+  value: unknown;
+}
+
+function selectCallOutput(
+  result: CallResult,
+  raw: unknown,
+  format: CallOutputFormat
+): SelectedCallOutput {
+  const preferred: Record<CallOutputFormat, CallOutputKind[]> = {
+    auto: ["json", "markdown", "text", "raw"],
+    text: ["text", "markdown", "json", "raw"],
+    markdown: ["markdown", "text", "json", "raw"],
+    json: ["json", "raw"],
+    raw: ["raw"],
+  };
+  for (const kind of preferred[format]) {
+    if (kind === "json") {
+      const value = result.json();
+      if (value !== null) return { kind, value };
+    } else if (kind === "markdown") {
+      const value = result.markdown();
+      if (typeof value === "string") return { kind, value };
+    } else if (kind === "text") {
+      const value = result.text();
+      if (typeof value === "string") return { kind, value };
+    } else {
+      return { kind, value: raw };
+    }
+  }
+  return { kind: "raw", value: raw };
+}
+
+function jsonString(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return undefined;
+  }
+}
+
+function serializeCallOutput(
+  selected: SelectedCallOutput,
+  requested: CallOutputFormat
+): string {
+  if (selected.kind === "markdown" || selected.kind === "text") {
+    return String(selected.value);
+  }
+  if (selected.kind === "json") {
+    return jsonString(selected.value) ?? String(selected.value);
+  }
+  if (requested === "json") {
+    return jsonString(selected.value) ?? JSON.stringify(String(selected.value));
+  }
+  if (typeof selected.value === "string") return selected.value;
+  if (selected.value === null) return "null";
+  if (selected.value === undefined) return "undefined";
+  if (
+    typeof selected.value === "bigint" ||
+    typeof selected.value === "symbol" ||
+    typeof selected.value === "function"
+  ) {
+    return selected.value.toString();
+  }
+  return inspect(selected.value, {
+    depth: 8,
+    maxStringLength: null,
+    breakLength: 80,
+  });
+}
+
+function describeSharedCallError(
+  error: unknown,
+  server: string,
+  tool: string
+): string {
+  const issue = describeConnectionIssue(error);
+  if (issue.kind === "auth") {
+    return (
+      `Authentication is required for MCP server '${server}'. ` +
+      "Ask the user to authenticate this MCP connection outside the agent session, then retry."
+    );
+  }
+  if (issue.kind === "offline") {
+    return `MCP server '${server}' appears offline: ${issue.rawMessage}`;
+  }
+  if (issue.kind === "http") {
+    return (
+      `MCP call ${server}.${tool} failed with HTTP ${issue.statusCode ?? "error"}: ` +
+      issue.rawMessage
+    );
+  }
+  if (issue.kind === "stdio-exit") {
+    const exit =
+      typeof issue.stdioExitCode === "number"
+        ? `code ${issue.stdioExitCode}`
+        : "an unknown status";
+    const signal = issue.stdioSignal ? ` (signal ${issue.stdioSignal})` : "";
+    return `MCP server '${server}' exited with ${exit}${signal}.`;
+  }
+  return issue.rawMessage || (error instanceof Error ? error.message : String(error));
+}
+
+function schemaAllowsString(value: unknown): boolean {
+  const schema = asRecord(value);
+  if (!schema) return false;
+  if (schema.type === "string") return true;
+  if (Array.isArray(schema.type) && schema.type.includes("string")) return true;
+  return ["anyOf", "oneOf", "allOf"].some((key) => {
+    const branches = schema[key];
+    return Array.isArray(branches) && branches.some(schemaAllowsString);
+  });
+}
+
+async function loadCallInputSchema(
+  runtime: McpRuntime,
+  server: string,
+  tool: string,
+  timeoutMs: number
+): Promise<Record<string, unknown> | undefined> {
+  let cache = callCatalogCache.get(runtime);
+  if (!cache) {
+    cache = new Map();
+    callCatalogCache.set(runtime, cache);
+  }
+  let pending = cache.get(server);
+  if (!pending) {
+    pending = (async () => {
+      const sessionServer = (await readSession()).servers.find(
+        (entry) => entry.id === server
+      );
+      if (!sessionServer) return [];
+      return discoverServerCatalog(
+        runtime,
+        sessionServer,
+        DEFAULT_LIST_TIMEOUT_MS
+      );
+    })();
+    cache.set(server, pending);
+    void pending.catch(() => {
+      if (cache?.get(server) === pending) cache.delete(server);
+    });
+  }
+  const catalog = await withListTimeout(pending, timeoutMs).catch(
+    () => undefined
+  );
+  return catalog?.find((entry) => entry.name === tool)?.input_schema;
+}
+
+async function restoreSchemaStringArguments(
+  runtime: Awaited<ReturnType<typeof createRuntime>>,
+  server: string,
+  tool: string,
+  values: Record<string, unknown>,
+  candidates: Record<string, string> | undefined,
+  timeoutMs: number
+): Promise<Record<string, unknown>> {
+  if (!candidates || Object.keys(candidates).length === 0) return values;
+  const inputSchema = await loadCallInputSchema(
+    runtime,
+    server,
+    tool,
+    timeoutMs
+  );
+  const properties = asRecord(inputSchema?.properties);
+  if (!properties) return values;
+
+  let corrected: Record<string, unknown> | undefined;
+  for (const [key, rawValue] of Object.entries(candidates)) {
+    if (typeof values[key] !== "number" || !schemaAllowsString(properties[key])) {
+      continue;
+    }
+    corrected ??= { ...values };
+    corrected[key] = rawValue;
+  }
+  return corrected ?? values;
 }
 
 export async function main(args = process.argv.slice(2)): Promise<number> {
