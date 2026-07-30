@@ -71,11 +71,28 @@ updates:
       prefix: "chore(deps)"
       include: "scope"
     groups:
-      # Roll routine minor/patch bumps into one PR to cut noise; majors (which
-      # are breaking for pre-1.0 crates, and for pyo3 mean an ABI review) come
-      # as individual PRs so they can be reviewed and tested on their own.
-      cargo-minor-patch:
+      # An update-type filter cannot express "compatible" for Cargo. Cargo's
+      # compatibility rule is the leftmost NONZERO component, but Dependabot
+      # labels by numeric position — so pyo3 0.29 -> 0.30 is reported as
+      # "minor" and serde-saphyr 0.0.28 -> 0.0.29 as "patch", while Cargo
+      # treats both as breaking. A `update-types: [minor, patch]` group would
+      # therefore quietly batch exactly the changes that need individual
+      # review.
+      #
+      # So group by allow-list instead: only crates at >=1.0, where a
+      # minor/patch bump genuinely is backward compatible. Everything else —
+      # pyo3 (0.29, and a bump is an ABI review), serde-saphyr (0.0.28),
+      # signal-hook (0.3), and any dependency added later — is unlisted and
+      # arrives as its own PR. Note the exact `serde` / `serde_json` patterns:
+      # a `serde*` glob would pull pre-1.0 serde-saphyr back into the group.
+      cargo-semver-compatible:
         applies-to: version-updates
+        patterns:
+          - "regex"
+          - "schemars"
+          - "serde"
+          - "serde_json"
+          - "url"
         update-types:
           - "minor"
           - "patch"
