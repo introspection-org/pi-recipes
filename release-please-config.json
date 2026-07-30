@@ -3,6 +3,8 @@
   "bootstrap-sha": "3e48ebaccb8eadd9672419d517173ac45a02e65d",
   "release-type": "node",
   "include-component-in-tag": false,
+  "label": "autorelease: pending-root",
+  "release-label": "autorelease: tagged-root",
   "always-update": true,
   "packages": {
     ".": {
