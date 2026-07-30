@@ -1,0 +1,156 @@
+version: 2
+
+# Three ecosystems in one repo, each with its own manifest root:
+#
+#   npm    -> / (the published @introspection-ai/recipes package; pnpm)
+#   cargo  -> / (cargo workspace: crates/* + bindings/python)
+#   uv     -> /bindings/python (maturin build + dev toolchain, own uv.lock)
+#
+# Grouping convention matches the SDK repos: fleets that move in lockstep land
+# in one PR, everything else comes individually, and security alerts roll up
+# per ecosystem so a batch of advisories is one review rather than one each.
+
+updates:
+  # ── npm: the published package + its Pi peer/dev toolchain ──
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "javascript"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    # The Pi packages are peer + dev dependencies, not runtime `dependencies`,
+    # and they are exactly the ones that need to stay current — so watch all
+    # dependency types rather than production only.
+    allow:
+      - dependency-type: "all"
+    groups:
+      # Pi runtime and the first-party SDK the recipe format is built on.
+      # No update-type filter: majors matter here and should surface promptly.
+      introspection-and-pi:
+        applies-to: version-updates
+        patterns:
+          - "@introspection-sdk/*"
+          - "@introspection-ai/*"
+          - "@earendil-works/*"
+
+      typescript-tooling:
+        applies-to: version-updates
+        patterns:
+          - "typescript"
+          - "esbuild"
+          - "vitest"
+          - "typebox"
+          - "@types/node"
+
+      security-rollup:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # ── Rust: the workspace behind recipe-check and the MCP client ──
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      # An update-type filter cannot express "compatible" for Cargo. Cargo's
+      # compatibility rule is the leftmost NONZERO component, but Dependabot
+      # labels by numeric position — so pyo3 0.29 -> 0.30 is reported as
+      # "minor" and serde-saphyr 0.0.28 -> 0.0.29 as "patch", while Cargo
+      # treats both as breaking. A `update-types: [minor, patch]` group would
+      # therefore quietly batch exactly the changes that need individual
+      # review.
+      #
+      # So group by allow-list instead: only crates at >=1.0, where a
+      # minor/patch bump genuinely is backward compatible. Everything else —
+      # pyo3 (0.29, and a bump is an ABI review), serde-saphyr (0.0.28),
+      # signal-hook (0.3), and any dependency added later — is unlisted and
+      # arrives as its own PR. Note the exact `serde` / `serde_json` patterns:
+      # a `serde*` glob would pull pre-1.0 serde-saphyr back into the group.
+      cargo-semver-compatible:
+        applies-to: version-updates
+        patterns:
+          - "regex"
+          - "schemars"
+          - "serde"
+          - "serde_json"
+          - "url"
+        update-types:
+          - "minor"
+          - "patch"
+      security-rollup:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # ── Python: the maturin binding's own uv.lock (dev toolchain only) ──
+  #
+  # The dev group pins maturin/mypy/ruff exactly, and ci.yml pins the matching
+  # uv release via `astral-sh/setup-uv` + `[tool.uv] required-version`. Bumping
+  # uv itself stays manual — those two must move together.
+  - package-ecosystem: "uv"
+    directory: "/bindings/python"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      python-tooling:
+        applies-to: version-updates
+        patterns:
+          - "maturin"
+          - "mypy"
+          - "pytest*"
+          - "ruff"
+      security-rollup:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # ── GitHub Actions used by ci.yml / release-please.yml ──
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(actions)"
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+      security-rollup:
+        applies-to: security-updates
+        patterns:
+          - "*"
