@@ -1,0 +1,43 @@
+name: Dependabot auto-merge
+
+# Dependabot cannot merge anything itself — there is no auto-merge setting in
+# dependabot.yml. This workflow asks GitHub to auto-merge the PR; GitHub then
+# waits for required checks and merges when they pass. It never bypasses CI.
+#
+# Requires "Allow auto-merge" in Settings > General > Pull Requests.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Cargo is gated on the group, not the update type. Cargo's compatibility
+      # rule is the leftmost NONZERO component, but Dependabot labels by numeric
+      # position — so pyo3 0.29->0.30 reports as "minor" and serde-saphyr
+      # 0.0.28->0.0.29 as "patch" while Cargo treats both as breaking. A
+      # `!= semver-major` gate would auto-merge exactly those. The
+      # cargo-semver-compatible group is by construction >=1.0 minor/patch, so
+      # membership of it — not the label — is the safe signal.
+      #
+      # Every other ecosystem follows npm/PyPI semver, where the update type is
+      # trustworthy, so majors are the only exclusion there.
+      - name: Enable auto-merge
+        if: >
+          steps.meta.outputs.dependency-group == 'cargo-semver-compatible' ||
+          (steps.meta.outputs.package-ecosystem != 'cargo' &&
+           steps.meta.outputs.update-type != 'version-update:semver-major')
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
