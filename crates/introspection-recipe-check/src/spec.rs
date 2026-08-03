@@ -55,8 +55,9 @@ macro_rules! spec_bail {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct JudgeDefinition {
     /// Unique judge name within the recipe (at most 255 characters).
+    #[serde(alias = "judge")]
     #[cfg_attr(feature = "schema", schemars(length(max = 255), pattern(r"\S")))]
-    pub judge: String,
+    pub name: String,
     /// Optional human description (at most 2000 characters).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", schemars(length(max = 2000)))]
@@ -208,8 +209,8 @@ pub fn parse_judge_definitions(
         };
         let definition =
             normalize_judge_definition(definition, &format!("judge YAML {}", source.path))?;
-        if !seen.insert(definition.judge.clone()) {
-            spec_bail!("duplicate judge name {:?}", definition.judge);
+        if !seen.insert(definition.name.clone()) {
+            spec_bail!("duplicate judge name {:?}", definition.name);
         }
         parsed.push(ParsedJudgeDefinition {
             source_path: source.path,
@@ -228,10 +229,13 @@ pub fn normalize_judge_definition(
     if definition.on.is_null() {
         definition.on = json!({});
     }
-    if definition.judge.trim().is_empty() {
+    if definition.name.trim().is_empty() {
         spec_bail!("{context} has an empty judge name");
     }
-    if definition.judge.chars().count() > 255 {
+    if !is_portable_name(&definition.name) {
+        spec_bail!("{context} judge name must use lowercase kebab-case");
+    }
+    if definition.name.chars().count() > 255 {
         spec_bail!("{context} has a judge name longer than 255 characters");
     }
     if definition
@@ -253,6 +257,16 @@ pub fn normalize_judge_definition(
     validate_llm_config(context, &definition.llm)?;
     validate_gate(&definition.on)?;
     Ok(definition)
+}
+
+fn is_portable_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+        })
 }
 
 fn validate_llm_config(context: &str, llm: &JudgeLlmConfig) -> Result<(), JudgeSpecError> {
@@ -513,7 +527,7 @@ mod tests {
     }
 
     const HELPFUL_JUDGE: &str = "\
-judge: helpful
+name: helpful
 description: Scores whether the assistant actually helped.
 instructions: |
   Judge whether the assistant resolved the user's request.
@@ -526,11 +540,11 @@ llm:
         let sources = [
             source(
                 "judges/b.yaml",
-                "judge: b\ninstructions: Grade b.\nllm:\n  model: gpt-5\n",
+                "name: b\ninstructions: Grade b.\nllm:\n  model: gpt-5\n",
             ),
             source(
                 "judges/a.yaml",
-                "judge: a\ninstructions: Grade a.\nllm:\n  model: gpt-5\n",
+                "name: a\ninstructions: Grade a.\nllm:\n  model: gpt-5\n",
             ),
         ];
         let parsed = parse_judge_definitions(&sources).unwrap();
@@ -552,14 +566,14 @@ llm:
     fn normalized_definition_serializes_without_absent_options() {
         let parsed = parse_judge_definitions(&[source(
             "judges/a.yaml",
-            "judge: a\ninstructions: Grade a.\nllm:\n  model: gpt-5\n",
+            "name: a\ninstructions: Grade a.\nllm:\n  model: gpt-5\n",
         )])
         .unwrap();
         let value = serde_json::to_value(&parsed[0].definition).unwrap();
         assert_eq!(
             value,
             json!({
-                "judge": "a",
+                "name": "a",
                 "on": {},
                 "llm": {
                     "provider": "openai",
@@ -577,9 +591,31 @@ llm:
     }
 
     #[test]
+    fn legacy_judge_field_normalizes_to_name_and_conflicts_fail() {
+        let parsed = parse_judge_definitions(&[source(
+            "judges/legacy.yaml",
+            "judge: legacy\ninstructions: Grade.\nllm:\n  model: gpt-5\n",
+        )])
+        .unwrap();
+        assert_eq!(parsed[0].definition.name, "legacy");
+        assert_eq!(
+            serde_json::to_value(&parsed[0].definition).unwrap()["name"],
+            "legacy"
+        );
+
+        let conflict = parse_judge_definitions(&[source(
+            "judges/conflict.yaml",
+            "name: current\njudge: legacy\ninstructions: Grade.\nllm:\n  model: gpt-5\n",
+        )])
+        .unwrap_err()
+        .to_string();
+        assert!(conflict.contains("duplicate field"), "{conflict}");
+    }
+
+    #[test]
     fn accepts_explicit_null_optional_request_fields_and_gate_events() {
         let content = "\
-judge: g
+name: g
 instructions: Grade.
 on:
   - event: tool
@@ -604,6 +640,17 @@ llm:
         let error = parse_judge_definitions(&duplicate).unwrap_err().to_string();
         assert!(error.contains("duplicate judge name"), "{error}");
 
+        for invalid_name in ["DeepWiki", "deep_wiki", "deep--wiki", " deepwiki"] {
+            let invalid = [source(
+                "judges/invalid-name.yaml",
+                &format!(
+                    "name: {invalid_name:?}\ninstructions: Grade.\nllm:\n  model: gpt-5\n"
+                ),
+            )];
+            let error = parse_judge_definitions(&invalid).unwrap_err().to_string();
+            assert!(error.contains("lowercase kebab-case"), "{error}");
+        }
+
         let unknown = [source(
             "judges/typo.yaml",
             &format!("{HELPFUL_JUDGE}surprise: true\n"),
@@ -613,7 +660,7 @@ llm:
 
         let empty = [source(
             "judges/empty.yaml",
-            "judge: empty\nllm:\n  model: gpt-5\n",
+            "name: empty\nllm:\n  model: gpt-5\n",
         )];
         let error = parse_judge_definitions(&empty).unwrap_err().to_string();
         assert!(error.contains("empty instructions"), "{error}");
@@ -623,39 +670,39 @@ llm:
     fn rejects_invalid_gates_and_llm_config() {
         let cases: &[(&str, &str)] = &[
             (
-                "judge: g\ninstructions: Grade.\non:\n  - event: deploy\nllm:\n  model: gpt-5\n",
+                "name: g\ninstructions: Grade.\non:\n  - event: deploy\nllm:\n  model: gpt-5\n",
                 "unknown judge gate event",
             ),
             (
-                "judge: g\ninstructions: Grade.\non:\n  - event: message\n    match:\n      pattern_id: p\nllm:\n  model: gpt-5\n",
+                "name: g\ninstructions: Grade.\non:\n  - event: message\n    match:\n      pattern_id: p\nllm:\n  model: gpt-5\n",
                 "must not reference pattern_id",
             ),
             (
-                "judge: g\ninstructions: Grade.\non:\n  - event: message\n    match:\n      environment: prod\nllm:\n  model: gpt-5\n",
+                "name: g\ninstructions: Grade.\non:\n  - event: message\n    match:\n      environment: prod\nllm:\n  model: gpt-5\n",
                 "automatic platform context",
             ),
             (
-                "judge: g\ninstructions: Grade.\non:\n  - event: message\n    match:\n      text: /hello/g\nllm:\n  model: gpt-5\n",
+                "name: g\ninstructions: Grade.\non:\n  - event: message\n    match:\n      text: /hello/g\nllm:\n  model: gpt-5\n",
                 "unsupported regex flags",
             ),
             (
-                "judge: g\ninstructions: Grade.\nllm:\n  model: ''\n",
+                "name: g\ninstructions: Grade.\nllm:\n  model: ''\n",
                 "invalid llm.model",
             ),
             (
-                "judge: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  request:\n    temperature: 3\n",
+                "name: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  request:\n    temperature: 3\n",
                 "temperature must be between 0 and 2",
             ),
             (
-                "judge: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  transport:\n    timeout_ms: 900000\n",
+                "name: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  transport:\n    timeout_ms: 900000\n",
                 "timeout_ms must be between 1 and 600000",
             ),
             (
-                "judge: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  local:\n    base_url: http://remote.example/v1\n    api_key_env: KEY\n",
+                "name: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  local:\n    base_url: http://remote.example/v1\n    api_key_env: KEY\n",
                 "must use HTTPS outside localhost",
             ),
             (
-                "judge: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  local:\n    base_url: https://remote.example/v1?key=x\n    api_key_env: KEY\n",
+                "name: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  local:\n    base_url: https://remote.example/v1?key=x\n    api_key_env: KEY\n",
                 "must not contain a query or fragment",
             ),
         ];
@@ -676,7 +723,7 @@ llm:
             "https://api.example.com/v1",
         ] {
             let content = format!(
-                "judge: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  local:\n    base_url: {base_url}\n    api_key_env: MODEL_API_KEY\n"
+                "name: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  local:\n    base_url: {base_url}\n    api_key_env: MODEL_API_KEY\n"
             );
             parse_judge_definitions(&[source("judges/g.yaml", &content)])
                 .unwrap_or_else(|error| panic!("{base_url}: {error}"));
@@ -690,11 +737,11 @@ llm:
     fn agrees_with_diagnostic_judge_validation() {
         let cases: &[&str] = &[
             HELPFUL_JUDGE,
-            "judge: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  request:\n    max_tokens: null\n",
-            "judge: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  local:\n    base_url: http://[::1]:4000/v1\n    api_key_env: MODEL_API_KEY\n",
-            "judge: g\nllm:\n  model: gpt-5\n",
-            "judge: g\ninstructions: Grade.\nllm:\n  model: ''\n",
-            "judge: g\ninstructions: Grade.\non:\n  - event: deploy\nllm:\n  model: gpt-5\n",
+            "name: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  request:\n    max_tokens: null\n",
+            "name: g\ninstructions: Grade.\nllm:\n  model: gpt-5\n  local:\n    base_url: http://[::1]:4000/v1\n    api_key_env: MODEL_API_KEY\n",
+            "name: g\nllm:\n  model: gpt-5\n",
+            "name: g\ninstructions: Grade.\nllm:\n  model: ''\n",
+            "name: g\ninstructions: Grade.\non:\n  - event: deploy\nllm:\n  model: gpt-5\n",
             &format!("{HELPFUL_JUDGE}surprise: true\n"),
         ];
         for content in cases {
@@ -737,8 +784,8 @@ llm:
         assert_eq!(properties["instructions"]["type"], json!("string"));
         assert_eq!(properties["instructions"]["minLength"], json!(1));
         assert_eq!(properties["instructions"]["pattern"], json!(r"\S"));
-        assert_eq!(properties["judge"]["maxLength"], json!(255));
-        assert_eq!(properties["judge"]["pattern"], json!(r"\S"));
+        assert_eq!(properties["name"]["maxLength"], json!(255));
+        assert_eq!(properties["name"]["pattern"], json!(r"\S"));
         assert_eq!(properties["description"]["maxLength"], json!(2000));
 
         let llm = schema["$defs"]["JudgeLlmConfig"].as_object().unwrap();
