@@ -87,7 +87,7 @@
 		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client vendor/introspection-recipe-check"
 	},
 	"dependencies": {
-		"@introspection-sdk/introspection-pi": "^0.13.0",
+		"@introspection-sdk/introspection-pi": "^0.15.0",
 		"@opentelemetry/api": "^1.9.1",
 		"ajv": "^8.20.0",
 		"mcporter": "0.12.3",
@@ -101,10 +101,10 @@
 		"typebox": "*"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-agent-core": "0.82.1",
-		"@earendil-works/pi-ai": "0.82.1",
-		"@earendil-works/pi-coding-agent": "0.82.1",
-		"@earendil-works/pi-tui": "0.82.1",
+		"@earendil-works/pi-agent-core": "0.83.0",
+		"@earendil-works/pi-ai": "0.83.0",
+		"@earendil-works/pi-coding-agent": "0.83.0",
+		"@earendil-works/pi-tui": "0.83.0",
 		"@types/node": "^26.1.2",
 		"esbuild": "^0.28.1",
 		"typebox": "^1.0.56",
