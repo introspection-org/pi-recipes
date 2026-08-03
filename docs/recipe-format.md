@@ -130,8 +130,10 @@ MUST select one explicitly.
 ## Judges
 
 A Recipe MAY include portable LLM grading definitions as direct `.yaml` or
-`.yml` children of `judges/`. Nested files are not judge sources. Judge names
-MUST be unique within the package.
+`.yml` children of `judges/`. Nested files are not judge sources. Every judge
+YAML MUST declare a package-unique lowercase kebab-case `name`. As with agent
+definitions, this is the stable authored identity and the filename has no
+semantic meaning.
 
 The authored schema, defaults, applicability gates, and model configuration are
 defined in [Recipe judges](recipe-judges.md). The Recipe Format owns this
