@@ -55,6 +55,7 @@ macro_rules! spec_bail {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct JudgeDefinition {
     /// Unique judge name within the recipe (at most 255 characters).
+    #[serde(alias = "judge")]
     #[cfg_attr(feature = "schema", schemars(length(max = 255), pattern(r"\S")))]
     pub name: String,
     /// Optional human description (at most 2000 characters).
@@ -587,6 +588,28 @@ llm:
                 "instructions": "Grade a.",
             })
         );
+    }
+
+    #[test]
+    fn legacy_judge_field_normalizes_to_name_and_conflicts_fail() {
+        let parsed = parse_judge_definitions(&[source(
+            "judges/legacy.yaml",
+            "judge: legacy\ninstructions: Grade.\nllm:\n  model: gpt-5\n",
+        )])
+        .unwrap();
+        assert_eq!(parsed[0].definition.name, "legacy");
+        assert_eq!(
+            serde_json::to_value(&parsed[0].definition).unwrap()["name"],
+            "legacy"
+        );
+
+        let conflict = parse_judge_definitions(&[source(
+            "judges/conflict.yaml",
+            "name: current\njudge: legacy\ninstructions: Grade.\nllm:\n  model: gpt-5\n",
+        )])
+        .unwrap_err()
+        .to_string();
+        assert!(conflict.contains("duplicate field"), "{conflict}");
     }
 
     #[test]

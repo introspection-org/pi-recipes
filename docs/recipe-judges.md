@@ -47,6 +47,9 @@ lowercase kebab-case and must be unique across all judge files in one Recipe.
 As with `agents/*.yaml`, the filename has no semantic meaning. Evaluators default
 `llm.provider` to `openai`.
 
+Legacy definitions using `judge:` remain accepted as a deprecated input alias.
+Parsers normalize that field to `name`; a definition cannot declare both.
+
 The canonical expanded definition is:
 
 ```yaml

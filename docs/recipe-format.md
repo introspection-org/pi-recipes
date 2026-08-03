@@ -135,6 +135,9 @@ YAML MUST declare a package-unique lowercase kebab-case `name`. As with agent
 definitions, this is the stable authored identity and the filename has no
 semantic meaning.
 
+For backwards compatibility, parsers accept legacy `judge:` as a deprecated
+alias and normalize it to `name`. A definition cannot declare both fields.
+
 The authored schema, defaults, applicability gates, and model configuration are
 defined in [Recipe judges](recipe-judges.md). The Recipe Format owns this
 declarative evaluation contract; hosts own transcript assembly, execution,

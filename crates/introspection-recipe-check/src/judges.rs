@@ -16,7 +16,7 @@ use url::{Host, Url};
 use crate::{span_from_message, CheckContext};
 
 const JUDGES_DIR: &str = "judges";
-const TOP_LEVEL_FIELDS: &[&str] = &["description", "instructions", "llm", "name", "on"];
+const TOP_LEVEL_FIELDS: &[&str] = &["description", "instructions", "judge", "llm", "name", "on"];
 const LLM_FIELDS: &[&str] = &["local", "model", "provider", "request", "transport"];
 const REQUEST_FIELDS: &[&str] = &["max_tokens", "reasoning_effort", "temperature"];
 const TRANSPORT_FIELDS: &[&str] = &["max_retries", "max_retry_delay_ms", "timeout_ms"];
@@ -125,7 +125,17 @@ fn validate_judge(path: &str, ctx: &mut CheckContext) -> ValidatedJudge {
 }
 
 fn validate_name(map: &Map<String, Value>, path: &str, ctx: &mut CheckContext) -> Option<String> {
-    match map.get("name") {
+    if map.contains_key("name") && map.contains_key("judge") {
+        ctx.error(
+            "judge.name_conflict",
+            path,
+            "Judge definition cannot declare both name and legacy judge",
+            Some("keep `name:` and remove the deprecated `judge:` field"),
+        );
+        return None;
+    }
+
+    match map.get("name").or_else(|| map.get("judge")) {
         None | Some(Value::Null) => {
             ctx.error(
                 "judge.name_missing",
@@ -140,7 +150,7 @@ fn validate_name(map: &Map<String, Value>, path: &str, ctx: &mut CheckContext) -
                 "judge.name_invalid",
                 path,
                 "Judge name must be a non-empty string",
-                Some("set judge to a unique name containing at most 255 characters"),
+                Some("set name to a unique value containing at most 255 characters"),
             );
             None
         }
@@ -168,7 +178,7 @@ fn validate_name(map: &Map<String, Value>, path: &str, ctx: &mut CheckContext) -
                 "judge.name_invalid",
                 path,
                 "Judge name must be a non-empty string",
-                Some("set judge to a unique string name"),
+                Some("set name to a unique string value"),
             );
             None
         }
@@ -815,6 +825,23 @@ llm:
         ]));
         assert!(report.valid, "{:?}", report.diagnostics);
         assert_eq!(report.resources.get("judges"), Some(&2));
+    }
+
+    #[test]
+    fn accepts_legacy_judge_name_alias_but_rejects_both_fields() {
+        let legacy = check_recipe_files(&snapshot(&[(
+            "judges/legacy.yaml",
+            Some(&MINIMAL.replace("name: helpful", "judge: helpful")),
+        )]));
+        assert!(legacy.valid, "{:?}", legacy.diagnostics);
+
+        let diagnostics = judge_diagnostics(&[(
+            "judges/conflict.yaml",
+            Some(
+                "name: helpful\njudge: legacy\ninstructions: Grade.\nllm:\n  model: gpt-5\n",
+            ),
+        )]);
+        assert_eq!(diagnostics[0].code, "judge.name_conflict");
     }
 
     #[test]
