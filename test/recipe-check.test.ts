@@ -111,7 +111,7 @@ describe("shared Recipe validator bridge", () => {
     writeFileSync(
       join(root, "judges", "helpful.yaml"),
       [
-        "judge: helpful",
+        "name: helpful",
         "instructions: Grade the answer.",
         "llm:",
         "  model: gpt-5",
@@ -125,7 +125,7 @@ describe("shared Recipe validator bridge", () => {
 
     writeFileSync(
       join(root, "judges", "helpful.yaml"),
-      "judge: helpful\nllm:\n  model: gpt-5\n"
+      "name: helpful\nllm:\n  model: gpt-5\n"
     );
     await expect(checkRecipeAtLoad(root, env)).resolves.toMatchObject({
       valid: false,

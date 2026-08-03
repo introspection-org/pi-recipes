@@ -44,7 +44,7 @@ def test_judge_parser_preserves_cloud_compatibility_surface() -> None:
             {
                 "path": "judges/helpful.yaml",
                 "content": (
-                    "judge: helpful\n"
+                    "name: helpful\n"
                     "instructions: Grade the answer.\n"
                     "llm:\n"
                     "  model: gpt-5\n"
@@ -54,4 +54,19 @@ def test_judge_parser_preserves_cloud_compatibility_surface() -> None:
     )
 
     assert parsed[0].source_path == "judges/helpful.yaml"
-    assert parsed[0].definition.to_dict()["judge"] == "helpful"
+    assert parsed[0].definition.to_dict()["name"] == "helpful"
+
+    legacy = introspection_recipe_check.parse_judge_definitions(
+        [
+            {
+                "path": "judges/legacy.yaml",
+                "content": (
+                    "judge: legacy\n"
+                    "instructions: Grade the answer.\n"
+                    "llm:\n"
+                    "  model: gpt-5\n"
+                ),
+            }
+        ]
+    )
+    assert legacy[0].definition.to_dict()["name"] == "legacy"
