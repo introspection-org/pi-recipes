@@ -33,7 +33,7 @@ host-specific registry data.
 The minimal definition is:
 
 ```yaml
-judge: helpful
+name: helpful
 
 instructions: |
   Determine whether the assistant answered the user correctly.
@@ -42,14 +42,18 @@ llm:
   model: gpt-5
 ```
 
-`judge`, `instructions`, and `llm.model` are required and non-empty. Judge names
-must be unique across all judge files in one Recipe. Evaluators default
+`name`, `instructions`, and `llm.model` are required and non-empty. Names use
+lowercase kebab-case and must be unique across all judge files in one Recipe.
+As with `agents/*.yaml`, the filename has no semantic meaning. Evaluators default
 `llm.provider` to `openai`.
+
+Legacy definitions using `judge:` remain accepted as a deprecated input alias.
+Parsers normalize that field to `name`; a definition cannot declare both.
 
 The canonical expanded definition is:
 
 ```yaml
-judge: helpful
+name: helpful
 description: Did the assistant answer correctly?
 
 on:
