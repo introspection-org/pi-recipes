@@ -16,7 +16,7 @@ use url::{Host, Url};
 use crate::{span_from_message, CheckContext};
 
 const JUDGES_DIR: &str = "judges";
-const TOP_LEVEL_FIELDS: &[&str] = &["description", "instructions", "judge", "llm", "on"];
+const TOP_LEVEL_FIELDS: &[&str] = &["description", "instructions", "judge", "llm", "name", "on"];
 const LLM_FIELDS: &[&str] = &["local", "model", "provider", "request", "transport"];
 const REQUEST_FIELDS: &[&str] = &["max_tokens", "reasoning_effort", "temperature"];
 const TRANSPORT_FIELDS: &[&str] = &["max_retries", "max_retry_delay_ms", "timeout_ms"];
@@ -125,13 +125,23 @@ fn validate_judge(path: &str, ctx: &mut CheckContext) -> ValidatedJudge {
 }
 
 fn validate_name(map: &Map<String, Value>, path: &str, ctx: &mut CheckContext) -> Option<String> {
-    match map.get("judge") {
+    if map.contains_key("name") && map.contains_key("judge") {
+        ctx.error(
+            "judge.name_conflict",
+            path,
+            "Judge definition cannot declare both name and legacy judge",
+            Some("keep `name:` and remove the deprecated `judge:` field"),
+        );
+        return None;
+    }
+
+    match map.get("name").or_else(|| map.get("judge")) {
         None | Some(Value::Null) => {
             ctx.error(
                 "judge.name_missing",
                 path,
                 "Judge definition must declare a non-empty judge name",
-                Some("add `judge: <unique-name>`"),
+                Some("add `name: <unique-name>`"),
             );
             None
         }
@@ -140,7 +150,7 @@ fn validate_name(map: &Map<String, Value>, path: &str, ctx: &mut CheckContext) -
                 "judge.name_invalid",
                 path,
                 "Judge name must be a non-empty string",
-                Some("set judge to a unique name containing at most 255 characters"),
+                Some("set name to a unique value containing at most 255 characters"),
             );
             None
         }
@@ -153,17 +163,36 @@ fn validate_name(map: &Map<String, Value>, path: &str, ctx: &mut CheckContext) -
             );
             None
         }
-        Some(Value::String(name)) => Some(name.clone()),
+        Some(Value::String(name)) if is_portable_name(name) => Some(name.clone()),
+        Some(Value::String(_)) => {
+            ctx.error(
+                "judge.name_invalid",
+                path,
+                "Judge name must use lowercase kebab-case",
+                Some("use lowercase ASCII letters, digits, and single hyphens"),
+            );
+            None
+        }
         Some(_) => {
             ctx.error(
                 "judge.name_invalid",
                 path,
                 "Judge name must be a non-empty string",
-                Some("set judge to a unique string name"),
+                Some("set name to a unique string value"),
             );
             None
         }
     }
+}
+
+fn is_portable_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+        })
 }
 
 fn validate_description(map: &Map<String, Value>, path: &str, ctx: &mut CheckContext) {
@@ -728,12 +757,12 @@ subagents: []
 system_instructions:
   content: Test instructions
 "#;
-    const MINIMAL: &str = r#"judge: helpful
+    const MINIMAL: &str = r#"name: helpful
 instructions: Determine whether the assistant answered correctly.
 llm:
   model: gpt-5
 "#;
-    const EXPANDED: &str = r#"judge: helpful
+    const EXPANDED: &str = r#"name: helpful
 description: Did the assistant answer correctly?
 on:
   - event: message
@@ -791,11 +820,28 @@ llm:
             ("judges/minimal.yaml", Some(MINIMAL)),
             (
                 "judges/expanded.yml",
-                Some(&EXPANDED.replace("judge: helpful", "judge: expanded")),
+                Some(&EXPANDED.replace("name: helpful", "name: expanded")),
             ),
         ]));
         assert!(report.valid, "{:?}", report.diagnostics);
         assert_eq!(report.resources.get("judges"), Some(&2));
+    }
+
+    #[test]
+    fn accepts_legacy_judge_name_alias_but_rejects_both_fields() {
+        let legacy = check_recipe_files(&snapshot(&[(
+            "judges/legacy.yaml",
+            Some(&MINIMAL.replace("name: helpful", "judge: helpful")),
+        )]));
+        assert!(legacy.valid, "{:?}", legacy.diagnostics);
+
+        let diagnostics = judge_diagnostics(&[(
+            "judges/conflict.yaml",
+            Some(
+                "name: helpful\njudge: legacy\ninstructions: Grade.\nllm:\n  model: gpt-5\n",
+            ),
+        )]);
+        assert_eq!(diagnostics[0].code, "judge.name_conflict");
     }
 
     #[test]
@@ -811,7 +857,7 @@ llm:
     #[test]
     fn reports_malformed_unreadable_and_non_mapping_sources() {
         let diagnostics = judge_diagnostics(&[
-            ("judges/a.yaml", Some("judge: [unterminated\n")),
+            ("judges/a.yaml", Some("name: [unterminated\n")),
             ("judges/b.yml", None),
             ("judges/c.yaml", Some("- a\n- list\n")),
         ]);
@@ -831,7 +877,7 @@ llm:
         let diagnostics = judge_diagnostics(&[(
             "judges/invalid.yaml",
             Some(
-                r#"judge: ""
+                r#"name: ""
 instructions: "  "
 unexpected: true
 llm:
@@ -858,11 +904,26 @@ llm:
     }
 
     #[test]
+    fn rejects_noncanonical_judge_names() {
+        for name in ["DeepWiki", "deep_wiki", "deep--wiki", " deepwiki"] {
+            let diagnostics = judge_diagnostics(&[(
+                "judges/invalid-name.yaml",
+                Some(&format!(
+                    "name: {name:?}\ninstructions: Grade.\nllm:\n  model: gpt-5\n"
+                )),
+            )]);
+            assert!(diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "judge.name_invalid"));
+        }
+    }
+
+    #[test]
     fn rejects_invalid_llm_shapes_overrides_and_bounds() {
         let diagnostics = judge_diagnostics(&[(
             "judges/invalid.yaml",
             Some(
-                r#"judge: invalid
+                r#"name: invalid
 instructions: Grade it.
 llm:
   provider: OpenAI
@@ -912,7 +973,7 @@ llm:
         let report = check_recipe_files(&snapshot(&[(
             "judges/bounds.yaml",
             Some(
-                r#"judge: bounds
+                r#"name: bounds
 instructions: Grade it.
 on: {}
 llm:
@@ -940,7 +1001,7 @@ llm:
         let report = check_recipe_files(&snapshot(&[(
             "judges/ipv6-loopback.yaml",
             Some(
-                r#"judge: ipv6-loopback
+                r#"name: ipv6-loopback
 instructions: Grade it.
 llm:
   model: gpt-5
@@ -958,7 +1019,7 @@ llm:
         let report = check_recipe_files(&snapshot(&[(
             "judges/parser-parity.yaml",
             Some(
-                r#"judge: parser-parity
+                r#"name: parser-parity
 instructions: Grade it.
 on:
   - event: message
@@ -980,7 +1041,7 @@ llm:
         let diagnostics = judge_diagnostics(&[(
             "judges/missing-model.yaml",
             Some(
-                r#"judge: missing-model
+                r#"name: missing-model
 instructions: Grade it.
 llm:
   request:
@@ -1005,7 +1066,7 @@ llm:
         let diagnostics = judge_diagnostics(&[(
             "judges/gates.yaml",
             Some(
-                r#"judge: gates
+                r#"name: gates
 instructions: Grade it.
 on:
   - event: span
@@ -1064,8 +1125,8 @@ llm:
     #[test]
     fn diagnostics_are_deterministic_for_unsorted_snapshots() {
         let report = check_recipe_files(&snapshot(&[
-            ("judges/z.yml", Some("judge: z\n")),
-            ("judges/a.yaml", Some("judge: a\n")),
+            ("judges/z.yml", Some("name: z\n")),
+            ("judges/a.yaml", Some("name: a\n")),
         ]));
         let paths = report
             .diagnostics
@@ -1110,7 +1171,7 @@ llm:
     fn malformed_yaml_span_is_one_based_when_available() {
         let diagnostics = judge_diagnostics(&[(
             "judges/span.yaml",
-            Some("judge: okay\nllm:\n  model: [broken\n"),
+            Some("name: okay\nllm:\n  model: [broken\n"),
         )]);
         let span = diagnostics[0].span.expect("parser source span");
         assert!(span.line >= 1);
