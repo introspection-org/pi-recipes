@@ -138,7 +138,7 @@ jobs:
           INTROSPECTION_RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
           CARGO_BUILD_TARGET: ${{ matrix.target }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: native-tools-${{ matrix.platform_id }}
           path: |
@@ -299,7 +299,7 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           args: --release --locked --compatibility pypi --out dist --manifest-path bindings/python/Cargo.toml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: python-wheel-${{ matrix.target }}
           path: dist/*.whl
