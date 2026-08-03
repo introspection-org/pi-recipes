@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/introspection-org/recipes/compare/v0.16.1...v0.17.0) (2026-08-03)
+
+
+### Features
+
+* align judge identity with recipe names ([#190](https://github.com/introspection-org/recipes/issues/190)) ([166c40d](https://github.com/introspection-org/recipes/commit/166c40d4a10a274d163873326f054ffccad4a652))
+
 ## [0.16.1](https://github.com/introspection-org/recipes/compare/v0.16.0...v0.16.1) (2026-07-30)
 
 
