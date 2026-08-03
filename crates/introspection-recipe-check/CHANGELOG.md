@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/introspection-org/recipes/compare/introspection-recipe-check-v0.1.0...introspection-recipe-check-v0.2.0) (2026-08-03)
+
+
+### Features
+
+* align judge identity with recipe names ([#190](https://github.com/introspection-org/recipes/issues/190)) ([166c40d](https://github.com/introspection-org/recipes/commit/166c40d4a10a274d163873326f054ffccad4a652))
+* publish introspection recipe checker ([#153](https://github.com/introspection-org/recipes/issues/153)) ([b8be591](https://github.com/introspection-org/recipes/commit/b8be5914aa05ecb144110cd4f6831222cd79c7b5))
+
 ## 0.1.0 (2026-07-28)
 
 
