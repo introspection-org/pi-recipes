@@ -184,6 +184,18 @@ describe("shared Recipe validator bridge", () => {
     });
   });
 
+  it("keeps local MCP configuration out of the Recipe snapshot", async () => {
+    const root = recipe(
+      "name: agent\nmodel:\n  name: anthropic/claude-haiku-4-5\n"
+    );
+    mkdirSync(join(root, ".pi"), { recursive: true });
+    writeFileSync(join(root, ".pi", "mcp.local.json"), "{");
+
+    await expect(checkRecipeAtLoad(root, env)).resolves.toMatchObject({
+      valid: true,
+    });
+  });
+
   it("accepts a valid local Recipe snapshot", async () => {
     const root = recipe(
       [
