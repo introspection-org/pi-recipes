@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/introspection-org/recipes/compare/v0.17.0...v0.17.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* exclude local MCP config from recipe validation ([#194](https://github.com/introspection-org/recipes/issues/194)) ([4e205c0](https://github.com/introspection-org/recipes/commit/4e205c049ed2098cc0aecb232a34f68d6fb2f21f))
+
 ## [0.17.0](https://github.com/introspection-org/recipes/compare/v0.16.1...v0.17.0) (2026-08-03)
 
 
