@@ -235,6 +235,7 @@ function snapshot(recipeDir: string): {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const absolute = join(directory, entry.name);
       const path = relative(recipeDir, absolute).replaceAll("\\", "/");
+      if (path === ".pi/mcp.local.json") continue;
       let target: {
         isDirectory(): boolean;
         isFile(): boolean;
