@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/introspection-org/recipes/compare/v0.17.1...v0.18.0) (2026-08-05)
+
+
+### Features
+
+* support multi-select interactions ([#196](https://github.com/introspection-org/recipes/issues/196)) ([acedb10](https://github.com/introspection-org/recipes/commit/acedb10e3db507ca31a09a997e61cea58ece2acd))
+
 ## [0.17.1](https://github.com/introspection-org/recipes/compare/v0.17.0...v0.17.1) (2026-08-04)
 
 
