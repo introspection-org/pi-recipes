@@ -18,7 +18,7 @@ import {
 } from "../src/interactions.js";
 
 interface FakeUiCall {
-  kind: "select" | "input" | "confirm";
+  kind: "select" | "input" | "confirm" | "custom";
   title: string;
   options?: string[];
   dialog?: ExtensionUIDialogOptions;
@@ -29,6 +29,7 @@ function fakeCtx(opts: {
   mode?: "tui" | "rpc" | "print";
   selectResults?: Array<string | undefined>;
   inputResults?: Array<string | undefined>;
+  customInputs?: string[];
 }): { ctx: ExtensionContext; calls: FakeUiCall[] } {
   const calls: FakeUiCall[] = [];
   const selectResults = [...(opts.selectResults ?? [])];
@@ -57,6 +58,48 @@ function fakeCtx(opts: {
         calls.push({ kind: "confirm", title: "" });
         return false;
       },
+      ...(opts.customInputs
+        ? {
+            async custom<T>(
+              factory: (
+                tui: { requestRender(): void },
+                theme: {
+                  fg(color: string, text: string): string;
+                  bold(text: string): string;
+                },
+                keybindings: object,
+                done: (result: T) => void
+              ) =>
+                | {
+                    handleInput?(data: string): void;
+                    dispose?(): void;
+                  }
+                | Promise<{
+                    handleInput?(data: string): void;
+                    dispose?(): void;
+                  }>
+            ) {
+              calls.push({ kind: "custom", title: "" });
+              let result: T | undefined;
+              const component = await factory(
+                { requestRender() {} },
+                {
+                  fg: (_color, text) => text,
+                  bold: (text) => text,
+                },
+                {},
+                (value) => {
+                  result = value;
+                }
+              );
+              for (const input of opts.customInputs ?? []) {
+                component.handleInput?.(input);
+              }
+              component.dispose?.();
+              return result;
+            },
+          }
+        : {}),
       notify() {},
     },
   } as unknown as ExtensionContext;
@@ -140,6 +183,93 @@ describe("askUser", () => {
         title: "Answer",
       }),
     ]);
+  });
+
+  it("answers a multiple-choice question through a portable toggle walk", async () => {
+    const { ctx, calls } = fakeCtx({
+      hasUI: true,
+      selectResults: ["[ ] Tea", "[ ] Water", "Done"],
+    });
+    const result = await askUser(
+      {
+        ...question,
+        selection: "multiple",
+        options: [
+          { label: "Tea", value: "tea" },
+          { label: "Coffee", value: "coffee" },
+          { label: "Water", value: "water" },
+        ],
+      },
+      { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
+    );
+
+    expect(result.outcome).toEqual({
+      type: "answered_multiple",
+      answers: ["tea", "water"],
+    });
+    expect(result.content).toEqual([
+      { type: "text", text: 'Answers: ["tea","water"]' },
+    ]);
+    expect(calls.map((call) => call.options)).toEqual([
+      ["[ ] Tea", "[ ] Coffee", "[ ] Water", "Other", "Done"],
+      ["[x] Tea", "[ ] Coffee", "[ ] Water", "Other", "Done"],
+      ["[x] Tea", "[ ] Coffee", "[x] Water", "Other", "Done"],
+    ]);
+  });
+
+  it("uses a native custom TUI for multiple selection", async () => {
+    const { ctx, calls } = fakeCtx({
+      hasUI: true,
+      customInputs: ["1", "2", "\x1b[B", "\x1b[B", "\x1b[B", "\r"],
+    });
+    const result = await askUser(
+      {
+        ...question,
+        selection: "multiple",
+        options: [
+          { label: "Tea", value: "tea", description: "Calming" },
+          { label: "Coffee", value: "coffee", description: "Energizing" },
+        ],
+      },
+      { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
+    );
+
+    expect(result.outcome).toEqual({
+      type: "answered_multiple",
+      answers: ["tea", "coffee"],
+    });
+    expect(calls).toEqual([expect.objectContaining({ kind: "custom" })]);
+  });
+
+  it("includes a custom answer in a multiple-choice response", async () => {
+    const { ctx } = fakeCtx({
+      hasUI: true,
+      selectResults: ["[ ] Tea", "Other"],
+      inputResults: ["  Sparkling  "],
+    });
+    const result = await askUser(
+      {
+        ...question,
+        selection: "multiple",
+        options: ["Tea", "Coffee"],
+      },
+      { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
+    );
+
+    expect(result.outcome).toEqual({
+      type: "answered_multiple",
+      answers: ["Tea", "Sparkling"],
+    });
+  });
+
+  it("rejects multiple selection without usable options", async () => {
+    const { ctx } = fakeCtx({ hasUI: false });
+    await expect(
+      askUser(
+        { ...question, selection: "multiple", options: ["  "] },
+        { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
+      )
+    ).rejects.toThrow("Multiple selection requires at least one option");
   });
 
   it("returns option values while preserving structured option details", async () => {
@@ -436,6 +566,35 @@ describe("askUser", () => {
     });
   });
 
+  it("exposes multiple selection to interrupt-capable hosts", async () => {
+    const { ctx } = fakeCtx({ hasUI: false });
+    const result = await askUserQuestion(
+      {
+        question: "Which markets?",
+        selection: "multiple",
+        options: ["Sydney", "Melbourne"],
+      },
+      {
+        toolCallId: "tool-1",
+        ctx,
+        signal: undefined,
+        env: { PI_INTERRUPT_RESUME: "1" },
+      }
+    );
+
+    expect(result.details.interrupt).toEqual({
+      reason: "input_required",
+      message: "Which markets?",
+      options: [{ label: "Sydney" }, { label: "Melbourne" }],
+      selection: "multiple",
+      metadata: {
+        kind: "ask_user_question",
+        question: "Which markets?",
+      },
+      outcome: { type: "awaiting_user" },
+    });
+  });
+
   it("askUserApproval builds native approval display and metadata", async () => {
     const { ctx } = fakeCtx({ hasUI: false });
     const result = await askUserApproval(
@@ -622,6 +781,10 @@ describe("askUser", () => {
     // envelopes must match byte-for-byte.
     const table: Array<{ outcome: AskUserOutcome; text: string }> = [
       { outcome: { type: "answered", answer: "Tea" }, text: "Answer: Tea" },
+      {
+        outcome: { type: "answered_multiple", answers: ["Tea", "Water"] },
+        text: 'Answers: ["Tea","Water"]',
+      },
       { outcome: { type: "approved" }, text: "Approved." },
       {
         outcome: { type: "approved", feedback: "Ship it" },
@@ -658,19 +821,25 @@ describe("askUser", () => {
   it("formats host resume records into the frozen interaction envelope", () => {
     expect(
       formatInteractionResume({
-        status: "resumed",
+        status: "resolved",
         payload: { answer: "  Tea  " },
       })
     ).toBe("Answer: Tea");
     expect(
       formatInteractionResume({
-        status: "resumed",
+        status: "resolved",
+        payload: { answers: ["  Tea  ", "Water", "Tea", "", 42] },
+      })
+    ).toBe('Answers: ["Tea","Water"]');
+    expect(
+      formatInteractionResume({
+        status: "resolved",
         payload: { approved: true, feedback: "  Ship it  " },
       })
     ).toBe("Approved. Feedback: Ship it");
     expect(
       formatInteractionResume({
-        status: "resumed",
+        status: "resolved",
         payload: { approved: false },
       })
     ).toBe("Revision requested.");
