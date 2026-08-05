@@ -204,7 +204,7 @@ describe("askUser", () => {
     );
 
     expect(result.outcome).toEqual({
-      type: "answered_multiple",
+      type: "answered",
       answers: ["tea", "water"],
     });
     expect(result.content).toEqual([
@@ -235,7 +235,7 @@ describe("askUser", () => {
     );
 
     expect(result.outcome).toEqual({
-      type: "answered_multiple",
+      type: "answered",
       answers: ["tea", "coffee"],
     });
     expect(calls).toEqual([expect.objectContaining({ kind: "custom" })]);
@@ -257,8 +257,50 @@ describe("askUser", () => {
     );
 
     expect(result.outcome).toEqual({
-      type: "answered_multiple",
+      type: "answered",
       answers: ["Tea", "Sparkling"],
+    });
+  });
+
+  it("deduplicates a portable custom answer matching a selected option", async () => {
+    const { ctx } = fakeCtx({
+      hasUI: true,
+      selectResults: ["[ ] Tea", "Other"],
+      inputResults: ["  Tea  "],
+    });
+    const result = await askUser(
+      {
+        ...question,
+        selection: "multiple",
+        options: ["Tea", "Coffee"],
+      },
+      { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
+    );
+
+    expect(result.outcome).toEqual({
+      type: "answered",
+      answers: ["Tea"],
+    });
+  });
+
+  it("deduplicates a TUI custom answer matching a selected option", async () => {
+    const { ctx } = fakeCtx({
+      hasUI: true,
+      customInputs: ["1", "\x1b[B", "\x1b[B", "\r"],
+      inputResults: ["  Tea  "],
+    });
+    const result = await askUser(
+      {
+        ...question,
+        selection: "multiple",
+        options: ["Tea"],
+      },
+      { toolCallId: "tool-1", ctx, signal: undefined, env: {} }
+    );
+
+    expect(result.outcome).toEqual({
+      type: "answered",
+      answers: ["Tea"],
     });
   });
 
@@ -782,7 +824,7 @@ describe("askUser", () => {
     const table: Array<{ outcome: AskUserOutcome; text: string }> = [
       { outcome: { type: "answered", answer: "Tea" }, text: "Answer: Tea" },
       {
-        outcome: { type: "answered_multiple", answers: ["Tea", "Water"] },
+        outcome: { type: "answered", answers: ["Tea", "Water"] },
         text: 'Answers: ["Tea","Water"]',
       },
       { outcome: { type: "approved" }, text: "Approved." },

@@ -181,8 +181,8 @@ export interface AskUserOptions {
 
 /** How the interaction settled. */
 export type AskUserOutcome =
-  | { type: "answered"; answer: string }
-  | { type: "answered_multiple"; answers: string[] }
+  | { type: "answered"; answer: string; answers?: never }
+  | { type: "answered"; answers: string[]; answer?: never }
   | { type: "approved"; feedback?: string }
   | { type: "revision_requested"; feedback?: string }
   | { type: "declined" }
@@ -536,16 +536,16 @@ async function multiSelectDialogWalk(
       const customAnswer = text?.trim();
       if (!customAnswer) {
         return answers.length > 0
-          ? { type: "answered_multiple", answers }
+          ? { type: "answered", answers }
           : { type: "declined" };
       }
       return {
-        type: "answered_multiple",
-        answers: [...answers, customAnswer],
+        type: "answered",
+        answers: normalizeAnswers([...answers, customAnswer]),
       };
     }
     return answers.length > 0
-      ? { type: "answered_multiple", answers }
+      ? { type: "answered", answers }
       : { type: "declined" };
   }
 
@@ -574,7 +574,7 @@ async function multiSelectFallback(
     if (choice === COMPLETE_SELECTION_OPTION) {
       const answers = selectedAnswers(options, selected);
       return answers.length > 0
-        ? { type: "answered_multiple", answers }
+        ? { type: "answered", answers }
         : { type: "declined" };
     }
 
@@ -584,8 +584,11 @@ async function multiSelectFallback(
       const customAnswer = text?.trim();
       if (!customAnswer) continue;
       return {
-        type: "answered_multiple",
-        answers: [...selectedAnswers(options, selected), customAnswer],
+        type: "answered",
+        answers: normalizeAnswers([
+          ...selectedAnswers(options, selected),
+          customAnswer,
+        ]),
       };
     }
 
@@ -653,9 +656,9 @@ function localDialogMessage(request: AskUserRequest): string {
 export function formatInteractionOutcome(outcome: AskUserOutcome): string {
   switch (outcome.type) {
     case "answered":
-      return `Answer: ${outcome.answer}`;
-    case "answered_multiple":
-      return `Answers: ${JSON.stringify(outcome.answers)}`;
+      return outcome.answers
+        ? `Answers: ${JSON.stringify(outcome.answers)}`
+        : `Answer: ${outcome.answer}`;
     case "approved":
       return outcome.feedback
         ? `Approved. Feedback: ${outcome.feedback}`
@@ -707,7 +710,7 @@ export function formatInteractionResume(
 
   const answers = normalizeAnswers(payload?.answers);
   if (answers.length > 0) {
-    return formatInteractionOutcome({ type: "answered_multiple", answers });
+    return formatInteractionOutcome({ type: "answered", answers });
   }
 
   if (typeof payload?.approved === "boolean") {
