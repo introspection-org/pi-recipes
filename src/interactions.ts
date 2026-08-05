@@ -52,6 +52,10 @@ export const DEFAULT_RPC_DIALOG_TIMEOUT_MS = 120_000;
 const APPROVE_OPTION = "Approve";
 const REQUEST_CHANGES_OPTION = "Request changes";
 const CUSTOM_ANSWER_OPTION = "Other";
+const COMPLETE_SELECTION_OPTION = "Done";
+
+/** Whether a question accepts one answer or several. */
+export type AskUserSelection = "single" | "multiple";
 
 // Frozen envelope literals — the interaction wire contract. Interrupt-capable
 // hosts synthesize the same literals when resuming a paused run, so recipes
@@ -99,6 +103,8 @@ export interface AskUserRequest {
   message: string;
   /** Optional choices for a question. Hosts may also allow a custom answer. */
   options?: readonly (string | AskUserOption)[];
+  /** Answer cardinality. Defaults to `single`. `multiple` requires options. */
+  selection?: AskUserSelection;
   /**
    * Native renderer or tool hints for hosts that can render richer UI.
    */
@@ -119,6 +125,8 @@ export interface AskUserQuestionRequest {
   header?: string;
   /** Optional answer suggestions. Hosts may also allow a custom answer. */
   options?: readonly (string | AskUserOption)[];
+  /** Answer cardinality. Defaults to `single`. `multiple` requires options. */
+  selection?: AskUserSelection;
   /** Additional renderer or tool hints. */
   metadata?: Record<string, unknown>;
   /** Optional structured display copy. */
@@ -173,7 +181,8 @@ export interface AskUserOptions {
 
 /** How the interaction settled. */
 export type AskUserOutcome =
-  | { type: "answered"; answer: string }
+  | { type: "answered"; answer: string; answers?: never }
+  | { type: "answered"; answers: string[]; answer?: never }
   | { type: "approved"; feedback?: string }
   | { type: "revision_requested"; feedback?: string }
   | { type: "declined" }
@@ -187,6 +196,7 @@ export interface AskUserInterrupt {
   reason: string;
   message: string;
   options?: AskUserOption[];
+  selection?: AskUserSelection;
   metadata?: Record<string, unknown>;
   display?: AskUserDisplay;
   expiresAt?: string;
@@ -241,6 +251,13 @@ export async function askUser(
 ): Promise<AskUserResult> {
   const env = opts.env ?? process.env;
 
+  if (
+    request.selection === "multiple" &&
+    normalizeOptions(request.options).length === 0
+  ) {
+    throw new Error("Multiple selection requires at least one option");
+  }
+
   if (interactionAutoResolution.getStore() === true) {
     return finishedResult(
       request,
@@ -272,7 +289,14 @@ export async function askUser(
       : undefined;
     throwIfAborted(opts.signal);
     const outcome =
-      custom ?? (await dialogWalk(request, opts.ctx.ui, dialog, opts.signal));
+      custom ??
+      (await dialogWalk(
+        request,
+        opts.ctx.ui,
+        dialog,
+        opts.signal,
+        opts.ctx.mode === "tui"
+      ));
     return finishedResult(request, outcome);
   }
 
@@ -299,6 +323,7 @@ export async function askUserQuestion(
       reason: ASK_USER_REASON_INPUT_REQUIRED,
       message: request.question,
       options: request.options,
+      ...(request.selection ? { selection: request.selection } : {}),
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       ...(request.display ? { display: request.display } : {}),
       ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
@@ -411,7 +436,8 @@ async function dialogWalk(
   request: AskUserRequest,
   ui: ExtensionUIContext,
   dialog: ExtensionUIDialogOptions,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  preferCustomTui: boolean
 ): Promise<AskUserOutcome> {
   if (isApprovalReason(request.reason)) {
     // ui.confirm() cannot carry per-option labels, so approvals use a select.
@@ -437,6 +463,16 @@ async function dialogWalk(
 
   if (request.options && request.options.length > 0) {
     const options = normalizeOptions(request.options);
+    if (request.selection === "multiple") {
+      return multiSelectDialogWalk(
+        request,
+        options,
+        ui,
+        dialog,
+        signal,
+        preferCustomTui
+      );
+    }
     const selectOptions = [...options.map((option) => option.label)];
     if (!selectOptions.includes(CUSTOM_ANSWER_OPTION)) {
       selectOptions.push(CUSTOM_ANSWER_OPTION);
@@ -473,6 +509,110 @@ async function dialogWalk(
   return trimmed
     ? { type: "answered", answer: trimmed }
     : { type: "declined" };
+}
+
+async function multiSelectDialogWalk(
+  request: AskUserRequest,
+  options: AskUserOption[],
+  ui: ExtensionUIContext,
+  dialog: ExtensionUIDialogOptions,
+  signal: AbortSignal | undefined,
+  preferCustomTui: boolean
+): Promise<AskUserOutcome> {
+  if (preferCustomTui && typeof ui.custom === "function") {
+    const { showMultiSelectTui } = await import("./interaction-tui.js");
+    const result = await showMultiSelectTui(
+      localDialogMessage(request),
+      options,
+      ui,
+      signal
+    );
+    throwIfAborted(signal);
+    if (!result) return { type: "declined" };
+    const answers = selectedAnswers(options, new Set(result.selected));
+    if (result.custom) {
+      const text = await ui.input("Answer", "Type another answer", dialog);
+      throwIfAborted(signal);
+      const customAnswer = text?.trim();
+      if (!customAnswer) {
+        return answers.length > 0
+          ? { type: "answered", answers }
+          : { type: "declined" };
+      }
+      return {
+        type: "answered",
+        answers: normalizeAnswers([...answers, customAnswer]),
+      };
+    }
+    return answers.length > 0
+      ? { type: "answered", answers }
+      : { type: "declined" };
+  }
+
+  return multiSelectFallback(request, options, ui, dialog, signal);
+}
+
+async function multiSelectFallback(
+  request: AskUserRequest,
+  options: AskUserOption[],
+  ui: ExtensionUIContext,
+  dialog: ExtensionUIDialogOptions,
+  signal: AbortSignal | undefined
+): Promise<AskUserOutcome> {
+  const selected = new Set<number>();
+
+  while (true) {
+    const choices = options.map(
+      (option, index) => `${selected.has(index) ? "[x]" : "[ ]"} ${option.label}`
+    );
+    choices.push(CUSTOM_ANSWER_OPTION, COMPLETE_SELECTION_OPTION);
+
+    const choice = await ui.select(localDialogMessage(request), choices, dialog);
+    throwIfAborted(signal);
+    if (choice === undefined) return { type: "declined" };
+
+    if (choice === COMPLETE_SELECTION_OPTION) {
+      const answers = selectedAnswers(options, selected);
+      return answers.length > 0
+        ? { type: "answered", answers }
+        : { type: "declined" };
+    }
+
+    if (choice === CUSTOM_ANSWER_OPTION) {
+      const text = await ui.input("Answer", "Type another answer", dialog);
+      throwIfAborted(signal);
+      const customAnswer = text?.trim();
+      if (!customAnswer) continue;
+      return {
+        type: "answered",
+        answers: normalizeAnswers([
+          ...selectedAnswers(options, selected),
+          customAnswer,
+        ]),
+      };
+    }
+
+    const optionIndex = choices.indexOf(choice);
+    if (optionIndex < 0 || optionIndex >= options.length) continue;
+    if (selected.has(optionIndex)) {
+      selected.delete(optionIndex);
+    } else {
+      selected.add(optionIndex);
+    }
+  }
+}
+
+function selectedAnswers(
+  options: AskUserOption[],
+  selected: ReadonlySet<number>
+): string[] {
+  return [
+    ...new Set(
+      options.flatMap((option, index) =>
+        selected.has(index) ? [option.value?.trim() || option.label] : []
+      )
+    ),
+  ];
 }
 
 function localDialogMessage(request: AskUserRequest): string {
@@ -516,7 +656,9 @@ function localDialogMessage(request: AskUserRequest): string {
 export function formatInteractionOutcome(outcome: AskUserOutcome): string {
   switch (outcome.type) {
     case "answered":
-      return `Answer: ${outcome.answer}`;
+      return outcome.answers
+        ? `Answers: ${JSON.stringify(outcome.answers)}`
+        : `Answer: ${outcome.answer}`;
     case "approved":
       return outcome.feedback
         ? `Approved. Feedback: ${outcome.feedback}`
@@ -566,6 +708,11 @@ export function formatInteractionResume(
     return formatInteractionOutcome({ type: "answered", answer });
   }
 
+  const answers = normalizeAnswers(payload?.answers);
+  if (answers.length > 0) {
+    return formatInteractionOutcome({ type: "answered", answers });
+  }
+
   if (typeof payload?.approved === "boolean") {
     const feedback =
       typeof payload.feedback === "string" ? payload.feedback.trim() : "";
@@ -585,6 +732,19 @@ export function formatInteractionResume(
   return response.status
     ? `Interrupt response: ${response.status}`
     : "Interrupt response received.";
+}
+
+function normalizeAnswers(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.flatMap((answer) => {
+        if (typeof answer !== "string") return [];
+        const trimmed = answer.trim();
+        return trimmed ? [trimmed] : [];
+      })
+    ),
+  ];
 }
 
 function normalizeOptions(
@@ -619,6 +779,7 @@ function interruptDetails(
       reason: request.reason,
       message: request.message,
       ...(options.length > 0 ? { options } : {}),
+      ...(request.selection ? { selection: request.selection } : {}),
       ...(request.metadata ? { metadata: request.metadata } : {}),
       ...(request.display ? { display: request.display } : {}),
       ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
