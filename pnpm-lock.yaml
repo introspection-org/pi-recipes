@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@introspection-sdk/introspection-pi':
-        specifier: ^0.15.0
-        version: 0.15.0(@earendil-works/pi-agent-core@0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3))(@earendil-works/pi-ai@0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3))
+        specifier: ^0.19.1
+        version: 0.19.1(@earendil-works/pi-agent-core@0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3))(@earendil-works/pi-ai@0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3))
       '@opentelemetry/api':
         specifier: ^1.9.1
         version: 1.9.1
@@ -377,8 +377,8 @@ packages:
   '@iarna/toml@2.2.5':
     resolution: {integrity: sha512-trnsAYxU3xnS1gPHPyU961coFyLkh4gAD/0zQ5mymY4yOZ+CYvsPqUbOFSw0aDM4y0tV7tiFxL/1XfXPNC6IPg==}
 
-  '@introspection-sdk/introspection-pi@0.15.0':
-    resolution: {integrity: sha512-+ARN4PzlbzI2j9+Ek/ZsktkhZKR9Qbvje9T2qhfoC+gkOnHQFu3KH7rZOTcMJhqqLZKA1rFmMjTACaM3qTJJmA==}
+  '@introspection-sdk/introspection-pi@0.19.1':
+    resolution: {integrity: sha512-0N645dnbq2I64nJlcyjdEjC3CiMkEERLZ5XOdQJdsFI8eoVwnmwcWxHyKuVOHxnCaVvWBtaXkX4I7lL3hocvcQ==}
     engines: {node: '>=22'}
     peerDependencies:
       '@earendil-works/pi-agent-core': '>=0.75.0'
@@ -389,8 +389,8 @@ packages:
       '@earendil-works/pi-ai':
         optional: true
 
-  '@introspection-sdk/types@0.15.0':
-    resolution: {integrity: sha512-1Fd7Mgb+FSeEYSPksroEwocxZgb7RaL9YWkQ406dev7tUFkwhWPhK1dDee55jiXUkmD3gKkZDRCGjCQhdj/iYA==}
+  '@introspection-sdk/types@0.19.1':
+    resolution: {integrity: sha512-GIdMgiFwMVc81FYRDO78n1nqxH7GHH03Tu1qu6Vcq3Y/gQNbFVxmN63OpY5MekD+nSI5EbCuZcyPw+kqWv1Z1Q==}
     engines: {node: '>=22'}
 
   '@jridgewell/sourcemap-codec@1.5.5':
@@ -2318,15 +2318,15 @@ snapshots:
 
   '@iarna/toml@2.2.5': {}
 
-  '@introspection-sdk/introspection-pi@0.15.0(@earendil-works/pi-agent-core@0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3))(@earendil-works/pi-ai@0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3))':
+  '@introspection-sdk/introspection-pi@0.19.1(@earendil-works/pi-agent-core@0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3))(@earendil-works/pi-ai@0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3))':
     dependencies:
-      '@introspection-sdk/types': 0.15.0
+      '@introspection-sdk/types': 0.19.1
       '@opentelemetry/api': 1.9.1
     optionalDependencies:
       '@earendil-works/pi-agent-core': 0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-ai': 0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.1)(zod@4.4.3)
 
-  '@introspection-sdk/types@0.15.0':
+  '@introspection-sdk/types@0.19.1':
     dependencies:
       '@ag-ui/core': 0.0.57
 
