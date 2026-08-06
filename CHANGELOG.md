@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/introspection-org/recipes/compare/v0.18.0...v0.18.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* preserve complete session telemetry ([#198](https://github.com/introspection-org/recipes/issues/198)) ([41bb6c9](https://github.com/introspection-org/recipes/commit/41bb6c9f2fc06443f01b85ca7bd99ffede565eef))
+
 ## [0.18.0](https://github.com/introspection-org/recipes/compare/v0.17.1...v0.18.0) (2026-08-05)
 
 
