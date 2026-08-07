@@ -161,6 +161,7 @@ for manual and CI validation.
 - [Pi extension](docs/pi-extension.md)
 - [Agent composition](docs/agent-composition.md)
 - [Interactions](docs/interactions.md)
+- [Connectors](docs/connectors.md)
 - [MCP configuration](docs/mcp-configuration.md)
 - [Recipe judges](docs/recipe-judges.md)
 

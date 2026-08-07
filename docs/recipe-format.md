@@ -303,6 +303,12 @@ System package ids name versioned, host-approved bundles. They are not apt,
 brew, or shell commands. A host that does not provide a declared bundle MUST
 fail closed; Recipes cannot run privileged installers.
 
+Connector requirements are deployment configuration, not a `package.json#pi`
+runtime field. The `.introspection` manifest declares app slugs under
+`runtime.connectors`; the Recipe package uses the existing `pi.mcp.servers`
+format to authorize their MCP tools. Recipes registers no connector-specific
+tools and handles no provider credentials. See [Connectors](connectors.md).
+
 Recipe packages are trusted application code. In particular, authored
 TypeScript extensions execute inside the Pi process with its authority. A host
 that accepts third-party Recipes MUST review or isolate them before execution;
