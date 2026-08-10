@@ -1158,7 +1158,7 @@ fn validate_agent_model(
         let valid = value.as_str().is_some_and(|level| {
             matches!(
                 level,
-                "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+                "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
             )
         });
         if !valid {
@@ -1166,7 +1166,7 @@ fn validate_agent_model(
                 "agent.model.thinking_level_invalid",
                 path,
                 "Agent model.thinking_level is unsupported",
-                Some("use off, minimal, low, medium, high, or xhigh"),
+                Some("use off, minimal, low, medium, high, xhigh, or max"),
             );
         }
     }
@@ -1260,14 +1260,14 @@ fn validate_agent_ai(
         if !value.as_str().is_some_and(|level| {
             matches!(
                 level,
-                "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+                "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
             )
         }) {
             ctx.error(
                 "agent.ai.thinking_level_invalid",
                 path,
                 "Agent ai.thinking_level is unsupported",
-                Some("use off, minimal, low, medium, high, or xhigh"),
+                Some("use off, minimal, low, medium, high, xhigh, or max"),
             );
         }
     }

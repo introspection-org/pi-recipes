@@ -14,6 +14,7 @@ const THINKING_LEVELS = new Set([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]);
 
 const CACHE_RETENTIONS = new Set(["none", "short", "long"]);

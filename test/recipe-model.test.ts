@@ -25,7 +25,7 @@ describe("parseRecipeAgentAiConfig", () => {
     expect(
       parseRecipeAgentAiConfig("test", {
         model: "openrouter/anthropic/claude-sonnet-4",
-        thinking_level: "high",
+        thinking_level: "max",
         options: {
           max_tokens: 4096,
           sampling_params: { min_p: 0.1 },
@@ -34,7 +34,7 @@ describe("parseRecipeAgentAiConfig", () => {
       })
     ).toEqual({
       name: "openrouter/anthropic/claude-sonnet-4",
-      thinkingLevel: "high",
+      thinkingLevel: "max",
       streamOptions: {
         maxTokens: 4096,
         samplingParams: { min_p: 0.1 },
