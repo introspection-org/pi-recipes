@@ -251,7 +251,6 @@ jobs:
           if [[ "$tag" != "latest" ]]; then
             npm dist-tag rm "$package_name" latest || true
           fi
-          npm access set status=public "$package_name"
 
   publish-crate:
     needs: release-please
