@@ -14,6 +14,7 @@ import {
   type McpDaemonEnvelope,
   type McpDaemonRequest,
 } from "./mcp-daemon-protocol.js";
+import { mcpTraceContextFromEnv } from "./mcp-trace-context.js";
 
 const START_TIMEOUT_MS = 20_000;
 const MAX_DAEMON_FRAME_BYTES = 10 * 1024 * 1024;
@@ -164,6 +165,7 @@ export async function callMcpDaemonTool(
   } = {}
 ): Promise<unknown> {
   const env = options.env ?? process.env;
+  const traceContext = mcpTraceContextFromEnv(env);
   const signal = options.signal;
   if (signal?.aborted) {
     throw new Error(
@@ -230,6 +232,7 @@ export async function callMcpDaemonTool(
       tool,
       arguments: args,
       timeoutMs,
+      ...(traceContext ? { trace: traceContext } : {}),
     },
     (envelope, socket) => {
       if ("result" in envelope) {

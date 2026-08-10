@@ -5,6 +5,7 @@ import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { context } from "@opentelemetry/api";
 
 import { createRuntime } from "mcporter";
 import {
@@ -23,6 +24,7 @@ import {
   type McpDaemonRequest,
   serializeMcpDaemonEnvelope,
 } from "./mcp-daemon-protocol.js";
+import { mcpDaemonRequestContext } from "./mcp-trace-context.js";
 
 const configuredSocketPath = process.env[MCP_DAEMON_SOCKET_ENV];
 const configuredToken = process.env[MCP_DAEMON_TOKEN_ENV];
@@ -238,6 +240,15 @@ async function executeRun(
 }
 
 async function execute(request: Extract<McpDaemonRequest, { type: "execute" }>, socket: Socket) {
+  return context.with(mcpDaemonRequestContext(request.trace), () =>
+    executeRequest(request, socket)
+  );
+}
+
+async function executeRequest(
+  request: Extract<McpDaemonRequest, { type: "execute" }>,
+  socket: Socket
+) {
   const controller = new AbortController();
   active.set(request.id, controller);
   socket.once("close", () => controller.abort());
@@ -273,6 +284,15 @@ async function execute(request: Extract<McpDaemonRequest, { type: "execute" }>, 
 }
 
 async function callTool(
+  request: Extract<McpDaemonRequest, { type: "call" }>,
+  socket: Socket
+): Promise<void> {
+  return context.with(mcpDaemonRequestContext(request.trace), () =>
+    callToolRequest(request, socket)
+  );
+}
+
+async function callToolRequest(
   request: Extract<McpDaemonRequest, { type: "call" }>,
   socket: Socket
 ): Promise<void> {

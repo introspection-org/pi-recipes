@@ -7,6 +7,7 @@ import {
   exchangeMcpDaemon,
   mcpDaemonEnvironment,
 } from "./mcp-daemon-client.js";
+import { mcpTraceContextFromEnv } from "./mcp-trace-context.js";
 
 function commandNeedsStdin(args: readonly string[]): boolean {
   if (args.some((arg, index) => arg === "--json" && args[index + 1] === "-")) return true;
@@ -60,8 +61,17 @@ async function main(args = process.argv.slice(2)): Promise<number> {
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   try {
+    const traceContext = mcpTraceContextFromEnv();
     await exchangeMcpDaemon(
-      { type: "execute", id, token, fingerprint, args, stdin: input },
+      {
+        type: "execute",
+        id,
+        token,
+        fingerprint,
+        args,
+        stdin: input,
+        ...(traceContext ? { trace: traceContext } : {}),
+      },
       (envelope, socket) => {
         if ("stream" in envelope) {
           (envelope.stream === "stdout" ? stdout : stderr).write(envelope.data);
