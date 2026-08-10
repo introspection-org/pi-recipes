@@ -1188,7 +1188,7 @@ fn validate_agent_model(
             );
         }
     }
-    validate_model_providers(model.get("providers"), path, ctx);
+    validate_model_providers(model.get("providers"), path, ctx, false);
 }
 
 fn snake_case_key(value: &str) -> bool {
@@ -1311,7 +1311,7 @@ fn validate_agent_ai(
             }
         }
     }
-    validate_model_providers(ai.get("providers"), path, ctx);
+    validate_model_providers(ai.get("providers"), path, ctx, true);
 }
 
 fn validate_agent_runtime(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
@@ -1452,7 +1452,12 @@ fn validate_non_negative_number(
     }
 }
 
-fn validate_model_providers(value: Option<&JsonValue>, path: &str, ctx: &mut CheckContext) {
+fn validate_model_providers(
+    value: Option<&JsonValue>,
+    path: &str,
+    ctx: &mut CheckContext,
+    transparent_openrouter_routing: bool,
+) {
     let Some(value) = value else {
         return;
     };
@@ -1495,7 +1500,7 @@ fn validate_model_providers(value: Option<&JsonValue>, path: &str, ctx: &mut Che
             );
         }
         if let Some(value) = openrouter.get("routing") {
-            validate_openrouter_routing(value, path, ctx);
+            validate_openrouter_routing(value, path, ctx, transparent_openrouter_routing);
         }
     }
     if let Some(value) = providers.get("anthropic") {
@@ -1532,7 +1537,12 @@ fn validate_model_providers(value: Option<&JsonValue>, path: &str, ctx: &mut Che
     }
 }
 
-fn validate_openrouter_routing(value: &JsonValue, path: &str, ctx: &mut CheckContext) {
+fn validate_openrouter_routing(
+    value: &JsonValue,
+    path: &str,
+    ctx: &mut CheckContext,
+    transparent: bool,
+) {
     const ROUTING_KEYS: &[&str] = &[
         "allow_fallbacks",
         "require_parameters",
@@ -1557,6 +1567,9 @@ fn validate_openrouter_routing(value: &JsonValue, path: &str, ctx: &mut CheckCon
         );
         return;
     };
+    if transparent {
+        return;
+    }
     for key in routing
         .keys()
         .filter(|key| !ROUTING_KEYS.contains(&key.as_str()))
@@ -3253,6 +3266,16 @@ mod tests {
             ),
         ]);
         let report = check_recipe_files(&valid);
+        assert!(report.valid, "{:?}", report.diagnostics);
+
+        let future_openrouter_routing = recipe_files(&[
+            ("package.json", &manifest),
+            (
+                "agents/agent.yaml",
+                "name: agent\nai:\n  model: openrouter/anthropic/claude-sonnet-4\n  providers:\n    openrouter:\n      routing:\n        future_router_policy:\n          mode: strict\n",
+            ),
+        ]);
+        let report = check_recipe_files(&future_openrouter_routing);
         assert!(report.valid, "{:?}", report.diagnostics);
 
         let unsafe_options = recipe_files(&[

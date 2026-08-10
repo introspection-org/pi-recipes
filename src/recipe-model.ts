@@ -51,7 +51,7 @@ const PROVIDER_KEYS = new Set(["openrouter", "anthropic"]);
 
 const OPENROUTER_PROVIDER_KEYS = new Set(["routing"]);
 
-const OPENROUTER_KEYS = new Set([
+const LEGACY_OPENROUTER_KEYS = new Set([
   "allow_fallbacks",
   "require_parameters",
   "data_collection",
@@ -238,12 +238,18 @@ function parseOpenRouterRouting(
       `${context} has invalid ${prefix}.providers.openrouter.routing: expected object`
     );
   }
-  assertKnownKeys(
-    context,
-    `${prefix}.providers.openrouter.routing`,
-    value,
-    OPENROUTER_KEYS
-  );
+  // `ai:` is the forward-compatible Pi boundary. OpenRouter owns this payload
+  // and can add routing fields without requiring a Recipes release. Keep the
+  // legacy `model:` block strict so its existing typo detection does not
+  // change underneath published Recipes.
+  if (prefix === "model") {
+    assertKnownKeys(
+      context,
+      `${prefix}.providers.openrouter.routing`,
+      value,
+      LEGACY_OPENROUTER_KEYS
+    );
+  }
   return { ...value } as OpenRouterRouting;
 }
 

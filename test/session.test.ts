@@ -97,6 +97,31 @@ async function credentialStore(): Promise<InMemoryCredentialStore> {
   return store;
 }
 
+async function openRouterCredentialStore(): Promise<InMemoryCredentialStore> {
+  const store = new InMemoryCredentialStore();
+  await store.modify("openrouter", async () => ({
+    type: "api_key",
+    key: "test-openrouter-key",
+  }));
+  return store;
+}
+
+async function captureSerializedPayload(handle: RecipeSessionHandle): Promise<{
+  payload: Record<string, unknown>;
+}> {
+  let payload: Record<string, unknown> | undefined;
+  handle.session.agent.onPayload = (nextPayload) => {
+    payload = nextPayload as Record<string, unknown>;
+    throw new Error("request payload captured");
+  };
+
+  await handle.session.prompt("capture the request").catch(() => {});
+  if (!payload) {
+    throw new Error("Expected Pi to construct a provider request");
+  }
+  return { payload };
+}
+
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -173,6 +198,75 @@ describe("createAgentSession", () => {
     expect(handle.session.agent.steeringMode).toBe("all");
     expect(handle.session.agent.followUpMode).toBe("all");
     expect(handle.session.agent.toolExecution).toBe("sequential");
+  });
+
+  it("forwards transparent AI options and provider routing to root and subagent requests", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "ai:",
+        "  model: openrouter/anthropic/claude-sonnet-4.5",
+        "  options:",
+        "    max_tokens: 321",
+        "    sampling_params:",
+        "      future_option: enabled",
+        "  providers:",
+        "    openrouter:",
+        "      routing:",
+        "        order: [anthropic, google-vertex, amazon-bedrock]",
+        "        only: [anthropic, google-vertex, amazon-bedrock]",
+        "        allow_fallbacks: true",
+        "        future_router_policy:",
+        "          mode: strict",
+        "tools: []",
+        "subagents: [explorer]",
+      ].join("\n")
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "explorer.yaml"),
+      [
+        "name: explorer",
+        "from: agent",
+        "tools: []",
+      ].join("\n")
+    );
+    const recipe = resolveRecipe({ recipeDir });
+    const credentials = await openRouterCredentialStore();
+    const root = await createAgentSession({
+      recipe,
+      cwd: workspaceDir,
+      credentials,
+      env: cleanEnv(),
+      runController: null,
+    });
+    handles.push(root);
+    const child = await createAgentSessionInternal({
+      recipe,
+      agentName: "explorer",
+      cwd: workspaceDir,
+      credentials,
+      env: cleanEnv(),
+      runController: null,
+      sessionRole: "subagent",
+    });
+    handles.push(child);
+
+    for (const handle of [root, child]) {
+      const captured = await captureSerializedPayload(handle);
+      expect(captured.payload).toMatchObject({
+        model: "anthropic/claude-sonnet-4.5",
+        max_completion_tokens: 321,
+        future_option: "enabled",
+        provider: {
+          order: ["anthropic", "google-vertex", "amazon-bedrock"],
+          only: ["anthropic", "google-vertex", "amazon-bedrock"],
+          allow_fallbacks: true,
+          future_router_policy: { mode: "strict" },
+        },
+      });
+    }
   });
 
   it("fails closed when a package extension cannot load", async () => {

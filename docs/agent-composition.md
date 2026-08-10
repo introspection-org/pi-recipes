@@ -137,9 +137,10 @@ ai:
       betas: [context-1m]
       context_management: {}
     openrouter:
-      routing:                  # allow_fallbacks, require_parameters, data_collection,
-        order: [anthropic]      # zdr, order, only, ignore, quantizations, sort, max_price,
-        sort: throughput        # preferred_min_throughput, preferred_max_latency, …
+      routing:                  # forwarded opaquely to OpenRouter
+        order: [anthropic]
+        only: [anthropic]
+        allow_fallbacks: true
 runtime:
   steering_mode: one-at-a-time
   follow_up_mode: one-at-a-time

@@ -1,13 +1,14 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadValidatedRecipeAgentDefinitions,
   validateRecipeAgentDefinitions,
 } from "../src/recipe-agent.js";
 import {
   applyRecipeAgentModelConfigToModel,
+  applyRecipeAgentModelConfigToSession,
   cloneModelForRecipe,
   mergeRecipeAgentModelConfig,
   parseRecipeAgentAiConfig,
@@ -52,6 +53,27 @@ describe("parseRecipeAgentAiConfig", () => {
     expect(() =>
       parseRecipeAgentAiConfig("test", { options: { on_payload: true } })
     ).toThrow(/host-owned/);
+  });
+
+  it("preserves future OpenRouter routing fields without a Recipes release", () => {
+    expect(
+      parseRecipeAgentAiConfig("test", {
+        model: "openrouter/anthropic/claude-sonnet-4",
+        providers: {
+          openrouter: {
+            routing: {
+              order: ["anthropic"],
+              future_router_policy: { mode: "strict" },
+            },
+          },
+        },
+      })
+    ).toMatchObject({
+      openrouter: {
+        order: ["anthropic"],
+        future_router_policy: { mode: "strict" },
+      },
+    });
   });
 });
 
@@ -226,6 +248,32 @@ describe("applyRecipeAgentModelConfigToModel", () => {
 
     expect(applied.compat?.openRouterRouting).toEqual({ sort: "throughput" });
     expect(applied.headers?.["anthropic-beta"]).toBe("existing,new-beta");
+  });
+});
+
+describe("applyRecipeAgentModelConfigToSession", () => {
+  it("forwards future AI options to Pi without enumerating them", () => {
+    const baseStreamFunction = vi.fn(() => "stream");
+    const session = {
+      agent: { streamFunction: baseStreamFunction },
+    } as any;
+    applyRecipeAgentModelConfigToSession(session, {
+      streamOptions: {
+        futureOption: "enabled",
+        samplingParams: { future_wire_option: true },
+      },
+    });
+
+    const model = {} as any;
+    const context = {} as any;
+    expect(
+      session.agent.streamFunction(model, context, { temperature: 0.2 })
+    ).toBe("stream");
+    expect(baseStreamFunction).toHaveBeenCalledWith(model, context, {
+      temperature: 0.2,
+      futureOption: "enabled",
+      samplingParams: { future_wire_option: true },
+    });
   });
 });
 

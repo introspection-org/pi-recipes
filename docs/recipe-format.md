@@ -129,10 +129,11 @@ when present, or Pi's normal base prompt otherwise.
 
 Recipe-authored configuration uses `snake_case`. `ai.options` is normalized at
 the Pi boundary to Pi's camelCase request options, so newly added Pi request
-options do not require a Recipe schema release. Nested option values are opaque
-provider data and are not renamed. Host-owned request controls (`api_key`,
-`headers`, hooks, fetch, environment, abort signals, telemetry, and session
-identity) are rejected.
+options do not require a Recipe schema release. Nested option values and
+`ai.providers.openrouter.routing` are opaque provider data and are not renamed
+or field-allowlisted. Host-owned request controls (`api_key`, `headers`, hooks,
+fetch, environment, abort signals, telemetry, and session identity) are
+rejected.
 
 `runtime` owns portable agent behavior. Queue modes accept `all` or
 `one-at-a-time`; `tool_execution` accepts `parallel` or `sequential`. The
