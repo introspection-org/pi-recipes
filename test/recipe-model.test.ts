@@ -25,7 +25,7 @@ describe("parseRecipeAgentAiConfig", () => {
     expect(
       parseRecipeAgentAiConfig("test", {
         model: "openrouter/anthropic/claude-sonnet-4",
-        thinking_level: "high",
+        thinking_level: "max",
         options: {
           max_tokens: 4096,
           sampling_params: { min_p: 0.1 },
@@ -34,7 +34,7 @@ describe("parseRecipeAgentAiConfig", () => {
       })
     ).toEqual({
       name: "openrouter/anthropic/claude-sonnet-4",
-      thinkingLevel: "high",
+      thinkingLevel: "max",
       streamOptions: {
         maxTokens: 4096,
         samplingParams: { min_p: 0.1 },
@@ -53,6 +53,25 @@ describe("parseRecipeAgentAiConfig", () => {
     expect(() =>
       parseRecipeAgentAiConfig("test", { options: { on_payload: true } })
     ).toThrow(/host-owned/);
+    for (const option of [
+      "client",
+      "bearer_token",
+      "profile",
+      "region",
+      "project",
+      "location",
+      "azure_api_version",
+      "azure_resource_name",
+      "azure_base_url",
+      "azure_deployment_name",
+      "transform_headers",
+    ]) {
+      expect(() =>
+        parseRecipeAgentAiConfig("test", {
+          options: { [option]: "host binding" },
+        })
+      ).toThrow(/host-owned/);
+    }
   });
 
   it("preserves future OpenRouter routing fields without a Recipes release", () => {
@@ -103,6 +122,41 @@ describe("parseRecipeAgentAiConfig", () => {
         providers: { anthropic: { context_management: "invalid" } },
       })
     ).toThrow(/context_management: expected object/);
+  });
+
+  it("preserves Vercel AI Gateway routing but rejects request-scoped credentials", () => {
+    expect(
+      parseRecipeAgentAiConfig("test", {
+        model: "vercel-ai-gateway/anthropic/claude-sonnet-5",
+        providers: {
+          vercel_ai_gateway: {
+            routing: {
+              order: ["anthropic", "bedrock"],
+              only: ["anthropic", "bedrock"],
+              sort: "cost",
+              future_gateway_policy: { mode: "strict" },
+            },
+          },
+        },
+      })
+    ).toMatchObject({
+      vercelAiGateway: {
+        order: ["anthropic", "bedrock"],
+        only: ["anthropic", "bedrock"],
+        sort: "cost",
+        future_gateway_policy: { mode: "strict" },
+      },
+    });
+
+    expect(() =>
+      parseRecipeAgentAiConfig("test", {
+        providers: {
+          vercel_ai_gateway: {
+            routing: { byok: { anthropic: [{ apiKey: "secret" }] } },
+          },
+        },
+      })
+    ).toThrow(/host-owned.*byok/);
   });
 });
 
@@ -326,6 +380,49 @@ describe("applyRecipeAgentModelConfigToSession", () => {
       futureOption: "enabled",
       samplingParams: { future_wire_option: true },
     });
+  });
+
+  it("injects Vercel gateway routing into only Vercel request payloads", async () => {
+    const previousOnPayload = vi.fn((payload) => ({
+      ...(payload as Record<string, unknown>),
+      extensionApplied: true,
+    }));
+    const session = {
+      agent: {
+        streamFunction: vi.fn(),
+        onPayload: previousOnPayload,
+      },
+    } as any;
+    applyRecipeAgentModelConfigToSession(session, {
+      vercelAiGateway: {
+        order: ["anthropic", "bedrock"],
+        sort: "cost",
+        future_gateway_policy: { mode: "strict" },
+      },
+    });
+
+    const original = {
+      providerOptions: { gateway: { caching: "auto" }, existing: true },
+    };
+    await expect(
+      session.agent.onPayload(original, { provider: "vercel-ai-gateway" })
+    ).resolves.toEqual({
+      providerOptions: {
+        existing: true,
+        gateway: {
+          caching: "auto",
+          order: ["anthropic", "bedrock"],
+          sort: "cost",
+          future_gateway_policy: { mode: "strict" },
+        },
+      },
+      extensionApplied: true,
+    });
+    expect(previousOnPayload).toHaveBeenCalledOnce();
+
+    await expect(
+      session.agent.onPayload(original, { provider: "anthropic" })
+    ).resolves.toEqual({ ...original, extensionApplied: true });
   });
 });
 

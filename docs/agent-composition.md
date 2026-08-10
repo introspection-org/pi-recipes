@@ -141,6 +141,10 @@ ai:
         order: [anthropic]
         only: [anthropic]
         allow_fallbacks: true
+    vercel_ai_gateway:
+      routing:                  # providerOptions.gateway on Vercel requests
+        order: [anthropic, bedrock]
+        only: [anthropic, bedrock]
 session:
   steering_mode: one-at-a-time
   follow_up_mode: one-at-a-time
@@ -150,11 +154,13 @@ session:
     max_retries: 2
 ```
 
-`ai.options` accepts current and future Pi request options using snake_case;
-Recipes converts only the option names to Pi camelCase. Its safe outer envelope
-is validated, while provider maps and nested option payloads remain opaque. All
-AI settings except the fully resolved model are optional and merge by key along
-a `from:` chain until a child explicitly declares `ai.model`.
+`ai.options` accepts current and future portable Pi `streamSimple` request
+options using snake_case; Recipes converts only the option names to Pi
+camelCase. Provider-adapter-only options are not implied by this block. Its safe
+outer envelope is validated, while explicit provider maps and nested payloads
+remain opaque except for credential and runtime-binding controls. All AI
+settings except the fully resolved model are optional and merge by key along a
+`from:` chain until a child explicitly declares `ai.model`.
 
 The former `model:` block remains readable for existing Recipes. New Recipes
 should use `ai:`; mixing both blocks in one agent is a validation error.

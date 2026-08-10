@@ -128,17 +128,23 @@ provider or session default. Omitted agent instructions preserve `SYSTEM.md`
 when present, or Pi's normal base prompt otherwise.
 
 Recipe-authored configuration uses `snake_case`. `ai.options` is normalized at
-the Pi boundary to Pi's camelCase request options, so newly added Pi request
-options do not require a Recipe schema release. Nested option values and
-`ai.providers.openrouter.routing` are opaque provider data and are not renamed
-or field-allowlisted. Host-owned request controls (`api_key`, `headers`, hooks,
-fetch, environment, abort signals, telemetry, and session identity) are
-rejected.
+the Pi boundary to Pi's camelCase portable `streamSimple` request options, so
+newly added portable Pi options do not require a Recipe schema release. It is
+not an alias for every provider adapter's lower-level options. Nested option
+values, `ai.providers.openrouter.routing`, and
+`ai.providers.vercel_ai_gateway.routing` are opaque provider data and are not
+renamed or field-allowlisted. Host-owned request controls are rejected,
+including credentials and SDK clients; headers and hooks; fetch, environment,
+abort signals, telemetry, and session identity; cloud project, location,
+region, and profile selection; and Azure endpoint/deployment configuration.
 
-The checker validates the provider envelope: OpenRouter `routing` and
-Anthropic `context_management` must be objects, and Anthropic `betas` must be
-non-empty strings. Fields inside the routing and context-management objects
-remain transparent provider payloads.
+The checker validates the provider envelope: OpenRouter and Vercel AI Gateway
+`routing` and Anthropic `context_management` must be objects, and Anthropic
+`betas` must be non-empty strings. Fields inside the routing and
+context-management objects remain transparent provider payloads, except that
+Vercel request-scoped `byok` credentials are host-owned and rejected. Vercel
+routing is serialized as `providerOptions.gateway` only for the
+`vercel-ai-gateway` provider.
 
 The checker does not predict live provider compatibility inside those
 transparent payloads. For example, OpenRouter's `require_parameters` policy
