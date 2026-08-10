@@ -6,7 +6,7 @@
   "release-label": "autorelease: tagged-checker",
   "always-update": true,
   "separate-pull-requests": true,
-  "group-pull-request-title-pattern": "chore(${branch}): release introspection-recipe-check ${version}",
+  "group-pull-request-title-pattern": "chore(${branch}): release introspection-recipe-check libraries",
   "packages": {
     "crates/introspection-recipe-check": {
       "release-type": "rust",

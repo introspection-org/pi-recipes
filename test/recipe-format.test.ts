@@ -499,7 +499,11 @@ describe("release train isolation", () => {
     ) as { label?: string; "release-label"?: string };
     const checkerConfig = JSON.parse(
       readFileSync(join(root, "release-please-checker-config.json"), "utf8")
-    ) as { label?: string; "release-label"?: string };
+    ) as {
+      label?: string;
+      "release-label"?: string;
+      "group-pull-request-title-pattern"?: string;
+    };
 
     expect(rootConfig).toMatchObject({
       label: "autorelease: pending-root",
@@ -508,6 +512,24 @@ describe("release train isolation", () => {
     expect(checkerConfig).toMatchObject({
       label: "autorelease: pending-checker",
       "release-label": "autorelease: tagged-checker",
+      // linked-versions emits this shared title without a version. The same
+      // pattern must parse the merged PR so release-please can create tags.
+      "group-pull-request-title-pattern":
+        "chore(${branch}): release introspection-recipe-check libraries",
     });
+  });
+
+  it("fails visibly when a merged checker release PR remains pending", () => {
+    const root = join(import.meta.dirname, "..");
+    const workflow = readFileSync(
+      join(root, ".github", "workflows", "release-please.yml"),
+      "utf8"
+    );
+
+    expect(workflow).toContain("name: Verify checker release state");
+    expect(workflow).toContain(
+      '.name == "autorelease: pending-checker"'
+    );
+    expect(workflow).toContain("Merged checker release PRs remain untagged");
   });
 });
