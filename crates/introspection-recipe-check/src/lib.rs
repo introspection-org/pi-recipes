@@ -1283,15 +1283,26 @@ fn validate_agent_ai(
         };
         const BLOCKED: &[&str] = &[
             "api_key",
+            "azure_api_version",
+            "azure_base_url",
+            "azure_deployment_name",
+            "azure_resource_name",
+            "bearer_token",
+            "client",
             "env",
             "fetch",
             "headers",
+            "location",
             "on_payload",
             "on_response",
+            "profile",
+            "project",
             "reasoning",
+            "region",
             "session_id",
             "signal",
             "telemetry_context",
+            "transform_headers",
         ];
         for key in options.keys() {
             if !snake_case_key(key) {
@@ -1539,7 +1550,7 @@ fn validate_model_providers(
     value: Option<&JsonValue>,
     path: &str,
     ctx: &mut CheckContext,
-    transparent_openrouter_routing: bool,
+    transparent_provider_payloads: bool,
 ) {
     let Some(value) = value else {
         return;
@@ -1553,15 +1564,19 @@ fn validate_model_providers(
         );
         return;
     };
-    for key in providers
-        .keys()
-        .filter(|key| !matches!(key.as_str(), "openrouter" | "anthropic"))
-    {
+    for key in providers.keys().filter(|key| {
+        !matches!(key.as_str(), "openrouter" | "anthropic")
+            && !(transparent_provider_payloads && key.as_str() == "vercel_ai_gateway")
+    }) {
         ctx.error(
             "agent.model.providers_key_unknown",
             path,
             format!("Agent model.providers contains unknown field '{key}'"),
-            Some("use only openrouter and anthropic"),
+            Some(if transparent_provider_payloads {
+                "use only openrouter, anthropic, and vercel_ai_gateway"
+            } else {
+                "use only openrouter and anthropic"
+            }),
         );
     }
     if let Some(value) = providers.get("openrouter") {
@@ -1583,7 +1598,7 @@ fn validate_model_providers(
             );
         }
         if let Some(value) = openrouter.get("routing") {
-            validate_openrouter_routing(value, path, ctx, transparent_openrouter_routing);
+            validate_openrouter_routing(value, path, ctx, transparent_provider_payloads);
         }
     }
     if let Some(value) = providers.get("anthropic") {
@@ -1627,6 +1642,46 @@ fn validate_model_providers(
                 "Agent model.providers.anthropic.context_management must be an object",
                 None::<String>,
             );
+        }
+    }
+    if transparent_provider_payloads {
+        if let Some(value) = providers.get("vercel_ai_gateway") {
+            let Some(vercel) = value.as_object() else {
+                ctx.error(
+                    "agent.ai.providers.vercel_ai_gateway_invalid",
+                    path,
+                    "Agent ai.providers.vercel_ai_gateway must be an object",
+                    None::<String>,
+                );
+                return;
+            };
+            for key in vercel.keys().filter(|key| key.as_str() != "routing") {
+                ctx.error(
+                    "agent.ai.providers.vercel_ai_gateway_key_unknown",
+                    path,
+                    format!("Agent ai.providers.vercel_ai_gateway contains unknown field '{key}'"),
+                    Some("use only routing"),
+                );
+            }
+            if let Some(value) = vercel.get("routing") {
+                let Some(routing) = value.as_object() else {
+                    ctx.error(
+                        "agent.ai.providers.vercel_ai_gateway.routing_invalid",
+                        path,
+                        "Agent ai.providers.vercel_ai_gateway.routing must be an object",
+                        None::<String>,
+                    );
+                    return;
+                };
+                if routing.contains_key("byok") {
+                    ctx.error(
+                        "agent.ai.providers.vercel_ai_gateway.routing_key_blocked",
+                        path,
+                        "Agent ai.providers.vercel_ai_gateway.routing cannot configure host-owned field 'byok'",
+                        None::<String>,
+                    );
+                }
+            }
         }
     }
 }

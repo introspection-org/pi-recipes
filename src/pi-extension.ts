@@ -54,6 +54,7 @@ import { type RecipeAgentDefinition } from "./recipe-agent.js";
 import type { RecipeAgentMcpMode } from "./recipe-agent.js";
 import { createMcpToolSet } from "./mcp-tools.js";
 import {
+  applyRecipeAgentPayloadPolicy,
   applyRecipeAgentModelConfigToModel,
   cloneModelForRecipe,
 } from "./recipe-model.js";
@@ -791,9 +792,6 @@ export function createRecipesExtension(
       launchState.resolved.modelConfig?.streamOptions
         ? "ai.options (or legacy model request options)"
         : undefined,
-      launchState.resolved.modelConfig?.anthropic?.contextManagement !== undefined
-        ? "ai.providers.anthropic.context_management"
-        : undefined,
       launchState.resolved.sessionConfig ? "session" : undefined,
     ].filter((value): value is string => Boolean(value));
     if (unsupportedPortableConfig.length > 0) {
@@ -1204,6 +1202,15 @@ export function createRecipesExtension(
     pi.on("agent_end", (_event, ctx) => {
       sessionCtx = ctx;
       completions.poke();
+    });
+
+    pi.on("before_provider_request", (event, ctx) => {
+      if (!state || !ctx.model) return undefined;
+      return applyRecipeAgentPayloadPolicy(
+        event.payload,
+        ctx.model,
+        state.resolved.modelConfig
+      );
     });
 
     pi.registerMessageRenderer<AgentCompletionsDetails>(

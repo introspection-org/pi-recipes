@@ -573,7 +573,7 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
-  it("fails closed when Pi cannot apply Anthropic context management", async () => {
+  it("applies Anthropic context management through Pi's payload hook", async () => {
     const root = mkdtempSync(
       join(tmpdir(), "pi-recipe-unsupported-anthropic-context-")
     );
@@ -596,12 +596,7 @@ describe("Recipes extension for Pi", () => {
         ].join("\n")
       );
       const notify = vi.fn();
-      const abort = vi.fn();
-      const ctx = {
-        ...extensionContext(projectDir, notify),
-        abort,
-        mode: "json",
-      };
+      const ctx = extensionContext(projectDir, notify);
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
@@ -612,18 +607,84 @@ describe("Recipes extension for Pi", () => {
         ctx
       );
 
-      expect(pi.activeTools).toEqual([]);
-      expect(notify).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "Pi's extension API cannot apply Recipe ai.providers.anthropic.context_management"
-        ),
-        "warning"
+      expect(pi.activeTools).toEqual(["read"]);
+      const results = await pi.emitExtensionEvent(
+        { type: "before_provider_request", payload: { model: "claude" } } as any,
+        {
+          ...ctx,
+          model: { provider: "anthropic", api: "anthropic-messages" },
+        }
       );
-      expect(process.exitCode).toBe(1);
-      await pi.emitExtensionEvent({ type: "agent_start" } as any, ctx);
-      expect(abort).toHaveBeenCalledOnce();
+      expect(results).toContainEqual({
+        model: "claude",
+        context_management: { edits: [] },
+      });
+      expect(process.exitCode).toBe(previousExitCode);
     } finally {
       process.exitCode = previousExitCode;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies Vercel AI Gateway routing through Pi's payload hook", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-vercel-routing-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "ai:",
+          "  model: vercel-ai-gateway/anthropic/claude-sonnet-5",
+          "  providers:",
+          "    vercel_ai_gateway:",
+          "      routing:",
+          "        order: [anthropic, bedrock]",
+          "        only: [anthropic, bedrock]",
+          "        sort: cost",
+          "tools: [read]",
+        ].join("\n")
+      );
+      const ctx = extensionContext(projectDir);
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(pi.activeTools).toEqual(["read"]);
+      const results = await pi.emitExtensionEvent(
+        {
+          type: "before_provider_request",
+          payload: {
+            providerOptions: { gateway: { caching: "auto" } },
+          },
+        } as any,
+        {
+          ...ctx,
+          model: {
+            provider: "vercel-ai-gateway",
+            api: "anthropic-messages",
+          },
+        }
+      );
+      expect(results).toContainEqual({
+        providerOptions: {
+          gateway: {
+            caching: "auto",
+            order: ["anthropic", "bedrock"],
+            only: ["anthropic", "bedrock"],
+            sort: "cost",
+          },
+        },
+      });
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

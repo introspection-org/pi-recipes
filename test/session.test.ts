@@ -106,12 +106,71 @@ async function openRouterCredentialStore(): Promise<InMemoryCredentialStore> {
   return store;
 }
 
+async function vercelAiGatewayCredentialStore(): Promise<InMemoryCredentialStore> {
+  const store = new InMemoryCredentialStore();
+  await store.modify("vercel-ai-gateway", async () => ({
+    type: "api_key",
+    key: "test-vercel-ai-gateway-key",
+  }));
+  return store;
+}
+
+async function providerCredentialStore(
+  provider: string
+): Promise<InMemoryCredentialStore> {
+  const store = new InMemoryCredentialStore();
+  if (provider === "openai-codex") {
+    const payload = Buffer.from(
+      JSON.stringify({
+        "https://api.openai.com/auth": {
+          chatgpt_account_id: "test-account",
+        },
+      })
+    ).toString("base64url");
+    await store.modify(provider, async () => ({
+      type: "oauth",
+      access: `e30.${payload}.signature`,
+      refresh: "test-openai-codex-refresh-token",
+      expires: Date.now() + 60 * 60 * 1000,
+    }));
+    return store;
+  }
+  await store.modify(provider, async () => ({
+    type: "api_key",
+    key: `test-${provider}-key`,
+    ...(provider === "azure-openai-responses"
+      ? { env: { AZURE_OPENAI_RESOURCE_NAME: "test-resource" } }
+      : {}),
+  }));
+  return store;
+}
+
+function nestedValue(
+  value: Record<string, unknown>,
+  path: readonly string[]
+): unknown {
+  let current: unknown = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
 async function captureSerializedPayload(handle: RecipeSessionHandle): Promise<{
   payload: Record<string, unknown>;
 }> {
   let payload: Record<string, unknown> | undefined;
-  handle.session.agent.onPayload = (nextPayload) => {
-    payload = nextPayload as Record<string, unknown>;
+  const previousOnPayload = handle.session.agent.onPayload;
+  handle.session.agent.onPayload = async (nextPayload, model) => {
+    const previousResult = previousOnPayload
+      ? await previousOnPayload(nextPayload, model)
+      : undefined;
+    payload = (previousResult === undefined
+      ? nextPayload
+      : previousResult) as Record<string, unknown>;
     throw new Error("request payload captured");
   };
 
@@ -326,6 +385,162 @@ describe("createAgentSession", () => {
         },
       });
     }
+  });
+
+  it("forwards Vercel AI Gateway routing to root and subagent request payloads", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "ai:",
+        "  model: vercel-ai-gateway/anthropic/claude-sonnet-5",
+        "  providers:",
+        "    vercel_ai_gateway:",
+        "      routing:",
+        "        order: [anthropic, bedrock]",
+        "        only: [anthropic, bedrock]",
+        "        sort: cost",
+        "        caching: auto",
+        "        future_gateway_policy:",
+        "          mode: strict",
+        "tools: []",
+        "subagents: [explorer]",
+      ].join("\n")
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "explorer.yaml"),
+      ["name: explorer", "from: agent", "tools: []"].join("\n")
+    );
+    const recipe = resolveRecipe({ recipeDir });
+    const credentials = await vercelAiGatewayCredentialStore();
+    const root = await createAgentSession({
+      recipe,
+      cwd: workspaceDir,
+      credentials,
+      env: cleanEnv(),
+      runController: null,
+    });
+    handles.push(root);
+    const child = await createAgentSessionInternal({
+      recipe,
+      agentName: "explorer",
+      cwd: workspaceDir,
+      credentials,
+      env: cleanEnv(),
+      runController: null,
+      sessionRole: "subagent",
+    });
+    handles.push(child);
+
+    for (const handle of [root, child]) {
+      const captured = await captureSerializedPayload(handle);
+      expect(captured.payload).toMatchObject({
+        providerOptions: {
+          gateway: {
+            order: ["anthropic", "bedrock"],
+            only: ["anthropic", "bedrock"],
+            sort: "cost",
+            caching: "auto",
+            future_gateway_policy: { mode: "strict" },
+          },
+        },
+      });
+    }
+  });
+
+  it.each([
+    {
+      provider: "openai",
+      model: "gpt-4.1",
+      maxTokensPath: ["max_output_tokens"],
+    },
+    {
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      maxTokensPath: ["max_tokens"],
+    },
+    {
+      provider: "google",
+      model: "gemini-2.5-flash",
+      maxTokensPath: ["config", "maxOutputTokens"],
+    },
+    {
+      provider: "google-vertex",
+      model: "gemini-2.5-flash",
+      maxTokensPath: ["config", "maxOutputTokens"],
+    },
+    {
+      provider: "amazon-bedrock",
+      model: "anthropic.claude-sonnet-4-5-20250929-v1:0",
+      maxTokensPath: ["inferenceConfig", "maxTokens"],
+    },
+    {
+      provider: "azure-openai-responses",
+      model: "gpt-4.1",
+      maxTokensPath: ["max_output_tokens"],
+    },
+    {
+      provider: "mistral",
+      model: "mistral-large-latest",
+      maxTokensPath: ["maxTokens"],
+    },
+  ])(
+    "serializes portable AI options through the $provider adapter",
+    async ({ provider, model, maxTokensPath }) => {
+      const { recipeDir, workspaceDir } = fixture();
+      writeFileSync(
+        join(recipeDir, "agents", "agent.yaml"),
+        [
+          "name: agent",
+          "ai:",
+          `  model: ${provider}/${model}`,
+          "  thinking_level: off",
+          "  options:",
+          "    max_tokens: 321",
+          "tools: []",
+        ].join("\n")
+      );
+      const handle = await createAgentSession({
+        recipe: resolveRecipe({ recipeDir }),
+        cwd: workspaceDir,
+        credentials: await providerCredentialStore(provider),
+        env: cleanEnv(),
+        runController: null,
+      });
+      handles.push(handle);
+
+      const captured = await captureSerializedPayload(handle);
+      expect(nestedValue(captured.payload, maxTokensPath)).toBe(321);
+    }
+  );
+
+  it("serializes supported portable AI options through the OpenAI Codex adapter", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "ai:",
+        "  model: openai-codex/gpt-5.4",
+        "  thinking_level: off",
+        "  options:",
+        "    temperature: 0.4",
+        "tools: []",
+      ].join("\n")
+    );
+    const handle = await createAgentSession({
+      recipe: resolveRecipe({ recipeDir }),
+      cwd: workspaceDir,
+      credentials: await providerCredentialStore("openai-codex"),
+      env: cleanEnv(),
+      runController: null,
+    });
+    handles.push(handle);
+
+    const captured = await captureSerializedPayload(handle);
+    expect(captured.payload.temperature).toBe(0.4);
+    expect(captured.payload).not.toHaveProperty("max_output_tokens");
   });
 
   it("fails closed when a package extension cannot load", async () => {

@@ -34,20 +34,37 @@ const AI_KEYS = new Set(["model", "thinking_level", "options", "providers"]);
 
 const BLOCKED_AI_OPTION_KEYS = new Set([
   "apiKey",
+  "azureApiVersion",
+  "azureBaseUrl",
+  "azureDeploymentName",
+  "azureResourceName",
+  "bearerToken",
+  "client",
   "env",
   "fetch",
   "headers",
+  "location",
   "onPayload",
   "onResponse",
+  "profile",
+  "project",
   "reasoning",
+  "region",
   "sessionId",
   "signal",
   "telemetryContext",
+  "transformHeaders",
 ]);
 
 const SNAKE_CASE_KEY = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 
-const PROVIDER_KEYS = new Set(["openrouter", "anthropic"]);
+const LEGACY_PROVIDER_KEYS = new Set(["openrouter", "anthropic"]);
+
+const AI_PROVIDER_KEYS = new Set([
+  "openrouter",
+  "anthropic",
+  "vercel_ai_gateway",
+]);
 
 const OPENROUTER_PROVIDER_KEYS = new Set(["routing"]);
 
@@ -69,6 +86,10 @@ const LEGACY_OPENROUTER_KEYS = new Set([
 
 const ANTHROPIC_KEYS = new Set(["betas", "context_management"]);
 
+const VERCEL_AI_GATEWAY_KEYS = new Set(["routing"]);
+
+const BLOCKED_VERCEL_AI_GATEWAY_ROUTING_KEYS = new Set(["byok"]);
+
 export interface RecipeAgentModelStreamOptions extends Record<string, unknown> {
   temperature?: number;
   maxTokens?: number;
@@ -83,12 +104,15 @@ export interface RecipeAgentModelAnthropicOptions {
   contextManagement?: unknown;
 }
 
+export type RecipeAgentVercelAiGatewayRouting = Record<string, unknown>;
+
 export interface RecipeAgentModelConfig {
   name?: string;
   thinkingLevel?: ThinkingLevel;
   streamOptions?: RecipeAgentModelStreamOptions;
   openrouter?: OpenRouterRouting;
   anthropic?: RecipeAgentModelAnthropicOptions;
+  vercelAiGateway?: RecipeAgentVercelAiGatewayRouting;
 }
 
 export class RecipeModelConfigError extends Error {
@@ -304,23 +328,76 @@ function parseAnthropic(
   };
 }
 
+function parseVercelAiGatewayRouting(
+  context: string,
+  value: unknown
+): RecipeAgentVercelAiGatewayRouting | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new RecipeModelConfigError(
+      `${context} has invalid ai.providers.vercel_ai_gateway.routing: expected object`
+    );
+  }
+  const blocked = Object.keys(value).filter((key) =>
+    BLOCKED_VERCEL_AI_GATEWAY_ROUTING_KEYS.has(key)
+  );
+  if (blocked.length > 0) {
+    throw new RecipeModelConfigError(
+      `${context} cannot configure host-owned ai.providers.vercel_ai_gateway.routing field(s): ${blocked.join(", ")}`
+    );
+  }
+  return { ...value };
+}
+
+function parseVercelAiGateway(
+  context: string,
+  value: unknown
+): RecipeAgentVercelAiGatewayRouting | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new RecipeModelConfigError(
+      `${context} has invalid ai.providers.vercel_ai_gateway: expected object`
+    );
+  }
+  assertKnownKeys(
+    context,
+    "ai.providers.vercel_ai_gateway",
+    value,
+    VERCEL_AI_GATEWAY_KEYS
+  );
+  return parseVercelAiGatewayRouting(context, value.routing);
+}
+
 function parseProviders(
   context: string,
   value: unknown,
   prefix: "ai" | "model"
-): Pick<RecipeAgentModelConfig, "openrouter" | "anthropic"> | undefined {
+): Pick<
+  RecipeAgentModelConfig,
+  "openrouter" | "anthropic" | "vercelAiGateway"
+> | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
     throw new RecipeModelConfigError(
       `${context} has invalid ${prefix}.providers: expected object`
     );
   }
-  assertKnownKeys(context, `${prefix}.providers`, value, PROVIDER_KEYS);
+  assertKnownKeys(
+    context,
+    `${prefix}.providers`,
+    value,
+    prefix === "ai" ? AI_PROVIDER_KEYS : LEGACY_PROVIDER_KEYS
+  );
   const openrouter = parseOpenRouterProvider(context, value.openrouter, prefix);
   const anthropic = parseAnthropic(context, value.anthropic, prefix);
+  const vercelAiGateway =
+    prefix === "ai"
+      ? parseVercelAiGateway(context, value.vercel_ai_gateway)
+      : undefined;
   return {
     ...(openrouter ? { openrouter } : {}),
     ...(anthropic ? { anthropic } : {}),
+    ...(vercelAiGateway ? { vercelAiGateway } : {}),
   };
 }
 
@@ -450,8 +527,8 @@ export function parseRecipeAgentAiConfig(
 
 /**
  * Merge a child agent's model config over its `from:` base. Sections
- * (`streamOptions`, `openrouter`, `anthropic`) merge by key so a child can
- * override one option without restating the base's.
+ * (`streamOptions`, `openrouter`, `anthropic`, `vercelAiGateway`) merge by key
+ * so a child can override one option without restating the base's.
  */
 export function mergeRecipeAgentModelConfig(
   base: RecipeAgentModelConfig | undefined,
@@ -474,12 +551,17 @@ export function mergeRecipeAgentModelConfig(
     ...(base.anthropic ?? {}),
     ...(overlay.anthropic ?? {}),
   };
+  const vercelAiGateway = {
+    ...(base.vercelAiGateway ?? {}),
+    ...(overlay.vercelAiGateway ?? {}),
+  };
   return {
     ...base,
     ...overlay,
     ...(hasKeys(streamOptions) ? { streamOptions } : {}),
     ...(hasKeys(openrouter) ? { openrouter } : {}),
     ...(hasKeys(anthropic) ? { anthropic } : {}),
+    ...(hasKeys(vercelAiGateway) ? { vercelAiGateway } : {}),
   };
 }
 
@@ -533,7 +615,7 @@ function mergeStreamOptions(
 
 function withAnthropicContextManagement(
   payload: unknown,
-  model: Model<any>,
+  model: Pick<Model<any>, "api">,
   config: RecipeAgentModelConfig
 ): unknown {
   const contextManagement = config.anthropic?.contextManagement;
@@ -546,10 +628,56 @@ function withAnthropicContextManagement(
   };
 }
 
+function withVercelAiGatewayRouting(
+  payload: unknown,
+  model: Pick<Model<any>, "provider">,
+  config: RecipeAgentModelConfig
+): unknown {
+  const routing = config.vercelAiGateway;
+  if (
+    routing === undefined ||
+    model.provider !== "vercel-ai-gateway" ||
+    !isRecord(payload)
+  ) {
+    return payload;
+  }
+  const providerOptions = isRecord(payload.providerOptions)
+    ? payload.providerOptions
+    : {};
+  const gateway = isRecord(providerOptions.gateway)
+    ? providerOptions.gateway
+    : {};
+  return {
+    ...payload,
+    providerOptions: {
+      ...providerOptions,
+      gateway: {
+        ...gateway,
+        ...routing,
+      },
+    },
+  };
+}
+
+/** Apply Recipe-owned provider payload policy after Pi serializes a request. */
+export function applyRecipeAgentPayloadPolicy(
+  payload: unknown,
+  model: Pick<Model<any>, "provider" | "api">,
+  config: RecipeAgentModelConfig | undefined
+): unknown {
+  if (!config) return payload;
+  const withAnthropicPolicy = withAnthropicContextManagement(
+    payload,
+    model,
+    config
+  );
+  return withVercelAiGatewayRouting(withAnthropicPolicy, model, config);
+}
+
 /**
- * Apply stream options and Anthropic context management onto a live agent
- * session. Wraps the session's stream function and payload hook; safe to call
- * once per session.
+ * Apply stream options and provider payload policy onto a live agent session.
+ * Wraps the session's stream function and payload hook; safe to call once per
+ * session.
  */
 export function applyRecipeAgentModelConfigToSession(
   session: AgentSession,
@@ -567,14 +695,13 @@ export function applyRecipeAgentModelConfigToSession(
       );
   }
 
-  if (config.anthropic?.contextManagement !== undefined) {
+  if (
+    config.anthropic?.contextManagement !== undefined ||
+    config.vercelAiGateway !== undefined
+  ) {
     const previousOnPayload = session.agent.onPayload;
     session.agent.onPayload = async (payload, model) => {
-      const nextPayload = withAnthropicContextManagement(
-        payload,
-        model,
-        config
-      );
+      const nextPayload = applyRecipeAgentPayloadPolicy(payload, model, config);
       const previousResult = previousOnPayload
         ? await previousOnPayload(nextPayload, model)
         : undefined;
