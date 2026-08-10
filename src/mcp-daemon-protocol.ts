@@ -8,6 +8,11 @@ export const MCP_SESSION_ROOT_ENV = "PI_RECIPES_MCP_SESSION_ROOT";
 export const MCP_DAEMON_GENERATION_ENV = "PI_RECIPES_MCP_DAEMON_GENERATION";
 export const MCP_DAEMON_MAX_FRAME_BYTES = 10 * 1024 * 1024;
 
+export interface McpDaemonTraceContext {
+  traceparent: string;
+  tracestate?: string;
+}
+
 export interface McpDaemonExecuteRequest {
   type: "execute";
   id: string;
@@ -15,6 +20,7 @@ export interface McpDaemonExecuteRequest {
   fingerprint: string;
   args: string[];
   stdin: string;
+  trace?: McpDaemonTraceContext;
 }
 
 export interface McpDaemonCancelRequest {
@@ -55,6 +61,7 @@ export interface McpDaemonCallRequest {
   tool: string;
   arguments: Record<string, unknown>;
   timeoutMs: number;
+  trace?: McpDaemonTraceContext;
 }
 
 export interface McpCatalogServer {
