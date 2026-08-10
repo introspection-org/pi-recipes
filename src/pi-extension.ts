@@ -791,6 +791,9 @@ export function createRecipesExtension(
       launchState.resolved.modelConfig?.streamOptions
         ? "ai.options (or legacy model request options)"
         : undefined,
+      launchState.resolved.modelConfig?.anthropic?.contextManagement !== undefined
+        ? "ai.providers.anthropic.context_management"
+        : undefined,
       launchState.resolved.sessionConfig ? "session" : undefined,
     ].filter((value): value is string => Boolean(value));
     if (unsupportedPortableConfig.length > 0) {
