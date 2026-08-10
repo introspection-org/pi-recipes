@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.19.0](https://github.com/introspection-org/recipes/compare/v0.18.1...v0.19.0) (2026-08-10)
+
+
+### Features
+
+* add transparent AI and session configuration ([#208](https://github.com/introspection-org/recipes/issues/208)) ([a86a08d](https://github.com/introspection-org/recipes/commit/a86a08d74d053afc991a1bc7fc977892a29bf4e5))
+
+
+### Bug Fixes
+
+* propagate trace context per MCP call ([#201](https://github.com/introspection-org/recipes/issues/201)) ([001e83e](https://github.com/introspection-org/recipes/commit/001e83e59ba68dcb16d22bdc5058a50d3b7ed85b))
+
 ## [0.18.1](https://github.com/introspection-org/recipes/compare/v0.18.0...v0.18.1) (2026-08-06)
 
 
