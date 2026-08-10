@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.19.1](https://github.com/introspection-org/recipes/compare/v0.19.0...v0.19.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* avoid redundant npm access mutation ([#213](https://github.com/introspection-org/recipes/issues/213)) ([cefde86](https://github.com/introspection-org/recipes/commit/cefde868724c6c444e4c6e2b024a4346d1d0a81a))
+* complete provider policy support ([#212](https://github.com/introspection-org/recipes/issues/212)) ([e2a3fca](https://github.com/introspection-org/recipes/commit/e2a3fcaef04f12f6ec426a876464e6ea68d241aa))
+* recover checker release train ([#209](https://github.com/introspection-org/recipes/issues/209)) ([b05f299](https://github.com/introspection-org/recipes/commit/b05f2993d500d2402a6db8aa1a67ff07278305e4))
+
 ## [0.19.0](https://github.com/introspection-org/recipes/compare/v0.18.1...v0.19.0) (2026-08-10)
 
 
