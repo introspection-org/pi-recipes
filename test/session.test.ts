@@ -153,6 +153,28 @@ describe("createAgentSession", () => {
     expect(handle.session.systemPrompt).toContain("Conformance agent");
   });
 
+  it("applies authored runtime policy to the session-local Pi agent", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "ai:",
+        "  model: anthropic/claude-sonnet-4-5",
+        "runtime:",
+        "  steering_mode: all",
+        "  follow_up_mode: all",
+        "  tool_execution: sequential",
+      ].join("\n")
+    );
+
+    const handle = await open({ recipeDir, cwd: workspaceDir });
+
+    expect(handle.session.agent.steeringMode).toBe("all");
+    expect(handle.session.agent.followUpMode).toBe("all");
+    expect(handle.session.agent.toolExecution).toBe("sequential");
+  });
+
   it("fails closed when a package extension cannot load", async () => {
     const { recipeDir, workspaceDir } = fixture({
       manifestPi: { extensions: ["extensions/fail.ts"] },

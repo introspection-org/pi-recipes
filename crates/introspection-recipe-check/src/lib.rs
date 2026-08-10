@@ -966,6 +966,8 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
         "from",
         "description",
         "model",
+        "ai",
+        "runtime",
         "tools",
         "mcp",
         "skills",
@@ -1048,7 +1050,17 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
     };
 
     let mut fields = HashSet::new();
+    if map.contains_key("model") && map.contains_key("ai") {
+        ctx.error(
+            "agent.ai_model_conflict",
+            path,
+            "Agent must not declare both ai and model",
+            Some("use ai; model is retained only for backwards compatibility"),
+        );
+    }
     validate_agent_model(map, path, &name, &mut fields, ctx);
+    validate_agent_ai(map, path, &name, &mut fields, ctx);
+    validate_agent_runtime(map, path, ctx);
     let tools = validate_agent_string_array(map, "tools", path, ctx);
     if tools
         .as_deref()
@@ -1177,6 +1189,228 @@ fn validate_agent_model(
         }
     }
     validate_model_providers(model.get("providers"), path, ctx);
+}
+
+fn snake_case_key(value: &str) -> bool {
+    let mut chars = value.chars();
+    if !chars.next().is_some_and(|ch| ch.is_ascii_lowercase()) {
+        return false;
+    }
+    let mut previous_underscore = false;
+    for ch in chars {
+        if ch == '_' {
+            if previous_underscore {
+                return false;
+            }
+            previous_underscore = true;
+        } else if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
+            previous_underscore = false;
+        } else {
+            return false;
+        }
+    }
+    !previous_underscore
+}
+
+fn validate_agent_ai(
+    map: &JsonMap,
+    path: &str,
+    name: &str,
+    fields: &mut HashSet<AgentField>,
+    ctx: &mut CheckContext,
+) {
+    let Some(value) = map.get("ai") else { return };
+    let Some(ai) = value.as_object() else {
+        ctx.error(
+            "agent.ai_invalid",
+            path,
+            "Agent ai must be an object",
+            None::<String>,
+        );
+        return;
+    };
+    const AI_KEYS: &[&str] = &["model", "thinking_level", "options", "providers"];
+    for key in ai.keys().filter(|key| !AI_KEYS.contains(&key.as_str())) {
+        ctx.error(
+            "agent.ai_key_unknown",
+            path,
+            format!("Agent ai contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", AI_KEYS.join(", "))),
+        );
+    }
+    if let Some(model_name) = obj_string(ai, "model") {
+        fields.insert(AgentField::ModelName);
+        if !valid_model_spec(&model_name) {
+            ctx.error(
+                "agent.ai.model_invalid",
+                path,
+                format!("Recipe agent '{name}' has invalid ai.model '{model_name}' - expected '<provider>/<model_id>'"),
+                Some("use an available provider and model identifier"),
+            );
+        }
+    } else if ai.contains_key("model") {
+        ctx.error(
+            "agent.ai.model_invalid",
+            path,
+            "Agent ai.model must be a non-empty string",
+            None::<String>,
+        );
+    }
+    if let Some(value) = ai.get("thinking_level") {
+        if !value.as_str().is_some_and(|level| {
+            matches!(
+                level,
+                "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+            )
+        }) {
+            ctx.error(
+                "agent.ai.thinking_level_invalid",
+                path,
+                "Agent ai.thinking_level is unsupported",
+                Some("use off, minimal, low, medium, high, or xhigh"),
+            );
+        }
+    }
+    if let Some(value) = ai.get("options") {
+        let Some(options) = value.as_object() else {
+            ctx.error(
+                "agent.ai.options_invalid",
+                path,
+                "Agent ai.options must be an object",
+                None::<String>,
+            );
+            return;
+        };
+        const BLOCKED: &[&str] = &[
+            "api_key",
+            "env",
+            "fetch",
+            "headers",
+            "on_payload",
+            "on_response",
+            "reasoning",
+            "session_id",
+            "signal",
+            "telemetry_context",
+        ];
+        for key in options.keys() {
+            if !snake_case_key(key) {
+                ctx.error(
+                    "agent.ai.options_key_invalid",
+                    path,
+                    format!("Agent ai.options key '{key}' must use snake_case"),
+                    None::<String>,
+                );
+            } else if BLOCKED.contains(&key.as_str()) {
+                ctx.error(
+                    "agent.ai.options_key_blocked",
+                    path,
+                    format!("Agent ai.options cannot configure host-owned option '{key}'"),
+                    None::<String>,
+                );
+            }
+        }
+    }
+    validate_model_providers(ai.get("providers"), path, ctx);
+}
+
+fn validate_agent_runtime(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
+    let Some(value) = map.get("runtime") else {
+        return;
+    };
+    let Some(runtime) = value.as_object() else {
+        ctx.error(
+            "agent.runtime_invalid",
+            path,
+            "Agent runtime must be an object",
+            None::<String>,
+        );
+        return;
+    };
+    const RUNTIME_KEYS: &[&str] = &[
+        "steering_mode",
+        "follow_up_mode",
+        "tool_execution",
+        "retry",
+        "compaction",
+        "branch_summary",
+        "images",
+    ];
+    for key in runtime
+        .keys()
+        .filter(|key| !RUNTIME_KEYS.contains(&key.as_str()))
+    {
+        ctx.error(
+            "agent.runtime_key_unknown",
+            path,
+            format!("Agent runtime contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", RUNTIME_KEYS.join(", "))),
+        );
+    }
+    for key in ["steering_mode", "follow_up_mode"] {
+        if let Some(value) = runtime.get(key) {
+            if !value
+                .as_str()
+                .is_some_and(|mode| matches!(mode, "all" | "one-at-a-time"))
+            {
+                ctx.error(
+                    format!("agent.runtime.{key}_invalid"),
+                    path,
+                    format!("Agent runtime.{key} must be all or one-at-a-time"),
+                    None::<String>,
+                );
+            }
+        }
+    }
+    if let Some(value) = runtime.get("tool_execution") {
+        if !value
+            .as_str()
+            .is_some_and(|mode| matches!(mode, "parallel" | "sequential"))
+        {
+            ctx.error(
+                "agent.runtime.tool_execution_invalid",
+                path,
+                "Agent runtime.tool_execution must be parallel or sequential",
+                None::<String>,
+            );
+        }
+    }
+    for key in ["retry", "compaction", "branch_summary", "images"] {
+        if let Some(value) = runtime.get(key) {
+            if !value.is_object() {
+                ctx.error(
+                    format!("agent.runtime.{key}_invalid"),
+                    path,
+                    format!("Agent runtime.{key} must be an object"),
+                    None::<String>,
+                );
+                continue;
+            }
+            validate_runtime_object_keys(value, path, &format!("runtime.{key}"), ctx);
+        }
+    }
+}
+
+fn validate_runtime_object_keys(
+    value: &JsonValue,
+    path: &str,
+    prefix: &str,
+    ctx: &mut CheckContext,
+) {
+    let Some(settings) = value.as_object() else {
+        return;
+    };
+    for (key, child) in settings {
+        if !snake_case_key(key) {
+            ctx.error(
+                "agent.runtime.key_invalid",
+                path,
+                format!("Agent {prefix} key '{key}' must use snake_case"),
+                None::<String>,
+            );
+        }
+        validate_runtime_object_keys(child, path, &format!("{prefix}.{key}"), ctx);
+    }
 }
 
 fn validate_non_negative_number(
@@ -3001,6 +3235,38 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.name_invalid"));
+    }
+
+    #[test]
+    fn accepts_ai_and_runtime_and_rejects_unsafe_ai_options() {
+        let package = json!({
+            "name": "agent-ai-runtime",
+            "version": "0.1.0",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let manifest = serde_json::to_string_pretty(&package).expect("serialize package");
+        let valid = recipe_files(&[
+            ("package.json", &manifest),
+            (
+                "agents/agent.yaml",
+                "name: agent\nai:\n  model: openai/gpt-5\n  thinking_level: high\n  options:\n    max_tokens: 4096\nruntime:\n  steering_mode: one-at-a-time\n  follow_up_mode: all\n  tool_execution: parallel\n  retry:\n    max_retries: 3\n",
+            ),
+        ]);
+        let report = check_recipe_files(&valid);
+        assert!(report.valid, "{:?}", report.diagnostics);
+
+        let unsafe_options = recipe_files(&[
+            ("package.json", &manifest),
+            (
+                "agents/agent.yaml",
+                "name: agent\nai:\n  model: openai/gpt-5\n  options:\n    api_key: secret\n",
+            ),
+        ]);
+        let report = check_recipe_files(&unsafe_options);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.ai.options_key_blocked"));
     }
 
     #[test]

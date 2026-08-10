@@ -30,6 +30,23 @@ const MODEL_KEYS = new Set([
   "providers",
 ]);
 
+const AI_KEYS = new Set(["model", "thinking_level", "options", "providers"]);
+
+const BLOCKED_AI_OPTION_KEYS = new Set([
+  "apiKey",
+  "env",
+  "fetch",
+  "headers",
+  "onPayload",
+  "onResponse",
+  "reasoning",
+  "sessionId",
+  "signal",
+  "telemetryContext",
+]);
+
+const SNAKE_CASE_KEY = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+
 const PROVIDER_KEYS = new Set(["openrouter", "anthropic"]);
 
 const OPENROUTER_PROVIDER_KEYS = new Set(["routing"]);
@@ -52,7 +69,7 @@ const OPENROUTER_KEYS = new Set([
 
 const ANTHROPIC_KEYS = new Set(["betas", "context_management"]);
 
-export interface RecipeAgentModelStreamOptions {
+export interface RecipeAgentModelStreamOptions extends Record<string, unknown> {
   temperature?: number;
   maxTokens?: number;
   cacheRetention?: CacheRetention;
@@ -87,6 +104,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasKeys(value: object | undefined): boolean {
   return value !== undefined && Object.keys(value).length > 0;
+}
+
+function snakeToCamel(key: string): string {
+  return key.replace(/_([a-z0-9])/g, (_, character: string) =>
+    character.toUpperCase()
+  );
+}
+
+function normalizeSnakeCaseObject(
+  context: string,
+  value: unknown
+): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new RecipeModelConfigError(`${context}: expected object`);
+  }
+  const normalized: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (!SNAKE_CASE_KEY.test(key)) {
+      throw new RecipeModelConfigError(
+        `${context} has non-snake_case key "${key}"`
+      );
+    }
+    const normalizedKey = snakeToCamel(key);
+    if (BLOCKED_AI_OPTION_KEYS.has(normalizedKey)) {
+      throw new RecipeModelConfigError(
+        `${context} cannot configure host-owned option "${key}"`
+      );
+    }
+    normalized[normalizedKey] = child;
+  }
+  return normalized;
 }
 
 function optionalString(
@@ -181,17 +229,18 @@ function assertKnownKeys(
 
 function parseOpenRouterRouting(
   context: string,
-  value: unknown
+  value: unknown,
+  prefix: "ai" | "model"
 ): OpenRouterRouting | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
     throw new RecipeModelConfigError(
-      `${context} has invalid model.providers.openrouter.routing: expected object`
+      `${context} has invalid ${prefix}.providers.openrouter.routing: expected object`
     );
   }
   assertKnownKeys(
     context,
-    "model.providers.openrouter.routing",
+    `${prefix}.providers.openrouter.routing`,
     value,
     OPENROUTER_KEYS
   );
@@ -200,37 +249,39 @@ function parseOpenRouterRouting(
 
 function parseOpenRouterProvider(
   context: string,
-  value: unknown
+  value: unknown,
+  prefix: "ai" | "model"
 ): OpenRouterRouting | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
     throw new RecipeModelConfigError(
-      `${context} has invalid model.providers.openrouter: expected object`
+      `${context} has invalid ${prefix}.providers.openrouter: expected object`
     );
   }
   assertKnownKeys(
     context,
-    "model.providers.openrouter",
+    `${prefix}.providers.openrouter`,
     value,
     OPENROUTER_PROVIDER_KEYS
   );
-  return parseOpenRouterRouting(context, value.routing);
+  return parseOpenRouterRouting(context, value.routing, prefix);
 }
 
 function parseAnthropic(
   context: string,
-  value: unknown
+  value: unknown,
+  prefix: "ai" | "model"
 ): RecipeAgentModelAnthropicOptions | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
     throw new RecipeModelConfigError(
-      `${context} has invalid model.providers.anthropic: expected object`
+      `${context} has invalid ${prefix}.providers.anthropic: expected object`
     );
   }
-  assertKnownKeys(context, "model.providers.anthropic", value, ANTHROPIC_KEYS);
+  assertKnownKeys(context, `${prefix}.providers.anthropic`, value, ANTHROPIC_KEYS);
   const betas = optionalStringArray(
     context,
-    "model.providers.anthropic.betas",
+    `${prefix}.providers.anthropic.betas`,
     value.betas
   );
   return {
@@ -243,17 +294,18 @@ function parseAnthropic(
 
 function parseProviders(
   context: string,
-  value: unknown
+  value: unknown,
+  prefix: "ai" | "model"
 ): Pick<RecipeAgentModelConfig, "openrouter" | "anthropic"> | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
     throw new RecipeModelConfigError(
-      `${context} has invalid model.providers: expected object`
+      `${context} has invalid ${prefix}.providers: expected object`
     );
   }
-  assertKnownKeys(context, "model.providers", value, PROVIDER_KEYS);
-  const openrouter = parseOpenRouterProvider(context, value.openrouter);
-  const anthropic = parseAnthropic(context, value.anthropic);
+  assertKnownKeys(context, `${prefix}.providers`, value, PROVIDER_KEYS);
+  const openrouter = parseOpenRouterProvider(context, value.openrouter, prefix);
+  const anthropic = parseAnthropic(context, value.anthropic, prefix);
   return {
     ...(openrouter ? { openrouter } : {}),
     ...(anthropic ? { anthropic } : {}),
@@ -339,13 +391,47 @@ export function parseRecipeAgentModelConfig(
   };
 
   const name = optionalString(context, "model.name", value.name);
-  const providers = parseProviders(context, value.providers);
+  const providers = parseProviders(context, value.providers, "model");
   return {
     ...(name ? { name } : {}),
     ...(thinkingLevel
       ? { thinkingLevel: thinkingLevel as ThinkingLevel }
       : {}),
     ...(hasKeys(streamOptions) ? { streamOptions } : {}),
+    ...(providers ?? {}),
+  };
+}
+
+/**
+ * Parse the preferred agent YAML `ai:` block. `options` keys are normalized
+ * from Recipe snake_case to Pi camelCase without enumerating Pi's evolving
+ * request-option surface. Nested values are deliberately left opaque.
+ */
+export function parseRecipeAgentAiConfig(
+  context: string,
+  value: unknown
+): RecipeAgentModelConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new RecipeModelConfigError(`${context} has invalid ai: expected object`);
+  }
+  assertKnownKeys(context, "ai", value, AI_KEYS);
+
+  const name = optionalString(context, "ai.model", value.model);
+  const thinkingLevel = parseThinkingLevel(
+    context,
+    "ai.thinking_level",
+    value.thinking_level
+  );
+  const streamOptions =
+    value.options === undefined
+      ? undefined
+      : normalizeSnakeCaseObject(`${context} ai.options`, value.options);
+  const providers = parseProviders(context, value.providers, "ai");
+  return {
+    ...(name ? { name } : {}),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(streamOptions && hasKeys(streamOptions) ? { streamOptions } : {}),
     ...(providers ?? {}),
   };
 }

@@ -10,9 +10,90 @@ import {
   applyRecipeAgentModelConfigToModel,
   cloneModelForRecipe,
   mergeRecipeAgentModelConfig,
+  parseRecipeAgentAiConfig,
   parseRecipeAgentModelConfig,
   RecipeModelConfigError,
 } from "../src/recipe-model.js";
+import {
+  mergeRecipeAgentRuntimeConfig,
+  parseRecipeAgentRuntimeConfig,
+} from "../src/recipe-runtime.js";
+
+describe("parseRecipeAgentAiConfig", () => {
+  it("normalizes future Pi options without flattening nested payloads", () => {
+    expect(
+      parseRecipeAgentAiConfig("test", {
+        model: "openrouter/anthropic/claude-sonnet-4",
+        thinking_level: "high",
+        options: {
+          max_tokens: 4096,
+          sampling_params: { min_p: 0.1 },
+          websocket_connect_timeout_ms: 5000,
+        },
+      })
+    ).toEqual({
+      name: "openrouter/anthropic/claude-sonnet-4",
+      thinkingLevel: "high",
+      streamOptions: {
+        maxTokens: 4096,
+        samplingParams: { min_p: 0.1 },
+        websocketConnectTimeoutMs: 5000,
+      },
+    });
+  });
+
+  it("rejects mixed casing and host-owned request controls", () => {
+    expect(() =>
+      parseRecipeAgentAiConfig("test", { options: { maxTokens: 1 } })
+    ).toThrow(/non-snake_case/);
+    expect(() =>
+      parseRecipeAgentAiConfig("test", { options: { api_key: "secret" } })
+    ).toThrow(/host-owned/);
+    expect(() =>
+      parseRecipeAgentAiConfig("test", { options: { on_payload: true } })
+    ).toThrow(/host-owned/);
+  });
+});
+
+describe("parseRecipeAgentRuntimeConfig", () => {
+  it("maps portable runtime policy onto Pi settings", () => {
+    expect(
+      parseRecipeAgentRuntimeConfig("test", {
+        steering_mode: "one-at-a-time",
+        follow_up_mode: "all",
+        tool_execution: "sequential",
+        retry: { max_retries: 4, base_delay_ms: 250 },
+        branch_summary: { reserve_tokens: 2048 },
+      })
+    ).toEqual({
+      steeringMode: "one-at-a-time",
+      followUpMode: "all",
+      toolExecution: "sequential",
+      settings: {
+        steeringMode: "one-at-a-time",
+        followUpMode: "all",
+        retry: { maxRetries: 4, baseDelayMs: 250 },
+        branchSummary: { reserveTokens: 2048 },
+      },
+    });
+  });
+
+  it("merges inherited runtime policy", () => {
+    expect(
+      mergeRecipeAgentRuntimeConfig(
+        { steeringMode: "all", settings: { retry: { maxRetries: 2 } } },
+        { toolExecution: "sequential", settings: { images: { autoResize: false } } }
+      )
+    ).toEqual({
+      steeringMode: "all",
+      toolExecution: "sequential",
+      settings: {
+        retry: { maxRetries: 2 },
+        images: { autoResize: false },
+      },
+    });
+  });
+});
 
 describe("parseRecipeAgentModelConfig", () => {
   it("parses the full model block", () => {
@@ -215,6 +296,97 @@ describe("recipe agent model config loading", () => {
       skills: [],
       subagents: [],
     });
+  });
+
+  it("loads the preferred ai and runtime blocks", () => {
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "ai:",
+        "  model: openai/gpt-5.5",
+        "  thinking_level: high",
+        "  options:",
+        "    max_tokens: 2048",
+        "runtime:",
+        "  steering_mode: all",
+        "  tool_execution: sequential",
+      ].join("\n")
+    );
+
+    expect(validateRecipeAgentDefinitions(recipeDir)).toEqual([]);
+    expect(
+      loadValidatedRecipeAgentDefinitions(recipeDir).definitions.get("agent")
+    ).toMatchObject({
+      model: { name: "openai/gpt-5.5", thinkingLevel: "high" },
+      modelConfig: { streamOptions: { maxTokens: 2048 } },
+      runtimeConfig: {
+        steeringMode: "all",
+        toolExecution: "sequential",
+      },
+    });
+  });
+
+  it("inherits ai and runtime settings into child agents", () => {
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "ai:",
+        "  model: anthropic/claude-sonnet-4-6",
+        "  options:",
+        "    max_tokens: 4096",
+        "runtime:",
+        "  retry:",
+        "    enabled: true",
+        "    max_retries: 2",
+      ].join("\n")
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "reviewer.yaml"),
+      [
+        "name: reviewer",
+        "from: agent",
+        "ai:",
+        "  thinking_level: high",
+        "runtime:",
+        "  retry:",
+        "    max_retries: 5",
+        "  tool_execution: sequential",
+      ].join("\n")
+    );
+
+    const reviewer = loadValidatedRecipeAgentDefinitions(recipeDir).definitions.get(
+      "reviewer"
+    );
+    expect(reviewer).toMatchObject({
+      modelConfig: {
+        name: "anthropic/claude-sonnet-4-6",
+        thinkingLevel: "high",
+        streamOptions: { maxTokens: 4096 },
+      },
+      runtimeConfig: {
+        toolExecution: "sequential",
+        settings: { retry: { enabled: true, maxRetries: 5 } },
+      },
+    });
+  });
+
+  it("rejects declaring legacy model and ai together", () => {
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: openai/gpt-5.5",
+        "ai:",
+        "  model: openai/gpt-5.5",
+      ].join("\n")
+    );
+
+    expect(validateRecipeAgentDefinitions(recipeDir)).toEqual([
+      expect.objectContaining({ message: expect.stringMatching(/both model and ai/) }),
+    ]);
   });
 
   it.each(["append", "replace"] as const)(
