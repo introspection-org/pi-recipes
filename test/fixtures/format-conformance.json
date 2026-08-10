@@ -8,11 +8,11 @@
     }
   },
   {
-    "name": "ai and runtime agent",
+    "name": "ai and session agent",
     "valid": true,
     "files": {
-      "package.json": "{\"name\":\"ai-runtime\",\"pi\":{}}",
-      "agents/agent.yaml": "name: agent\nai:\n  model: openai/gpt-5\n  options:\n    max_tokens: 4096\nruntime:\n  steering_mode: one-at-a-time\n  tool_execution: parallel\n"
+      "package.json": "{\"name\":\"ai-session\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nai:\n  model: openai/gpt-5\n  options:\n    max_tokens: 4096\nsession:\n  steering_mode: one-at-a-time\n  tool_execution: parallel\n"
     }
   },
   {

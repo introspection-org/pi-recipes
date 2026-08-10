@@ -16,9 +16,9 @@ import {
   RecipeModelConfigError,
 } from "../src/recipe-model.js";
 import {
-  mergeRecipeAgentRuntimeConfig,
-  parseRecipeAgentRuntimeConfig,
-} from "../src/recipe-runtime.js";
+  mergeRecipeAgentSessionConfig,
+  parseRecipeAgentSessionConfig,
+} from "../src/recipe-session.js";
 
 describe("parseRecipeAgentAiConfig", () => {
   it("normalizes future Pi options without flattening nested payloads", () => {
@@ -77,10 +77,10 @@ describe("parseRecipeAgentAiConfig", () => {
   });
 });
 
-describe("parseRecipeAgentRuntimeConfig", () => {
-  it("maps portable runtime policy onto Pi settings", () => {
+describe("parseRecipeAgentSessionConfig", () => {
+  it("maps portable session policy onto Pi settings", () => {
     expect(
-      parseRecipeAgentRuntimeConfig("test", {
+      parseRecipeAgentSessionConfig("test", {
         steering_mode: "one-at-a-time",
         follow_up_mode: "all",
         tool_execution: "sequential",
@@ -100,9 +100,9 @@ describe("parseRecipeAgentRuntimeConfig", () => {
     });
   });
 
-  it("merges inherited runtime policy", () => {
+  it("merges inherited session policy", () => {
     expect(
-      mergeRecipeAgentRuntimeConfig(
+      mergeRecipeAgentSessionConfig(
         { steeringMode: "all", settings: { retry: { maxRetries: 2 } } },
         { toolExecution: "sequential", settings: { images: { autoResize: false } } }
       )
@@ -346,7 +346,7 @@ describe("recipe agent model config loading", () => {
     });
   });
 
-  it("loads the preferred ai and runtime blocks", () => {
+  it("loads the preferred ai and session blocks", () => {
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
       [
@@ -356,7 +356,7 @@ describe("recipe agent model config loading", () => {
         "  thinking_level: high",
         "  options:",
         "    max_tokens: 2048",
-        "runtime:",
+        "session:",
         "  steering_mode: all",
         "  tool_execution: sequential",
       ].join("\n")
@@ -368,14 +368,14 @@ describe("recipe agent model config loading", () => {
     ).toMatchObject({
       model: { name: "openai/gpt-5.5", thinkingLevel: "high" },
       modelConfig: { streamOptions: { maxTokens: 2048 } },
-      runtimeConfig: {
+      sessionConfig: {
         steeringMode: "all",
         toolExecution: "sequential",
       },
     });
   });
 
-  it("inherits ai and runtime settings into child agents", () => {
+  it("inherits ai and session settings into child agents", () => {
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
       [
@@ -384,7 +384,7 @@ describe("recipe agent model config loading", () => {
         "  model: anthropic/claude-sonnet-4-6",
         "  options:",
         "    max_tokens: 4096",
-        "runtime:",
+        "session:",
         "  retry:",
         "    enabled: true",
         "    max_retries: 2",
@@ -397,7 +397,7 @@ describe("recipe agent model config loading", () => {
         "from: agent",
         "ai:",
         "  thinking_level: high",
-        "runtime:",
+        "session:",
         "  retry:",
         "    max_retries: 5",
         "  tool_execution: sequential",
@@ -413,7 +413,7 @@ describe("recipe agent model config loading", () => {
         thinkingLevel: "high",
         streamOptions: { maxTokens: 4096 },
       },
-      runtimeConfig: {
+      sessionConfig: {
         toolExecution: "sequential",
         settings: { retry: { enabled: true, maxRetries: 5 } },
       },
@@ -434,6 +434,23 @@ describe("recipe agent model config loading", () => {
 
     expect(validateRecipeAgentDefinitions(recipeDir)).toEqual([
       expect.objectContaining({ message: expect.stringMatching(/both model and ai/) }),
+    ]);
+  });
+
+  it("rejects the unshipped runtime spelling instead of creating an alias", () => {
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "ai:",
+        "  model: openai/gpt-5.5",
+        "runtime:",
+        "  tool_execution: parallel",
+      ].join("\n")
+    );
+
+    expect(validateRecipeAgentDefinitions(recipeDir)).toEqual([
+      expect.objectContaining({ message: expect.stringMatching(/runtime/) }),
     ]);
   });
 

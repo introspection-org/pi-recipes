@@ -967,7 +967,7 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
         "description",
         "model",
         "ai",
-        "runtime",
+        "session",
         "tools",
         "mcp",
         "skills",
@@ -1060,7 +1060,7 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
     }
     validate_agent_model(map, path, &name, &mut fields, ctx);
     validate_agent_ai(map, path, &name, &mut fields, ctx);
-    validate_agent_runtime(map, path, ctx);
+    validate_agent_session(map, path, ctx);
     let tools = validate_agent_string_array(map, "tools", path, ctx);
     if tools
         .as_deref()
@@ -1314,20 +1314,20 @@ fn validate_agent_ai(
     validate_model_providers(ai.get("providers"), path, ctx, true);
 }
 
-fn validate_agent_runtime(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
-    let Some(value) = map.get("runtime") else {
+fn validate_agent_session(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
+    let Some(value) = map.get("session") else {
         return;
     };
-    let Some(runtime) = value.as_object() else {
+    let Some(session) = value.as_object() else {
         ctx.error(
-            "agent.runtime_invalid",
+            "agent.session_invalid",
             path,
-            "Agent runtime must be an object",
+            "Agent session must be an object",
             None::<String>,
         );
         return;
     };
-    const RUNTIME_KEYS: &[&str] = &[
+    const SESSION_KEYS: &[&str] = &[
         "steering_mode",
         "follow_up_mode",
         "tool_execution",
@@ -1336,62 +1336,62 @@ fn validate_agent_runtime(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
         "branch_summary",
         "images",
     ];
-    for key in runtime
+    for key in session
         .keys()
-        .filter(|key| !RUNTIME_KEYS.contains(&key.as_str()))
+        .filter(|key| !SESSION_KEYS.contains(&key.as_str()))
     {
         ctx.error(
-            "agent.runtime_key_unknown",
+            "agent.session_key_unknown",
             path,
-            format!("Agent runtime contains unknown field '{key}'"),
-            Some(format!("supported fields: {}", RUNTIME_KEYS.join(", "))),
+            format!("Agent session contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", SESSION_KEYS.join(", "))),
         );
     }
     for key in ["steering_mode", "follow_up_mode"] {
-        if let Some(value) = runtime.get(key) {
+        if let Some(value) = session.get(key) {
             if !value
                 .as_str()
                 .is_some_and(|mode| matches!(mode, "all" | "one-at-a-time"))
             {
                 ctx.error(
-                    format!("agent.runtime.{key}_invalid"),
+                    format!("agent.session.{key}_invalid"),
                     path,
-                    format!("Agent runtime.{key} must be all or one-at-a-time"),
+                    format!("Agent session.{key} must be all or one-at-a-time"),
                     None::<String>,
                 );
             }
         }
     }
-    if let Some(value) = runtime.get("tool_execution") {
+    if let Some(value) = session.get("tool_execution") {
         if !value
             .as_str()
             .is_some_and(|mode| matches!(mode, "parallel" | "sequential"))
         {
             ctx.error(
-                "agent.runtime.tool_execution_invalid",
+                "agent.session.tool_execution_invalid",
                 path,
-                "Agent runtime.tool_execution must be parallel or sequential",
+                "Agent session.tool_execution must be parallel or sequential",
                 None::<String>,
             );
         }
     }
     for key in ["retry", "compaction", "branch_summary", "images"] {
-        if let Some(value) = runtime.get(key) {
+        if let Some(value) = session.get(key) {
             if !value.is_object() {
                 ctx.error(
-                    format!("agent.runtime.{key}_invalid"),
+                    format!("agent.session.{key}_invalid"),
                     path,
-                    format!("Agent runtime.{key} must be an object"),
+                    format!("Agent session.{key} must be an object"),
                     None::<String>,
                 );
                 continue;
             }
-            validate_runtime_object_keys(value, path, &format!("runtime.{key}"), ctx);
+            validate_session_object_keys(value, path, &format!("session.{key}"), ctx);
         }
     }
 }
 
-fn validate_runtime_object_keys(
+fn validate_session_object_keys(
     value: &JsonValue,
     path: &str,
     prefix: &str,
@@ -1403,13 +1403,13 @@ fn validate_runtime_object_keys(
     for (key, child) in settings {
         if !snake_case_key(key) {
             ctx.error(
-                "agent.runtime.key_invalid",
+                "agent.session.key_invalid",
                 path,
                 format!("Agent {prefix} key '{key}' must use snake_case"),
                 None::<String>,
             );
         }
-        validate_runtime_object_keys(child, path, &format!("{prefix}.{key}"), ctx);
+        validate_session_object_keys(child, path, &format!("{prefix}.{key}"), ctx);
     }
 }
 
@@ -3251,9 +3251,9 @@ mod tests {
     }
 
     #[test]
-    fn accepts_ai_and_runtime_and_rejects_unsafe_ai_options() {
+    fn accepts_ai_and_session_and_rejects_unsafe_ai_options() {
         let package = json!({
-            "name": "agent-ai-runtime",
+            "name": "agent-ai-session",
             "version": "0.1.0",
             "pi": { "agents": ["agents/*.yaml"] }
         });
@@ -3262,11 +3262,24 @@ mod tests {
             ("package.json", &manifest),
             (
                 "agents/agent.yaml",
-                "name: agent\nai:\n  model: openai/gpt-5\n  thinking_level: high\n  options:\n    max_tokens: 4096\nruntime:\n  steering_mode: one-at-a-time\n  follow_up_mode: all\n  tool_execution: parallel\n  retry:\n    max_retries: 3\n",
+                "name: agent\nai:\n  model: openai/gpt-5\n  thinking_level: high\n  options:\n    max_tokens: 4096\nsession:\n  steering_mode: one-at-a-time\n  follow_up_mode: all\n  tool_execution: parallel\n  retry:\n    max_retries: 3\n",
             ),
         ]);
         let report = check_recipe_files(&valid);
         assert!(report.valid, "{:?}", report.diagnostics);
+
+        let unshipped_runtime_alias = recipe_files(&[
+            ("package.json", &manifest),
+            (
+                "agents/agent.yaml",
+                "name: agent\nai:\n  model: openai/gpt-5\nruntime:\n  tool_execution: parallel\n",
+            ),
+        ]);
+        let report = check_recipe_files(&unshipped_runtime_alias);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.key_unknown"));
 
         let future_openrouter_routing = recipe_files(&[
             ("package.json", &manifest),

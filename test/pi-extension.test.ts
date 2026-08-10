@@ -524,8 +524,8 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
-  it("fails closed when Pi cannot apply authored request or runtime configuration", async () => {
-    const root = mkdtempSync(join(tmpdir(), "pi-recipe-unsupported-ai-runtime-"));
+  it("fails closed when Pi cannot apply authored request or session configuration", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-unsupported-ai-session-"));
     const previousExitCode = process.exitCode;
     try {
       const recipeDir = writeRecipe(root);
@@ -539,7 +539,7 @@ describe("Recipes extension for Pi", () => {
           "  model: openai/gpt-4.1",
           "  options:",
           "    max_tokens: 4096",
-          "runtime:",
+          "session:",
           "  tool_execution: parallel",
           "tools: [read]",
         ].join("\n")
@@ -560,7 +560,7 @@ describe("Recipes extension for Pi", () => {
       expect(pi.activeTools).toEqual([]);
       expect(notify).toHaveBeenCalledWith(
         expect.stringContaining(
-          "Pi's extension API cannot apply Recipe ai.options (or legacy model request options) and runtime"
+          "Pi's extension API cannot apply Recipe ai.options (or legacy model request options) and session"
         ),
         "warning"
       );

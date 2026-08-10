@@ -121,9 +121,9 @@ package is an internal bridge for Pi startup, not a second user-facing CLI.
 ## Host parity
 
 The Pi extension and embedded hosts consume the same resolver. Embedded Recipe
-sessions apply `ai.options` and `runtime` directly to the live Pi agent and a
+sessions apply `ai.options` and `session` directly to the live Pi agent and a
 session-local settings manager. Pi's current extension API exposes model and
-thinking selection but not request defaults or agent runtime setters, so
+thinking selection but not request defaults or session-policy setters, so
 `pi --recipe` fails closed when either section is present instead of silently
 ignoring authored behavior. Use the embedded Recipe session API for those
 Recipes until Pi exposes the required setters. Hosts should run the conformance

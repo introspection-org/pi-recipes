@@ -70,9 +70,9 @@ export { expectedProviderEnvVars } from "./provider-env.js";
 
 function sessionSettingsManager(
   base: SettingsManager,
-  runtimeSettings: Record<string, unknown> | undefined
+  sessionSettings: Record<string, unknown> | undefined
 ): SettingsManager {
-  if (!runtimeSettings) return base;
+  if (!sessionSettings) return base;
   const merge = (
     left: Record<string, unknown>,
     right: Record<string, unknown>
@@ -98,7 +98,7 @@ function sessionSettingsManager(
         base.getGlobalSettings() as Record<string, unknown>,
         base.getProjectSettings() as Record<string, unknown>
       ),
-      runtimeSettings
+      sessionSettings
     ) as never
   );
 }
@@ -605,7 +605,7 @@ async function createSessionForAgent(
       opts.settingsManager ?? SettingsManager.create(cwd, recipe.recipeDir);
     const settingsManager = sessionSettingsManager(
       baseSettingsManager,
-      recipe.runtimeConfig?.settings
+      recipe.sessionConfig?.settings
     );
     const services = await createAgentSessionServices({
       cwd,
@@ -750,8 +750,8 @@ async function createSessionForAgent(
       customTools,
     });
     session = created.session;
-    if (recipe.runtimeConfig?.toolExecution) {
-      session.agent.toolExecution = recipe.runtimeConfig.toolExecution;
+    if (recipe.sessionConfig?.toolExecution) {
+      session.agent.toolExecution = recipe.sessionConfig.toolExecution;
     }
     normalizeSessionToolsForModel(session, model);
     applyRecipeAgentModelConfigToSession(session, recipe.modelConfig);

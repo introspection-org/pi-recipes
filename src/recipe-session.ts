@@ -1,4 +1,4 @@
-const RUNTIME_KEYS = new Set([
+const SESSION_KEYS = new Set([
   "steering_mode",
   "follow_up_mode",
   "tool_execution",
@@ -13,17 +13,17 @@ const SNAKE_CASE_KEY = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 export type RecipeQueueMode = "all" | "one-at-a-time";
 export type RecipeToolExecutionMode = "parallel" | "sequential";
 
-export interface RecipeAgentRuntimeConfig {
+export interface RecipeAgentSessionConfig {
   steeringMode?: RecipeQueueMode;
   followUpMode?: RecipeQueueMode;
   toolExecution?: RecipeToolExecutionMode;
   settings?: Record<string, unknown>;
 }
 
-export class RecipeRuntimeConfigError extends Error {
+export class RecipeSessionConfigError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "RecipeRuntimeConfigError";
+    this.name = "RecipeSessionConfigError";
   }
 }
 
@@ -39,12 +39,12 @@ function snakeToCamel(key: string): string {
 
 function normalizeObject(context: string, value: unknown): Record<string, unknown> {
   if (!isRecord(value)) {
-    throw new RecipeRuntimeConfigError(`${context}: expected object`);
+    throw new RecipeSessionConfigError(`${context}: expected object`);
   }
   const normalized: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) {
     if (!SNAKE_CASE_KEY.test(key)) {
-      throw new RecipeRuntimeConfigError(
+      throw new RecipeSessionConfigError(
         `${context} has non-snake_case key "${key}"`
       );
     }
@@ -62,27 +62,27 @@ function parseQueueMode(
 ): RecipeQueueMode | undefined {
   if (value === undefined) return undefined;
   if (value !== "all" && value !== "one-at-a-time") {
-    throw new RecipeRuntimeConfigError(
-      `${context} has invalid runtime.${key}: expected all or one-at-a-time`
+    throw new RecipeSessionConfigError(
+      `${context} has invalid session.${key}: expected all or one-at-a-time`
     );
   }
   return value;
 }
 
-export function parseRecipeAgentRuntimeConfig(
+export function parseRecipeAgentSessionConfig(
   context: string,
   value: unknown
-): RecipeAgentRuntimeConfig | undefined {
+): RecipeAgentSessionConfig | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
-    throw new RecipeRuntimeConfigError(
-      `${context} has invalid runtime: expected object`
+    throw new RecipeSessionConfigError(
+      `${context} has invalid session: expected object`
     );
   }
-  const unknown = Object.keys(value).filter((key) => !RUNTIME_KEYS.has(key));
+  const unknown = Object.keys(value).filter((key) => !SESSION_KEYS.has(key));
   if (unknown.length > 0) {
-    throw new RecipeRuntimeConfigError(
-      `${context} has unsupported runtime key(s): ${unknown.join(", ")}`
+    throw new RecipeSessionConfigError(
+      `${context} has unsupported session key(s): ${unknown.join(", ")}`
     );
   }
 
@@ -102,8 +102,8 @@ export function parseRecipeAgentRuntimeConfig(
     toolExecution !== "parallel" &&
     toolExecution !== "sequential"
   ) {
-    throw new RecipeRuntimeConfigError(
-      `${context} has invalid runtime.tool_execution: expected parallel or sequential`
+    throw new RecipeSessionConfigError(
+      `${context} has invalid session.tool_execution: expected parallel or sequential`
     );
   }
 
@@ -114,7 +114,7 @@ export function parseRecipeAgentRuntimeConfig(
   for (const key of ["retry", "compaction", "branch_summary", "images"] as const) {
     if (value[key] === undefined) continue;
     settings[snakeToCamel(key)] = normalizeObject(
-      `${context} runtime.${key}`,
+      `${context} session.${key}`,
       value[key]
     );
   }
@@ -127,10 +127,10 @@ export function parseRecipeAgentRuntimeConfig(
   };
 }
 
-export function mergeRecipeAgentRuntimeConfig(
-  base: RecipeAgentRuntimeConfig | undefined,
-  overlay: RecipeAgentRuntimeConfig | undefined
-): RecipeAgentRuntimeConfig | undefined {
+export function mergeRecipeAgentSessionConfig(
+  base: RecipeAgentSessionConfig | undefined,
+  overlay: RecipeAgentSessionConfig | undefined
+): RecipeAgentSessionConfig | undefined {
   if (!base) return overlay;
   if (!overlay) return base;
   const settings = mergeObjects(base.settings ?? {}, overlay.settings ?? {});

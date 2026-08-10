@@ -88,7 +88,7 @@ Omission means "inherit" for a derived agent. Declaring a field means
 | --- | --- |
 | `description` | Child value replaces the base; omission inherits it |
 | `ai` | Merges by key when `model` is omitted; declaring `ai.model` starts a fresh AI configuration |
-| `runtime` | Merges by key; nested settings objects merge recursively |
+| `session` | Merges by key; nested settings objects merge recursively |
 | `tools` | Child array replaces the inherited allowlist; `[]` clears it |
 | `skills` | Child array replaces the inherited selection; `[]` clears it |
 | `subagents` | Child array replaces inherited visibility; `[]` clears it |
@@ -117,10 +117,10 @@ boundary. Restate every server and selector the child may use. `mcp: { servers:
 Each resolved root or child agent may select its own mode; each live session
 receives only that selected agent's MCP policy.
 
-## AI and Runtime Configuration
+## AI and Session Configuration
 
 The `ai` block selects the model and carries request/provider configuration.
-The `runtime` block controls Pi agent/session behavior. Set only what a case
+The `session` block controls portable Pi session behavior. Set only what a case
 needs.
 
 ```yaml
@@ -141,7 +141,7 @@ ai:
         order: [anthropic]
         only: [anthropic]
         allow_fallbacks: true
-runtime:
+session:
   steering_mode: one-at-a-time
   follow_up_mode: one-at-a-time
   tool_execution: parallel
@@ -158,6 +158,12 @@ explicitly declares `ai.model`.
 
 The former `model:` block remains readable for existing Recipes. New Recipes
 should use `ai:`; mixing both blocks in one agent is a validation error.
+
+`session` covers Pi's portable model-independent policy: steering and follow-up
+queues, tool execution, retry (including provider retry), compaction, branch
+summaries, and image handling. Pi settings for UI presentation, shell and
+filesystem authority, package loading, persistence, networking, analytics,
+telemetry, and model defaults remain host-owned or belong under `ai`.
 
 ## Resources and Capabilities
 

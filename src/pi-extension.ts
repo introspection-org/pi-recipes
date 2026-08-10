@@ -791,13 +791,13 @@ export function createRecipesExtension(
       launchState.resolved.modelConfig?.streamOptions
         ? "ai.options (or legacy model request options)"
         : undefined,
-      launchState.resolved.runtimeConfig ? "runtime" : undefined,
+      launchState.resolved.sessionConfig ? "session" : undefined,
     ].filter((value): value is string => Boolean(value));
     if (unsupportedPortableConfig.length > 0) {
       throw new Error(
         `Pi's extension API cannot apply Recipe ${unsupportedPortableConfig.join(
           " and "
-        )}; use the embedded Recipe session API until Pi exposes request-default and runtime setters`
+        )}; use the embedded Recipe session API until Pi exposes request-default and session-policy setters`
       );
     }
 

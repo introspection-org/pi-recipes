@@ -95,7 +95,7 @@ ai:
   thinking_level: high
   options:
     max_tokens: 4096
-runtime:
+session:
   steering_mode: one-at-a-time
   follow_up_mode: one-at-a-time
   tool_execution: parallel
@@ -135,11 +135,13 @@ or field-allowlisted. Host-owned request controls (`api_key`, `headers`, hooks,
 fetch, environment, abort signals, telemetry, and session identity) are
 rejected.
 
-`runtime` owns portable agent behavior. Queue modes accept `all` or
+`session` owns portable Pi session behavior. Queue modes accept `all` or
 `one-at-a-time`; `tool_execution` accepts `parallel` or `sequential`. The
 `retry`, `compaction`, `branch_summary`, and `images` objects use the same
 settings as Pi with snake_case keys and are applied to a session-local settings
-manager, leaving host settings unmodified.
+manager, leaving host settings unmodified. UI, shell, resource loading,
+persistence, networking, analytics, telemetry, and model-default settings are
+not portable session policy and remain host-owned or belong under `ai`.
 
 `tools` MUST NOT contain `agent`. The host materializes that session-generated
 tool for a root session whose effective `subagents` list is non-empty.

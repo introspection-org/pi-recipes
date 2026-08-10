@@ -9,11 +9,11 @@ import {
   type RecipeAgentModelConfig,
 } from "./recipe-model.js";
 import {
-  mergeRecipeAgentRuntimeConfig,
-  parseRecipeAgentRuntimeConfig,
-  RecipeRuntimeConfigError,
-  type RecipeAgentRuntimeConfig,
-} from "./recipe-runtime.js";
+  mergeRecipeAgentSessionConfig,
+  parseRecipeAgentSessionConfig,
+  RecipeSessionConfigError,
+  type RecipeAgentSessionConfig,
+} from "./recipe-session.js";
 import {
   assertRecipePathContained,
   isValidRecipeMcpToolSelection,
@@ -72,8 +72,8 @@ export interface RecipeAgentDefinition {
    * projection, kept for callers that only route on the spec.
    */
   modelConfig?: RecipeAgentModelConfig;
-  /** Portable Pi agent/session behavior declared under `runtime:`. */
-  runtimeConfig?: RecipeAgentRuntimeConfig;
+  /** Portable Pi session behavior declared under `session:`. */
+  sessionConfig?: RecipeAgentSessionConfig;
   tools: string[];
   /** MCP tool selection, separate from the exact Pi/extension tool allowlist. */
   mcp?: RecipeAgentMcp;
@@ -88,7 +88,7 @@ export type RecipeAgentConfigField =
   | "description"
   | "model"
   | "ai"
-  | "runtime"
+  | "session"
   | "tools"
   | "mcp"
   | "skills"
@@ -121,7 +121,7 @@ const AGENT_YAML_KEYS = new Set([
   "description",
   "model",
   "ai",
-  "runtime",
+  "session",
   "tools",
   "mcp",
   "skills",
@@ -459,7 +459,7 @@ function readRecipeAgentSources(
     const name = data.name as string;
 
     let modelConfig: RecipeAgentModelConfig | undefined;
-    let runtimeConfig: RecipeAgentRuntimeConfig | undefined;
+    let sessionConfig: RecipeAgentSessionConfig | undefined;
     try {
       if (Object.hasOwn(data, "model") && Object.hasOwn(data, "ai")) {
         throw new RecipeModelConfigError(
@@ -469,14 +469,14 @@ function readRecipeAgentSources(
       modelConfig = Object.hasOwn(data, "ai")
         ? parseRecipeAgentAiConfig(`Agent YAML at ${path}`, data.ai)
         : parseRecipeAgentModelConfig(`Agent YAML at ${path}`, data.model);
-      runtimeConfig = parseRecipeAgentRuntimeConfig(
+      sessionConfig = parseRecipeAgentSessionConfig(
         `Agent YAML at ${path}`,
-        data.runtime
+        data.session
       );
     } catch (err) {
       if (
         !(err instanceof RecipeModelConfigError) &&
-        !(err instanceof RecipeRuntimeConfigError)
+        !(err instanceof RecipeSessionConfigError)
       ) throw err;
       opts.onInvalidFile?.(path, err);
       continue;
@@ -490,7 +490,7 @@ function readRecipeAgentSources(
           typeof data.description === "string" ? data.description : undefined,
         model: modelProjection(modelConfig),
         modelConfig,
-        runtimeConfig,
+        sessionConfig,
         tools: Object.hasOwn(data, "tools") ? stringArray(data.tools) : undefined,
         mcp: parseMcp(data),
         skills: Object.hasOwn(data, "skills") ? stringArray(data.skills) : undefined,
@@ -500,7 +500,7 @@ function readRecipeAgentSources(
           "description",
           "model",
           "ai",
-          "runtime",
+          "session",
           "tools",
           "mcp",
           "skills",
@@ -545,9 +545,9 @@ function definitionsFromSources(
       base?.modelConfig,
       raw.modelConfig
     );
-    const runtimeConfig = mergeRecipeAgentRuntimeConfig(
-      base?.runtimeConfig,
-      raw.runtimeConfig
+    const sessionConfig = mergeRecipeAgentSessionConfig(
+      base?.sessionConfig,
+      raw.sessionConfig
     );
     const definition: RecipeAgentDefinition = {
       name: raw.name,
@@ -555,7 +555,7 @@ function definitionsFromSources(
       description: raw.description ?? base?.description,
       model: modelProjection(modelConfig),
       ...(modelConfig ? { modelConfig } : {}),
-      ...(runtimeConfig ? { runtimeConfig } : {}),
+      ...(sessionConfig ? { sessionConfig } : {}),
       tools: raw.tools ?? base?.tools ?? [],
       mcp: mergeMcp(base?.mcp, raw.mcp),
       skills: raw.skills ?? base?.skills ?? [],
