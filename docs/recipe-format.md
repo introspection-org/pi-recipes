@@ -90,9 +90,15 @@ Recipe MUST contain at least one agent.
 ```yaml
 name: agent
 description: Produce a sourced research brief.
-model:
-  name: openrouter/anthropic/claude-sonnet-4.5
+ai:
+  model: openrouter/anthropic/claude-sonnet-4.5
   thinking_level: high
+  options:
+    max_tokens: 4096
+session:
+  steering_mode: one-at-a-time
+  follow_up_mode: one-at-a-time
+  tool_execution: parallel
 tools: [read, bash]
 skills: [research]
 subagents: [reviewer]
@@ -111,14 +117,44 @@ This is its
 stable identity for selection, subagent references, artifacts, and telemetry;
 the filename has no semantic meaning.
 
-Every fully resolved agent MUST also define `model.name` as
+Every fully resolved agent MUST also define `ai.model` as
 `<provider>/<model_id>`. The model may be declared directly or inherited with
-`from`.
+`from`. The legacy `model.name` form remains accepted for backwards
+compatibility, but an agent MUST NOT declare both `ai` and `model`.
 
 All remaining agent fields are optional. Omitted `tools`, `skills`, and
-`subagents` resolve to empty lists. Omitted `model.thinking_level` preserves the
+`subagents` resolve to empty lists. Omitted `ai.thinking_level` preserves the
 provider or session default. Omitted agent instructions preserve `SYSTEM.md`
 when present, or Pi's normal base prompt otherwise.
+
+Recipe-authored configuration uses `snake_case`. `ai.options` is normalized at
+the Pi boundary to Pi's camelCase request options, so newly added Pi request
+options do not require a Recipe schema release. Nested option values and
+`ai.providers.openrouter.routing` are opaque provider data and are not renamed
+or field-allowlisted. Host-owned request controls (`api_key`, `headers`, hooks,
+fetch, environment, abort signals, telemetry, and session identity) are
+rejected.
+
+The checker validates the provider envelope: OpenRouter `routing` and
+Anthropic `context_management` must be objects, and Anthropic `betas` must be
+non-empty strings. Fields inside the routing and context-management objects
+remain transparent provider payloads.
+
+The checker does not predict live provider compatibility inside those
+transparent payloads. For example, OpenRouter's `require_parameters` policy
+depends on the parameters emitted by the selected model adapter and the
+capabilities of currently available endpoints. Recipes preserves the authored
+value; endpoint compatibility must be verified against the provider.
+
+`session` owns portable Pi session behavior. Queue modes accept `all` or
+`one-at-a-time`; `tool_execution` accepts `parallel` or `sequential`. The
+`retry`, `compaction`, and `images` use the managed runtime's corresponding Pi
+settings with snake_case keys and are applied to a session-local settings
+manager, leaving host settings unmodified. Their nested keys, types, enums, and
+integer ranges are closed and validated. Interactive tree navigation and
+branch summaries, UI, shell, resource loading, persistence, networking,
+analytics, telemetry, and model-default settings are
+not portable session policy and remain host-owned or belong under `ai`.
 
 `tools` MUST NOT contain `agent`. The host materializes that session-generated
 tool for a root session whose effective `subagents` list is non-empty.

@@ -3,10 +3,17 @@ import { basename, join } from "node:path";
 import { parse } from "yaml";
 import {
   mergeRecipeAgentModelConfig,
+  parseRecipeAgentAiConfig,
   parseRecipeAgentModelConfig,
   RecipeModelConfigError,
   type RecipeAgentModelConfig,
 } from "./recipe-model.js";
+import {
+  mergeRecipeAgentSessionConfig,
+  parseRecipeAgentSessionConfig,
+  RecipeSessionConfigError,
+  type RecipeAgentSessionConfig,
+} from "./recipe-session.js";
 import {
   assertRecipePathContained,
   isValidRecipeMcpToolSelection,
@@ -60,11 +67,13 @@ export interface RecipeAgentDefinition {
     thinkingLevel?: string;
   };
   /**
-   * The full validated `model:` block (stream options, provider routing),
+   * The full validated `ai:` block (or legacy `model:` block),
    * merged along the `from:` chain. `model` is its `{name, thinkingLevel}`
    * projection, kept for callers that only route on the spec.
    */
   modelConfig?: RecipeAgentModelConfig;
+  /** Portable Pi session behavior declared under `session:`. */
+  sessionConfig?: RecipeAgentSessionConfig;
   tools: string[];
   /** MCP tool selection, separate from the exact Pi/extension tool allowlist. */
   mcp?: RecipeAgentMcp;
@@ -78,6 +87,8 @@ export interface RecipeAgentDefinition {
 export type RecipeAgentConfigField =
   | "description"
   | "model"
+  | "ai"
+  | "session"
   | "tools"
   | "mcp"
   | "skills"
@@ -109,6 +120,8 @@ const AGENT_YAML_KEYS = new Set([
   "from",
   "description",
   "model",
+  "ai",
+  "session",
   "tools",
   "mcp",
   "skills",
@@ -446,10 +459,25 @@ function readRecipeAgentSources(
     const name = data.name as string;
 
     let modelConfig: RecipeAgentModelConfig | undefined;
+    let sessionConfig: RecipeAgentSessionConfig | undefined;
     try {
-      modelConfig = parseRecipeAgentModelConfig(`Agent YAML at ${path}`, data.model);
+      if (Object.hasOwn(data, "model") && Object.hasOwn(data, "ai")) {
+        throw new RecipeModelConfigError(
+          `Agent YAML at ${path} cannot declare both model and ai`
+        );
+      }
+      modelConfig = Object.hasOwn(data, "ai")
+        ? parseRecipeAgentAiConfig(`Agent YAML at ${path}`, data.ai)
+        : parseRecipeAgentModelConfig(`Agent YAML at ${path}`, data.model);
+      sessionConfig = parseRecipeAgentSessionConfig(
+        `Agent YAML at ${path}`,
+        data.session
+      );
     } catch (err) {
-      if (!(err instanceof RecipeModelConfigError)) throw err;
+      if (
+        !(err instanceof RecipeModelConfigError) &&
+        !(err instanceof RecipeSessionConfigError)
+      ) throw err;
       opts.onInvalidFile?.(path, err);
       continue;
     }
@@ -462,6 +490,7 @@ function readRecipeAgentSources(
           typeof data.description === "string" ? data.description : undefined,
         model: modelProjection(modelConfig),
         modelConfig,
+        sessionConfig,
         tools: Object.hasOwn(data, "tools") ? stringArray(data.tools) : undefined,
         mcp: parseMcp(data),
         skills: Object.hasOwn(data, "skills") ? stringArray(data.skills) : undefined,
@@ -470,6 +499,8 @@ function readRecipeAgentSources(
         declaredFields: [
           "description",
           "model",
+          "ai",
+          "session",
           "tools",
           "mcp",
           "skills",
@@ -514,12 +545,17 @@ function definitionsFromSources(
       base?.modelConfig,
       raw.modelConfig
     );
+    const sessionConfig = mergeRecipeAgentSessionConfig(
+      base?.sessionConfig,
+      raw.sessionConfig
+    );
     const definition: RecipeAgentDefinition = {
       name: raw.name,
       ...(raw.from ? { from: raw.from } : {}),
       description: raw.description ?? base?.description,
       model: modelProjection(modelConfig),
       ...(modelConfig ? { modelConfig } : {}),
+      ...(sessionConfig ? { sessionConfig } : {}),
       tools: raw.tools ?? base?.tools ?? [],
       mcp: mergeMcp(base?.mcp, raw.mcp),
       skills: raw.skills ?? base?.skills ?? [],
@@ -676,7 +712,7 @@ function validateResolvedRecipeAgentSource(
     findings.push({
       agentName,
       field: "model.name",
-      message: `Recipe agent "${agentName}" must declare model.name directly or inherit it with from`,
+      message: `Recipe agent "${agentName}" must declare ai.model (or legacy model.name) directly or inherit it with from`,
     });
   }
 

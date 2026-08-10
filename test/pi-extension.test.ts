@@ -524,6 +524,110 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
+  it("fails closed when Pi cannot apply authored request or session configuration", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-unsupported-ai-session-"));
+    const previousExitCode = process.exitCode;
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "ai:",
+          "  model: openai/gpt-4.1",
+          "  options:",
+          "    max_tokens: 4096",
+          "session:",
+          "  tool_execution: parallel",
+          "tools: [read]",
+        ].join("\n")
+      );
+      const notify = vi.fn();
+      const abort = vi.fn();
+      const ctx = { ...extensionContext(projectDir, notify), abort, mode: "json" };
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(pi.activeTools).toEqual([]);
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Pi's extension API cannot apply Recipe ai.options (or legacy model request options) and session"
+        ),
+        "warning"
+      );
+      expect(process.exitCode).toBe(1);
+      await pi.emitExtensionEvent({ type: "agent_start" } as any, ctx);
+      expect(abort).toHaveBeenCalledOnce();
+    } finally {
+      process.exitCode = previousExitCode;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when Pi cannot apply Anthropic context management", async () => {
+    const root = mkdtempSync(
+      join(tmpdir(), "pi-recipe-unsupported-anthropic-context-")
+    );
+    const previousExitCode = process.exitCode;
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "ai:",
+          "  model: anthropic/claude-sonnet-4-5",
+          "  providers:",
+          "    anthropic:",
+          "      context_management:",
+          "        edits: []",
+          "tools: [read]",
+        ].join("\n")
+      );
+      const notify = vi.fn();
+      const abort = vi.fn();
+      const ctx = {
+        ...extensionContext(projectDir, notify),
+        abort,
+        mode: "json",
+      };
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+
+      createRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(pi.activeTools).toEqual([]);
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Pi's extension API cannot apply Recipe ai.providers.anthropic.context_management"
+        ),
+        "warning"
+      );
+      expect(process.exitCode).toBe(1);
+      await pi.emitExtensionEvent({ type: "agent_start" } as any, ctx);
+      expect(abort).toHaveBeenCalledOnce();
+    } finally {
+      process.exitCode = previousExitCode;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("treats an omitted subagents list as no visible subagents", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-empty-subagents-"));
     try {

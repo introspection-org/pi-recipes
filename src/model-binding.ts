@@ -116,10 +116,12 @@ export async function resolveRecipeCredentials(opts: {
       apiKey = auth.apiKey;
       credentialEnv = auth.env;
       if (auth.headers) {
-        opts.model.headers = {
-          ...(opts.model.headers ?? {}),
-          ...auth.headers,
-        };
+        const headers = { ...(opts.model.headers ?? {}) };
+        for (const [name, value] of Object.entries(auth.headers)) {
+          if (value === null) delete headers[name];
+          else headers[name] = value;
+        }
+        opts.model.headers = headers;
       }
     }
   }

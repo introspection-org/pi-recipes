@@ -18,6 +18,7 @@ import {
   type RecipeSystemInstructions,
 } from "../recipe-agent.js";
 import type { RecipeAgentModelConfig } from "../recipe-model.js";
+import type { RecipeAgentSessionConfig } from "../recipe-session.js";
 import { resolveAgentSkillPaths } from "../recipe-skills.js";
 import {
   packageResourcePaths,
@@ -42,6 +43,7 @@ export interface ResolvedRecipeAgent {
   readonly subagents: ReadonlyMap<string, RecipeAgentDefinition>;
   readonly modelSpec: string;
   readonly modelConfig?: RecipeAgentModelConfig;
+  readonly sessionConfig?: RecipeAgentSessionConfig;
   readonly thinkingLevel?: ThinkingLevel;
   readonly tools: readonly string[];
   readonly mcp?: ResolvedRecipeAgentMcp;
@@ -314,7 +316,7 @@ function buildResolvedRecipeAgent(
   const modelSpec = agent.model?.name;
   if (!modelSpec) {
     throw new RecipeResolutionError(
-      `Recipe agent "${agentName}" must declare model.name`
+      `Recipe agent "${agentName}" must declare ai.model (or legacy model.name)`
     );
   }
 
@@ -347,6 +349,7 @@ function buildResolvedRecipeAgent(
     subagents,
     modelSpec,
     ...(agent.modelConfig ? { modelConfig: agent.modelConfig } : {}),
+    ...(agent.sessionConfig ? { sessionConfig: agent.sessionConfig } : {}),
     ...(agent.model?.thinkingLevel
       ? { thinkingLevel: agent.model.thinkingLevel as ThinkingLevel }
       : {}),

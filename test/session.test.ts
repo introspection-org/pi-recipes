@@ -97,6 +97,31 @@ async function credentialStore(): Promise<InMemoryCredentialStore> {
   return store;
 }
 
+async function openRouterCredentialStore(): Promise<InMemoryCredentialStore> {
+  const store = new InMemoryCredentialStore();
+  await store.modify("openrouter", async () => ({
+    type: "api_key",
+    key: "test-openrouter-key",
+  }));
+  return store;
+}
+
+async function captureSerializedPayload(handle: RecipeSessionHandle): Promise<{
+  payload: Record<string, unknown>;
+}> {
+  let payload: Record<string, unknown> | undefined;
+  handle.session.agent.onPayload = (nextPayload) => {
+    payload = nextPayload as Record<string, unknown>;
+    throw new Error("request payload captured");
+  };
+
+  await handle.session.prompt("capture the request").catch(() => {});
+  if (!payload) {
+    throw new Error("Expected Pi to construct a provider request");
+  }
+  return { payload };
+}
+
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -151,6 +176,156 @@ describe("createAgentSession", () => {
     expect(handle.session.model?.id).toBe("claude-sonnet-4-5");
     expect(handle.session.systemPrompt).toContain("conformance fixture");
     expect(handle.session.systemPrompt).toContain("Conformance agent");
+  });
+
+  it("applies authored session policy to the session-local Pi agent", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "ai:",
+        "  model: anthropic/claude-sonnet-4-5",
+        "session:",
+        "  steering_mode: all",
+        "  follow_up_mode: all",
+        "  tool_execution: sequential",
+        "  retry:",
+        "    enabled: true",
+        "    max_retries: 4",
+        "    base_delay_ms: 250",
+        "    provider:",
+        "      timeout_ms: 30000",
+        "      max_retries: 1",
+        "      max_retry_delay_ms: 5000",
+        "  compaction:",
+        "    enabled: true",
+        "    reserve_tokens: 12000",
+        "    keep_recent_tokens: 6000",
+        "  images:",
+        "    auto_resize: false",
+        "    block_images: true",
+      ].join("\n")
+    );
+
+    const handle = await open({ recipeDir, cwd: workspaceDir });
+
+    expect(handle.session.agent.steeringMode).toBe("all");
+    expect(handle.session.agent.followUpMode).toBe("all");
+    expect(handle.session.agent.toolExecution).toBe("sequential");
+    expect(handle.session.settingsManager.getRetrySettings()).toEqual({
+      enabled: true,
+      maxRetries: 4,
+      baseDelayMs: 250,
+    });
+    expect(handle.session.settingsManager.getProviderRetrySettings()).toEqual({
+      timeoutMs: 30000,
+      maxRetries: 1,
+      maxRetryDelayMs: 5000,
+    });
+    expect(handle.session.settingsManager.getCompactionSettings()).toEqual({
+      enabled: true,
+      reserveTokens: 12000,
+      keepRecentTokens: 6000,
+    });
+    expect(handle.session.settingsManager.getImageAutoResize()).toBe(false);
+    expect(handle.session.settingsManager.getBlockImages()).toBe(true);
+  });
+
+  it("forwards transparent AI options and provider routing to root and subagent requests", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "ai:",
+        "  model: openrouter/anthropic/claude-sonnet-4.5",
+        "  options:",
+        "    max_tokens: 321",
+        "    sampling_params:",
+        "      future_option: enabled",
+        "  providers:",
+        "    openrouter:",
+        "      routing:",
+        "        order: [anthropic, google-vertex, amazon-bedrock]",
+        "        only: [anthropic, google-vertex, amazon-bedrock]",
+        "        ignore: [azure]",
+        "        allow_fallbacks: true",
+        "        require_parameters: false",
+        "        data_collection: deny",
+        "        zdr: true",
+        "        enforce_distillable_text: false",
+        "        quantizations: [fp16]",
+        "        sort:",
+        "          by: price",
+        "        max_price:",
+        '          prompt: "10"',
+        '          completion: "20"',
+        "        preferred_min_throughput:",
+        "          p50: 1",
+        "          p99: 4",
+        "        preferred_max_latency:",
+        "          p50: 5",
+        "          p99: 8",
+        "        future_router_policy:",
+        "          mode: strict",
+        "tools: []",
+        "subagents: [explorer]",
+      ].join("\n")
+    );
+    writeFileSync(
+      join(recipeDir, "agents", "explorer.yaml"),
+      [
+        "name: explorer",
+        "from: agent",
+        "tools: []",
+      ].join("\n")
+    );
+    const recipe = resolveRecipe({ recipeDir });
+    const credentials = await openRouterCredentialStore();
+    const root = await createAgentSession({
+      recipe,
+      cwd: workspaceDir,
+      credentials,
+      env: cleanEnv(),
+      runController: null,
+    });
+    handles.push(root);
+    const child = await createAgentSessionInternal({
+      recipe,
+      agentName: "explorer",
+      cwd: workspaceDir,
+      credentials,
+      env: cleanEnv(),
+      runController: null,
+      sessionRole: "subagent",
+    });
+    handles.push(child);
+
+    for (const handle of [root, child]) {
+      const captured = await captureSerializedPayload(handle);
+      expect(captured.payload).toMatchObject({
+        model: "anthropic/claude-sonnet-4.5",
+        max_completion_tokens: 321,
+        future_option: "enabled",
+        provider: {
+          order: ["anthropic", "google-vertex", "amazon-bedrock"],
+          only: ["anthropic", "google-vertex", "amazon-bedrock"],
+          ignore: ["azure"],
+          allow_fallbacks: true,
+          require_parameters: false,
+          data_collection: "deny",
+          zdr: true,
+          enforce_distillable_text: false,
+          quantizations: ["fp16"],
+          sort: { by: "price" },
+          max_price: { prompt: "10", completion: "20" },
+          preferred_min_throughput: { p50: 1, p99: 4 },
+          preferred_max_latency: { p50: 5, p99: 8 },
+          future_router_policy: { mode: "strict" },
+        },
+      });
+    }
   });
 
   it("fails closed when a package extension cannot load", async () => {

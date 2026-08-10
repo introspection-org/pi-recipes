@@ -8,6 +8,62 @@
     }
   },
   {
+    "name": "ai and session agent",
+    "valid": true,
+    "files": {
+      "package.json": "{\"name\":\"ai-session\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nai:\n  model: openrouter/anthropic/claude-sonnet-4\n  options:\n    max_tokens: 4096\n    future_request_policy:\n      mode: strict\n  providers:\n    openrouter:\n      routing:\n        future_router_policy:\n          mode: strict\n    anthropic:\n      context_management:\n        edits: []\nsession:\n  steering_mode: one-at-a-time\n  follow_up_mode: all\n  tool_execution: parallel\n  retry:\n    enabled: true\n    max_retries: 3\n    base_delay_ms: 2000\n    provider:\n      timeout_ms: 30000\n      max_retries: 2\n      max_retry_delay_ms: 60000\n  compaction:\n    enabled: true\n    reserve_tokens: 16384\n    keep_recent_tokens: 20000\n  images:\n    auto_resize: true\n    block_images: false\n"
+    }
+  },
+  {
+    "name": "unknown nested session policy",
+    "valid": false,
+    "files": {
+      "package.json": "{\"name\":\"bad-session-key\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nai:\n  model: openai/gpt-5\nsession:\n  retry:\n    max_retriez: 3\n"
+    }
+  },
+  {
+    "name": "empty session policy",
+    "valid": true,
+    "files": {
+      "package.json": "{\"name\":\"empty-session\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nai:\n  model: openai/gpt-5\nsession:\n  retry: {}\n  compaction: {}\n  images: {}\n"
+    }
+  },
+  {
+    "name": "invalid session policy value",
+    "valid": false,
+    "files": {
+      "package.json": "{\"name\":\"bad-session-value\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nai:\n  model: openai/gpt-5\nsession:\n  retry:\n    provider:\n      timeout_ms: 0\n"
+    }
+  },
+  {
+    "name": "invalid session policy type",
+    "valid": false,
+    "files": {
+      "package.json": "{\"name\":\"bad-session-type\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nai:\n  model: openai/gpt-5\nsession:\n  images:\n    auto_resize: \"yes\"\n"
+    }
+  },
+  {
+    "name": "interactive-only session policy",
+    "valid": false,
+    "files": {
+      "package.json": "{\"name\":\"interactive-session-policy\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nai:\n  model: openai/gpt-5\nsession:\n  branch_summary:\n    reserve_tokens: 16384\n"
+    }
+  },
+  {
+    "name": "invalid transparent payload envelope",
+    "valid": false,
+    "files": {
+      "package.json": "{\"name\":\"bad-ai-envelope\",\"pi\":{}}",
+      "agents/agent.yaml": "name: agent\nai:\n  model: anthropic/claude-sonnet-4\n  providers:\n    anthropic:\n      context_management: invalid\n"
+    }
+  },
+  {
     "name": "inherited model",
     "valid": true,
     "files": {

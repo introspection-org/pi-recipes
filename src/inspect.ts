@@ -13,6 +13,7 @@ export interface RecipeAgentInspection {
     thinkingLevel?: string;
     config?: ResolvedRecipeAgent["modelConfig"];
   };
+  session?: ResolvedRecipeAgent["sessionConfig"];
   prompt: {
     base: "SYSTEM.md" | "pi";
     agentInstructions?: {
@@ -83,6 +84,8 @@ function inspectAgent(
   const fields: RecipeAgentConfigField[] = [
     "description",
     "model",
+    "ai",
+    "session",
     "tools",
     "mcp",
     "skills",
@@ -116,6 +119,7 @@ function inspectAgent(
         : {}),
       ...(agent.modelConfig ? { config: agent.modelConfig } : {}),
     },
+    ...(agent.sessionConfig ? { session: agent.sessionConfig } : {}),
     prompt: {
       base: hasSystemPrompt ? "SYSTEM.md" : "pi",
       ...(agent.definition.systemInstructions && instructionSource

@@ -966,6 +966,8 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
         "from",
         "description",
         "model",
+        "ai",
+        "session",
         "tools",
         "mcp",
         "skills",
@@ -1048,7 +1050,17 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
     };
 
     let mut fields = HashSet::new();
+    if map.contains_key("model") && map.contains_key("ai") {
+        ctx.error(
+            "agent.ai_model_conflict",
+            path,
+            "Agent must not declare both ai and model",
+            Some("use ai; model is retained only for backwards compatibility"),
+        );
+    }
     validate_agent_model(map, path, &name, &mut fields, ctx);
+    validate_agent_ai(map, path, &name, &mut fields, ctx);
+    validate_agent_session(map, path, ctx);
     let tools = validate_agent_string_array(map, "tools", path, ctx);
     if tools
         .as_deref()
@@ -1176,7 +1188,312 @@ fn validate_agent_model(
             );
         }
     }
-    validate_model_providers(model.get("providers"), path, ctx);
+    validate_model_providers(model.get("providers"), path, ctx, false);
+}
+
+fn snake_case_key(value: &str) -> bool {
+    let mut chars = value.chars();
+    if !chars.next().is_some_and(|ch| ch.is_ascii_lowercase()) {
+        return false;
+    }
+    let mut previous_underscore = false;
+    for ch in chars {
+        if ch == '_' {
+            if previous_underscore {
+                return false;
+            }
+            previous_underscore = true;
+        } else if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
+            previous_underscore = false;
+        } else {
+            return false;
+        }
+    }
+    !previous_underscore
+}
+
+fn validate_agent_ai(
+    map: &JsonMap,
+    path: &str,
+    name: &str,
+    fields: &mut HashSet<AgentField>,
+    ctx: &mut CheckContext,
+) {
+    let Some(value) = map.get("ai") else { return };
+    let Some(ai) = value.as_object() else {
+        ctx.error(
+            "agent.ai_invalid",
+            path,
+            "Agent ai must be an object",
+            None::<String>,
+        );
+        return;
+    };
+    const AI_KEYS: &[&str] = &["model", "thinking_level", "options", "providers"];
+    for key in ai.keys().filter(|key| !AI_KEYS.contains(&key.as_str())) {
+        ctx.error(
+            "agent.ai_key_unknown",
+            path,
+            format!("Agent ai contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", AI_KEYS.join(", "))),
+        );
+    }
+    if let Some(model_name) = obj_string(ai, "model") {
+        fields.insert(AgentField::ModelName);
+        if !valid_model_spec(&model_name) {
+            ctx.error(
+                "agent.ai.model_invalid",
+                path,
+                format!("Recipe agent '{name}' has invalid ai.model '{model_name}' - expected '<provider>/<model_id>'"),
+                Some("use an available provider and model identifier"),
+            );
+        }
+    } else if ai.contains_key("model") {
+        ctx.error(
+            "agent.ai.model_invalid",
+            path,
+            "Agent ai.model must be a non-empty string",
+            None::<String>,
+        );
+    }
+    if let Some(value) = ai.get("thinking_level") {
+        if !value.as_str().is_some_and(|level| {
+            matches!(
+                level,
+                "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
+            )
+        }) {
+            ctx.error(
+                "agent.ai.thinking_level_invalid",
+                path,
+                "Agent ai.thinking_level is unsupported",
+                Some("use off, minimal, low, medium, high, or xhigh"),
+            );
+        }
+    }
+    if let Some(value) = ai.get("options") {
+        let Some(options) = value.as_object() else {
+            ctx.error(
+                "agent.ai.options_invalid",
+                path,
+                "Agent ai.options must be an object",
+                None::<String>,
+            );
+            return;
+        };
+        const BLOCKED: &[&str] = &[
+            "api_key",
+            "env",
+            "fetch",
+            "headers",
+            "on_payload",
+            "on_response",
+            "reasoning",
+            "session_id",
+            "signal",
+            "telemetry_context",
+        ];
+        for key in options.keys() {
+            if !snake_case_key(key) {
+                ctx.error(
+                    "agent.ai.options_key_invalid",
+                    path,
+                    format!("Agent ai.options key '{key}' must use snake_case"),
+                    None::<String>,
+                );
+            } else if BLOCKED.contains(&key.as_str()) {
+                ctx.error(
+                    "agent.ai.options_key_blocked",
+                    path,
+                    format!("Agent ai.options cannot configure host-owned option '{key}'"),
+                    None::<String>,
+                );
+            }
+        }
+    }
+    validate_model_providers(ai.get("providers"), path, ctx, true);
+}
+
+fn validate_agent_session(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
+    let Some(value) = map.get("session") else {
+        return;
+    };
+    let Some(session) = value.as_object() else {
+        ctx.error(
+            "agent.session_invalid",
+            path,
+            "Agent session must be an object",
+            None::<String>,
+        );
+        return;
+    };
+    const SESSION_KEYS: &[&str] = &[
+        "steering_mode",
+        "follow_up_mode",
+        "tool_execution",
+        "retry",
+        "compaction",
+        "images",
+    ];
+    for key in session
+        .keys()
+        .filter(|key| !SESSION_KEYS.contains(&key.as_str()))
+    {
+        ctx.error(
+            "agent.session_key_unknown",
+            path,
+            format!("Agent session contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", SESSION_KEYS.join(", "))),
+        );
+    }
+    for key in ["steering_mode", "follow_up_mode"] {
+        if let Some(value) = session.get(key) {
+            if !value
+                .as_str()
+                .is_some_and(|mode| matches!(mode, "all" | "one-at-a-time"))
+            {
+                ctx.error(
+                    format!("agent.session.{key}_invalid"),
+                    path,
+                    format!("Agent session.{key} must be all or one-at-a-time"),
+                    None::<String>,
+                );
+            }
+        }
+    }
+    if let Some(value) = session.get("tool_execution") {
+        if !value
+            .as_str()
+            .is_some_and(|mode| matches!(mode, "parallel" | "sequential"))
+        {
+            ctx.error(
+                "agent.session.tool_execution_invalid",
+                path,
+                "Agent session.tool_execution must be parallel or sequential",
+                None::<String>,
+            );
+        }
+    }
+    if let Some(value) = session.get("retry") {
+        validate_session_retry(value, path, ctx);
+    }
+    if let Some(value) = session.get("compaction") {
+        validate_session_settings_object(
+            value,
+            path,
+            "compaction",
+            &["enabled", "reserve_tokens", "keep_recent_tokens"],
+            &["enabled"],
+            &[("reserve_tokens", false), ("keep_recent_tokens", false)],
+            ctx,
+        );
+    }
+    if let Some(value) = session.get("images") {
+        validate_session_settings_object(
+            value,
+            path,
+            "images",
+            &["auto_resize", "block_images"],
+            &["auto_resize", "block_images"],
+            &[],
+            ctx,
+        );
+    }
+}
+
+fn validate_session_retry(value: &JsonValue, path: &str, ctx: &mut CheckContext) {
+    let Some(retry) = validate_session_settings_object(
+        value,
+        path,
+        "retry",
+        &["enabled", "max_retries", "base_delay_ms", "provider"],
+        &["enabled"],
+        &[("max_retries", false), ("base_delay_ms", false)],
+        ctx,
+    ) else {
+        return;
+    };
+    if let Some(provider) = retry.get("provider") {
+        validate_session_settings_object(
+            provider,
+            path,
+            "retry.provider",
+            &["timeout_ms", "max_retries", "max_retry_delay_ms"],
+            &[],
+            &[
+                ("timeout_ms", true),
+                ("max_retries", false),
+                ("max_retry_delay_ms", false),
+            ],
+            ctx,
+        );
+    }
+}
+
+fn validate_session_settings_object<'a>(
+    value: &'a JsonValue,
+    path: &str,
+    section: &str,
+    allowed_keys: &[&str],
+    boolean_keys: &[&str],
+    integer_keys: &[(&str, bool)],
+    ctx: &mut CheckContext,
+) -> Option<&'a JsonMap> {
+    let prefix = format!("session.{section}");
+    let Some(settings) = value.as_object() else {
+        ctx.error(
+            format!("agent.{prefix}_invalid"),
+            path,
+            format!("Agent {prefix} must be an object"),
+            None::<String>,
+        );
+        return None;
+    };
+    for key in settings
+        .keys()
+        .filter(|key| !allowed_keys.contains(&key.as_str()))
+    {
+        ctx.error(
+            format!("agent.{prefix}_key_unknown"),
+            path,
+            format!("Agent {prefix} contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", allowed_keys.join(", "))),
+        );
+    }
+    for key in boolean_keys {
+        if settings.get(*key).is_some_and(|value| !value.is_boolean()) {
+            ctx.error(
+                format!("agent.{prefix}.{key}_invalid"),
+                path,
+                format!("Agent {prefix}.{key} must be a boolean"),
+                None::<String>,
+            );
+        }
+    }
+    for (key, strictly_positive) in integer_keys {
+        let Some(value) = settings.get(*key) else {
+            continue;
+        };
+        let minimum = if *strictly_positive { 1.0 } else { 0.0 };
+        let valid = value.as_f64().is_some_and(|number| {
+            number.is_finite()
+                && number >= minimum
+                && number <= 9_007_199_254_740_991.0
+                && number.fract() == 0.0
+        });
+        if !valid {
+            ctx.error(
+                format!("agent.{prefix}.{key}_invalid"),
+                path,
+                format!(
+                    "Agent {prefix}.{key} must be an integer >= {}",
+                    minimum as u8
+                ),
+                None::<String>,
+            );
+        }
+    }
+    Some(settings)
 }
 
 fn validate_non_negative_number(
@@ -1218,7 +1535,12 @@ fn validate_non_negative_number(
     }
 }
 
-fn validate_model_providers(value: Option<&JsonValue>, path: &str, ctx: &mut CheckContext) {
+fn validate_model_providers(
+    value: Option<&JsonValue>,
+    path: &str,
+    ctx: &mut CheckContext,
+    transparent_openrouter_routing: bool,
+) {
     let Some(value) = value else {
         return;
     };
@@ -1261,7 +1583,7 @@ fn validate_model_providers(value: Option<&JsonValue>, path: &str, ctx: &mut Che
             );
         }
         if let Some(value) = openrouter.get("routing") {
-            validate_openrouter_routing(value, path, ctx);
+            validate_openrouter_routing(value, path, ctx, transparent_openrouter_routing);
         }
     }
     if let Some(value) = providers.get("anthropic") {
@@ -1295,10 +1617,26 @@ fn validate_model_providers(value: Option<&JsonValue>, path: &str, ctx: &mut Che
                 );
             }
         }
+        if anthropic
+            .get("context_management")
+            .is_some_and(|value| !value.is_object())
+        {
+            ctx.error(
+                "agent.model.providers.anthropic_context_management_invalid",
+                path,
+                "Agent model.providers.anthropic.context_management must be an object",
+                None::<String>,
+            );
+        }
     }
 }
 
-fn validate_openrouter_routing(value: &JsonValue, path: &str, ctx: &mut CheckContext) {
+fn validate_openrouter_routing(
+    value: &JsonValue,
+    path: &str,
+    ctx: &mut CheckContext,
+    transparent: bool,
+) {
     const ROUTING_KEYS: &[&str] = &[
         "allow_fallbacks",
         "require_parameters",
@@ -1323,6 +1661,9 @@ fn validate_openrouter_routing(value: &JsonValue, path: &str, ctx: &mut CheckCon
         );
         return;
     };
+    if transparent {
+        return;
+    }
     for key in routing
         .keys()
         .filter(|key| !ROUTING_KEYS.contains(&key.as_str()))
@@ -3001,6 +3342,61 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.name_invalid"));
+    }
+
+    #[test]
+    fn accepts_ai_and_session_and_rejects_unsafe_ai_options() {
+        let package = json!({
+            "name": "agent-ai-session",
+            "version": "0.1.0",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let manifest = serde_json::to_string_pretty(&package).expect("serialize package");
+        let valid = recipe_files(&[
+            ("package.json", &manifest),
+            (
+                "agents/agent.yaml",
+                "name: agent\nai:\n  model: openai/gpt-5\n  thinking_level: high\n  options:\n    max_tokens: 4096\nsession:\n  steering_mode: one-at-a-time\n  follow_up_mode: all\n  tool_execution: parallel\n  retry:\n    max_retries: 3\n",
+            ),
+        ]);
+        let report = check_recipe_files(&valid);
+        assert!(report.valid, "{:?}", report.diagnostics);
+
+        let unshipped_runtime_alias = recipe_files(&[
+            ("package.json", &manifest),
+            (
+                "agents/agent.yaml",
+                "name: agent\nai:\n  model: openai/gpt-5\nruntime:\n  tool_execution: parallel\n",
+            ),
+        ]);
+        let report = check_recipe_files(&unshipped_runtime_alias);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.key_unknown"));
+
+        let future_openrouter_routing = recipe_files(&[
+            ("package.json", &manifest),
+            (
+                "agents/agent.yaml",
+                "name: agent\nai:\n  model: openrouter/anthropic/claude-sonnet-4\n  providers:\n    openrouter:\n      routing:\n        future_router_policy:\n          mode: strict\n",
+            ),
+        ]);
+        let report = check_recipe_files(&future_openrouter_routing);
+        assert!(report.valid, "{:?}", report.diagnostics);
+
+        let unsafe_options = recipe_files(&[
+            ("package.json", &manifest),
+            (
+                "agents/agent.yaml",
+                "name: agent\nai:\n  model: openai/gpt-5\n  options:\n    api_key: secret\n",
+            ),
+        ]);
+        let report = check_recipe_files(&unsafe_options);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "agent.ai.options_key_blocked"));
     }
 
     #[test]

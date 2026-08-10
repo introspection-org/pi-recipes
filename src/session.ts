@@ -68,6 +68,41 @@ import {
 
 export { expectedProviderEnvVars } from "./provider-env.js";
 
+function sessionSettingsManager(
+  base: SettingsManager,
+  sessionSettings: Record<string, unknown> | undefined
+): SettingsManager {
+  if (!sessionSettings) return base;
+  const merge = (
+    left: Record<string, unknown>,
+    right: Record<string, unknown>
+  ): Record<string, unknown> => {
+    const result = { ...left };
+    for (const [key, value] of Object.entries(right)) {
+      const current = result[key];
+      result[key] =
+        current && value &&
+        typeof current === "object" && !Array.isArray(current) &&
+        typeof value === "object" && !Array.isArray(value)
+          ? merge(
+              current as Record<string, unknown>,
+              value as Record<string, unknown>
+            )
+          : value;
+    }
+    return result;
+  };
+  return SettingsManager.inMemory(
+    merge(
+      merge(
+        base.getGlobalSettings() as Record<string, unknown>,
+        base.getProjectSettings() as Record<string, unknown>
+      ),
+      sessionSettings
+    ) as never
+  );
+}
+
 /**
  * Everything between "resolved recipe" and "live Pi session", done once:
  * model construction and credentials, MCP materialization, skills /
@@ -566,8 +601,12 @@ async function createSessionForAgent(
     }
     inlineExtensions.push(...(opts.extensionFactories ?? []));
 
-    const settingsManager =
+    const baseSettingsManager =
       opts.settingsManager ?? SettingsManager.create(cwd, recipe.recipeDir);
+    const settingsManager = sessionSettingsManager(
+      baseSettingsManager,
+      recipe.sessionConfig?.settings
+    );
     const services = await createAgentSessionServices({
       cwd,
       agentDir: recipe.recipeDir,
@@ -711,6 +750,9 @@ async function createSessionForAgent(
       customTools,
     });
     session = created.session;
+    if (recipe.sessionConfig?.toolExecution) {
+      session.agent.toolExecution = recipe.sessionConfig.toolExecution;
+    }
     normalizeSessionToolsForModel(session, model);
     applyRecipeAgentModelConfigToSession(session, recipe.modelConfig);
     await session.bindExtensions({});

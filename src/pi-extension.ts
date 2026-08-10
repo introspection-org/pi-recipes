@@ -787,6 +787,23 @@ export function createRecipesExtension(
   ): Promise<void> {
     if (launchState.configured) return;
 
+    const unsupportedPortableConfig = [
+      launchState.resolved.modelConfig?.streamOptions
+        ? "ai.options (or legacy model request options)"
+        : undefined,
+      launchState.resolved.modelConfig?.anthropic?.contextManagement !== undefined
+        ? "ai.providers.anthropic.context_management"
+        : undefined,
+      launchState.resolved.sessionConfig ? "session" : undefined,
+    ].filter((value): value is string => Boolean(value));
+    if (unsupportedPortableConfig.length > 0) {
+      throw new Error(
+        `Pi's extension API cannot apply Recipe ${unsupportedPortableConfig.join(
+          " and "
+        )}; use the embedded Recipe session API until Pi exposes request-default and session-policy setters`
+      );
+    }
+
     const labelParts = [
       `${launchState.resolved.manifest.name}@${launchState.resolved.manifest.version}`,
       `agent:${launchState.resolved.name}`,

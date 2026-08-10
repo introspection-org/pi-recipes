@@ -42,8 +42,8 @@ of a base configuration.
 # agents/agent.yaml
 name: agent
 description: Main release coordinator
-model:
-  name: anthropic/claude-sonnet-4-6
+ai:
+  model: anthropic/claude-sonnet-4-6
   thinking_level: medium
 tools: [read, bash]
 skills: [release-policy]
@@ -57,7 +57,7 @@ system_instructions:
 # agents/reviewer.yaml
 name: reviewer
 from: agent
-model:
+ai:
   thinking_level: high
 tools: [read]
 subagents: []
@@ -87,7 +87,8 @@ Omission means "inherit" for a derived agent. Declaring a field means
 | Field | Derived-agent behavior |
 | --- | --- |
 | `description` | Child value replaces the base; omission inherits it |
-| `model` | Merges by key when `name` is omitted; declaring `model.name` starts a fresh model configuration |
+| `ai` | Merges by key when `model` is omitted; declaring `ai.model` starts a fresh AI configuration |
+| `session` | Merges by key; nested settings objects merge recursively |
 | `tools` | Child array replaces the inherited allowlist; `[]` clears it |
 | `skills` | Child array replaces the inherited selection; `[]` clears it |
 | `subagents` | Child array replaces inherited visibility; `[]` clears it |
@@ -104,8 +105,8 @@ Arrays never merge item by item. This makes capability boundaries reviewable:
 a derived agent that declares `tools: [read]` receives only `read`, not the
 base agent's other tools.
 
-Model settings merge only while the child omits `model.name`. Declaring
-`model.name` starts a fresh model configuration, even when restating the same
+AI settings merge only while the child omits `ai.model`. Declaring
+`ai.model` starts a fresh AI configuration, even when restating the same
 identity, so
 provider routing, headers, retries, cache policy, and transport tuning cannot
 silently cross model boundaries.
@@ -116,33 +117,56 @@ boundary. Restate every server and selector the child may use. `mcp: { servers:
 Each resolved root or child agent may select its own mode; each live session
 receives only that selected agent's MCP policy.
 
-## Model Configuration
+## AI and Session Configuration
 
-Beyond `name` and `thinking_level`, the `model` block accepts request and
-transport tuning and provider routing. Set only what a case needs.
+The `ai` block selects the model and carries request/provider configuration.
+The `session` block controls portable Pi session behavior. Set only what a case
+needs.
 
 ```yaml
-model:
-  name: anthropic/claude-sonnet-4-6
+ai:
+  model: anthropic/claude-sonnet-4-6
   thinking_level: medium
-  temperature: 0.2
-  max_tokens: 4096
-  cache_retention: short        # none | short | long
-  timeout_ms: 60000
-  max_retries: 2
-  max_retry_delay_ms: 8000
+  options:
+    temperature: 0.2
+    max_tokens: 4096
+    cache_retention: short
+    timeout_ms: 60000
   providers:
     anthropic:
       betas: [context-1m]
       context_management: {}
     openrouter:
-      routing:                  # allow_fallbacks, require_parameters, data_collection,
-        order: [anthropic]      # zdr, order, only, ignore, quantizations, sort, max_price,
-        sort: throughput        # preferred_min_throughput, preferred_max_latency, …
+      routing:                  # forwarded opaquely to OpenRouter
+        order: [anthropic]
+        only: [anthropic]
+        allow_fallbacks: true
+session:
+  steering_mode: one-at-a-time
+  follow_up_mode: one-at-a-time
+  tool_execution: parallel
+  retry:
+    enabled: true
+    max_retries: 2
 ```
 
-All model settings except the fully resolved `name` are optional and merge by
-key along a `from:` chain until a child explicitly declares `model.name`.
+`ai.options` accepts current and future Pi request options using snake_case;
+Recipes converts only the option names to Pi camelCase. Its safe outer envelope
+is validated, while provider maps and nested option payloads remain opaque. All
+AI settings except the fully resolved model are optional and merge by key along
+a `from:` chain until a child explicitly declares `ai.model`.
+
+The former `model:` block remains readable for existing Recipes. New Recipes
+should use `ai:`; mixing both blocks in one agent is a validation error.
+
+`session` covers the managed runtime's portable model-independent policy:
+steering and follow-up queues, tool execution, retry (including provider
+retry), compaction, and image handling. Pi settings for UI presentation, shell
+and filesystem authority, package loading, persistence, networking, analytics,
+telemetry, and model defaults remain host-owned or belong under `ai`.
+Unlike transparent AI payloads, every nested `session` key, type, enum, and
+numeric range is checked by the Recipe validator. Interactive tree navigation
+and branch summaries are not part of the managed runtime contract.
 
 ## Resources and Capabilities
 
