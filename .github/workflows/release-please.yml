@@ -56,6 +56,30 @@ jobs:
           config-file: release-please-checker-config.json
           manifest-file: .release-please-checker-manifest.json
 
+      # release-please exits successfully when it finds a merged release PR
+      # whose title it cannot parse. That leaves the PR untagged and blocks
+      # every later checker release while the workflow still appears green.
+      - name: Verify checker release state
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stale_prs="$(
+            gh api --paginate --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=closed \
+              -f per_page=100 \
+              --jq '.[]
+                | select(.merged_at != null)
+                | select(any(.labels[]; .name == "autorelease: pending-checker"))
+                | "#\(.number) \(.title)"'
+          )"
+          if [[ -n "$stale_prs" ]]; then
+            echo "Merged checker release PRs remain untagged:" >&2
+            echo "$stale_prs" >&2
+            exit 1
+          fi
+
   build-native-tools:
     needs: release-please
     if: ${{ always() && (needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root'))) }}
