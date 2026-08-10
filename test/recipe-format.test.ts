@@ -532,4 +532,15 @@ describe("release train isolation", () => {
     );
     expect(workflow).toContain("Merged checker release PRs remain untagged");
   });
+
+  it("publishes npm packages publicly without a redundant access mutation", () => {
+    const root = join(import.meta.dirname, "..");
+    const workflow = readFileSync(
+      join(root, ".github", "workflows", "release-please.yml"),
+      "utf8"
+    );
+
+    expect(workflow).toContain("pnpm publish --access public");
+    expect(workflow).not.toContain("npm access set status=public");
+  });
 });
