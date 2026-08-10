@@ -140,6 +140,12 @@ Anthropic `context_management` must be objects, and Anthropic `betas` must be
 non-empty strings. Fields inside the routing and context-management objects
 remain transparent provider payloads.
 
+The checker does not predict live provider compatibility inside those
+transparent payloads. For example, OpenRouter's `require_parameters` policy
+depends on the parameters emitted by the selected model adapter and the
+capabilities of currently available endpoints. Recipes preserves the authored
+value; endpoint compatibility must be verified against the provider.
+
 `session` owns portable Pi session behavior. Queue modes accept `all` or
 `one-at-a-time`; `tool_execution` accepts `parallel` or `sequential`. The
 `retry`, `compaction`, and `images` use the managed runtime's corresponding Pi
