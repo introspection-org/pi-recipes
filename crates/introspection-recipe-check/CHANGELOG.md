@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/introspection-org/recipes/compare/introspection-recipe-check-v0.2.0...introspection-recipe-check-v0.3.0) (2026-08-10)
+
+
+### Features
+
+* add transparent AI and session configuration ([#208](https://github.com/introspection-org/recipes/issues/208)) ([a86a08d](https://github.com/introspection-org/recipes/commit/a86a08d74d053afc991a1bc7fc977892a29bf4e5))
+
+
+### Bug Fixes
+
+* complete provider policy support ([#212](https://github.com/introspection-org/recipes/issues/212)) ([e2a3fca](https://github.com/introspection-org/recipes/commit/e2a3fcaef04f12f6ec426a876464e6ea68d241aa))
+
 ## [0.2.0](https://github.com/introspection-org/recipes/compare/introspection-recipe-check-v0.1.0...introspection-recipe-check-v0.2.0) (2026-08-03)
 
 
