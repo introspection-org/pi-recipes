@@ -75,6 +75,35 @@ describe("parseRecipeAgentAiConfig", () => {
       },
     });
   });
+
+  it("contains transparent Anthropic context management in an object envelope", () => {
+    expect(
+      parseRecipeAgentAiConfig("test", {
+        model: "anthropic/claude-sonnet-4",
+        providers: {
+          anthropic: {
+            context_management: {
+              edits: [{ type: "clear_tool_uses_20250919" }],
+              future_policy: { mode: "strict" },
+            },
+          },
+        },
+      })
+    ).toMatchObject({
+      anthropic: {
+        contextManagement: {
+          edits: [{ type: "clear_tool_uses_20250919" }],
+          future_policy: { mode: "strict" },
+        },
+      },
+    });
+
+    expect(() =>
+      parseRecipeAgentAiConfig("test", {
+        providers: { anthropic: { context_management: "invalid" } },
+      })
+    ).toThrow(/context_management: expected object/);
+  });
 });
 
 describe("parseRecipeAgentSessionConfig", () => {
@@ -85,7 +114,7 @@ describe("parseRecipeAgentSessionConfig", () => {
         follow_up_mode: "all",
         tool_execution: "sequential",
         retry: { max_retries: 4, base_delay_ms: 250 },
-        branch_summary: { reserve_tokens: 2048 },
+        compaction: { reserve_tokens: 2048 },
       })
     ).toEqual({
       steeringMode: "one-at-a-time",
@@ -95,7 +124,7 @@ describe("parseRecipeAgentSessionConfig", () => {
         steeringMode: "one-at-a-time",
         followUpMode: "all",
         retry: { maxRetries: 4, baseDelayMs: 250 },
-        branchSummary: { reserveTokens: 2048 },
+        compaction: { reserveTokens: 2048 },
       },
     });
   });
@@ -114,6 +143,29 @@ describe("parseRecipeAgentSessionConfig", () => {
         images: { autoResize: false },
       },
     });
+  });
+
+  it("treats empty session policy as a no-op", () => {
+    expect(parseRecipeAgentSessionConfig("test", {})).toBeUndefined();
+    expect(
+      parseRecipeAgentSessionConfig("test", {
+        retry: {},
+        compaction: {},
+        images: {},
+      })
+    ).toBeUndefined();
+  });
+
+  it.each([
+    [{ retry: { max_retriez: 3 } }, /max_retriez/],
+    [{ retry: { enabled: "yes" } }, /expected boolean/],
+    [{ retry: { max_retries: 1.5 } }, /expected integer/],
+    [{ retry: { provider: { timeout_ms: 0 } } }, /integer >= 1/],
+    [{ compaction: { reserve_tokens: -1 } }, /integer >= 0/],
+    [{ branch_summary: {} }, /unsupported session key/],
+    [{ images: { block_images: null } }, /expected boolean/],
+  ] as const)("rejects invalid portable session policy %#", (session, error) => {
+    expect(() => parseRecipeAgentSessionConfig("test", session)).toThrow(error);
   });
 });
 

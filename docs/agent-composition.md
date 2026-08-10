@@ -151,19 +151,22 @@ session:
 ```
 
 `ai.options` accepts current and future Pi request options using snake_case;
-Recipes converts only the option names to Pi camelCase. Provider maps and
-nested option payloads remain opaque. All AI settings except the fully resolved
-model are optional and merge by key along a `from:` chain until a child
-explicitly declares `ai.model`.
+Recipes converts only the option names to Pi camelCase. Its safe outer envelope
+is validated, while provider maps and nested option payloads remain opaque. All
+AI settings except the fully resolved model are optional and merge by key along
+a `from:` chain until a child explicitly declares `ai.model`.
 
 The former `model:` block remains readable for existing Recipes. New Recipes
 should use `ai:`; mixing both blocks in one agent is a validation error.
 
-`session` covers Pi's portable model-independent policy: steering and follow-up
-queues, tool execution, retry (including provider retry), compaction, branch
-summaries, and image handling. Pi settings for UI presentation, shell and
-filesystem authority, package loading, persistence, networking, analytics,
+`session` covers the managed runtime's portable model-independent policy:
+steering and follow-up queues, tool execution, retry (including provider
+retry), compaction, and image handling. Pi settings for UI presentation, shell
+and filesystem authority, package loading, persistence, networking, analytics,
 telemetry, and model defaults remain host-owned or belong under `ai`.
+Unlike transparent AI payloads, every nested `session` key, type, enum, and
+numeric range is checked by the Recipe validator. Interactive tree navigation
+and branch summaries are not part of the managed runtime contract.
 
 ## Resources and Capabilities
 

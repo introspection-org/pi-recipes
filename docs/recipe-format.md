@@ -135,12 +135,19 @@ or field-allowlisted. Host-owned request controls (`api_key`, `headers`, hooks,
 fetch, environment, abort signals, telemetry, and session identity) are
 rejected.
 
+The checker validates the provider envelope: OpenRouter `routing` and
+Anthropic `context_management` must be objects, and Anthropic `betas` must be
+non-empty strings. Fields inside the routing and context-management objects
+remain transparent provider payloads.
+
 `session` owns portable Pi session behavior. Queue modes accept `all` or
 `one-at-a-time`; `tool_execution` accepts `parallel` or `sequential`. The
-`retry`, `compaction`, `branch_summary`, and `images` objects use the same
-settings as Pi with snake_case keys and are applied to a session-local settings
-manager, leaving host settings unmodified. UI, shell, resource loading,
-persistence, networking, analytics, telemetry, and model-default settings are
+`retry`, `compaction`, and `images` use the managed runtime's corresponding Pi
+settings with snake_case keys and are applied to a session-local settings
+manager, leaving host settings unmodified. Their nested keys, types, enums, and
+integer ranges are closed and validated. Interactive tree navigation and
+branch summaries, UI, shell, resource loading, persistence, networking,
+analytics, telemetry, and model-default settings are
 not portable session policy and remain host-owned or belong under `ai`.
 
 `tools` MUST NOT contain `agent`. The host materializes that session-generated

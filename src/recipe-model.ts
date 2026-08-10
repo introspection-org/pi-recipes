@@ -290,10 +290,16 @@ function parseAnthropic(
     `${prefix}.providers.anthropic.betas`,
     value.betas
   );
+  const contextManagement = value.context_management;
+  if (contextManagement !== undefined && !isRecord(contextManagement)) {
+    throw new RecipeModelConfigError(
+      `${context} has invalid ${prefix}.providers.anthropic.context_management: expected object`
+    );
+  }
   return {
     ...(betas ? { betas } : {}),
-    ...(value.context_management !== undefined
-      ? { contextManagement: value.context_management }
+    ...(contextManagement !== undefined
+      ? { contextManagement }
       : {}),
   };
 }

@@ -1333,7 +1333,6 @@ fn validate_agent_session(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
         "tool_execution",
         "retry",
         "compaction",
-        "branch_summary",
         "images",
     ];
     for key in session
@@ -1375,42 +1374,126 @@ fn validate_agent_session(map: &JsonMap, path: &str, ctx: &mut CheckContext) {
             );
         }
     }
-    for key in ["retry", "compaction", "branch_summary", "images"] {
-        if let Some(value) = session.get(key) {
-            if !value.is_object() {
-                ctx.error(
-                    format!("agent.session.{key}_invalid"),
-                    path,
-                    format!("Agent session.{key} must be an object"),
-                    None::<String>,
-                );
-                continue;
-            }
-            validate_session_object_keys(value, path, &format!("session.{key}"), ctx);
-        }
+    if let Some(value) = session.get("retry") {
+        validate_session_retry(value, path, ctx);
+    }
+    if let Some(value) = session.get("compaction") {
+        validate_session_settings_object(
+            value,
+            path,
+            "compaction",
+            &["enabled", "reserve_tokens", "keep_recent_tokens"],
+            &["enabled"],
+            &[("reserve_tokens", false), ("keep_recent_tokens", false)],
+            ctx,
+        );
+    }
+    if let Some(value) = session.get("images") {
+        validate_session_settings_object(
+            value,
+            path,
+            "images",
+            &["auto_resize", "block_images"],
+            &["auto_resize", "block_images"],
+            &[],
+            ctx,
+        );
     }
 }
 
-fn validate_session_object_keys(
-    value: &JsonValue,
-    path: &str,
-    prefix: &str,
-    ctx: &mut CheckContext,
-) {
-    let Some(settings) = value.as_object() else {
+fn validate_session_retry(value: &JsonValue, path: &str, ctx: &mut CheckContext) {
+    let Some(retry) = validate_session_settings_object(
+        value,
+        path,
+        "retry",
+        &["enabled", "max_retries", "base_delay_ms", "provider"],
+        &["enabled"],
+        &[("max_retries", false), ("base_delay_ms", false)],
+        ctx,
+    ) else {
         return;
     };
-    for (key, child) in settings {
-        if !snake_case_key(key) {
+    if let Some(provider) = retry.get("provider") {
+        validate_session_settings_object(
+            provider,
+            path,
+            "retry.provider",
+            &["timeout_ms", "max_retries", "max_retry_delay_ms"],
+            &[],
+            &[
+                ("timeout_ms", true),
+                ("max_retries", false),
+                ("max_retry_delay_ms", false),
+            ],
+            ctx,
+        );
+    }
+}
+
+fn validate_session_settings_object<'a>(
+    value: &'a JsonValue,
+    path: &str,
+    section: &str,
+    allowed_keys: &[&str],
+    boolean_keys: &[&str],
+    integer_keys: &[(&str, bool)],
+    ctx: &mut CheckContext,
+) -> Option<&'a JsonMap> {
+    let prefix = format!("session.{section}");
+    let Some(settings) = value.as_object() else {
+        ctx.error(
+            format!("agent.{prefix}_invalid"),
+            path,
+            format!("Agent {prefix} must be an object"),
+            None::<String>,
+        );
+        return None;
+    };
+    for key in settings
+        .keys()
+        .filter(|key| !allowed_keys.contains(&key.as_str()))
+    {
+        ctx.error(
+            format!("agent.{prefix}_key_unknown"),
+            path,
+            format!("Agent {prefix} contains unknown field '{key}'"),
+            Some(format!("supported fields: {}", allowed_keys.join(", "))),
+        );
+    }
+    for key in boolean_keys {
+        if settings.get(*key).is_some_and(|value| !value.is_boolean()) {
             ctx.error(
-                "agent.session.key_invalid",
+                format!("agent.{prefix}.{key}_invalid"),
                 path,
-                format!("Agent {prefix} key '{key}' must use snake_case"),
+                format!("Agent {prefix}.{key} must be a boolean"),
                 None::<String>,
             );
         }
-        validate_session_object_keys(child, path, &format!("{prefix}.{key}"), ctx);
     }
+    for (key, strictly_positive) in integer_keys {
+        let Some(value) = settings.get(*key) else {
+            continue;
+        };
+        let minimum = if *strictly_positive { 1.0 } else { 0.0 };
+        let valid = value.as_f64().is_some_and(|number| {
+            number.is_finite()
+                && number >= minimum
+                && number <= 9_007_199_254_740_991.0
+                && number.fract() == 0.0
+        });
+        if !valid {
+            ctx.error(
+                format!("agent.{prefix}.{key}_invalid"),
+                path,
+                format!(
+                    "Agent {prefix}.{key} must be an integer >= {}",
+                    minimum as u8
+                ),
+                None::<String>,
+            );
+        }
+    }
+    Some(settings)
 }
 
 fn validate_non_negative_number(
@@ -1533,6 +1616,17 @@ fn validate_model_providers(
                     None::<String>,
                 );
             }
+        }
+        if anthropic
+            .get("context_management")
+            .is_some_and(|value| !value.is_object())
+        {
+            ctx.error(
+                "agent.model.providers.anthropic_context_management_invalid",
+                path,
+                "Agent model.providers.anthropic.context_management must be an object",
+                None::<String>,
+            );
         }
     }
 }

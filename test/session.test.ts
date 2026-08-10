@@ -202,9 +202,6 @@ describe("createAgentSession", () => {
         "    enabled: true",
         "    reserve_tokens: 12000",
         "    keep_recent_tokens: 6000",
-        "  branch_summary:",
-        "    reserve_tokens: 2048",
-        "    skip_prompt: true",
         "  images:",
         "    auto_resize: false",
         "    block_images: true",
@@ -230,10 +227,6 @@ describe("createAgentSession", () => {
       enabled: true,
       reserveTokens: 12000,
       keepRecentTokens: 6000,
-    });
-    expect(handle.session.settingsManager.getBranchSummarySettings()).toEqual({
-      reserveTokens: 2048,
-      skipPrompt: true,
     });
     expect(handle.session.settingsManager.getImageAutoResize()).toBe(false);
     expect(handle.session.settingsManager.getBlockImages()).toBe(true);

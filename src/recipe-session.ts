@@ -4,7 +4,6 @@ const SESSION_KEYS = new Set([
   "tool_execution",
   "retry",
   "compaction",
-  "branch_summary",
   "images",
 ]);
 
@@ -31,28 +30,162 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function snakeToCamel(key: string): string {
-  return key.replace(/_([a-z0-9])/g, (_, character: string) =>
-    character.toUpperCase()
-  );
+function assertKnownKeys(
+  context: string,
+  value: Record<string, unknown>,
+  allowed: readonly string[]
+): void {
+  const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) {
+    throw new RecipeSessionConfigError(
+      `${context} has unsupported key(s): ${unknown.join(", ")}`
+    );
+  }
 }
 
-function normalizeObject(context: string, value: unknown): Record<string, unknown> {
+function sessionObject(
+  context: string,
+  value: unknown
+): Record<string, unknown> {
   if (!isRecord(value)) {
     throw new RecipeSessionConfigError(`${context}: expected object`);
   }
-  const normalized: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) {
+  for (const key of Object.keys(value)) {
     if (!SNAKE_CASE_KEY.test(key)) {
-      throw new RecipeSessionConfigError(
-        `${context} has non-snake_case key "${key}"`
-      );
+      throw new RecipeSessionConfigError(`${context} has invalid key "${key}"`);
     }
-    normalized[snakeToCamel(key)] = isRecord(child)
-      ? normalizeObject(`${context}.${key}`, child)
-      : child;
   }
-  return normalized;
+  return value;
+}
+
+function optionalBoolean(
+  context: string,
+  key: string,
+  value: unknown
+): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") {
+    throw new RecipeSessionConfigError(
+      `${context}.${key}: expected boolean`
+    );
+  }
+  return value;
+}
+
+function optionalInteger(
+  context: string,
+  key: string,
+  value: unknown,
+  min: number
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < min
+  ) {
+    throw new RecipeSessionConfigError(
+      `${context}.${key}: expected integer >= ${min}`
+    );
+  }
+  return value;
+}
+
+function definedObject(
+  entries: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const defined = Object.fromEntries(
+    Object.entries(entries).filter(([, value]) => value !== undefined)
+  );
+  return Object.keys(defined).length > 0 ? defined : undefined;
+}
+
+function parseProviderRetry(
+  context: string,
+  value: unknown
+): Record<string, unknown> | undefined {
+  const data = sessionObject(context, value);
+  assertKnownKeys(context, data, [
+    "timeout_ms",
+    "max_retries",
+    "max_retry_delay_ms",
+  ]);
+  return definedObject({
+    timeoutMs: optionalInteger(context, "timeout_ms", data.timeout_ms, 1),
+    maxRetries: optionalInteger(context, "max_retries", data.max_retries, 0),
+    maxRetryDelayMs: optionalInteger(
+      context,
+      "max_retry_delay_ms",
+      data.max_retry_delay_ms,
+      0
+    ),
+  });
+}
+
+function parseRetry(
+  context: string,
+  value: unknown
+): Record<string, unknown> | undefined {
+  const data = sessionObject(context, value);
+  assertKnownKeys(context, data, [
+    "enabled",
+    "max_retries",
+    "base_delay_ms",
+    "provider",
+  ]);
+  return definedObject({
+    enabled: optionalBoolean(context, "enabled", data.enabled),
+    maxRetries: optionalInteger(context, "max_retries", data.max_retries, 0),
+    baseDelayMs: optionalInteger(
+      context,
+      "base_delay_ms",
+      data.base_delay_ms,
+      0
+    ),
+    provider:
+      data.provider === undefined
+        ? undefined
+        : parseProviderRetry(`${context}.provider`, data.provider),
+  });
+}
+
+function parseCompaction(
+  context: string,
+  value: unknown
+): Record<string, unknown> | undefined {
+  const data = sessionObject(context, value);
+  assertKnownKeys(context, data, [
+    "enabled",
+    "reserve_tokens",
+    "keep_recent_tokens",
+  ]);
+  return definedObject({
+    enabled: optionalBoolean(context, "enabled", data.enabled),
+    reserveTokens: optionalInteger(
+      context,
+      "reserve_tokens",
+      data.reserve_tokens,
+      0
+    ),
+    keepRecentTokens: optionalInteger(
+      context,
+      "keep_recent_tokens",
+      data.keep_recent_tokens,
+      0
+    ),
+  });
+}
+
+function parseImages(
+  context: string,
+  value: unknown
+): Record<string, unknown> | undefined {
+  const data = sessionObject(context, value);
+  assertKnownKeys(context, data, ["auto_resize", "block_images"]);
+  return definedObject({
+    autoResize: optionalBoolean(context, "auto_resize", data.auto_resize),
+    blockImages: optionalBoolean(context, "block_images", data.block_images),
+  });
 }
 
 function parseQueueMode(
@@ -106,25 +239,37 @@ export function parseRecipeAgentSessionConfig(
       `${context} has invalid session.tool_execution: expected parallel or sequential`
     );
   }
+  const parsedToolExecution = toolExecution as
+    | RecipeToolExecutionMode
+    | undefined;
 
   const settings: Record<string, unknown> = {
     ...(steeringMode ? { steeringMode } : {}),
     ...(followUpMode ? { followUpMode } : {}),
   };
-  for (const key of ["retry", "compaction", "branch_summary", "images"] as const) {
-    if (value[key] === undefined) continue;
-    settings[snakeToCamel(key)] = normalizeObject(
-      `${context} session.${key}`,
-      value[key]
-    );
-  }
+  const nestedSettings = {
+    retry:
+      value.retry === undefined
+        ? undefined
+        : parseRetry(`${context} session.retry`, value.retry),
+    compaction:
+      value.compaction === undefined
+        ? undefined
+        : parseCompaction(`${context} session.compaction`, value.compaction),
+    images:
+      value.images === undefined
+        ? undefined
+        : parseImages(`${context} session.images`, value.images),
+  };
+  Object.assign(settings, definedObject(nestedSettings));
 
-  return {
+  const parsed = {
     ...(steeringMode ? { steeringMode } : {}),
     ...(followUpMode ? { followUpMode } : {}),
-    ...(toolExecution ? { toolExecution } : {}),
+    ...(parsedToolExecution ? { toolExecution: parsedToolExecution } : {}),
     ...(Object.keys(settings).length > 0 ? { settings } : {}),
   };
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
 export function mergeRecipeAgentSessionConfig(
