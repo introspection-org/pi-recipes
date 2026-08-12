@@ -30,6 +30,24 @@ function api(): ExtensionAPI {
 }
 
 describe("Recipe extension context", () => {
+  it("shares context across separate Recipes module instances", async () => {
+    const bindingModule = await import("../src/extensions.js");
+    vi.resetModules();
+    const consumingModule = await import("../src/extensions.js");
+    const matched = vi.fn();
+    const factory = bindingModule.bindRecipeExtensionFactory(
+      (extensionApi) => {
+        consumingModule.forAgent(extensionApi, "reviewer", matched);
+      },
+      context("reviewer", "root")
+    );
+
+    expect(bindingModule).not.toBe(consumingModule);
+    await factory(api());
+
+    expect(matched).toHaveBeenCalledOnce();
+  });
+
   it("binds immutable agent and session identity before factory execution", async () => {
     const pi = api();
     const seen: RecipeExtensionSessionContext[] = [];
