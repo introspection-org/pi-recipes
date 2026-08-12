@@ -15,7 +15,39 @@ export interface RecipeExtensionSessionContext {
   };
 }
 
-const contexts = new WeakMap<ExtensionAPI, RecipeExtensionSessionContext>();
+// Embedded hosts may bundle Recipes while extensions resolve their own copy.
+// A process-wide symbol keeps their context registry shared across instances.
+const recipeExtensionContextsKey = Symbol.for(
+  "@introspection-ai/recipes.extension-contexts.v1"
+);
+
+function sharedRecipeExtensionContexts(): WeakMap<
+  ExtensionAPI,
+  RecipeExtensionSessionContext
+> {
+  const shared = globalThis as typeof globalThis & Record<symbol, unknown>;
+  const existing = shared[recipeExtensionContextsKey];
+  if (existing !== undefined) {
+    if (!(existing instanceof WeakMap)) {
+      throw new Error("The shared Recipe extension context registry is invalid");
+    }
+    return existing as WeakMap<ExtensionAPI, RecipeExtensionSessionContext>;
+  }
+
+  const contexts = new WeakMap<
+    ExtensionAPI,
+    RecipeExtensionSessionContext
+  >();
+  Object.defineProperty(shared, recipeExtensionContextsKey, {
+    configurable: false,
+    enumerable: false,
+    value: contexts,
+    writable: false,
+  });
+  return contexts;
+}
+
+const contexts = sharedRecipeExtensionContexts();
 
 export interface RecipeExtensionRegistrationRegistry {
   claim(kind: string, name: string, owner: string): void;
