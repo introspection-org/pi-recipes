@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.2](https://github.com/introspection-org/recipes/compare/v0.19.1...v0.19.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* share recipe extension context across instances ([#214](https://github.com/introspection-org/recipes/issues/214)) ([1b9031a](https://github.com/introspection-org/recipes/commit/1b9031ae36cd31808c0f6a27edc7fd92095ffcfa))
+
 ## [0.19.1](https://github.com/introspection-org/recipes/compare/v0.19.0...v0.19.1) (2026-08-10)
 
 
