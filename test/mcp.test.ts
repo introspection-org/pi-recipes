@@ -386,6 +386,7 @@ describe("static MCP session materialization", () => {
           transport: "streamable_http",
           url: "https://mcp.example.test/mcp",
           headers: { Authorization: "Bearer ${SESSION_TOKEN}" },
+          httpFetch: "default",
         },
       ]);
       const env: NodeJS.ProcessEnv = {
@@ -426,6 +427,9 @@ describe("static MCP session materialization", () => {
       expect(serializedSession).not.toContain("secret-value");
       expect(serializedTransport).not.toContain("secret-value");
       expect(serializedTransport).toContain("${SESSION_TOKEN}");
+      expect(JSON.parse(serializedTransport).mcpServers.nextplay.httpFetch).toBe(
+        "default"
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

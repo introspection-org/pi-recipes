@@ -92,7 +92,6 @@ interface LocalMcpOAuthSettings {
   oauthTokenEndpointAuthMethod?: string;
   oauthRedirectUrl?: string;
   oauthScope?: string;
-  httpFetch?: "default" | "node-http1";
 }
 
 interface McpEndpointBinding {
@@ -103,8 +102,10 @@ interface McpEndpointBinding {
    * Header values as written in the local config (`${VAR}` refs intact) so
    * they can be re-emitted into the mcporter config without persisting
    * resolved secrets to disk.
-   */
+  */
   rawHeaders: Record<string, string>;
+  /** mcporter request implementation; independent of endpoint authentication. */
+  httpFetch?: "default" | "node-http1";
   localOAuth?: LocalMcpOAuthSettings;
 }
 
@@ -487,7 +488,6 @@ function localBindings(
               ? { oauthRedirectUrl: server.oauthRedirectUrl }
               : {}),
             ...(server.oauthScope ? { oauthScope: server.oauthScope } : {}),
-            ...(server.httpFetch ? { httpFetch: server.httpFetch } : {}),
           }
         : undefined;
     return [{
@@ -495,6 +495,7 @@ function localBindings(
       name: label,
       baseUrl,
       rawHeaders,
+      ...(server.httpFetch ? { httpFetch: server.httpFetch } : {}),
       ...(localOAuth ? { localOAuth } : {}),
     }];
   });
@@ -703,6 +704,7 @@ function projectMcporterConfig(
       baseUrl: server.base_url,
       headers: binding?.rawHeaders ?? {},
       ...(allowedTools ? { allowedTools } : {}),
+      ...(binding?.httpFetch ? { httpFetch: binding.httpFetch } : {}),
       ...(binding?.localOAuth ?? {}),
     };
   }
