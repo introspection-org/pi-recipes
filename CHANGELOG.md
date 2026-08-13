@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.3](https://github.com/introspection-org/recipes/compare/v0.19.2...v0.19.3) (2026-08-13)
+
+
+### Bug Fixes
+
+* preserve MCP HTTP fetch overrides ([#216](https://github.com/introspection-org/recipes/issues/216)) ([8706a3c](https://github.com/introspection-org/recipes/commit/8706a3cde589948a2c1bbab4424b92cae26e49ca))
+
 ## [0.19.2](https://github.com/introspection-org/recipes/compare/v0.19.1...v0.19.2) (2026-08-12)
 
 
