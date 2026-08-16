@@ -23,6 +23,7 @@ import {
   createRecipeExtensionRegistrationRegistry,
   recipeExtensionToolAllowlist,
   type RecipeExtensionRegistrationRegistry,
+  type RecipeExtensionUnwindFailure,
 } from "./extensions.js";
 import {
   ChildAgentRunStore,
@@ -101,7 +102,8 @@ interface RecipeLaunchState {
   resolved: ResolvedRecipeAgent;
   extensionRegistrations: RecipeExtensionRegistrationRegistry;
   extensionsLoaded: boolean;
-  extensionFailure?: string;
+  /** Owners from a torn-down closure, unwound just before the next load. */
+  staleExtensionOwners: string[];
   configured: boolean;
   mcpConfigured: boolean;
   agentMcpMode: RecipeAgentMcpMode;
@@ -680,6 +682,7 @@ export function createRecipesExtension(
       resolved,
       extensionRegistrations: createRecipeExtensionRegistrationRegistry(),
       extensionsLoaded: false,
+      staleExtensionOwners: [],
       configured: false,
       mcpConfigured: false,
       agentMcpMode: "cli",
@@ -726,29 +729,72 @@ export function createRecipesExtension(
     }
   }
 
+  /** A leaked registration is worth surfacing: the runner is no longer clean. */
+  function reportUnwindFailures(
+    failures: readonly RecipeExtensionUnwindFailure[],
+    ctx?: Pick<ExtensionContext, "ui">
+  ): void {
+    if (failures.length === 0) return;
+    ctx?.ui?.notify(
+      `Recipe extensions did not unload cleanly: ${failures
+        .map((failure) => `${failure.owner} (${failure.error})`)
+        .join(", ")}`,
+      "warning"
+    );
+  }
+
+  /**
+   * Record that Pi tore down the extension runtime under a closure that is
+   * still loaded. The closure is unwound at the next load rather than here, so
+   * an extension's own `session_shutdown` handler still runs and can release
+   * whatever it owns before its registrations are neutralized.
+   */
+  function markRecipeExtensionsStale(launchState: RecipeLaunchState): void {
+    if (!launchState.extensionsLoaded) return;
+    launchState.staleExtensionOwners = [
+      ...launchState.resolved.extensionPaths,
+    ];
+    launchState.extensionsLoaded = false;
+  }
+
+  /**
+   * Load the Recipe's extension closure as one transaction. A factory that
+   * throws unwinds every registration the attempt installed, leaving the
+   * runner exactly as it was, so the author can fix the source and reload
+   * without restarting the process.
+   */
   async function loadRecipeExtensions(
     pi: ExtensionAPI,
     ctx: ExtensionContext,
     launchState: RecipeLaunchState
   ): Promise<void> {
-    if (launchState.extensionFailure) {
-      throw new Error(launchState.extensionFailure);
-    }
     if (launchState.extensionsLoaded) return;
-    // Pi cannot unload registrations made by an earlier factory if a later
-    // factory fails. Mark the closure attempted before execution so the same
-    // live runner never retries a partially installed closure.
-    launchState.extensionsLoaded = true;
+    if (launchState.staleExtensionOwners.length > 0) {
+      reportUnwindFailures(
+        await launchState.extensionRegistrations.unwind(
+          launchState.staleExtensionOwners
+        ),
+        ctx
+      );
+      launchState.staleExtensionOwners = [];
+    }
     for (const tool of pi.getAllTools()) {
+      // A tool an unwound closure left behind is not a host tool; claiming it
+      // for `<host>` would block the reload that is about to replace it.
+      if (launchState.extensionRegistrations.vacated("tool", tool.name)) {
+        continue;
+      }
       launchState.extensionRegistrations.claim(
         "tool",
         tool.name,
         "<host>"
       );
     }
+    const attempted: string[] = [];
     let loadedCount = 0;
     try {
       for (const extensionPath of launchState.resolved.extensionPaths) {
+        attempted.push(extensionPath);
         const factory = bindRecipeExtensionFactory(
           await loadRecipeExtensionFactory(
             launchState.resolved.recipeDir,
@@ -769,10 +815,13 @@ export function createRecipesExtension(
         loadedCount += 1;
       }
     } catch (error) {
-      launchState.extensionFailure =
-        error instanceof Error ? error.message : String(error);
+      reportUnwindFailures(
+        await launchState.extensionRegistrations.unwind(attempted),
+        ctx
+      );
       throw error;
     }
+    launchState.extensionsLoaded = true;
     if (launchState.resolved.extensionPaths.length > 0) {
       ctx.ui.notify(
         `Recipe extensions: ${loadedCount}/${launchState.resolved.extensionPaths.length} loaded`,
@@ -1366,6 +1415,10 @@ export function createRecipesExtension(
     });
 
     pi.on("session_shutdown", async () => {
+      // Pi discards its own registries here, so the closure must be reinstalled
+      // rather than skipped as already loaded when `session_start` fires again
+      // with reason "reload" against this same launch state.
+      if (state) markRecipeExtensionsStale(state);
       await closeAllChildRuns();
       await closeRootMcpRuntime();
       clearMcpCatalogPreload(env);

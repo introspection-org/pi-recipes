@@ -49,9 +49,45 @@ function sharedRecipeExtensionContexts(): WeakMap<
 
 const contexts = sharedRecipeExtensionContexts();
 
+/** A disposer that threw while unwinding an extension's registrations. */
+export interface RecipeExtensionUnwindFailure {
+  readonly owner: string;
+  readonly error: string;
+}
+
+/**
+ * One extension's live registration scope. A scope is created per load, so
+ * guards captured by a previous load stay disposed even after the same
+ * extension path is loaded again.
+ *
+ * @internal
+ */
+export interface RecipeExtensionOwnerScope {
+  readonly owner: string;
+  /** True once this load's registrations have been unwound. */
+  readonly disposed: boolean;
+  /** Record an undo closure for something this load installed on the host. */
+  effect(dispose: () => void | Promise<void>): void;
+}
+
 export interface RecipeExtensionRegistrationRegistry {
   claim(kind: string, name: string, owner: string): void;
   release(kind: string, name: string, owner: string): void;
+  /** @internal Begin a fresh load scope for `owner`. */
+  beginOwner(owner: string): RecipeExtensionOwnerScope;
+  /**
+   * Unwind the named owners, most recently loaded first, releasing their
+   * claims so the same paths can be loaded again. Never throws: a disposer
+   * that fails is reported so the caller can surface a leaked registration.
+   */
+  unwind(owners: readonly string[]): Promise<RecipeExtensionUnwindFailure[]>;
+  /**
+   * True when an unwound extension left this registration behind in the host.
+   * Pi keeps tools, commands, and shortcuts for the life of its runtime, so a
+   * caller enumerating the host's registrations must not mistake a neutralized
+   * one for a host-owned name and block the reload that would replace it.
+   */
+  vacated(kind: string, name: string): boolean;
 }
 
 /** @internal Exact tool names a package extension may keep model-visible. */
@@ -67,9 +103,19 @@ export function recipeExtensionToolAllowlist(
   ]);
 }
 
-/** @internal Reject ambiguous registrations across the package closure. */
+interface OwnerScopeState extends RecipeExtensionOwnerScope {
+  disposed: boolean;
+  readonly disposers: Array<() => void | Promise<void>>;
+}
+
+/**
+ * @internal Reject ambiguous registrations across the package closure, and
+ * hold the undo closures that let a closure be unwound again.
+ */
 export function createRecipeExtensionRegistrationRegistry(): RecipeExtensionRegistrationRegistry {
   const owners = new Map<string, string>();
+  const scopes = new Map<string, OwnerScopeState>();
+  const vacated = new Set<string>();
   return {
     claim(kind, name, owner) {
       const key = `${kind}\0${name}`;
@@ -81,6 +127,10 @@ export function createRecipeExtensionRegistrationRegistry(): RecipeExtensionRegi
         );
       }
       owners.set(key, owner);
+      vacated.delete(key);
+    },
+    vacated(kind, name) {
+      return vacated.has(`${kind}\0${name}`);
     },
     release(kind, name, owner) {
       const key = `${kind}\0${name}`;
@@ -91,6 +141,54 @@ export function createRecipeExtensionRegistrationRegistry(): RecipeExtensionRegi
         );
       }
       owners.delete(key);
+    },
+    beginOwner(owner) {
+      const scope: OwnerScopeState = {
+        owner,
+        disposed: false,
+        disposers: [],
+        effect(dispose) {
+          // A disposer recorded after unwinding belongs to a registration the
+          // host accepted too late to matter; run it immediately rather than
+          // retaining it against a scope that will never be unwound again.
+          if (scope.disposed) {
+            void dispose();
+            return;
+          }
+          scope.disposers.push(dispose);
+        },
+      };
+      scopes.set(owner, scope);
+      return scope;
+    },
+    async unwind(ownersToUnwind) {
+      const failures: RecipeExtensionUnwindFailure[] = [];
+      for (const owner of [...ownersToUnwind].reverse()) {
+        const scope = scopes.get(owner);
+        if (scope) {
+          // Mark first: a disposer that triggers host callbacks must not see
+          // this extension's guarded handlers as live.
+          scope.disposed = true;
+          scopes.delete(owner);
+          for (const dispose of [...scope.disposers].reverse()) {
+            try {
+              await dispose();
+            } catch (error) {
+              failures.push({
+                owner,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+          scope.disposers.length = 0;
+        }
+        for (const [key, holder] of [...owners]) {
+          if (holder !== owner) continue;
+          owners.delete(key);
+          vacated.add(key);
+        }
+      }
+      return failures;
     },
   };
 }
@@ -128,6 +226,62 @@ export function forRecipeSession(
   if (predicate(context)) register(context);
 }
 
+/**
+ * Pi can unregister a provider but nothing else, so a disposed extension's
+ * entry points are neutralized in place: the registration stays in the host
+ * registry and refuses to run. Returns the arguments to install.
+ */
+function guardRegistration(
+  property: string,
+  args: readonly unknown[],
+  scope: RecipeExtensionOwnerScope
+): unknown[] {
+  const guard = (
+    payload: unknown,
+    key: "execute" | "handler",
+    kind: string,
+    name: string
+  ): unknown => {
+    const source = payload as Record<string, unknown> | undefined;
+    const original = source?.[key];
+    if (typeof original !== "function") return payload;
+    const call = (original as (...callArgs: unknown[]) => unknown).bind(source);
+    // Preserve accessors and prototype: a registration payload may expose
+    // computed fields the host reads after registering it.
+    const guarded = Object.create(
+      Object.getPrototypeOf(source as object),
+      Object.getOwnPropertyDescriptors(source as object)
+    ) as Record<string, unknown>;
+    guarded[key] = (...callArgs: unknown[]) => {
+      if (!scope.disposed) return call(...callArgs);
+      throw new Error(
+        `Recipe extension ${scope.owner} was unloaded; its ${kind} "${name}" is no longer available`
+      );
+    };
+    return guarded;
+  };
+
+  if (property === "registerTool") {
+    const name = String((args[0] as { name?: unknown } | undefined)?.name);
+    return [guard(args[0], "execute", "tool", name), ...args.slice(1)];
+  }
+
+  if (property === "registerCommand" || property === "registerShortcut") {
+    return [
+      args[0],
+      guard(
+        args[1],
+        "handler",
+        property === "registerCommand" ? "command" : "shortcut",
+        String(args[0])
+      ),
+      ...args.slice(2),
+    ];
+  }
+
+  return [...args];
+}
+
 /** @internal Bind context before Pi invokes a package extension factory. */
 export function bindRecipeExtensionFactory(
   factory: ExtensionFactory,
@@ -137,6 +291,7 @@ export function bindRecipeExtensionFactory(
   allowedToolNames?: ReadonlySet<string>
 ): ExtensionFactory {
   return async (pi) => {
+    const scope = registrationRegistry?.beginOwner(owner);
     const registrationKinds: Record<string, string> = {
       registerTool: "tool",
       registerCommand: "command",
@@ -155,6 +310,29 @@ export function bindRecipeExtensionFactory(
                 ? registrationKinds[property]
                 : undefined;
             if (!kind || !registrationRegistry || typeof value !== "function") {
+              if (
+                property === "on" &&
+                typeof value === "function" &&
+                scope
+              ) {
+                // Lifecycle subscriptions are the registrations that must go
+                // quiet first: a stale handler from an unwound closure would
+                // otherwise keep running beside its replacement.
+                return (
+                  event: string,
+                  handler: (...handlerArgs: unknown[]) => unknown
+                ) => {
+                  const guarded = (...handlerArgs: unknown[]) =>
+                    scope.disposed ? undefined : handler(...handlerArgs);
+                  const off = value.call(target, event, guarded);
+                  if (typeof off === "function") {
+                    scope.effect(() => {
+                      (off as () => void)();
+                    });
+                  }
+                  return off;
+                };
+              }
               if (
                 property === "setActiveTools" &&
                 typeof value === "function" &&
@@ -209,7 +387,26 @@ export function bindRecipeExtensionFactory(
                   owner
                 );
               }
-              return value.apply(target, args);
+              if (!scope) return value.apply(target, args);
+              const result = value.apply(
+                target,
+                guardRegistration(String(property), args, scope)
+              );
+              if (
+                property === "registerProvider" &&
+                typeof registrationName === "string"
+              ) {
+                // The one registration Pi can genuinely remove. Call the host
+                // method directly: the registry releases this owner's claims
+                // itself once the scope finishes unwinding.
+                scope.effect(() => {
+                  const unregister = Reflect.get(target, "unregisterProvider");
+                  if (typeof unregister === "function") {
+                    unregister.call(target, registrationName);
+                  }
+                });
+              }
+              return result;
             };
           },
         })

@@ -1438,6 +1438,201 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
+  it("reloads a repaired extension closure on the same live runner", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - setup_git",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "extensions", "a-setup-git.ts"),
+        [
+          "export default (pi) => {",
+          "  pi.registerTool({",
+          "    name: 'setup_git',",
+          "    label: 'Setup git',",
+          "    description: 'Prepare git auth',",
+          "    parameters: { type: 'object', properties: {}, additionalProperties: false },",
+          "    async execute() {",
+          "      return { content: [{ type: 'text', text: 'ok' }], details: {} };",
+          "    },",
+          "  });",
+          "};",
+        ].join("\n")
+      );
+      const brokenPath = join(recipeDir, "extensions", "z-broken.ts");
+      writeFileSync(
+        brokenPath,
+        "export default () => { throw new Error('author typo'); };\n"
+      );
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: { agents: ["defs/*.yaml"], extensions: ["extensions/*.ts"] },
+          },
+          null,
+          2
+        )}\n`
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension()(pi);
+      const notify = vi.fn();
+      const ctx = extensionContext(join(root, "project"), notify);
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("author typo"),
+        "warning"
+      );
+      expect(pi.activeTools).toEqual([]);
+      // The half-installed closure was unwound, so the tool Pi still lists
+      // refuses to answer for the extension that no longer exists.
+      expect(pi.tools.has("setup_git")).toBe(true);
+      expect(() => (pi.tools.get("setup_git") as any).execute()).toThrow(
+        "was unloaded"
+      );
+
+      writeFileSync(brokenPath, "export default () => {};\n");
+      notify.mockClear();
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "new" } as any,
+        ctx
+      );
+
+      expect(notify).toHaveBeenCalledWith(
+        "Recipe extensions: 2/2 loaded",
+        "info"
+      );
+      expect(pi.activeTools.sort()).toEqual(["setup_git"]);
+      await expect(
+        (pi.tools.get("setup_git") as any).execute()
+      ).resolves.toEqual({
+        content: [{ type: "text", text: "ok" }],
+        details: {},
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets an extension clean up on shutdown before its closure is unwound", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+      const releasedPath = join(root, "released.log");
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - setup_git",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "extensions", "watcher.ts"),
+        [
+          "import { appendFileSync } from 'node:fs';",
+          "export default (pi) => {",
+          "  pi.registerTool({",
+          "    name: 'setup_git',",
+          "    label: 'Setup git',",
+          "    description: 'Prepare git auth',",
+          "    parameters: { type: 'object', properties: {}, additionalProperties: false },",
+          "    async execute() {",
+          "      return { content: [{ type: 'text', text: 'ok' }], details: {} };",
+          "    },",
+          "  });",
+          `  pi.on('session_shutdown', () => { appendFileSync(${JSON.stringify(releasedPath)}, 'released\\n'); });`,
+          "};",
+        ].join("\n")
+      );
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: { agents: ["defs/*.yaml"], extensions: ["extensions/*.ts"] },
+          },
+          null,
+          2
+        )}\n`
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension()(pi);
+      const notify = vi.fn();
+      const ctx = extensionContext(join(root, "project"), notify);
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      expect(pi.activeTools.sort()).toEqual(["setup_git"]);
+
+      await pi.emitExtensionEvent({ type: "session_shutdown" } as any, ctx);
+
+      // The extension's own teardown ran; unwinding is deferred to the reload.
+      expect(readFileSync(releasedPath, "utf8")).toBe("released\n");
+
+      notify.mockClear();
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "reload" } as any,
+        ctx
+      );
+
+      // Pi discarded its registries on reload, so the closure is reinstalled
+      // rather than skipped as already loaded.
+      expect(notify).toHaveBeenCalledWith(
+        "Recipe extensions: 1/1 loaded",
+        "info"
+      );
+      expect(pi.activeTools.sort()).toEqual(["setup_git"]);
+      await expect(
+        (pi.tools.get("setup_git") as any).execute()
+      ).resolves.toEqual({
+        content: [{ type: "text", text: "ok" }],
+        details: {},
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when an agent requests an unavailable tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {

@@ -29,6 +29,53 @@ function api(): ExtensionAPI {
   } as unknown as ExtensionAPI;
 }
 
+interface HostApi extends ExtensionAPI {
+  tools: Map<string, { name: string; execute: (...args: unknown[]) => unknown }>;
+  commands: Map<string, { handler: (...args: unknown[]) => unknown }>;
+  listeners: Map<string, Array<(...args: unknown[]) => unknown>>;
+  providers: Set<string>;
+  emit(event: string, ...args: unknown[]): unknown[];
+}
+
+/**
+ * A host that keeps registrations for its whole lifetime, the way Pi does:
+ * only providers can be removed, so everything else must be neutralized in
+ * place when a Recipe extension is unwound.
+ */
+function hostApi(): HostApi {
+  const tools = new Map<string, any>();
+  const commands = new Map<string, any>();
+  const listeners = new Map<string, Array<(...args: unknown[]) => unknown>>();
+  const providers = new Set<string>();
+  return {
+    tools,
+    commands,
+    listeners,
+    providers,
+    registerTool(tool: any) {
+      tools.set(tool.name, tool);
+    },
+    registerCommand(name: string, options: any) {
+      commands.set(name, options);
+    },
+    registerProvider(provider: any) {
+      providers.add(provider.id);
+    },
+    unregisterProvider(id: string) {
+      providers.delete(id);
+    },
+    on(event: string, handler: (...args: unknown[]) => unknown) {
+      const list = listeners.get(event) ?? [];
+      list.push(handler);
+      listeners.set(event, list);
+    },
+    setActiveTools: vi.fn(),
+    emit(event: string, ...args: unknown[]) {
+      return (listeners.get(event) ?? []).map((handler) => handler(...args));
+    },
+  } as unknown as HostApi;
+}
+
 describe("Recipe extension context", () => {
   it("shares context across separate Recipes module instances", async () => {
     const bindingModule = await import("../src/extensions.js");
@@ -164,6 +211,169 @@ describe("Recipe extension context", () => {
       "read",
       "mcp_google_drive_search",
     ]);
+  });
+
+  it("neutralizes tools and commands an unwound extension left in the host", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    const execute = vi.fn(async () => "ran");
+    const handler = vi.fn(async () => {});
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.registerTool({
+          name: "setup_git",
+          description: "Prepare git auth",
+          parameters: {},
+          execute,
+        } as never);
+        extensionApi.registerCommand("review", {
+          description: "Review",
+          handler,
+        } as never);
+      },
+      context(),
+      registrations,
+      "extensions/setup-git.ts"
+    )(pi);
+
+    await expect(pi.tools.get("setup_git")!.execute()).resolves.toBe("ran");
+
+    expect(await registrations.unwind(["extensions/setup-git.ts"])).toEqual([]);
+
+    // Pi keeps both registrations for the life of its runtime; they must
+    // refuse to run rather than silently answer for an unloaded extension.
+    expect(pi.tools.has("setup_git")).toBe(true);
+    expect(() => pi.tools.get("setup_git")!.execute()).toThrow(
+      'extensions/setup-git.ts was unloaded; its tool "setup_git" is no longer available'
+    );
+    expect(() => pi.commands.get("review")!.handler()).toThrow(
+      'its command "review" is no longer available'
+    );
+    expect(execute).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("silences lifecycle handlers an unwound extension subscribed", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    const onToolCall = vi.fn(() => "blocked");
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.on("tool_call", onToolCall as never);
+      },
+      context(),
+      registrations,
+      "extensions/policy.ts"
+    )(pi);
+
+    expect(pi.emit("tool_call")).toEqual(["blocked"]);
+
+    await registrations.unwind(["extensions/policy.ts"]);
+
+    expect(pi.emit("tool_call")).toEqual([undefined]);
+    expect(onToolCall).toHaveBeenCalledOnce();
+  });
+
+  it("unregisters providers an unwound extension installed", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.registerProvider({ id: "acme", models: [] } as never);
+      },
+      context(),
+      registrations,
+      "extensions/provider.ts"
+    )(pi);
+
+    expect(pi.providers.has("acme")).toBe(true);
+
+    await registrations.unwind(["extensions/provider.ts"]);
+
+    expect(pi.providers.has("acme")).toBe(false);
+  });
+
+  it("hands registrations to the next load and keeps the previous one disposed", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    const load = (result: string) =>
+      bindRecipeExtensionFactory(
+        (extensionApi) => {
+          extensionApi.registerTool({
+            name: "setup_git",
+            description: "Prepare git auth",
+            parameters: {},
+            execute: async () => result,
+          } as never);
+        },
+        context(),
+        registrations,
+        "extensions/setup-git.ts"
+      )(pi);
+
+    await load("first");
+    const stale = pi.tools.get("setup_git")!;
+    await registrations.unwind(["extensions/setup-git.ts"]);
+    expect(registrations.vacated("tool", "setup_git")).toBe(true);
+
+    // Re-claiming the released name is what makes reloading possible.
+    await expect(load("second")).resolves.toBeUndefined();
+    expect(registrations.vacated("tool", "setup_git")).toBe(false);
+    await expect(pi.tools.get("setup_git")!.execute()).resolves.toBe("second");
+    // The replaced load stays dead even though its path is live again.
+    expect(() => stale.execute()).toThrow("was unloaded");
+  });
+
+  it("reports a failing disposer instead of abandoning the unwind", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    pi.unregisterProvider = (() => {
+      throw new Error("provider teardown exploded");
+    }) as never;
+    const laterEffect = vi.fn();
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.registerProvider({ id: "acme", models: [] } as never);
+        extensionApi.on("tool_call", laterEffect as never);
+      },
+      context(),
+      registrations,
+      "extensions/provider.ts"
+    )(pi);
+
+    const failures = await registrations.unwind(["extensions/provider.ts"]);
+
+    expect(failures).toEqual([
+      { owner: "extensions/provider.ts", error: "provider teardown exploded" },
+    ]);
+    // The scope is still disposed, so the rest of the closure went quiet.
+    expect(pi.emit("tool_call")).toEqual([undefined]);
+  });
+
+  it("unwinds owners most recently loaded first", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    const order: string[] = [];
+    for (const owner of ["extensions/first.ts", "extensions/second.ts"]) {
+      await bindRecipeExtensionFactory(
+        (extensionApi) => {
+          extensionApi.registerProvider({ id: owner, models: [] } as never);
+        },
+        context(),
+        registrations,
+        owner
+      )(pi);
+    }
+    pi.unregisterProvider = ((id: string) => {
+      order.push(id);
+    }) as never;
+
+    await registrations.unwind([
+      "extensions/first.ts",
+      "extensions/second.ts",
+    ]);
+
+    expect(order).toEqual(["extensions/second.ts", "extensions/first.ts"]);
   });
 
   it("permits the session-generated agent tool only for delegated sessions", () => {
