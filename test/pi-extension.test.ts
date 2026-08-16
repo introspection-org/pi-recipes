@@ -1633,6 +1633,62 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
+  it("re-reads the package on reload so an edited system prompt takes effect", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension()(pi);
+      const notify = vi.fn();
+      const ctx = extensionContext(join(root, "project"), notify);
+      const systemPrompt = async () =>
+        (
+          await pi.emitExtensionEvent(
+            {
+              type: "before_agent_start",
+              prompt: "hello",
+              systemPrompt: "Default Pi prompt",
+              systemPromptOptions: {},
+            } as any,
+            ctx
+          )
+        )[0];
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      expect(await systemPrompt()).toEqual({
+        systemPrompt: "Base recipe prompt\n\nAgent-specific prompt",
+      });
+
+      writeFileSync(join(recipeDir, "SYSTEM.md"), "Edited recipe prompt");
+
+      // A session switch keeps the resolved package: only a reload re-reads it.
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "new" } as any,
+        ctx
+      );
+      expect(await systemPrompt()).toEqual({
+        systemPrompt: "Base recipe prompt\n\nAgent-specific prompt",
+      });
+
+      await pi.emitExtensionEvent({ type: "session_shutdown" } as any, ctx);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "reload" } as any,
+        ctx
+      );
+
+      expect(await systemPrompt()).toEqual({
+        systemPrompt: "Edited recipe prompt\n\nAgent-specific prompt",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when an agent requests an unavailable tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {

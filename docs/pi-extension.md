@@ -105,10 +105,14 @@ skills, prompt templates, and context files by default.
 
 ## Reloading a Recipe
 
-`/recipe reload` unwinds the loaded closure, drops the resolved Recipe, and
-runs Pi's own reload. Extension sources are compiled fresh from disk on every
-load, so editing `extensions/*.ts` and reloading runs the new code without
-restarting Pi.
+Both `/reload` and `/recipe reload` re-read the Recipe. Pi rebuilds its runtime
+and the extension re-resolves the package from disk, so an edited `SYSTEM.md`,
+agent YAML, tool allowlist, skill selection, or extension source takes effect
+without restarting Pi. Extension sources are compiled fresh on every load.
+
+A reload keeps the launch selection: `--recipe` and `--agent` are fixed for the
+process. Switching or forking a session reuses the already-resolved package
+instead; only a reload re-reads it.
 
 Loading the closure is one transaction. If any extension throws, every
 registration that attempt installed is unwound before the error is reported,

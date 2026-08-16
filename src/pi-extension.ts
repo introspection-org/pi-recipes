@@ -433,6 +433,10 @@ export function createRecipesExtension(
   const createChildAgentRunner =
     opts.createChildAgentRunner ?? createRecipeChildAgentRunner;
   let state: RecipeLaunchState | null = null;
+  // Set when Pi reloads its runtime under a live selection. The resolved graph
+  // is read from disk once and cached on the launch state, so a reload has to
+  // drop it or an edited SYSTEM.md or agent YAML would never take effect.
+  let resolutionStale = false;
   let lastLaunchErrorKey: string | null = null;
   let childRunIndex = 0;
   const childRuns = new Map<string, ChildRun>();
@@ -657,7 +661,14 @@ export function createRecipesExtension(
     }
     const requestedAgentName = selectedAgentName(pi);
     const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
-    if (state?.key === key) return state;
+    if (state?.key === key && !resolutionStale) return state;
+    // A reload keeps the selection but re-reads the package, so the previous
+    // launch state is carried rather than replaced: its registry still owns the
+    // registrations the outgoing closure left in Pi and knows which of them to
+    // release for the incoming one.
+    const carried = state?.key === key ? state : undefined;
+    if (carried) markRecipeExtensionsStale(carried);
+    resolutionStale = false;
 
     let resolvedRecipe: ResolvedRecipe;
     let resolved: ResolvedRecipeAgent;
@@ -680,9 +691,11 @@ export function createRecipesExtension(
       cwd,
       resolvedRecipe,
       resolved,
-      extensionRegistrations: createRecipeExtensionRegistrationRegistry(),
+      extensionRegistrations:
+        carried?.extensionRegistrations ??
+        createRecipeExtensionRegistrationRegistry(),
       extensionsLoaded: false,
-      staleExtensionOwners: [],
+      staleExtensionOwners: carried?.staleExtensionOwners ?? [],
       configured: false,
       mcpConfigured: false,
       agentMcpMode: "cli",
@@ -1334,9 +1347,13 @@ export function createRecipesExtension(
     };
     pi.registerTool(agentTool);
 
-    pi.on("session_start", async (_event, ctx) => {
+    pi.on("session_start", async (event, ctx) => {
       sessionCtx = ctx;
       localAgentContext = ctx;
+      // `/reload` rebuilds Pi's runtime around the same selection. Re-read the
+      // package so an edited system prompt, agent, or capability policy takes
+      // effect, matching what `/recipe reload` already did by dropping state.
+      if (event.reason === "reload") resolutionStale = true;
       const selectedRecipe = recipeFlag(pi);
       if (selectedRecipe) {
         const recipeDir = resolve(ctx.cwd, selectedRecipe);
