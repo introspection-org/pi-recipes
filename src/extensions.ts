@@ -413,8 +413,18 @@ export function bindRecipeExtensionFactory(
                   event: string,
                   handler: (...handlerArgs: unknown[]) => unknown
                 ) => {
+                  // Pi returns no way to remove a listener, so this wrapper
+                  // stays in the host for the life of its runtime. Release the
+                  // handler on unwind rather than only refusing to call it:
+                  // what it holds is the extension's whole module graph, and
+                  // it can never run again anyway.
+                  let live: ((...handlerArgs: unknown[]) => unknown) | undefined =
+                    handler;
+                  scope.effect(() => {
+                    live = undefined;
+                  });
                   const guarded = (...handlerArgs: unknown[]) =>
-                    scope.disposed ? undefined : handler(...handlerArgs);
+                    scope.disposed || !live ? undefined : live(...handlerArgs);
                   const off = value.call(target, event, guarded);
                   if (typeof off === "function") {
                     scope.effect(() => {
