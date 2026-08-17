@@ -323,20 +323,31 @@ function guardRegistration(
       // Frozen or sealed, so the payload itself cannot be modified.
     }
 
-    // Copying is the only way left to install the guard, and a copy is exactly
-    // wrong for an object whose behavior lives on a prototype: it reproduces
-    // no private slot, and a method reading one throws the first time the host
-    // touches it. Refuse instead of registering something that fails later.
+    // Copying is the only way left to install the guard, and a copy is a
+    // different object. Anything whose behavior depends on which object it
+    // runs against reads the wrong one: a prototype method reaching a private
+    // slot the copy has no way to hold, an accessor keyed by its receiver.
+    // Only plain data survives being copied, so refuse the rest here rather
+    // than register something that misbehaves at a later call site.
     const prototype = Object.getPrototypeOf(source as object);
-    if (prototype !== Object.prototype && prototype !== null) {
+    const descriptors = Object.getOwnPropertyDescriptors(source as object);
+    const behavesByIdentity =
+      (prototype !== Object.prototype && prototype !== null) ||
+      Reflect.ownKeys(descriptors).some((property) => {
+        const descriptor = (
+          descriptors as Record<string | symbol, PropertyDescriptor>
+        )[property];
+        return (
+          typeof descriptor.get === "function" ||
+          typeof descriptor.set === "function"
+        );
+      });
+    if (behavesByIdentity) {
       throw new Error(
-        `Recipe extension ${scope.owner} registered a frozen ${kind} "${name}" whose behavior comes from a prototype. Recipes must be able to neutralize a ${kind} when its extension unloads, which needs either the registration itself or a copy of it, and a copy cannot carry the private state such an object holds. Register a plain object, or leave the instance unfrozen.`
+        `Recipe extension ${scope.owner} registered a frozen ${kind} "${name}" that is more than plain data. Recipes must be able to neutralize a ${kind} when its extension unloads, which needs either the registration itself or a copy of it, and a copy is not the object a prototype method or an accessor was written against. Register plain data, or leave this registration unfrozen.`
       );
     }
 
-    // A frozen plain object copies safely: it holds no private state, and its
-    // own properties come across, so a callback still resolves its receiver.
-    const descriptors = Object.getOwnPropertyDescriptors(source as object);
     descriptors[key] = replacement;
     return Object.create(prototype, descriptors);
   };

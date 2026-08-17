@@ -397,7 +397,39 @@ describe("Recipe extension context", () => {
         "extensions/frozen-class.ts"
       )(pi)
     ).rejects.toThrow(
-      'registered a frozen tool "review_tool" whose behavior comes from a prototype'
+      'registered a frozen tool "review_tool" that is more than plain data'
+    );
+    expect(pi.tools.has("review_tool")).toBe(false);
+  });
+
+  it("refuses a frozen payload whose metadata is keyed by its receiver", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    const descriptions = new WeakMap<object, string>();
+    const tool: Record<string, unknown> = {
+      name: "review_tool",
+      parameters: {},
+      get description() {
+        return descriptions.get(this) ?? "unknown";
+      },
+      execute: async () => "ran",
+    };
+    descriptions.set(tool, "Review the diff");
+
+    // A copy is a different key, so the accessor would quietly answer for an
+    // object the extension never registered. A plain prototype does not make
+    // a payload plain data.
+    await expect(
+      bindRecipeExtensionFactory(
+        (extensionApi) => {
+          extensionApi.registerTool(Object.freeze(tool) as never);
+        },
+        context(),
+        registrations,
+        "extensions/receiver-keyed.ts"
+      )(pi)
+    ).rejects.toThrow(
+      'registered a frozen tool "review_tool" that is more than plain data'
     );
     expect(pi.tools.has("review_tool")).toBe(false);
   });

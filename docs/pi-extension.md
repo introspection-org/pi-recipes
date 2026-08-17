@@ -130,12 +130,13 @@ A torn-down closure is unwound just before the replacement loads, not when the
 session ends, so an extension holding resources of its own (timers, watchers,
 sockets) can still release them from a `session_shutdown` handler.
 
-Neutralizing a registration means replacing its entry point, so a Recipe may
-not register a frozen object whose behavior comes from a prototype. The
-registration itself cannot be edited, and copying it would leave the prototype
-reading private state the copy does not carry. Registering one fails at load
-with an error naming the extension. Register a plain object, or leave the
-instance unfrozen; a frozen plain object is fine.
+Neutralizing a registration means replacing its entry point, so a frozen
+registration must be plain data. A frozen object cannot be edited, leaving only
+a copy, and a copy is not the object a prototype method or an accessor was
+written against: class instances lose their private state, and accessors keyed
+by their receiver answer for the wrong one. Registering a frozen class instance
+or a frozen object with accessors fails at load with an error naming the
+extension. Register plain data, or leave the registration unfrozen.
 
 ## Validation
 
