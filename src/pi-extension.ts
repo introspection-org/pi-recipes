@@ -795,6 +795,13 @@ export function createRecipesExtension(
     launchState: RecipeLaunchState
   ): Promise<void> {
     if (launchState.extensionsLoaded) return;
+    if (launchState.staleOwnersDiscardedByHost) {
+      // Vacancies describe what a closure left in the host's registries, so a
+      // rebuild voids them all. This is separate from unwinding the stale
+      // owners because a load that failed records vacancies but leaves no
+      // loaded closure behind, and so no owner to unwind them through.
+      launchState.extensionRegistrations.clearVacated();
+    }
     if (launchState.staleExtensionOwners.length > 0) {
       reportUnwindFailures(
         await launchState.extensionRegistrations.unwind(
@@ -804,8 +811,8 @@ export function createRecipesExtension(
         ctx
       );
       launchState.staleExtensionOwners = [];
-      launchState.staleOwnersDiscardedByHost = false;
     }
+    launchState.staleOwnersDiscardedByHost = false;
     // The host's registrations are whatever it reports right now. A claim kept
     // from a previous load would outlive an ambient extension that has since
     // been removed, and reject a Recipe that adopts the name it left.

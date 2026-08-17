@@ -103,6 +103,13 @@ export interface RecipeExtensionRegistrationRegistry {
    * one for a host-owned name and block the reload that would replace it.
    */
   vacated(kind: string, name: string): boolean;
+  /**
+   * Forget every vacated name. A vacancy describes what this registry left
+   * behind in one host runtime, so a host that rebuilds its registries voids
+   * all of them at once — including any recorded by a load that failed and so
+   * left no owner to unwind.
+   */
+  clearVacated(): void;
 }
 
 /** @internal Exact tool names a package extension may keep model-visible. */
@@ -151,6 +158,9 @@ export function createRecipeExtensionRegistrationRegistry(): RecipeExtensionRegi
       for (const [key, holder] of [...owners]) {
         if (holder === owner) owners.delete(key);
       }
+    },
+    clearVacated() {
+      vacated.clear();
     },
     release(kind, name, owner) {
       const key = `${kind}\0${name}`;

@@ -1995,6 +1995,109 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
+  it("accepts an ambient tool taking a name a failed load left vacated", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - helper",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
+        ].join("\n")
+      );
+      const toolPath = join(recipeDir, "extensions", "a-helper.ts");
+      writeFileSync(
+        toolPath,
+        [
+          "export default (pi) => {",
+          "  pi.registerTool({",
+          "    name: 'helper',",
+          "    label: 'Helper',",
+          "    description: 'Recipe helper',",
+          "    parameters: { type: 'object', properties: {}, additionalProperties: false },",
+          "    async execute() {",
+          "      return { content: [{ type: 'text', text: 'recipe' }], details: {} };",
+          "    },",
+          "  });",
+          "};",
+        ].join("\n")
+      );
+      const brokenPath = join(recipeDir, "extensions", "z-broken.ts");
+      writeFileSync(
+        brokenPath,
+        "export default () => { throw new Error('author typo'); };\n"
+      );
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: { agents: ["defs/*.yaml"], extensions: ["extensions/*.ts"] },
+          },
+          null,
+          2
+        )}\n`
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension()(pi);
+      const notify = vi.fn();
+      const ctx = extensionContext(join(root, "project"), notify);
+
+      // The load fails after `helper` is installed, so the name is vacated
+      // while no closure is left loaded to unwind it later.
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("author typo"),
+        "warning"
+      );
+
+      // The host rebuilds, and an ambient extension now supplies the name.
+      await pi.emitExtensionEvent({ type: "session_shutdown" } as any, ctx);
+      pi.tools.clear();
+      pi.registerTool({
+        name: "helper",
+        description: "Ambient helper",
+        parameters: {},
+        async execute() {
+          return { content: [{ type: "text", text: "ambient" }], details: {} };
+        },
+      } as any);
+      writeFileSync(brokenPath, "export default () => {};\n");
+      writeFileSync(toolPath, "export default () => {};\n");
+      notify.mockClear();
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "reload" } as any,
+        ctx
+      );
+
+      expect(notify).not.toHaveBeenCalledWith(
+        expect.stringContaining("unavailable tool(s)"),
+        "warning"
+      );
+      expect(pi.activeTools).toEqual(["helper"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when an agent requests an unavailable tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {
