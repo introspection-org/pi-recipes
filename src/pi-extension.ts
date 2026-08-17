@@ -918,7 +918,16 @@ export function createRecipesExtension(
         : []),
     ]);
     const registeredTools = new Set(
-      pi.getAllTools().map((tool) => tool.name)
+      pi
+        .getAllTools()
+        .map((tool) => tool.name)
+        // A name the previous closure vacated and this one did not register
+        // again is a neutralized leftover the host cannot drop, not a tool.
+        // Activating it would answer every call with "was unloaded" instead of
+        // reporting the declared tool as unavailable.
+        .filter(
+          (name) => !launchState.extensionRegistrations.vacated("tool", name)
+        )
     );
     const missingTools = [...activeTools].filter(
       (name) => !registeredTools.has(name)

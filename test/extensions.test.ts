@@ -334,6 +334,41 @@ describe("Recipe extension context", () => {
     expect(pi.renderers.get("recipe-review")!()).toBe("rendered");
   });
 
+  it("keeps a class payload able to read its own private state", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    class ReviewTool {
+      readonly #label = "Review";
+      readonly name = "review_tool";
+      readonly parameters = {};
+      get description() {
+        return `${this.#label} the diff`;
+      }
+      async execute() {
+        return "ran";
+      }
+    }
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.registerTool(new ReviewTool() as never);
+      },
+      context(),
+      registrations,
+      "extensions/class-tool.ts"
+    )(pi);
+
+    // A copy would share the prototype without the private slots its accessor
+    // reads, so the host would throw the first time it asked for metadata.
+    const registered = pi.tools.get("review_tool")! as unknown as ReviewTool;
+    expect(registered.description).toBe("Review the diff");
+    await expect(registered.execute()).resolves.toBe("ran");
+
+    await registrations.unwind(["extensions/class-tool.ts"]);
+
+    expect(registered.description).toBe("Review the diff");
+    expect(() => registered.execute()).toThrow("was unloaded");
+  });
+
   it("silences lifecycle handlers an unwound extension subscribed", async () => {
     const pi = hostApi();
     const registrations = createRecipeExtensionRegistrationRegistry();

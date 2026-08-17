@@ -260,14 +260,10 @@ function guardRegistration(
     const original = source?.[key];
     if (typeof original !== "function") return payload;
     const call = (original as (...callArgs: unknown[]) => unknown).bind(source);
-    // Preserve accessors and prototype: a registration payload may expose
-    // computed fields the host reads after registering it. The guarded entry
-    // point replaces its descriptor during construction, because an extension
-    // is free to freeze what it registers or expose it through a getter.
-    const descriptors = Object.getOwnPropertyDescriptors(source as object);
-    descriptors[key] = {
+    const existing = Object.getOwnPropertyDescriptor(source as object, key);
+    const replacement: PropertyDescriptor = {
       configurable: true,
-      enumerable: descriptors[key]?.enumerable ?? true,
+      enumerable: existing?.enumerable ?? true,
       writable: true,
       value: (...callArgs: unknown[]) => {
         if (!scope.disposed) return call(...callArgs);
@@ -276,7 +272,21 @@ function guardRegistration(
         );
       },
     };
-    return Object.create(Object.getPrototypeOf(source as object), descriptors);
+    try {
+      // Replace the entry point on the payload itself so it keeps its
+      // identity. A class instance reading private state through an inherited
+      // accessor has to stay the object its own prototype was written for, and
+      // no copy carries the private slots that accessor needs.
+      Object.defineProperty(source as object, key, replacement);
+      return source;
+    } catch {
+      // Frozen or sealed, so the payload cannot be modified. Fall back to a
+      // copy that carries its own properties and prototype, with the entry
+      // point replaced during construction rather than assigned afterwards.
+      const descriptors = Object.getOwnPropertyDescriptors(source as object);
+      descriptors[key] = replacement;
+      return Object.create(Object.getPrototypeOf(source as object), descriptors);
+    }
   };
 
   if (property === "registerTool") {

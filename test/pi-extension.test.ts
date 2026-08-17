@@ -1807,6 +1807,96 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
+  it("fails closed when a repaired closure stops registering a declared tool", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - setup_git",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
+        ].join("\n")
+      );
+      const toolPath = join(recipeDir, "extensions", "a-setup-git.ts");
+      writeFileSync(
+        toolPath,
+        [
+          "export default (pi) => {",
+          "  pi.registerTool({",
+          "    name: 'setup_git',",
+          "    label: 'Setup git',",
+          "    description: 'Prepare git auth',",
+          "    parameters: { type: 'object', properties: {}, additionalProperties: false },",
+          "    async execute() {",
+          "      return { content: [{ type: 'text', text: 'ok' }], details: {} };",
+          "    },",
+          "  });",
+          "};",
+        ].join("\n")
+      );
+      const brokenPath = join(recipeDir, "extensions", "z-broken.ts");
+      writeFileSync(
+        brokenPath,
+        "export default () => { throw new Error('author typo'); };\n"
+      );
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: { agents: ["defs/*.yaml"], extensions: ["extensions/*.ts"] },
+          },
+          null,
+          2
+        )}\n`
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension()(pi);
+      const notify = vi.fn();
+      const ctx = extensionContext(join(root, "project"), notify);
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      expect(pi.tools.has("setup_git")).toBe(true);
+
+      // Repair the closure, but drop the tool the agent still declares. Pi
+      // cannot remove the neutralized entry the failed attempt left behind.
+      writeFileSync(brokenPath, "export default () => {};\n");
+      writeFileSync(toolPath, "export default () => {};\n");
+      notify.mockClear();
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "new" } as any,
+        ctx
+      );
+
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'declares unavailable tool(s): setup_git'
+        ),
+        "warning"
+      );
+      expect(pi.activeTools).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when an agent requests an unavailable tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {
