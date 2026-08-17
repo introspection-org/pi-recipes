@@ -87,7 +87,7 @@
 		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client vendor/introspection-recipe-check"
 	},
 	"dependencies": {
-		"@introspection-sdk/introspection-pi": "^0.19.1",
+		"@introspection-sdk/introspection-pi": "^0.22.0",
 		"@opentelemetry/api": "^1.9.1",
 		"ajv": "^8.20.0",
 		"mcporter": "0.13.0",
