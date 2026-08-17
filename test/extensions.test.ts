@@ -417,6 +417,49 @@ describe("Recipe extension context", () => {
     ).not.toThrow();
   });
 
+  it("refuses registrations from an API captured before the unwind", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    const owner = "extensions/late.ts";
+    const tool = (result: string) => ({
+      name: "setup_git",
+      description: "Prepare git auth",
+      parameters: {},
+      execute: async () => result,
+    });
+    let captured: ExtensionAPI | undefined;
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        captured = extensionApi;
+      },
+      context(),
+      registrations,
+      owner,
+      new Set(["setup_git"])
+    )(pi);
+
+    await registrations.unwind([owner]);
+    // The replacement load claims under the same path, so nothing downstream
+    // would read a late registration as belonging to a different owner.
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.registerTool(tool("live") as never);
+      },
+      context(),
+      registrations,
+      owner,
+      new Set(["setup_git"])
+    )(pi);
+
+    expect(() => captured!.registerTool(tool("stale") as never)).toThrow(
+      "extensions/late.ts was unloaded; it can no longer register a tool"
+    );
+    expect(() => captured!.setActiveTools(["setup_git"])).toThrow(
+      "can no longer choose the active tools"
+    );
+    await expect(pi.tools.get("setup_git")!.execute()).resolves.toBe("live");
+  });
+
   it("silences lifecycle handlers an unwound extension subscribed", async () => {
     const pi = hostApi();
     const registrations = createRecipeExtensionRegistrationRegistry();

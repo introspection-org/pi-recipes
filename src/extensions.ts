@@ -397,6 +397,11 @@ export function bindRecipeExtensionFactory(
                 allowedToolNames
               ) {
                 return (names: string[]) => {
+                  if (scope?.disposed) {
+                    throw new Error(
+                      `Recipe extension ${owner} was unloaded; it can no longer choose the active tools`
+                    );
+                  }
                   const undeclared = names.filter(
                     (name) => !allowedToolNames.has(name)
                   );
@@ -429,6 +434,15 @@ export function bindRecipeExtensionFactory(
               return typeof value === "function" ? value.bind(target) : value;
             }
             return (...args: unknown[]) => {
+              if (scope?.disposed) {
+                // A callback that outlived its load can still reach this API.
+                // Its owner path is the one the replacement load claims under,
+                // so the registry would read the two as the same owner and let
+                // this overwrite the live registration with a disposed guard.
+                throw new Error(
+                  `Recipe extension ${owner} was unloaded; it can no longer register a ${kind}`
+                );
+              }
               const registrationName =
                 property === "registerTool"
                   ? (args[0] as { name?: unknown } | undefined)?.name
