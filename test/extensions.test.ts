@@ -465,6 +465,40 @@ describe("Recipe extension context", () => {
     expect(pi.providers.has("acme")).toBe(true);
   });
 
+  it("re-guards a payload the next load registers again", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    const owner = "extensions/singleton.ts";
+    // A registration a cached dependency exports survives the reload that
+    // replaces its extension, so it arrives already carrying the old guard.
+    const singleton = {
+      name: "setup_git",
+      description: "Prepare git auth",
+      parameters: {},
+      execute: async () => "ran",
+    };
+    const load = () =>
+      bindRecipeExtensionFactory(
+        (extensionApi) => {
+          extensionApi.registerTool(singleton as never);
+        },
+        context(),
+        registrations,
+        owner
+      )(pi);
+
+    await load();
+    await expect(pi.tools.get("setup_git")!.execute()).resolves.toBe("ran");
+
+    await registrations.unwind([owner]);
+    expect(() => pi.tools.get("setup_git")!.execute()).toThrow("was unloaded");
+
+    await load();
+
+    // Stacking on the disposed guard would answer "was unloaded" forever.
+    await expect(pi.tools.get("setup_git")!.execute()).resolves.toBe("ran");
+  });
+
   it("silences lifecycle handlers an unwound extension subscribed", async () => {
     const pi = hostApi();
     const registrations = createRecipeExtensionRegistrationRegistry();

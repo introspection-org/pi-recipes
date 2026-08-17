@@ -261,6 +261,11 @@ export function forRecipeSession(
   if (predicate(context)) register(context);
 }
 
+/** Carries the callable a guard wraps, so re-guarding never stacks. */
+const guardedCallable = Symbol.for(
+  "@introspection-ai/recipes.guarded-callable.v1"
+);
+
 /**
  * Pi can unregister a provider but nothing else, so a disposed extension's
  * entry points are neutralized in place: the registration stays in the host
@@ -278,20 +283,34 @@ function guardRegistration(
     name: string
   ): unknown => {
     const source = payload as Record<string, unknown> | undefined;
-    const original = source?.[key];
-    if (typeof original !== "function") return payload;
-    const call = (original as (...callArgs: unknown[]) => unknown).bind(source);
+    const registered = source?.[key];
+    if (typeof registered !== "function") return payload;
+    // Guarding edits the payload, and a payload can outlive the load that
+    // registered it — a singleton exported by a cached dependency, say. What
+    // it carries then is the previous load's guard, which is already disposed,
+    // so guard the callable underneath rather than stacking on a dead one.
+    const underlying = ((registered as unknown as Record<symbol, unknown>)[
+      guardedCallable
+    ] ?? registered) as (...callArgs: unknown[]) => unknown;
+    const call = underlying.bind(source);
+    const guarded = (...callArgs: unknown[]) => {
+      if (!scope.disposed) return call(...callArgs);
+      throw new Error(
+        `Recipe extension ${scope.owner} was unloaded; its ${kind} "${name}" is no longer available`
+      );
+    };
+    Object.defineProperty(guarded, guardedCallable, {
+      configurable: true,
+      enumerable: false,
+      value: underlying,
+      writable: false,
+    });
     const existing = Object.getOwnPropertyDescriptor(source as object, key);
     const replacement: PropertyDescriptor = {
       configurable: true,
       enumerable: existing?.enumerable ?? true,
       writable: true,
-      value: (...callArgs: unknown[]) => {
-        if (!scope.disposed) return call(...callArgs);
-        throw new Error(
-          `Recipe extension ${scope.owner} was unloaded; its ${kind} "${name}" is no longer available`
-        );
-      },
+      value: guarded,
     };
     try {
       // Replace the entry point on the payload itself so it keeps its
