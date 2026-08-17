@@ -32,6 +32,8 @@ function api(): ExtensionAPI {
 interface HostApi extends ExtensionAPI {
   tools: Map<string, { name: string; execute: (...args: unknown[]) => unknown }>;
   commands: Map<string, { handler: (...args: unknown[]) => unknown }>;
+  shortcuts: Map<string, { handler: (...args: unknown[]) => unknown }>;
+  renderers: Map<string, (...args: unknown[]) => unknown>;
   listeners: Map<string, Array<(...args: unknown[]) => unknown>>;
   providers: Set<string>;
   emit(event: string, ...args: unknown[]): unknown[];
@@ -45,11 +47,15 @@ interface HostApi extends ExtensionAPI {
 function hostApi(): HostApi {
   const tools = new Map<string, any>();
   const commands = new Map<string, any>();
+  const shortcuts = new Map<string, any>();
+  const renderers = new Map<string, any>();
   const listeners = new Map<string, Array<(...args: unknown[]) => unknown>>();
   const providers = new Set<string>();
   return {
     tools,
     commands,
+    shortcuts,
+    renderers,
     listeners,
     providers,
     registerTool(tool: any) {
@@ -57,6 +63,15 @@ function hostApi(): HostApi {
     },
     registerCommand(name: string, options: any) {
       commands.set(name, options);
+    },
+    registerShortcut(shortcut: string, options: any) {
+      shortcuts.set(shortcut, options);
+    },
+    registerMessageRenderer(customType: string, renderer: any) {
+      renderers.set(customType, renderer);
+    },
+    registerEntryRenderer(customType: string, renderer: any) {
+      renderers.set(customType, renderer);
     },
     registerProvider(provider: any) {
       providers.add(provider.id);
@@ -287,6 +302,36 @@ describe("Recipe extension context", () => {
 
     expect(() => pi.tools.get("setup_git")!.execute()).toThrow("was unloaded");
     expect(() => pi.commands.get("review")!.handler()).toThrow("was unloaded");
+  });
+
+  it("neutralizes shortcuts but leaves transcript renderers callable", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.registerShortcut("ctrl+r", {
+          description: "Review",
+          handler: async () => "shortcut ran",
+        } as never);
+        extensionApi.registerMessageRenderer(
+          "recipe-review",
+          (() => "rendered") as never
+        );
+      },
+      context(),
+      registrations,
+      "extensions/ui.ts"
+    )(pi);
+
+    await registrations.unwind(["extensions/ui.ts"]);
+
+    expect(() => pi.shortcuts.get("ctrl+r")!.handler()).toThrow(
+      'its shortcut "ctrl+r" is no longer available'
+    );
+    // Renderers draw history rather than run behavior. Pi resolves them per
+    // message with no error boundary, so neutralizing one would break the
+    // transcript instead of reporting an unloaded extension.
+    expect(pi.renderers.get("recipe-review")!()).toBe("rendered");
   });
 
   it("silences lifecycle handlers an unwound extension subscribed", async () => {
