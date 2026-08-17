@@ -462,6 +462,13 @@ describe("Recipe extension context", () => {
       "can no longer choose the active tools"
     );
     await expect(pi.tools.get("setup_git")!.execute()).resolves.toBe("live");
+
+    // Removal answers to the same owner path, so it has to refuse too.
+    pi.providers.add("acme");
+    expect(() => captured!.unregisterProvider("acme")).toThrow(
+      "can no longer unregister a provider"
+    );
+    expect(pi.providers.has("acme")).toBe(true);
   });
 
   it("silences lifecycle handlers an unwound extension subscribed", async () => {

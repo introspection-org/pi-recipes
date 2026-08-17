@@ -432,6 +432,14 @@ export function bindRecipeExtensionFactory(
                 registrationRegistry
               ) {
                 return (name: string | { id?: string }) => {
+                  if (scope?.disposed) {
+                    // Removal is as owner-blind as registration: the claim and
+                    // the host entry both answer to the extension path the
+                    // replacement load already holds.
+                    throw new Error(
+                      `Recipe extension ${owner} was unloaded; it can no longer unregister a provider`
+                    );
+                  }
                   const providerName =
                     typeof name === "string" ? name : name.id;
                   if (providerName) {
