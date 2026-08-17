@@ -413,6 +413,14 @@ export function bindRecipeExtensionFactory(
                   event: string,
                   handler: (...handlerArgs: unknown[]) => unknown
                 ) => {
+                  if (scope.disposed) {
+                    // Subscribing now would install a listener that can never
+                    // run and that Pi offers no way to remove, so a callback
+                    // outliving its load could grow the list without bound.
+                    throw new Error(
+                      `Recipe extension ${owner} was unloaded; it can no longer subscribe to "${event}"`
+                    );
+                  }
                   // Pi returns no way to remove a listener, so this wrapper
                   // stays in the host for the life of its runtime. Release the
                   // handler on unwind rather than only refusing to call it:

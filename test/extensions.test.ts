@@ -495,6 +495,14 @@ describe("Recipe extension context", () => {
       "can no longer unregister a provider"
     );
     expect(pi.providers.has("acme")).toBe(true);
+
+    // A late subscription cannot be removed either, so it is refused rather
+    // than left inert in a list that only ever grows.
+    const before = pi.listeners.get("tool_call")?.length ?? 0;
+    expect(() => captured!.on("tool_call", (() => {}) as never)).toThrow(
+      'can no longer subscribe to "tool_call"'
+    );
+    expect(pi.listeners.get("tool_call")?.length ?? 0).toBe(before);
   });
 
   it("re-guards a payload the next load registers again", async () => {
