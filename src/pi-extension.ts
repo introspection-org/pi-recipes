@@ -806,6 +806,10 @@ export function createRecipesExtension(
       launchState.staleExtensionOwners = [];
       launchState.staleOwnersDiscardedByHost = false;
     }
+    // The host's registrations are whatever it reports right now. A claim kept
+    // from a previous load would outlive an ambient extension that has since
+    // been removed, and reject a Recipe that adopts the name it left.
+    launchState.extensionRegistrations.releaseOwner("<host>");
     for (const tool of pi.getAllTools()) {
       // A tool an unwound closure left behind is not a host tool; claiming it
       // for `<host>` would block the reload that is about to replace it.

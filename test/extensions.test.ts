@@ -369,6 +369,54 @@ describe("Recipe extension context", () => {
     expect(() => registered.execute()).toThrow("was unloaded");
   });
 
+  it("guards a frozen class payload without stripping its private state", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    class ReviewTool {
+      readonly #label = "Review";
+      readonly name = "review_tool";
+      readonly parameters = {};
+      get description() {
+        return `${this.#label} the diff`;
+      }
+      async execute() {
+        return "ran";
+      }
+    }
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.registerTool(Object.freeze(new ReviewTool()) as never);
+      },
+      context(),
+      registrations,
+      "extensions/frozen-class.ts"
+    )(pi);
+
+    // Frozen, so the payload cannot be edited and a copy would lose the private
+    // slots its inherited accessor reads.
+    const registered = pi.tools.get("review_tool")! as unknown as ReviewTool;
+    expect(registered.description).toBe("Review the diff");
+    await expect(registered.execute()).resolves.toBe("ran");
+
+    await registrations.unwind(["extensions/frozen-class.ts"]);
+
+    expect(registered.description).toBe("Review the diff");
+    expect(() => registered.execute()).toThrow("was unloaded");
+  });
+
+  it("rebuilds host claims instead of carrying them across a load", async () => {
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    registrations.claim("tool", "helper", "<host>");
+
+    // The ambient extension that supplied `helper` is gone after a reload, so
+    // a Recipe is free to adopt the name the rebuilt host no longer reports.
+    registrations.releaseOwner("<host>");
+
+    expect(() =>
+      registrations.claim("tool", "helper", "extensions/adopts.ts")
+    ).not.toThrow();
+  });
+
   it("silences lifecycle handlers an unwound extension subscribed", async () => {
     const pi = hostApi();
     const registrations = createRecipeExtensionRegistrationRegistry();

@@ -1897,6 +1897,104 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
+  it("lets a Recipe adopt a tool name a removed ambient extension supplied", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "  thinking_level: low",
+          "tools:",
+          "  - read",
+          "skills: []",
+          "subagents: []",
+          "system_instructions:",
+          "  mode: append",
+          "  content: Main instructions",
+        ].join("\n")
+      );
+      const extensionPath = join(recipeDir, "extensions", "adopts.ts");
+      writeFileSync(extensionPath, "export default () => {};\n");
+      writeFileSync(
+        join(recipeDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "demo",
+            version: "1.0.0",
+            pi: { agents: ["defs/*.yaml"], extensions: ["extensions/*.ts"] },
+          },
+          null,
+          2
+        )}\n`
+      );
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      // An ambient project extension supplies `helper` for the first load.
+      pi.registerTool({
+        name: "helper",
+        description: "Ambient helper",
+        parameters: {},
+        async execute() {
+          return { content: [], details: {} };
+        },
+      } as any);
+      createRecipesExtension()(pi);
+      const notify = vi.fn();
+      const ctx = extensionContext(join(root, "project"), notify);
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      expect(notify).toHaveBeenCalledWith(
+        "Recipe extensions: 1/1 loaded",
+        "info"
+      );
+
+      // The ambient extension is removed, and the Recipe takes over the name.
+      writeFileSync(
+        extensionPath,
+        [
+          "export default (pi) => {",
+          "  pi.registerTool({",
+          "    name: 'helper',",
+          "    label: 'Helper',",
+          "    description: 'Recipe helper',",
+          "    parameters: { type: 'object', properties: {}, additionalProperties: false },",
+          "    async execute() {",
+          "      return { content: [{ type: 'text', text: 'recipe' }], details: {} };",
+          "    },",
+          "  });",
+          "};",
+        ].join("\n")
+      );
+      await pi.emitExtensionEvent({ type: "session_shutdown" } as any, ctx);
+      pi.tools.clear();
+      notify.mockClear();
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "reload" } as any,
+        ctx
+      );
+
+      expect(notify).not.toHaveBeenCalledWith(
+        expect.stringContaining('registration "helper" conflicts'),
+        "warning"
+      );
+      expect(notify).toHaveBeenCalledWith(
+        "Recipe extensions: 1/1 loaded",
+        "info"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when an agent requests an unavailable tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {

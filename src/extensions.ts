@@ -73,6 +73,12 @@ export interface RecipeExtensionOwnerScope {
 export interface RecipeExtensionRegistrationRegistry {
   claim(kind: string, name: string, owner: string): void;
   release(kind: string, name: string, owner: string): void;
+  /**
+   * Drop every claim `owner` holds. Claims standing in for what the host
+   * itself registered are derived from the host's live registries, so they
+   * are rebuilt on each load rather than carried across one.
+   */
+  releaseOwner(owner: string): void;
   /** @internal Begin a fresh load scope for `owner`. */
   beginOwner(owner: string): RecipeExtensionOwnerScope;
   /**
@@ -140,6 +146,11 @@ export function createRecipeExtensionRegistrationRegistry(): RecipeExtensionRegi
     },
     vacated(kind, name) {
       return vacated.has(`${kind}\0${name}`);
+    },
+    releaseOwner(owner) {
+      for (const [key, holder] of [...owners]) {
+        if (holder === owner) owners.delete(key);
+      }
     },
     release(kind, name, owner) {
       const key = `${kind}\0${name}`;
@@ -280,13 +291,32 @@ function guardRegistration(
       Object.defineProperty(source as object, key, replacement);
       return source;
     } catch {
-      // Frozen or sealed, so the payload cannot be modified. Fall back to a
-      // copy that carries its own properties and prototype, with the entry
-      // point replaced during construction rather than assigned afterwards.
-      const descriptors = Object.getOwnPropertyDescriptors(source as object);
-      descriptors[key] = replacement;
-      return Object.create(Object.getPrototypeOf(source as object), descriptors);
+      // Frozen or sealed, so the payload itself cannot be modified.
     }
+
+    // A proxy still reads through to the original, so an accessor inherited
+    // from a class prototype keeps running against the instance that owns its
+    // private state. Reflect must receive that instance rather than the proxy
+    // for the same reason, and a method handed back stays bound to it.
+    const own = Object.getOwnPropertyDescriptor(source as object, key);
+    const proxyWouldViolateInvariant =
+      own !== undefined && !own.configurable && !own.writable && "value" in own;
+    if (!proxyWouldViolateInvariant) {
+      return new Proxy(source as object, {
+        get(target, property) {
+          if (property === key) return replacement.value;
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    }
+
+    // The entry point is a frozen own value, which a proxy may not report as
+    // anything else. Copying is all that is left, and a payload locked down
+    // this far is a plain object rather than an instance with private state.
+    const descriptors = Object.getOwnPropertyDescriptors(source as object);
+    descriptors[key] = replacement;
+    return Object.create(Object.getPrototypeOf(source as object), descriptors);
   };
 
   if (property === "registerTool") {
