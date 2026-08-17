@@ -305,6 +305,19 @@ function guardRegistration(
       return new Proxy(source as object, {
         get(target, property) {
           if (property === key) return replacement.value;
+          const ownProperty = Object.getOwnPropertyDescriptor(target, property);
+          if (
+            ownProperty !== undefined &&
+            !ownProperty.configurable &&
+            !ownProperty.writable &&
+            "value" in ownProperty
+          ) {
+            // A proxy must report a frozen own value exactly, so this one
+            // cannot be bound. Nothing is lost: a field holding a function
+            // captures its instance already, and a prototype method is not an
+            // own property and still takes the binding below.
+            return ownProperty.value;
+          }
           const value = Reflect.get(target, property, target);
           return typeof value === "function" ? value.bind(target) : value;
         },

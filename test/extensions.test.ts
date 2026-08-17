@@ -376,6 +376,9 @@ describe("Recipe extension context", () => {
       readonly #label = "Review";
       readonly name = "review_tool";
       readonly parameters = {};
+      // A class field is an own property, and freezing locks its value. A
+      // proxy has to report it exactly rather than substituting a bound copy.
+      readonly renderCall = () => `${this.#label} call`;
       get description() {
         return `${this.#label} the diff`;
       }
@@ -396,6 +399,7 @@ describe("Recipe extension context", () => {
     // slots its inherited accessor reads.
     const registered = pi.tools.get("review_tool")! as unknown as ReviewTool;
     expect(registered.description).toBe("Review the diff");
+    expect(registered.renderCall()).toBe("Review call");
     await expect(registered.execute()).resolves.toBe("ran");
 
     await registrations.unwind(["extensions/frozen-class.ts"]);
