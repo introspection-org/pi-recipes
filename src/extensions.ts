@@ -304,42 +304,22 @@ function guardRegistration(
       // Frozen or sealed, so the payload itself cannot be modified.
     }
 
-    // A proxy still reads through to the original, so an accessor inherited
-    // from a class prototype keeps running against the instance that owns its
-    // private state. Reflect must receive that instance rather than the proxy
-    // for the same reason, and a method handed back stays bound to it.
-    const own = Object.getOwnPropertyDescriptor(source as object, key);
-    const proxyWouldViolateInvariant =
-      own !== undefined && !own.configurable && !own.writable && "value" in own;
-    if (!proxyWouldViolateInvariant) {
-      return new Proxy(source as object, {
-        get(target, property) {
-          if (property === key) return replacement.value;
-          const ownProperty = Object.getOwnPropertyDescriptor(target, property);
-          if (
-            ownProperty !== undefined &&
-            !ownProperty.configurable &&
-            !ownProperty.writable &&
-            "value" in ownProperty
-          ) {
-            // A proxy must report a frozen own value exactly, so this one
-            // cannot be bound. Nothing is lost: a field holding a function
-            // captures its instance already, and a prototype method is not an
-            // own property and still takes the binding below.
-            return ownProperty.value;
-          }
-          const value = Reflect.get(target, property, target);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
-      });
+    // Copying is the only way left to install the guard, and a copy is exactly
+    // wrong for an object whose behavior lives on a prototype: it reproduces
+    // no private slot, and a method reading one throws the first time the host
+    // touches it. Refuse instead of registering something that fails later.
+    const prototype = Object.getPrototypeOf(source as object);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new Error(
+        `Recipe extension ${scope.owner} registered a frozen ${kind} "${name}" whose behavior comes from a prototype. Recipes must be able to neutralize a ${kind} when its extension unloads, which needs either the registration itself or a copy of it, and a copy cannot carry the private state such an object holds. Register a plain object, or leave the instance unfrozen.`
+      );
     }
 
-    // The entry point is a frozen own value, which a proxy may not report as
-    // anything else. Copying is all that is left, and a payload locked down
-    // this far is a plain object rather than an instance with private state.
+    // A frozen plain object copies safely: it holds no private state, and its
+    // own properties come across, so a callback still resolves its receiver.
     const descriptors = Object.getOwnPropertyDescriptors(source as object);
     descriptors[key] = replacement;
-    return Object.create(Object.getPrototypeOf(source as object), descriptors);
+    return Object.create(prototype, descriptors);
   };
 
   if (property === "registerTool") {

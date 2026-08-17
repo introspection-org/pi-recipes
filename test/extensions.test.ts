@@ -369,16 +369,13 @@ describe("Recipe extension context", () => {
     expect(() => registered.execute()).toThrow("was unloaded");
   });
 
-  it("guards a frozen class payload without stripping its private state", async () => {
+  it("refuses a frozen payload whose behavior comes from a prototype", async () => {
     const pi = hostApi();
     const registrations = createRecipeExtensionRegistrationRegistry();
     class ReviewTool {
       readonly #label = "Review";
       readonly name = "review_tool";
       readonly parameters = {};
-      // A class field is an own property, and freezing locks its value. A
-      // proxy has to report it exactly rather than substituting a bound copy.
-      readonly renderCall = () => `${this.#label} call`;
       get description() {
         return `${this.#label} the diff`;
       }
@@ -386,26 +383,23 @@ describe("Recipe extension context", () => {
         return "ran";
       }
     }
-    await bindRecipeExtensionFactory(
-      (extensionApi) => {
-        extensionApi.registerTool(Object.freeze(new ReviewTool()) as never);
-      },
-      context(),
-      registrations,
-      "extensions/frozen-class.ts"
-    )(pi);
 
-    // Frozen, so the payload cannot be edited and a copy would lose the private
-    // slots its inherited accessor reads.
-    const registered = pi.tools.get("review_tool")! as unknown as ReviewTool;
-    expect(registered.description).toBe("Review the diff");
-    expect(registered.renderCall()).toBe("Review call");
-    await expect(registered.execute()).resolves.toBe("ran");
-
-    await registrations.unwind(["extensions/frozen-class.ts"]);
-
-    expect(registered.description).toBe("Review the diff");
-    expect(() => registered.execute()).toThrow("was unloaded");
+    // Neither route to a guard is open: the instance cannot be edited, and a
+    // copy would leave its accessor reading a private slot that no longer
+    // exists. Say so at registration rather than when the host reads it.
+    await expect(
+      bindRecipeExtensionFactory(
+        (extensionApi) => {
+          extensionApi.registerTool(Object.freeze(new ReviewTool()) as never);
+        },
+        context(),
+        registrations,
+        "extensions/frozen-class.ts"
+      )(pi)
+    ).rejects.toThrow(
+      'registered a frozen tool "review_tool" whose behavior comes from a prototype'
+    );
+    expect(pi.tools.has("review_tool")).toBe(false);
   });
 
   it("rebuilds host claims instead of carrying them across a load", async () => {
