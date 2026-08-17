@@ -1609,6 +1609,8 @@ describe("Recipes extension for Pi", () => {
       // The extension's own teardown ran; unwinding is deferred to the reload.
       expect(readFileSync(releasedPath, "utf8")).toBe("released\n");
 
+      // Pi discards its registries and rebuilds the runtime across a reload.
+      pi.tools.clear();
       notify.mockClear();
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "reload" } as any,

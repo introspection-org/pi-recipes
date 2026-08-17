@@ -79,8 +79,17 @@ export interface RecipeExtensionRegistrationRegistry {
    * Unwind the named owners, most recently loaded first, releasing their
    * claims so the same paths can be loaded again. Never throws: a disposer
    * that fails is reported so the caller can surface a leaked registration.
+   *
+   * Pass `hostDiscarded` when the host tore down its own registries, as it
+   * does when it rebuilds its runtime. Every recorded disposer and vacated
+   * name identifies a registration by name alone, and the host may already
+   * have installed something else under that name, so a teardown drops this
+   * bookkeeping instead of replaying it against the new runtime.
    */
-  unwind(owners: readonly string[]): Promise<RecipeExtensionUnwindFailure[]>;
+  unwind(
+    owners: readonly string[],
+    hostDiscarded?: boolean
+  ): Promise<RecipeExtensionUnwindFailure[]>;
   /**
    * True when an unwound extension left this registration behind in the host.
    * Pi keeps tools, commands, and shortcuts for the life of its runtime, so a
@@ -161,7 +170,7 @@ export function createRecipeExtensionRegistrationRegistry(): RecipeExtensionRegi
       scopes.set(owner, scope);
       return scope;
     },
-    async unwind(ownersToUnwind) {
+    async unwind(ownersToUnwind, hostDiscarded = false) {
       const failures: RecipeExtensionUnwindFailure[] = [];
       for (const owner of [...ownersToUnwind].reverse()) {
         const scope = scopes.get(owner);
@@ -170,14 +179,16 @@ export function createRecipeExtensionRegistrationRegistry(): RecipeExtensionRegi
           // this extension's guarded handlers as live.
           scope.disposed = true;
           scopes.delete(owner);
-          for (const dispose of [...scope.disposers].reverse()) {
-            try {
-              await dispose();
-            } catch (error) {
-              failures.push({
-                owner,
-                error: error instanceof Error ? error.message : String(error),
-              });
+          if (!hostDiscarded) {
+            for (const dispose of [...scope.disposers].reverse()) {
+              try {
+                await dispose();
+              } catch (error) {
+                failures.push({
+                  owner,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
             }
           }
           scope.disposers.length = 0;
@@ -185,7 +196,10 @@ export function createRecipeExtensionRegistrationRegistry(): RecipeExtensionRegi
         for (const [key, holder] of [...owners]) {
           if (holder !== owner) continue;
           owners.delete(key);
-          vacated.add(key);
+          // A name is only worth marking while the host still carries the
+          // registration behind it. After a teardown the next thing under that
+          // name belongs to whoever registered it, and must be claimed.
+          if (!hostDiscarded) vacated.add(key);
         }
       }
       return failures;

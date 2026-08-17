@@ -360,6 +360,39 @@ describe("Recipe extension context", () => {
     expect(() => stale.execute()).toThrow("was unloaded");
   });
 
+  it("leaves the host alone when it discarded the registrations itself", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.registerProvider({ id: "acme", models: [] } as never);
+        extensionApi.registerTool({
+          name: "setup_git",
+          description: "Prepare git auth",
+          parameters: {},
+          execute: async () => "ran",
+        } as never);
+      },
+      context(),
+      registrations,
+      "extensions/provider.ts"
+    )(pi);
+
+    // The host rebuilt its runtime; whatever answers to these names now was
+    // installed by someone else and must not be torn down by this unwind.
+    pi.providers.delete("acme");
+    pi.providers.add("acme");
+    await registrations.unwind(["extensions/provider.ts"], true);
+
+    expect(pi.providers.has("acme")).toBe(true);
+    // A name the host no longer associates with this extension stays claimable,
+    // so a host tool that appears under it is not mistaken for a leftover.
+    expect(registrations.vacated("tool", "setup_git")).toBe(false);
+    expect(() => registrations.claim("tool", "setup_git", "<host>")).not.toThrow();
+    // The scope is disposed regardless: the outgoing closure still goes quiet.
+    expect(() => pi.tools.get("setup_git")!.execute()).toThrow("was unloaded");
+  });
+
   it("reports a failing disposer instead of abandoning the unwind", async () => {
     const pi = hostApi();
     const registrations = createRecipeExtensionRegistrationRegistry();

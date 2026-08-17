@@ -104,6 +104,8 @@ interface RecipeLaunchState {
   extensionsLoaded: boolean;
   /** Owners from a torn-down closure, unwound just before the next load. */
   staleExtensionOwners: string[];
+  /** Whether the host discarded its registries under those stale owners. */
+  staleOwnersDiscardedByHost: boolean;
   configured: boolean;
   mcpConfigured: boolean;
   agentMcpMode: RecipeAgentMcpMode;
@@ -667,7 +669,7 @@ export function createRecipesExtension(
     // registrations the outgoing closure left in Pi and knows which of them to
     // release for the incoming one.
     const carried = state?.key === key ? state : undefined;
-    if (carried) markRecipeExtensionsStale(carried);
+    if (carried) markRecipeExtensionsStale(carried, false);
 
     let resolvedRecipe: ResolvedRecipe;
     let resolved: ResolvedRecipeAgent;
@@ -699,6 +701,7 @@ export function createRecipesExtension(
         createRecipeExtensionRegistrationRegistry(),
       extensionsLoaded: false,
       staleExtensionOwners: carried?.staleExtensionOwners ?? [],
+      staleOwnersDiscardedByHost: carried?.staleOwnersDiscardedByHost ?? false,
       configured: false,
       mcpConfigured: false,
       agentMcpMode: "cli",
@@ -765,7 +768,14 @@ export function createRecipesExtension(
    * an extension's own `session_shutdown` handler still runs and can release
    * whatever it owns before its registrations are neutralized.
    */
-  function markRecipeExtensionsStale(launchState: RecipeLaunchState): void {
+  function markRecipeExtensionsStale(
+    launchState: RecipeLaunchState,
+    discardedByHost: boolean
+  ): void {
+    // Latch rather than assign: a teardown may be observed after the closure
+    // was already marked stale for another reason, and the disposers must not
+    // then run against registries the host has since rebuilt.
+    if (discardedByHost) launchState.staleOwnersDiscardedByHost = true;
     if (!launchState.extensionsLoaded) return;
     launchState.staleExtensionOwners = [
       ...launchState.resolved.extensionPaths,
@@ -788,11 +798,13 @@ export function createRecipesExtension(
     if (launchState.staleExtensionOwners.length > 0) {
       reportUnwindFailures(
         await launchState.extensionRegistrations.unwind(
-          launchState.staleExtensionOwners
+          launchState.staleExtensionOwners,
+          launchState.staleOwnersDiscardedByHost
         ),
         ctx
       );
       launchState.staleExtensionOwners = [];
+      launchState.staleOwnersDiscardedByHost = false;
     }
     for (const tool of pi.getAllTools()) {
       // A tool an unwound closure left behind is not a host tool; claiming it
@@ -1442,7 +1454,7 @@ export function createRecipesExtension(
       // Pi discards its own registries here, so the closure must be reinstalled
       // rather than skipped as already loaded when `session_start` fires again
       // with reason "reload" against this same launch state.
-      if (state) markRecipeExtensionsStale(state);
+      if (state) markRecipeExtensionsStale(state, true);
       await closeAllChildRuns();
       await closeRootMcpRuntime();
       clearMcpCatalogPreload(env);
