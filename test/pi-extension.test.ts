@@ -1753,6 +1753,60 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
+  it("discovers an edited skill selection on the reload that changed it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(join(recipeDir, "skills", "new-skill"), { recursive: true });
+      writeFileSync(
+        join(recipeDir, "skills", "new-skill", "SKILL.md"),
+        "---\ndescription: Added by the reload\n---\n"
+      );
+      const agentPath = join(recipeDir, "defs", "main.yaml");
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension()(pi);
+      const ctx = extensionContext(projectDir, vi.fn());
+      const discover = async () =>
+        (
+          await pi.emitExtensionEvent(
+            { type: "resources_discover", cwd: projectDir, reason: "reload" } as any,
+            ctx
+          )
+        )[0] as { skillPaths: string[] };
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      expect((await discover()).skillPaths).toEqual([
+        join(recipeDir, "skills", "repo-index", "SKILL.md"),
+      ]);
+
+      writeFileSync(
+        agentPath,
+        readFileSync(agentPath, "utf8").replace("- repo-index", "- new-skill")
+      );
+
+      // Pi emits resources_discover after session_start on a reload, so the
+      // re-resolved package is already in place when the paths are collected.
+      await pi.emitExtensionEvent({ type: "session_shutdown" } as any, ctx);
+      pi.tools.clear();
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "reload" } as any,
+        ctx
+      );
+
+      expect((await discover()).skillPaths).toEqual([
+        join(recipeDir, "skills", "new-skill", "SKILL.md"),
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when an agent requests an unavailable tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {
