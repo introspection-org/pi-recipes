@@ -1689,6 +1689,68 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
+  it("keeps re-reading the package after a reload fails to resolve", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const agentPath = join(recipeDir, "defs", "main.yaml");
+      const agentYaml = readFileSync(agentPath, "utf8");
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension()(pi);
+      const notify = vi.fn();
+      const ctx = extensionContext(join(root, "project"), notify);
+      const systemPrompt = async () =>
+        (
+          await pi.emitExtensionEvent(
+            {
+              type: "before_agent_start",
+              prompt: "hello",
+              systemPrompt: "Default Pi prompt",
+              systemPromptOptions: {},
+            } as any,
+            ctx
+          )
+        )[0];
+
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      expect(await systemPrompt()).toEqual({
+        systemPrompt: "Base recipe prompt\n\nAgent-specific prompt",
+      });
+
+      // Edit the prompt, and rename the selected agent so the package still
+      // validates but the reload cannot resolve the selection.
+      writeFileSync(join(recipeDir, "SYSTEM.md"), "Edited recipe prompt");
+      writeFileSync(agentPath, agentYaml.replace("name: main", "name: renamed"));
+      await pi.emitExtensionEvent({ type: "session_shutdown" } as any, ctx);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "reload" } as any,
+        ctx
+      );
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining('Recipe agent "main" was not found'),
+        "warning"
+      );
+
+      writeFileSync(agentPath, agentYaml);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "new" } as any,
+        ctx
+      );
+
+      // The failed reload must not have handed the pre-edit package back.
+      expect(await systemPrompt()).toEqual({
+        systemPrompt: "Edited recipe prompt\n\nAgent-specific prompt",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when an agent requests an unavailable tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-launch-"));
     try {

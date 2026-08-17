@@ -247,18 +247,22 @@ function guardRegistration(
     if (typeof original !== "function") return payload;
     const call = (original as (...callArgs: unknown[]) => unknown).bind(source);
     // Preserve accessors and prototype: a registration payload may expose
-    // computed fields the host reads after registering it.
-    const guarded = Object.create(
-      Object.getPrototypeOf(source as object),
-      Object.getOwnPropertyDescriptors(source as object)
-    ) as Record<string, unknown>;
-    guarded[key] = (...callArgs: unknown[]) => {
-      if (!scope.disposed) return call(...callArgs);
-      throw new Error(
-        `Recipe extension ${scope.owner} was unloaded; its ${kind} "${name}" is no longer available`
-      );
+    // computed fields the host reads after registering it. The guarded entry
+    // point replaces its descriptor during construction, because an extension
+    // is free to freeze what it registers or expose it through a getter.
+    const descriptors = Object.getOwnPropertyDescriptors(source as object);
+    descriptors[key] = {
+      configurable: true,
+      enumerable: descriptors[key]?.enumerable ?? true,
+      writable: true,
+      value: (...callArgs: unknown[]) => {
+        if (!scope.disposed) return call(...callArgs);
+        throw new Error(
+          `Recipe extension ${scope.owner} was unloaded; its ${kind} "${name}" is no longer available`
+        );
+      },
     };
-    return guarded;
+    return Object.create(Object.getPrototypeOf(source as object), descriptors);
   };
 
   if (property === "registerTool") {

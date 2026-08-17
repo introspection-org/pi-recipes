@@ -253,6 +253,42 @@ describe("Recipe extension context", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it("guards registrations an extension froze or exposed through accessors", async () => {
+    const pi = hostApi();
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    await bindRecipeExtensionFactory(
+      (extensionApi) => {
+        extensionApi.registerTool(
+          Object.freeze({
+            name: "setup_git",
+            description: "Prepare git auth",
+            parameters: {},
+            execute: async () => "ran",
+          }) as never
+        );
+        extensionApi.registerCommand("review", {
+          description: "Review",
+          get handler() {
+            return async () => "reviewed";
+          },
+        } as never);
+      },
+      context(),
+      registrations,
+      "extensions/frozen.ts"
+    )(pi);
+
+    await expect(pi.tools.get("setup_git")!.execute()).resolves.toBe("ran");
+    await expect(pi.commands.get("review")!.handler()).resolves.toBe(
+      "reviewed"
+    );
+
+    await registrations.unwind(["extensions/frozen.ts"]);
+
+    expect(() => pi.tools.get("setup_git")!.execute()).toThrow("was unloaded");
+    expect(() => pi.commands.get("review")!.handler()).toThrow("was unloaded");
+  });
+
   it("silences lifecycle handlers an unwound extension subscribed", async () => {
     const pi = hostApi();
     const registrations = createRecipeExtensionRegistrationRegistry();

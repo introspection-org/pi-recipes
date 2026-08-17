@@ -668,7 +668,6 @@ export function createRecipesExtension(
     // release for the incoming one.
     const carried = state?.key === key ? state : undefined;
     if (carried) markRecipeExtensionsStale(carried);
-    resolutionStale = false;
 
     let resolvedRecipe: ResolvedRecipe;
     let resolved: ResolvedRecipeAgent;
@@ -676,10 +675,14 @@ export function createRecipesExtension(
       resolvedRecipe = resolveRecipe({ recipeDir });
       resolved = resolvedRecipe.selectAgent(requestedAgentName);
     } catch (err) {
+      // Leave the resolution marked stale. The previous state is still
+      // installed, and clearing the mark here would hand it back to a later
+      // session as though it had been re-read from the repaired package.
       throw new RecipeLaunchError(
         recipeLoadErrorMessage(flag, err instanceof Error ? err.message : String(err))
       );
     }
+    resolutionStale = false;
     // Keep the recipe selected by CLI flags visible to shell commands and
     // recipe-authored instructions. In production `env` is process.env, so
     // built-in shell tools and child agents inherit these resolved values.
@@ -1308,7 +1311,11 @@ export function createRecipesExtension(
           }
           await closeAllChildRuns();
           await closeRootMcpRuntime();
-          state = null;
+          // Keep the launch state so the shutdown that `ctx.reload()` emits can
+          // mark this closure stale and hand its registry to the next load.
+          // Re-reading the package is this command's own contract, so it marks
+          // the resolution rather than waiting to observe Pi's reload.
+          resolutionStale = true;
           archivedRuns.clear();
           completions.clear();
           await ctx.waitForIdle();
