@@ -37,9 +37,12 @@ export interface AgentRunSummary {
   error?: string;
 }
 
+/** Pi custom-entry type carrying one child run event. */
+export const AGENT_RUN_EVENT_ENTRY_TYPE = "agent_run_event";
+
 /** One canonical Pi event attributed to the child run that emitted it. */
 export interface AgentRunEvent {
-  type: "agent_run_event";
+  type: typeof AGENT_RUN_EVENT_ENTRY_TYPE;
   agent_run_id: string;
   parent_agent_run_id: string | null;
   agent_name: string;

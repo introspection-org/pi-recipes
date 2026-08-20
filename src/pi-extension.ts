@@ -35,7 +35,10 @@ import {
   renderCompletionNotice,
   type ChildCompletionEnvelope,
 } from "./child-agent-completions.js";
-import type { AgentRunEvent } from "./agents.js";
+import {
+  AGENT_RUN_EVENT_ENTRY_TYPE,
+  type AgentRunEvent,
+} from "./agents.js";
 import {
   clearMcpSession,
   clearSessionMcpCli,
@@ -446,6 +449,7 @@ export function createRecipesExtension(
   // Latest extension context, for the idle check gating completion delivery.
   let sessionCtx: Pick<ExtensionContext, "isIdle"> | null = null;
   let localAgentContext: ExtensionContext | null = null;
+  let extensionApi: ExtensionAPI | null = null;
   let sessionConfigurationError: string | null = null;
   const visibleAgentDefinitions = new Map<string, RecipeAgentDefinition>();
 
@@ -1084,9 +1088,10 @@ export function createRecipesExtension(
           event,
         };
         opts.onAgentRunEvent?.(envelope);
-        if (ctx.mode === "json") {
-          process.stdout.write(`${JSON.stringify(envelope)}\n`);
-        }
+        // Custom entries join Pi's canonical session event stream without
+        // entering model context. JSON mode serializes the resulting single
+        // `entry_appended` event through Pi's guarded output writer.
+        extensionApi?.appendEntry(AGENT_RUN_EVENT_ENTRY_TYPE, envelope);
       },
       onAssistantMessage(text, stream) {
         if (!run) return;
@@ -1175,6 +1180,7 @@ export function createRecipesExtension(
   }
 
   return (pi) => {
+    extensionApi = pi;
     // Deliver queued background completions by waking the parent model with
     // a triggerTurn message. Delivery only happens when the session is
     // genuinely idle: a message queued while the parent turn is streaming

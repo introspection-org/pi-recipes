@@ -62,12 +62,13 @@ See [Recipe Format](recipe-format.md) for the authored contract and
 
 ## Structured child events
 
-Pi's JSON mode emits root session events directly. Recipes adds one
-`agent_run_event` line for every canonical event emitted by a delegated child.
-The envelope carries the child run id, its root parent, agent identity, and
-depth; its `event` field is the unchanged Pi session event. Consumers can
-attribute cost, messages, and tool calls across the run tree without a second
-transcript store.
+Pi's JSON mode emits root session events directly. Recipes appends one Pi
+custom entry for every canonical event emitted by a delegated child. Pi emits
+that entry as an `entry_appended` event; its `data` is an `agent_run_event`
+envelope carrying the child run id, root parent, agent identity, depth, and
+unchanged Pi session event. Custom entries are part of Pi's canonical session
+stream but do not participate in model context. Consumers can attribute cost,
+messages, and tool calls across the run tree without a second transcript store.
 
 ## Local capability bindings
 

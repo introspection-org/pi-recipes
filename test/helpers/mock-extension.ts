@@ -12,6 +12,7 @@ export interface MockExtensionAPI extends ExtensionAPI {
   flagValues: Map<string, boolean | string>;
   handlers: Map<string, Array<(event: any, ctx: any) => unknown>>;
   messages: unknown[];
+  entries: Array<{ customType: string; data?: unknown }>;
   sentMessages: Array<{ message: any; options?: any }>;
   messageRenderers: Map<string, (message: any, options: any, theme: any) => unknown>;
   sessionName?: string;
@@ -28,6 +29,7 @@ export function createMockExtensionAPI(): MockExtensionAPI {
   const flagValues = new Map<string, boolean | string>();
   const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
   const messages: unknown[] = [];
+  const entries: Array<{ customType: string; data?: unknown }> = [];
   const sentMessages: Array<{ message: any; options?: any }> = [];
   const messageRenderers = new Map<string, (message: any, options: any, theme: any) => unknown>();
   const api = {
@@ -37,6 +39,7 @@ export function createMockExtensionAPI(): MockExtensionAPI {
     flagValues,
     handlers,
     messages,
+    entries,
     sentMessages,
     messageRenderers,
     activeTools: [],
@@ -69,6 +72,9 @@ export function createMockExtensionAPI(): MockExtensionAPI {
       sentMessages.push({ message, options });
     },
     sendUserMessage() {},
+    appendEntry(customType: string, data?: unknown) {
+      entries.push({ customType, data });
+    },
     setSessionName(name: string) {
       api.sessionName = name;
     },

@@ -1596,11 +1596,8 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
-  it("emits scoped child events through observers and Pi JSON mode", async () => {
+  it("appends scoped child events to Pi's canonical session stream", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-events-"));
-    const stdout = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
     try {
       const recipeDir = writeRecipe(root);
       const projectDir = join(root, "project");
@@ -1660,11 +1657,13 @@ describe("Recipes extension for Pi", () => {
         event: childEvent,
       });
       expect(onAgentRunEvent).toHaveBeenCalledWith(envelope);
-      expect(stdout).toHaveBeenCalledWith(
-        `${JSON.stringify(onAgentRunEvent.mock.calls[0]?.[0])}\n`
-      );
+      expect(pi.entries).toEqual([
+        {
+          customType: "agent_run_event",
+          data: onAgentRunEvent.mock.calls[0]?.[0],
+        },
+      ]);
     } finally {
-      stdout.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
   });
