@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import type {
+  AgentRunEventObserver,
   AgentRunController,
   AgentRunStatus,
   AgentRunSummary,
 } from "./agents.js";
+import { notifyAgentRunEvent } from "./agents.js";
 import { autoResolveInteractions } from "./interactions.js";
 import { promptResultText } from "./child-agent.js";
 import { createIsolatedChildSession } from "./child-session.js";
@@ -27,6 +29,8 @@ export interface InProcessRunControllerOptions {
   concurrency?: number;
   /** Root session instrumentation inherited by in-process child sessions. */
   otel?: RecipeSessionOtelOptions;
+  /** Observe canonical Pi events from every child run. */
+  onAgentRunEvent?: AgentRunEventObserver;
   /** Child session factory; defaults to `createAgentSession`. Test/DI seam. */
   sessionFactory?: (
     options: CreateAgentSessionInternalOptions
@@ -132,6 +136,15 @@ export function createInProcessRunController(
             : {}),
           ...(opts.sessionFactory ? { sessionFactory: opts.sessionFactory } : {}),
           onEvent: (event) => {
+            notifyAgentRunEvent(opts.onAgentRunEvent, {
+              type: "agent_run_event",
+              agent_run_id: run.summary.agent_run_id,
+              parent_agent_run_id: "root",
+              agent_name: run.summary.agent_name,
+              invocation_name: run.summary.invocation_name,
+              depth: 1,
+              event,
+            });
             const record = event as { type?: string; toolName?: unknown };
             if (record.type === "tool_execution_start") {
               touch(run, { current_tool: String(record.toolName ?? "") });

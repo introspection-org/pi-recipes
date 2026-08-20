@@ -1595,4 +1595,89 @@ describe("Recipes extension for Pi", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("appends scoped child events to Pi's canonical session stream", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-events-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      const childEvent = {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "child answer" }],
+          usage: { input: 3, output: 2, cacheRead: 1, cost: { total: 0.02 } },
+        },
+      };
+      const droppedChildEvent = { type: "agent_start" };
+      const createChildAgentRunner = vi.fn((opts: any = {}) => ({
+        async start() {},
+        async prompt() {
+          opts.onEvent?.(droppedChildEvent);
+          opts.onEvent?.(childEvent);
+          opts.onAssistantMessage?.("child answer", "final");
+          return "child answer";
+        },
+        async steer() {},
+        async cancel() {},
+        async shutdown() {},
+      }));
+      const onAgentRunEvent = vi.fn(async (_event: unknown) => {
+        throw new Error("observer rejected");
+      });
+      const pi = createMockExtensionAPI();
+      const appendEntry = pi.appendEntry.bind(pi);
+      const appendEntrySpy = vi
+        .spyOn(pi, "appendEntry")
+        .mockImplementationOnce(() => {
+          throw new Error("session persistence failed");
+        })
+        .mockImplementation(appendEntry);
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      const ctx = { ...extensionContext(projectDir), mode: "json" } as any;
+
+      createRecipesExtension({ createChildAgentRunner, onAgentRunEvent })(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      const started = await pi.tools.get("agent")?.execute(
+        "tool-call-1",
+        { name: "explorer", prompt: "inspect" },
+        undefined,
+        undefined,
+        ctx
+      );
+      const completed = await pi.tools.get("agent")?.execute(
+        "tool-call-2",
+        { action: "wait", id: started?.details?.agent?.agent_run_id },
+        undefined,
+        undefined,
+        ctx
+      );
+
+      expect(completed?.details?.agent?.status).toBe("completed");
+      const envelope = expect.objectContaining({
+        type: "agent_run_event",
+        agent_run_id: started?.details?.agent?.agent_run_id,
+        parent_agent_run_id: "root",
+        agent_name: "explorer",
+        invocation_name: "explorer",
+        depth: 1,
+        event: childEvent,
+      });
+      expect(onAgentRunEvent).toHaveBeenCalledWith(envelope);
+      expect(appendEntrySpy).toHaveBeenCalledTimes(2);
+      expect(pi.entries).toEqual([
+        {
+          customType: "agent_run_event",
+          data: onAgentRunEvent.mock.calls[1]?.[0],
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

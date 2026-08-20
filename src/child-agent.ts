@@ -24,6 +24,8 @@ export interface CreateRecipeChildAgentRunnerOptions {
   env?: NodeJS.ProcessEnv;
   credentials?: CredentialStore;
   modelRegistry?: ModelRegistry;
+  /** Observe the child's canonical Pi session events. */
+  onEvent?: (event: AgentSessionEvent) => void;
   onAssistantMessage?: (text: string, stream: "delta" | "final") => void;
   onToolEvent?: (event: RecipeChildToolEvent) => void;
 }
@@ -122,6 +124,7 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
   }
 
   private handleSessionEvent(event: AgentSessionEvent): void {
+    this.opts.onEvent?.(event);
     const record = asRecord(event);
     const message = messageFromEvent(event);
     const role = typeof message?.role === "string" ? message.role : undefined;

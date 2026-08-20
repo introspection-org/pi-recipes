@@ -1,4 +1,8 @@
-import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  defineTool,
+  type AgentSessionEvent,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
 /** Portable lifecycle contract for Recipe agent runs. */
@@ -31,6 +35,39 @@ export interface AgentRunSummary {
   output_preview?: string;
   output?: string;
   error?: string;
+}
+
+/** Pi custom-entry type carrying one child run event. */
+export const AGENT_RUN_EVENT_ENTRY_TYPE = "agent_run_event";
+
+/** One canonical Pi event attributed to the child run that emitted it. */
+export interface AgentRunEvent {
+  type: typeof AGENT_RUN_EVENT_ENTRY_TYPE;
+  agent_run_id: string;
+  parent_agent_run_id: string | null;
+  agent_name: string;
+  invocation_name: string;
+  depth: number;
+  event: AgentSessionEvent;
+}
+
+/** Host observer for child run events. Observers never own run lifecycle. */
+export type AgentRunEventObserver = (
+  event: AgentRunEvent
+) => void | Promise<void>;
+
+/** Notify a host observer without allowing it to interrupt the child run. */
+export function notifyAgentRunEvent(
+  observer: AgentRunEventObserver | undefined,
+  event: AgentRunEvent
+): void {
+  if (!observer) return;
+  try {
+    void Promise.resolve(observer(event)).catch(() => {});
+  } catch {
+    // Observation is detached from execution. A host hook must not turn a
+    // successful child event into a failed delegated run.
+  }
 }
 
 export interface AgentRunController {

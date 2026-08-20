@@ -36,6 +36,12 @@ import {
   type ChildCompletionEnvelope,
 } from "./child-agent-completions.js";
 import {
+  AGENT_RUN_EVENT_ENTRY_TYPE,
+  type AgentRunEvent,
+  type AgentRunEventObserver,
+  notifyAgentRunEvent,
+} from "./agents.js";
+import {
   clearMcpSession,
   clearSessionMcpCli,
   configureMcpLocalConfigPath,
@@ -76,6 +82,8 @@ import {
 export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
   createChildAgentRunner?: CreateRecipeChildAgentRunner;
+  /** Observe canonical Pi events from every child run. */
+  onAgentRunEvent?: AgentRunEventObserver;
 }
 
 interface AgentCallParams {
@@ -443,6 +451,7 @@ export function createRecipesExtension(
   // Latest extension context, for the idle check gating completion delivery.
   let sessionCtx: Pick<ExtensionContext, "isIdle"> | null = null;
   let localAgentContext: ExtensionContext | null = null;
+  let extensionApi: ExtensionAPI | null = null;
   let sessionConfigurationError: string | null = null;
   const visibleAgentDefinitions = new Map<string, RecipeAgentDefinition>();
 
@@ -1069,6 +1078,28 @@ export function createRecipesExtension(
       env,
       agentName,
       modelRegistry: ctx.modelRegistry,
+      onEvent(event) {
+        if (!run) return;
+        const envelope: AgentRunEvent = {
+          type: "agent_run_event",
+          agent_run_id: run.id,
+          parent_agent_run_id: "root",
+          agent_name: run.agent,
+          invocation_name: run.agent,
+          depth: 1,
+          event,
+        };
+        notifyAgentRunEvent(opts.onAgentRunEvent, envelope);
+        // Custom entries join Pi's canonical session event stream without
+        // entering model context. JSON mode serializes the resulting single
+        // `entry_appended` event through Pi's guarded output writer.
+        try {
+          extensionApi?.appendEntry(AGENT_RUN_EVENT_ENTRY_TYPE, envelope);
+        } catch {
+          // Event capture is auxiliary. Session persistence failures must not
+          // change the outcome of the child work being observed.
+        }
+      },
       onAssistantMessage(text, stream) {
         if (!run) return;
         if (stream === "delta") {
@@ -1156,6 +1187,7 @@ export function createRecipesExtension(
   }
 
   return (pi) => {
+    extensionApi = pi;
     // Deliver queued background completions by waking the parent model with
     // a triggerTurn message. Delivery only happens when the session is
     // genuinely idle: a message queued while the parent turn is streaming

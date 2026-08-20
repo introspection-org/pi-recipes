@@ -1116,6 +1116,9 @@ describe("in-process run controller", () => {
       | Parameters<typeof createAgentSessionInternal>[0]
       | undefined;
     const tracer = {} as never;
+    const onAgentRunEvent = vi.fn(() => {
+      throw new Error("observer failed");
+    });
     const controller = createInProcessRunController({
       recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
@@ -1128,6 +1131,7 @@ describe("in-process run controller", () => {
           agentName: "root",
         },
       },
+      onAgentRunEvent,
       sessionFactory: async (options) => {
         childOptions = options;
         const handle = await createAgentSessionInternal({
@@ -1151,6 +1155,15 @@ describe("in-process run controller", () => {
     expect(childOptions?.otel?.meta?.agentName).toBeUndefined();
     expect(childOptions?.runController).toBeNull();
     expect(childOptions?.sessionRole).toBe("subagent");
+    expect(onAgentRunEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "agent_run_event",
+        agent_run_id: run.agent_run_id,
+        parent_agent_run_id: "root",
+        agent_name: "helper",
+        depth: 1,
+      })
+    );
     expect(childOptions?.env).not.toBe(parentEnv);
     expect(childOptions?.env).toEqual(parentEnv);
     await controller.close(run.agent_run_id);
