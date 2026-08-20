@@ -1610,9 +1610,11 @@ describe("Recipes extension for Pi", () => {
           usage: { input: 3, output: 2, cacheRead: 1, cost: { total: 0.02 } },
         },
       };
+      const droppedChildEvent = { type: "agent_start" };
       const createChildAgentRunner = vi.fn((opts: any = {}) => ({
         async start() {},
         async prompt() {
+          opts.onEvent?.(droppedChildEvent);
           opts.onEvent?.(childEvent);
           opts.onAssistantMessage?.("child answer", "final");
           return "child answer";
@@ -1625,6 +1627,13 @@ describe("Recipes extension for Pi", () => {
         throw new Error("observer rejected");
       });
       const pi = createMockExtensionAPI();
+      const appendEntry = pi.appendEntry.bind(pi);
+      const appendEntrySpy = vi
+        .spyOn(pi, "appendEntry")
+        .mockImplementationOnce(() => {
+          throw new Error("session persistence failed");
+        })
+        .mockImplementation(appendEntry);
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
       const ctx = { ...extensionContext(projectDir), mode: "json" } as any;
@@ -1660,10 +1669,11 @@ describe("Recipes extension for Pi", () => {
         event: childEvent,
       });
       expect(onAgentRunEvent).toHaveBeenCalledWith(envelope);
+      expect(appendEntrySpy).toHaveBeenCalledTimes(2);
       expect(pi.entries).toEqual([
         {
           customType: "agent_run_event",
-          data: onAgentRunEvent.mock.calls[0]?.[0],
+          data: onAgentRunEvent.mock.calls[1]?.[0],
         },
       ]);
     } finally {

@@ -1093,7 +1093,12 @@ export function createRecipesExtension(
         // Custom entries join Pi's canonical session event stream without
         // entering model context. JSON mode serializes the resulting single
         // `entry_appended` event through Pi's guarded output writer.
-        extensionApi?.appendEntry(AGENT_RUN_EVENT_ENTRY_TYPE, envelope);
+        try {
+          extensionApi?.appendEntry(AGENT_RUN_EVENT_ENTRY_TYPE, envelope);
+        } catch {
+          // Event capture is auxiliary. Session persistence failures must not
+          // change the outcome of the child work being observed.
+        }
       },
       onAssistantMessage(text, stream) {
         if (!run) return;
