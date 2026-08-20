@@ -1116,7 +1116,9 @@ describe("in-process run controller", () => {
       | Parameters<typeof createAgentSessionInternal>[0]
       | undefined;
     const tracer = {} as never;
-    const onAgentRunEvent = vi.fn();
+    const onAgentRunEvent = vi.fn(() => {
+      throw new Error("observer failed");
+    });
     const controller = createInProcessRunController({
       recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,

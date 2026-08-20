@@ -38,6 +38,8 @@ import {
 import {
   AGENT_RUN_EVENT_ENTRY_TYPE,
   type AgentRunEvent,
+  type AgentRunEventObserver,
+  notifyAgentRunEvent,
 } from "./agents.js";
 import {
   clearMcpSession,
@@ -81,7 +83,7 @@ export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
   createChildAgentRunner?: CreateRecipeChildAgentRunner;
   /** Observe canonical Pi events from every child run. */
-  onAgentRunEvent?: (event: AgentRunEvent) => void;
+  onAgentRunEvent?: AgentRunEventObserver;
 }
 
 interface AgentCallParams {
@@ -1087,7 +1089,7 @@ export function createRecipesExtension(
           depth: 1,
           event,
         };
-        opts.onAgentRunEvent?.(envelope);
+        notifyAgentRunEvent(opts.onAgentRunEvent, envelope);
         // Custom entries join Pi's canonical session event stream without
         // entering model context. JSON mode serializes the resulting single
         // `entry_appended` event through Pi's guarded output writer.

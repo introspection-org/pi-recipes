@@ -1621,7 +1621,9 @@ describe("Recipes extension for Pi", () => {
         async cancel() {},
         async shutdown() {},
       }));
-      const onAgentRunEvent = vi.fn();
+      const onAgentRunEvent = vi.fn(async (_event: unknown) => {
+        throw new Error("observer rejected");
+      });
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
@@ -1639,7 +1641,7 @@ describe("Recipes extension for Pi", () => {
         undefined,
         ctx
       );
-      await pi.tools.get("agent")?.execute(
+      const completed = await pi.tools.get("agent")?.execute(
         "tool-call-2",
         { action: "wait", id: started?.details?.agent?.agent_run_id },
         undefined,
@@ -1647,6 +1649,7 @@ describe("Recipes extension for Pi", () => {
         ctx
       );
 
+      expect(completed?.details?.agent?.status).toBe("completed");
       const envelope = expect.objectContaining({
         type: "agent_run_event",
         agent_run_id: started?.details?.agent?.agent_run_id,

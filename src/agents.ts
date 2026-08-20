@@ -51,6 +51,25 @@ export interface AgentRunEvent {
   event: AgentSessionEvent;
 }
 
+/** Host observer for child run events. Observers never own run lifecycle. */
+export type AgentRunEventObserver = (
+  event: AgentRunEvent
+) => void | Promise<void>;
+
+/** Notify a host observer without allowing it to interrupt the child run. */
+export function notifyAgentRunEvent(
+  observer: AgentRunEventObserver | undefined,
+  event: AgentRunEvent
+): void {
+  if (!observer) return;
+  try {
+    void Promise.resolve(observer(event)).catch(() => {});
+  } catch {
+    // Observation is detached from execution. A host hook must not turn a
+    // successful child event into a failed delegated run.
+  }
+}
+
 export interface AgentRunController {
   list(): AgentRunSummary[];
   get(id: string): AgentRunSummary | null;

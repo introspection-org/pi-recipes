@@ -25,7 +25,7 @@ import {
 import {
   createAgentTool,
   type AgentRunController,
-  type AgentRunEvent,
+  type AgentRunEventObserver,
 } from "./agents.js";
 import {
   clearMcpCatalogPreload,
@@ -175,7 +175,7 @@ export interface CreateAgentSessionOptions {
   /** Tap on `session.subscribe`, detached at dispose. */
   onEvent?: (event: AgentSessionEvent) => void;
   /** Observe canonical Pi events from every default in-process child run. */
-  onAgentRunEvent?: (event: AgentRunEvent) => void;
+  onAgentRunEvent?: AgentRunEventObserver;
   /**
    * Attach GenAI semantic-convention instrumentation with a host-owned OTel
    * tracer. Recipes creates no provider, processor, exporter, or global

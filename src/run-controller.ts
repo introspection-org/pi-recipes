@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import type {
-  AgentRunEvent,
+  AgentRunEventObserver,
   AgentRunController,
   AgentRunStatus,
   AgentRunSummary,
 } from "./agents.js";
+import { notifyAgentRunEvent } from "./agents.js";
 import { autoResolveInteractions } from "./interactions.js";
 import { promptResultText } from "./child-agent.js";
 import { createIsolatedChildSession } from "./child-session.js";
@@ -29,7 +30,7 @@ export interface InProcessRunControllerOptions {
   /** Root session instrumentation inherited by in-process child sessions. */
   otel?: RecipeSessionOtelOptions;
   /** Observe canonical Pi events from every child run. */
-  onAgentRunEvent?: (event: AgentRunEvent) => void;
+  onAgentRunEvent?: AgentRunEventObserver;
   /** Child session factory; defaults to `createAgentSession`. Test/DI seam. */
   sessionFactory?: (
     options: CreateAgentSessionInternalOptions
@@ -135,7 +136,7 @@ export function createInProcessRunController(
             : {}),
           ...(opts.sessionFactory ? { sessionFactory: opts.sessionFactory } : {}),
           onEvent: (event) => {
-            opts.onAgentRunEvent?.({
+            notifyAgentRunEvent(opts.onAgentRunEvent, {
               type: "agent_run_event",
               agent_run_id: run.summary.agent_run_id,
               parent_agent_run_id: "root",
