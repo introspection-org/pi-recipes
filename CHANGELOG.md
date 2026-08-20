@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.0](https://github.com/introspection-org/recipes/compare/v0.19.3...v0.20.0) (2026-08-20)
+
+
+### Features
+
+* expose scoped child agent events ([#224](https://github.com/introspection-org/recipes/issues/224)) ([c3d3b9d](https://github.com/introspection-org/recipes/commit/c3d3b9d7d5ec64aeabb0cd0a9de01ffc7d925a43))
+
+
+### Bug Fixes
+
+* support Pi 0.84.2 ([#218](https://github.com/introspection-org/recipes/issues/218)) ([846314f](https://github.com/introspection-org/recipes/commit/846314f571733eefcc623daceb0042d462dee8e5))
+
 ## [0.19.3](https://github.com/introspection-org/recipes/compare/v0.19.2...v0.19.3) (2026-08-13)
 
 
