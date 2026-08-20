@@ -1,4 +1,8 @@
-import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  defineTool,
+  type AgentSessionEvent,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
 /** Portable lifecycle contract for Recipe agent runs. */
@@ -31,6 +35,17 @@ export interface AgentRunSummary {
   output_preview?: string;
   output?: string;
   error?: string;
+}
+
+/** One canonical Pi event attributed to the child run that emitted it. */
+export interface AgentRunEvent {
+  type: "agent_run_event";
+  agent_run_id: string;
+  parent_agent_run_id: string | null;
+  agent_name: string;
+  invocation_name: string;
+  depth: number;
+  event: AgentSessionEvent;
 }
 
 export interface AgentRunController {

@@ -197,12 +197,14 @@ describe("Recipe child agent runner", () => {
     const { emit } = mockHandle();
     const onToolEvent = vi.fn();
     const onAssistantMessage = vi.fn();
+    const onEvent = vi.fn();
 
     const runner = createRecipeChildAgentRunner({
       recipe,
       workspaceDir,
       agentName: "worker",
       env: {},
+      onEvent,
       onToolEvent,
       onAssistantMessage,
     });
@@ -225,6 +227,11 @@ describe("Recipe child agent runner", () => {
       name: "read",
       args: { path: "README.md" },
     });
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    expect(onEvent).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ type: "tool_execution_start" })
+    );
     expect(onAssistantMessage).toHaveBeenCalledWith("working", "delta");
     await runner.shutdown();
   });

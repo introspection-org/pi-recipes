@@ -35,6 +35,7 @@ import {
   renderCompletionNotice,
   type ChildCompletionEnvelope,
 } from "./child-agent-completions.js";
+import type { AgentRunEvent } from "./agents.js";
 import {
   clearMcpSession,
   clearSessionMcpCli,
@@ -76,6 +77,8 @@ import {
 export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
   createChildAgentRunner?: CreateRecipeChildAgentRunner;
+  /** Observe canonical Pi events from every child run. */
+  onAgentRunEvent?: (event: AgentRunEvent) => void;
 }
 
 interface AgentCallParams {
@@ -1069,6 +1072,22 @@ export function createRecipesExtension(
       env,
       agentName,
       modelRegistry: ctx.modelRegistry,
+      onEvent(event) {
+        if (!run) return;
+        const envelope: AgentRunEvent = {
+          type: "agent_run_event",
+          agent_run_id: run.id,
+          parent_agent_run_id: "root",
+          agent_name: run.agent,
+          invocation_name: run.agent,
+          depth: 1,
+          event,
+        };
+        opts.onAgentRunEvent?.(envelope);
+        if (ctx.mode === "json") {
+          process.stdout.write(`${JSON.stringify(envelope)}\n`);
+        }
+      },
       onAssistantMessage(text, stream) {
         if (!run) return;
         if (stream === "delta") {

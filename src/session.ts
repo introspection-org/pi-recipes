@@ -22,7 +22,11 @@ import {
   type AgentMeta,
   type InstrumentSessionOptions,
 } from "@introspection-sdk/introspection-pi";
-import { createAgentTool, type AgentRunController } from "./agents.js";
+import {
+  createAgentTool,
+  type AgentRunController,
+  type AgentRunEvent,
+} from "./agents.js";
 import {
   clearMcpCatalogPreload,
   preloadMcpCatalogs,
@@ -170,6 +174,8 @@ export interface CreateAgentSessionOptions {
   onDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
   /** Tap on `session.subscribe`, detached at dispose. */
   onEvent?: (event: AgentSessionEvent) => void;
+  /** Observe canonical Pi events from every default in-process child run. */
+  onAgentRunEvent?: (event: AgentRunEvent) => void;
   /**
    * Attach GenAI semantic-convention instrumentation with a host-owned OTel
    * tracer. Recipes creates no provider, processor, exporter, or global
@@ -681,6 +687,9 @@ async function createSessionForAgent(
             env,
             ...(opts.credentials ? { credentials: opts.credentials } : {}),
             concurrency: opts.inProcessRunController?.concurrency,
+            ...(opts.onAgentRunEvent
+              ? { onAgentRunEvent: opts.onAgentRunEvent }
+              : {}),
             ...(otel ? { otel } : {}),
           })
         : inertRunController();

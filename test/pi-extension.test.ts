@@ -1595,4 +1595,77 @@ describe("Recipes extension for Pi", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("emits scoped child events through observers and Pi JSON mode", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-events-"));
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    try {
+      const recipeDir = writeRecipe(root);
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir, { recursive: true });
+      const childEvent = {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "child answer" }],
+          usage: { input: 3, output: 2, cacheRead: 1, cost: { total: 0.02 } },
+        },
+      };
+      const createChildAgentRunner = vi.fn((opts: any = {}) => ({
+        async start() {},
+        async prompt() {
+          opts.onEvent?.(childEvent);
+          opts.onAssistantMessage?.("child answer", "final");
+          return "child answer";
+        },
+        async steer() {},
+        async cancel() {},
+        async shutdown() {},
+      }));
+      const onAgentRunEvent = vi.fn();
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      const ctx = { ...extensionContext(projectDir), mode: "json" } as any;
+
+      createRecipesExtension({ createChildAgentRunner, onAgentRunEvent })(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        ctx
+      );
+      const started = await pi.tools.get("agent")?.execute(
+        "tool-call-1",
+        { name: "explorer", prompt: "inspect" },
+        undefined,
+        undefined,
+        ctx
+      );
+      await pi.tools.get("agent")?.execute(
+        "tool-call-2",
+        { action: "wait", id: started?.details?.agent?.agent_run_id },
+        undefined,
+        undefined,
+        ctx
+      );
+
+      const envelope = expect.objectContaining({
+        type: "agent_run_event",
+        agent_run_id: started?.details?.agent?.agent_run_id,
+        parent_agent_run_id: "root",
+        agent_name: "explorer",
+        invocation_name: "explorer",
+        depth: 1,
+        event: childEvent,
+      });
+      expect(onAgentRunEvent).toHaveBeenCalledWith(envelope);
+      expect(stdout).toHaveBeenCalledWith(
+        `${JSON.stringify(onAgentRunEvent.mock.calls[0]?.[0])}\n`
+      );
+    } finally {
+      stdout.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

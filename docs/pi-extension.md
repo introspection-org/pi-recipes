@@ -60,6 +60,15 @@ For the selected agent, the extension:
 See [Recipe Format](recipe-format.md) for the authored contract and
 [Agent composition](agent-composition.md) for inheritance and selection.
 
+## Structured child events
+
+Pi's JSON mode emits root session events directly. Recipes adds one
+`agent_run_event` line for every canonical event emitted by a delegated child.
+The envelope carries the child run id, its root parent, agent identity, and
+depth; its `event` field is the unchanged Pi session event. Consumers can
+attribute cost, messages, and tool calls across the run tree without a second
+transcript store.
+
 ## Local capability bindings
 
 Recipe source may include `.pi/mcp.local.example.json`, but secrets belong in

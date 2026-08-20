@@ -73,6 +73,7 @@ const handle = await createAgentSession({
   transformSystemPrompt,
   onDiagnostics,
   onEvent,
+  onAgentRunEvent,
   otel: {
     tracer,
     meter,
@@ -112,6 +113,12 @@ The default in-process subagent controller uses that same Recipe snapshot for
 every child, so no session reparses the package or observes a different source
 snapshot. Injected controllers own child selection and execution after the root
 session is constructed.
+
+`onEvent` observes the root Pi session. `onAgentRunEvent` observes each event
+from the default in-process children as an `AgentRunEvent` envelope containing
+the run id, parent id, agent identity, depth, and canonical Pi event. Hosts can
+merge the two streams without copying root events. An injected `runController`
+owns its own observation contract and does not trigger this callback.
 
 An injected `runController` is owned by the returned session handle.
 `dispose()` calls the controller's `shutdown()` exactly once; controller
