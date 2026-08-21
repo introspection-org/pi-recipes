@@ -23,6 +23,7 @@ import {
   createRecipeExtensionRegistrationRegistry,
   recipeExtensionToolAllowlist,
   type RecipeExtensionRegistrationRegistry,
+  type RecipeExtensionUnwindFailure,
 } from "./extensions.js";
 import {
   ChildAgentRunStore,
@@ -109,7 +110,10 @@ interface RecipeLaunchState {
   resolved: ResolvedRecipeAgent;
   extensionRegistrations: RecipeExtensionRegistrationRegistry;
   extensionsLoaded: boolean;
-  extensionFailure?: string;
+  /** Owners from a torn-down closure, unwound just before the next load. */
+  staleExtensionOwners: string[];
+  /** Whether the host discarded its registries under those stale owners. */
+  staleOwnersDiscardedByHost: boolean;
   configured: boolean;
   mcpConfigured: boolean;
   agentMcpMode: RecipeAgentMcpMode;
@@ -439,6 +443,10 @@ export function createRecipesExtension(
   const createChildAgentRunner =
     opts.createChildAgentRunner ?? createRecipeChildAgentRunner;
   let state: RecipeLaunchState | null = null;
+  // Set when Pi reloads its runtime under a live selection. The resolved graph
+  // is read from disk once and cached on the launch state, so a reload has to
+  // drop it or an edited SYSTEM.md or agent YAML would never take effect.
+  let resolutionStale = false;
   let lastLaunchErrorKey: string | null = null;
   let childRunIndex = 0;
   const childRuns = new Map<string, ChildRun>();
@@ -664,7 +672,13 @@ export function createRecipesExtension(
     }
     const requestedAgentName = selectedAgentName(pi);
     const key = [cwd, recipeDir, requestedAgentName ?? ""].join("\0");
-    if (state?.key === key) return state;
+    if (state?.key === key && !resolutionStale) return state;
+    // A reload keeps the selection but re-reads the package, so the previous
+    // launch state is carried rather than replaced: its registry still owns the
+    // registrations the outgoing closure left in Pi and knows which of them to
+    // release for the incoming one.
+    const carried = state?.key === key ? state : undefined;
+    if (carried) markRecipeExtensionsStale(carried, false);
 
     let resolvedRecipe: ResolvedRecipe;
     let resolved: ResolvedRecipeAgent;
@@ -672,10 +686,14 @@ export function createRecipesExtension(
       resolvedRecipe = resolveRecipe({ recipeDir });
       resolved = resolvedRecipe.selectAgent(requestedAgentName);
     } catch (err) {
+      // Leave the resolution marked stale. The previous state is still
+      // installed, and clearing the mark here would hand it back to a later
+      // session as though it had been re-read from the repaired package.
       throw new RecipeLaunchError(
         recipeLoadErrorMessage(flag, err instanceof Error ? err.message : String(err))
       );
     }
+    resolutionStale = false;
     // Keep the recipe selected by CLI flags visible to shell commands and
     // recipe-authored instructions. In production `env` is process.env, so
     // built-in shell tools and child agents inherit these resolved values.
@@ -687,8 +705,12 @@ export function createRecipesExtension(
       cwd,
       resolvedRecipe,
       resolved,
-      extensionRegistrations: createRecipeExtensionRegistrationRegistry(),
+      extensionRegistrations:
+        carried?.extensionRegistrations ??
+        createRecipeExtensionRegistrationRegistry(),
       extensionsLoaded: false,
+      staleExtensionOwners: carried?.staleExtensionOwners ?? [],
+      staleOwnersDiscardedByHost: carried?.staleOwnersDiscardedByHost ?? false,
       configured: false,
       mcpConfigured: false,
       agentMcpMode: "cli",
@@ -735,29 +757,92 @@ export function createRecipesExtension(
     }
   }
 
+  /** A leaked registration is worth surfacing: the runner is no longer clean. */
+  function reportUnwindFailures(
+    failures: readonly RecipeExtensionUnwindFailure[],
+    ctx?: Pick<ExtensionContext, "ui">
+  ): void {
+    if (failures.length === 0) return;
+    ctx?.ui?.notify(
+      `Recipe extensions did not unload cleanly: ${failures
+        .map((failure) => `${failure.owner} (${failure.error})`)
+        .join(", ")}`,
+      "warning"
+    );
+  }
+
+  /**
+   * Record that Pi tore down the extension runtime under a closure that is
+   * still loaded. The closure is unwound at the next load rather than here, so
+   * an extension's own `session_shutdown` handler still runs and can release
+   * whatever it owns before its registrations are neutralized.
+   */
+  function markRecipeExtensionsStale(
+    launchState: RecipeLaunchState,
+    discardedByHost: boolean
+  ): void {
+    // Latch rather than assign: a teardown may be observed after the closure
+    // was already marked stale for another reason, and the disposers must not
+    // then run against registries the host has since rebuilt.
+    if (discardedByHost) launchState.staleOwnersDiscardedByHost = true;
+    if (!launchState.extensionsLoaded) return;
+    launchState.staleExtensionOwners = [
+      ...launchState.resolved.extensionPaths,
+    ];
+    launchState.extensionsLoaded = false;
+  }
+
+  /**
+   * Load the Recipe's extension closure as one transaction. A factory that
+   * throws unwinds every registration the attempt installed, leaving the
+   * runner exactly as it was, so the author can fix the source and reload
+   * without restarting the process.
+   */
   async function loadRecipeExtensions(
     pi: ExtensionAPI,
     ctx: ExtensionContext,
     launchState: RecipeLaunchState
   ): Promise<void> {
-    if (launchState.extensionFailure) {
-      throw new Error(launchState.extensionFailure);
-    }
     if (launchState.extensionsLoaded) return;
-    // Pi cannot unload registrations made by an earlier factory if a later
-    // factory fails. Mark the closure attempted before execution so the same
-    // live runner never retries a partially installed closure.
-    launchState.extensionsLoaded = true;
+    if (launchState.staleOwnersDiscardedByHost) {
+      // Vacancies describe what a closure left in the host's registries, so a
+      // rebuild voids them all. This is separate from unwinding the stale
+      // owners because a load that failed records vacancies but leaves no
+      // loaded closure behind, and so no owner to unwind them through.
+      launchState.extensionRegistrations.clearVacated();
+    }
+    if (launchState.staleExtensionOwners.length > 0) {
+      reportUnwindFailures(
+        await launchState.extensionRegistrations.unwind(
+          launchState.staleExtensionOwners,
+          launchState.staleOwnersDiscardedByHost
+        ),
+        ctx
+      );
+      launchState.staleExtensionOwners = [];
+    }
+    launchState.staleOwnersDiscardedByHost = false;
+    // The host's registrations are whatever it reports right now. A claim kept
+    // from a previous load would outlive an ambient extension that has since
+    // been removed, and reject a Recipe that adopts the name it left.
+    launchState.extensionRegistrations.releaseOwner("<host>");
     for (const tool of pi.getAllTools()) {
+      // A tool an unwound closure left behind is not a host tool; claiming it
+      // for `<host>` would block the reload that is about to replace it.
+      if (launchState.extensionRegistrations.vacated("tool", tool.name)) {
+        continue;
+      }
       launchState.extensionRegistrations.claim(
         "tool",
         tool.name,
         "<host>"
       );
     }
+    const attempted: string[] = [];
     let loadedCount = 0;
     try {
       for (const extensionPath of launchState.resolved.extensionPaths) {
+        attempted.push(extensionPath);
         const factory = bindRecipeExtensionFactory(
           await loadRecipeExtensionFactory(
             launchState.resolved.recipeDir,
@@ -778,10 +863,13 @@ export function createRecipesExtension(
         loadedCount += 1;
       }
     } catch (error) {
-      launchState.extensionFailure =
-        error instanceof Error ? error.message : String(error);
+      reportUnwindFailures(
+        await launchState.extensionRegistrations.unwind(attempted),
+        ctx
+      );
       throw error;
     }
+    launchState.extensionsLoaded = true;
     if (launchState.resolved.extensionPaths.length > 0) {
       ctx.ui.notify(
         `Recipe extensions: ${loadedCount}/${launchState.resolved.extensionPaths.length} loaded`,
@@ -850,7 +938,16 @@ export function createRecipesExtension(
         : []),
     ]);
     const registeredTools = new Set(
-      pi.getAllTools().map((tool) => tool.name)
+      pi
+        .getAllTools()
+        .map((tool) => tool.name)
+        // A name the previous closure vacated and this one did not register
+        // again is a neutralized leftover the host cannot drop, not a tool.
+        // Activating it would answer every call with "was unloaded" instead of
+        // reporting the declared tool as unavailable.
+        .filter(
+          (name) => !launchState.extensionRegistrations.vacated("tool", name)
+        )
     );
     const missingTools = [...activeTools].filter(
       (name) => !registeredTools.has(name)
@@ -1278,7 +1375,11 @@ export function createRecipesExtension(
           }
           await closeAllChildRuns();
           await closeRootMcpRuntime();
-          state = null;
+          // Keep the launch state so the shutdown that `ctx.reload()` emits can
+          // mark this closure stale and hand its registry to the next load.
+          // Re-reading the package is this command's own contract, so it marks
+          // the resolution rather than waiting to observe Pi's reload.
+          resolutionStale = true;
           archivedRuns.clear();
           completions.clear();
           await ctx.waitForIdle();
@@ -1317,9 +1418,13 @@ export function createRecipesExtension(
     };
     pi.registerTool(agentTool);
 
-    pi.on("session_start", async (_event, ctx) => {
+    pi.on("session_start", async (event, ctx) => {
       sessionCtx = ctx;
       localAgentContext = ctx;
+      // `/reload` rebuilds Pi's runtime around the same selection. Re-read the
+      // package so an edited system prompt, agent, or capability policy takes
+      // effect, matching what `/recipe reload` already did by dropping state.
+      if (event.reason === "reload") resolutionStale = true;
       const selectedRecipe = recipeFlag(pi);
       if (selectedRecipe) {
         const recipeDir = resolve(ctx.cwd, selectedRecipe);
@@ -1398,6 +1503,10 @@ export function createRecipesExtension(
     });
 
     pi.on("session_shutdown", async () => {
+      // Pi discards its own registries here, so the closure must be reinstalled
+      // rather than skipped as already loaded when `session_start` fires again
+      // with reason "reload" against this same launch state.
+      if (state) markRecipeExtensionsStale(state, true);
       await closeAllChildRuns();
       await closeRootMcpRuntime();
       clearMcpCatalogPreload(env);

@@ -113,6 +113,41 @@ commands, and other non-tool behavior. Recipe `tools` remains the exact
 model-callable allowlist. Embedded Recipe sessions disable ambient extensions,
 skills, prompt templates, and context files by default.
 
+## Reloading a Recipe
+
+Both `/reload` and `/recipe reload` re-read the Recipe. Pi rebuilds its runtime
+and the extension re-resolves the package from disk, so an edited `SYSTEM.md`,
+agent YAML, tool allowlist, skill selection, or extension source takes effect
+without restarting Pi. Extension sources are compiled fresh on every load.
+
+A reload keeps the launch selection: `--recipe` and `--agent` are fixed for the
+process. Switching or forking a session reuses the already-resolved package
+instead; only a reload re-reads it.
+
+Loading the closure is one transaction. If any extension throws, every
+registration that attempt installed is unwound before the error is reported,
+so a partially installed closure is never left running and the same session can
+load the Recipe again once the source is fixed.
+
+Unwinding is as complete as the host allows. Pi can remove a provider; tools,
+commands, and shortcuts stay in its registry for the life of the runtime, so an
+unwound extension's entries are neutralized instead — they refuse to run and
+report which extension was unloaded. Lifecycle handlers registered with
+`pi.on` go quiet at the same point, which is what keeps a reloaded extension
+from running beside the one it replaced.
+
+A torn-down closure is unwound just before the replacement loads, not when the
+session ends, so an extension holding resources of its own (timers, watchers,
+sockets) can still release them from a `session_shutdown` handler.
+
+Neutralizing a registration means replacing its entry point, so a frozen
+registration must be plain data. A frozen object cannot be edited, leaving only
+a copy, and a copy is not the object a prototype method or an accessor was
+written against: class instances lose their private state, and accessors keyed
+by their receiver answer for the wrong one. Registering a frozen class instance
+or a frozen object with accessors fails at load with an error naming the
+extension. Register plain data, or leave the registration unfrozen.
+
 ## Validation
 
 Every `pi --recipe` launch automatically runs the shared Recipe Format
