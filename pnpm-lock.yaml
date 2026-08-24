@@ -18,8 +18,8 @@ importers:
         specifier: ^8.20.0
         version: 8.20.0
       mcporter:
-        specifier: 0.13.6
-        version: 0.13.6
+        specifier: 0.13.7
+        version: 0.13.7
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -1284,8 +1284,8 @@ packages:
   highlight.js@10.7.3:
     resolution: {integrity: sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A==}
 
-  hono@4.13.2:
-    resolution: {integrity: sha512-JydRilDRkYBQMt9qR9U92mXxmbGqsqSn/IKOrh4e7/gEbn+0zSr8igTu0obwJoNGN4sez28DIql7FBHWydoJpA==}
+  hono@4.13.3:
+    resolution: {integrity: sha512-r8AO2mYHoLxSHkgafNeC/BXyb2vWRxD3jem4Ts+ptav8oTG5FIRifAjuJEmZI4bSvvc2ns0GxmIYiZnHqN3mMw==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@9.0.3:
@@ -1463,8 +1463,8 @@ packages:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
 
-  mcporter@0.13.6:
-    resolution: {integrity: sha512-sSUyQEJEJ7I74u8WjajhHAxLJLYhERuKdjGqaaQp7JkQ7pckwVHp3drj2EU5O7Mh5zq+iww+PPmiNVhoC467Gg==}
+  mcporter@0.13.7:
+    resolution: {integrity: sha512-+xfZwrFv+oO0YOyHUQzyBRaOGomJhMWPtoINGfY6rtEk7s4jW6T+osnjPr/1XAmIpN8J0/P03XiLnTIUkltPzg==}
     engines: {node: '>=24'}
     hasBin: true
 
@@ -1504,9 +1504,9 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
-  negotiator@1.0.0:
-    resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
-    engines: {node: '>= 0.6'}
+  negotiator@1.1.0:
+    resolution: {integrity: sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg==}
+    engines: {node: '>=18'}
 
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
@@ -2338,9 +2338,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@hono/node-server@1.19.17(hono@4.13.2)':
+  '@hono/node-server@1.19.17(hono@4.13.3)':
     dependencies:
-      hono: 4.13.2
+      hono: 4.13.3
     optional: true
 
   '@iarna/toml@2.2.5': {}
@@ -2423,7 +2423,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 1.19.17(hono@4.13.2)
+      '@hono/node-server': 1.19.17(hono@4.13.3)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -2433,7 +2433,7 @@ snapshots:
       eventsource-parser: 3.1.1
       express: 5.2.1
       express-rate-limit: 8.6.2(express@5.2.1)
-      hono: 4.13.2
+      hono: 4.13.3
       jose: 6.2.9
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -2783,7 +2783,7 @@ snapshots:
   accepts@2.0.0:
     dependencies:
       mime-types: 3.0.2
-      negotiator: 1.0.0
+      negotiator: 1.1.0
     optional: true
 
   acorn@8.18.0: {}
@@ -3143,7 +3143,7 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
-  hono@4.13.2:
+  hono@4.13.3:
     optional: true
 
   hosted-git-info@9.0.3:
@@ -3296,7 +3296,7 @@ snapshots:
   math-intrinsics@1.1.0:
     optional: true
 
-  mcporter@0.13.6:
+  mcporter@0.13.7:
     dependencies:
       '@iarna/toml': 2.2.5
       '@modelcontextprotocol/client': 2.0.0
@@ -3335,7 +3335,9 @@ snapshots:
 
   nanoid@3.3.18: {}
 
-  negotiator@1.0.0:
+  negotiator@1.1.0:
+    dependencies:
+      content-type: 2.1.0
     optional: true
 
   node-domexception@1.0.0: {}
