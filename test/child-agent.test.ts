@@ -72,10 +72,12 @@ function writeRecipe(
   return { recipeDir, workspaceDir };
 }
 
-function mockHandle() {
+function mockHandle(
+  messages: any[] = [{ role: "assistant", content: "done" }]
+) {
   const listeners: Array<(event: any) => void> = [];
   const session = {
-    messages: [{ role: "assistant", content: "done" }],
+    messages,
     prompt: vi.fn(async () => undefined),
     steer: vi.fn(async () => undefined),
     abort: vi.fn(async () => undefined),
@@ -149,6 +151,33 @@ describe("Recipe child agent runner", () => {
     await runner.shutdown();
     expect(handle.dispose).toHaveBeenCalledOnce();
     expect(existsSync(sessionOptions.mcpRuntimeDir)).toBe(false);
+  });
+
+  it("rejects terminal provider errors instead of returning empty success", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipe-child-provider-error-"));
+    roots.push(root);
+    const { recipeDir, workspaceDir } = writeRecipe(root);
+    const recipe = resolveRecipe({ recipeDir });
+    mockHandle([
+      {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "413 Payload Too Large",
+      },
+    ]);
+
+    const runner = createRecipeChildAgentRunner({
+      recipe,
+      workspaceDir,
+      agentName: "worker",
+      env: {},
+    });
+
+    await expect(runner.prompt("inspect")).rejects.toThrow(
+      "413 Payload Too Large"
+    );
+    await runner.shutdown();
   });
 
   it("uses each resolved child's own MCP mode", async () => {
