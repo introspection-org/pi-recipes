@@ -4,6 +4,7 @@ import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import {
   MCP_DAEMON_FINGERPRINT_ENV,
@@ -297,9 +298,32 @@ export function nativeMcpClientPath(
   arch = process.arch
 ): string | undefined {
   const executable = platform === "win32" ? "mcp-client.exe" : "mcp-client";
+  // Anchor every lookup at the recipes package rather than at this module.
+  // The runtime agent bundles this code into its own tree, where `import.meta`
+  // points at the bundle and the platform packages - linked only beneath
+  // recipes, never hoisted - are invisible. The package itself stays
+  // resolvable there because it is a direct dependency of the host.
   const packageEntrypoint = fileURLToPath(
     import.meta.resolve("@introspection-ai/recipes")
   );
+  // A published install carries exactly one binary: the platform packages are
+  // gated by npm `os`/`cpu`, so only the one this host can execute is ever
+  // downloaded. Resolution is wrapped because a package manager that skipped
+  // optional dependencies - or a lookup for a platform other than the host's -
+  // simply has nothing to resolve, which is a fallthrough rather than an error.
+  // package.json is the resolution target because a package `exports` map may
+  // not expose the binary path, while the manifest always resolves.
+  try {
+    const manifest = createRequire(packageEntrypoint).resolve(
+      `@introspection-ai/mcp-client-${platform}-${arch}/package.json`
+    );
+    const packaged = resolve(dirname(manifest), "bin", executable);
+    if (existsSync(packaged)) return packaged;
+  } catch {
+    // No platform package for this host; fall through to the working tree.
+  }
+  // Working-tree fallback: `pnpm build:native` writes here, so a checkout runs
+  // against a locally compiled client without publishing anything.
   const candidate = resolve(
     dirname(packageEntrypoint),
     "..",

@@ -65,10 +65,6 @@ import {
   cloneModelForRecipe,
 } from "./recipe-model.js";
 import {
-  checkRecipeAtLoad,
-  formatRecipeDiagnostics,
-} from "./recipe-check.js";
-import {
   resolveRecipe,
   type ResolvedRecipeAgent,
   type ResolvedRecipe,
@@ -1320,25 +1316,6 @@ export function createRecipesExtension(
     pi.on("session_start", async (_event, ctx) => {
       sessionCtx = ctx;
       localAgentContext = ctx;
-      const selectedRecipe = recipeFlag(pi);
-      if (selectedRecipe) {
-        const recipeDir = resolve(ctx.cwd, selectedRecipe);
-        if (existsSync(recipeDir)) {
-          try {
-            const report = await checkRecipeAtLoad(recipeDir, env);
-            if (!report.valid) {
-              const message = formatRecipeDiagnostics(report.diagnostics);
-              failRecipeSession(pi, `validation failed\n${message}`, ctx);
-              return;
-            }
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : String(error);
-            failRecipeSession(pi, `validation failed\n${message}`, ctx);
-            return;
-          }
-        }
-      }
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
       if (!launchState) return;
       launchState.configured = false;

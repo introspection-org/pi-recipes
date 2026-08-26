@@ -92,43 +92,21 @@ jobs:
             arch: x64
             platform_id: linux-x64
             target: x86_64-unknown-linux-gnu
-            package_mcp: true
-            is_musl: false
           - os: ubuntu-24.04-arm
             platform: linux
             arch: arm64
             platform_id: linux-arm64
             target: aarch64-unknown-linux-gnu
-            package_mcp: true
-            is_musl: false
-          - os: ubuntu-latest
-            platform: linux
-            arch: x64
-            platform_id: linux-x64-musl
-            target: x86_64-unknown-linux-musl
-            package_mcp: false
-            is_musl: true
           - os: macos-14
             platform: darwin
             arch: arm64
             platform_id: darwin-arm64
             target: aarch64-apple-darwin
-            package_mcp: true
-            is_musl: false
           - os: macos-15-intel
             platform: darwin
             arch: x64
             platform_id: darwin-x64
             target: x86_64-apple-darwin
-            package_mcp: true
-            is_musl: false
-          - os: windows-latest
-            platform: win32
-            arch: x64
-            platform_id: win32-x64
-            target: x86_64-pc-windows-msvc
-            package_mcp: false
-            is_musl: false
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -139,35 +117,25 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install musl linker
-        if: ${{ matrix.is_musl }}
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
       - run: cargo build --release --target ${{ matrix.target }} -p pi-mcp-client
-        if: ${{ matrix.package_mcp }}
 
-      - run: cargo build --release --target ${{ matrix.target }} -p introspection-recipe-check --bin introspection-recipe-check
+      # Staged by rust target, which is the layout build-mcp-client-packages.mjs
+      # reads; the os/cpu mapping lives in npm/targets.json, not in this matrix.
+      - name: Stage the binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "staged/${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/mcp-client" "staged/${{ matrix.target }}/"
 
-      - run: node scripts/package-mcp-client.mjs
-        if: ${{ matrix.package_mcp }}
-        env:
-          MCP_CLIENT_PLATFORM: ${{ matrix.platform }}
-          MCP_CLIENT_ARCH: ${{ matrix.arch }}
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
-
-      - run: node scripts/package-introspection-recipe-check.mjs
-        env:
-          INTROSPECTION_RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
-          INTROSPECTION_RECIPE_CHECK_ARCH: ${{ matrix.arch }}
-          INTROSPECTION_RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
-
+      # The wildcard must sit at `staged/` so the rust-target directory survives:
+      # upload-artifact roots the archive at the least common ancestor of the
+      # matched files, so `staged/<target>/*` would upload a bare mcp-client and
+      # the assembly step below could not tell the platforms apart.
       - uses: actions/upload-artifact@v7
         with:
           name: native-tools-${{ matrix.platform_id }}
-          path: |
-            vendor/mcp-client/${{ matrix.platform }}-${{ matrix.arch }}
-            vendor/introspection-recipe-check/${{ matrix.platform_id }}
+          path: staged/**
           if-no-files-found: error
 
   publish:
@@ -207,25 +175,18 @@ jobs:
           pattern: native-tools-*
           path: native-tool-artifacts
 
-      - name: Prepare packaged native binaries
+      - name: Assemble the per-platform mcp-client packages
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf vendor/mcp-client vendor/introspection-recipe-check
-          mkdir -p vendor/mcp-client vendor/introspection-recipe-check
+          version="$(node -p "require('./package.json').version")"
+          rm -rf npm/artifacts && mkdir -p npm/artifacts
           for artifact in native-tool-artifacts/native-tools-*; do
-            platform_id="${artifact##*/native-tools-}"
-            mkdir -p "vendor/mcp-client/${platform_id}"
-            mkdir -p "vendor/introspection-recipe-check/${platform_id}"
-            find "$artifact" -type f -name 'mcp-client*' -exec cp {} "vendor/mcp-client/${platform_id}/" \;
-            find "$artifact" -type f -name 'introspection-recipe-check*' -exec cp {} "vendor/introspection-recipe-check/${platform_id}/" \;
+            # Each artifact holds a <rust-target>/mcp-client tree (see the upload above).
+            cp -R "$artifact"/. npm/artifacts/
           done
-          find vendor/mcp-client -type f -name 'mcp-client*' \
-            | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
-          find vendor/introspection-recipe-check -type f -name 'introspection-recipe-check*' \
-            | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
-          find vendor/mcp-client -maxdepth 2 -type f -print
-          find vendor/introspection-recipe-check -maxdepth 2 -type f -print
+          find npm/artifacts -maxdepth 2 -type f -print
+          node npm/build-mcp-client-packages.mjs "$version" npm/artifacts
 
       - run: pnpm pack:check
 
@@ -241,6 +202,17 @@ jobs:
           if [[ "$version" == *-* ]]; then
             tag="beta"
           fi
+
+          # Platform packages first, so the optionalDependencies the root
+          # manifest names already resolve when it is published.
+          for d in npm/dist/mcp-client-*; do
+            platform_name="$(node -p "require('./$d/package.json').name")"
+            if npm view "$platform_name@$version" version >/dev/null 2>&1; then
+              echo "$platform_name@$version is already published"
+            else
+              npm publish "$d" --access public --tag "$tag"
+            fi
+          done
 
           if npm view "$package_name@$version" version >/dev/null 2>&1; then
             echo "$package_name@$version is already published"

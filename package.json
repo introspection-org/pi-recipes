@@ -10,8 +10,6 @@
 	},
 	"files": [
 		"dist",
-		"vendor/mcp-client",
-		"vendor/introspection-recipe-check",
 		"docs",
 		"README.md",
 		"package.json"
@@ -78,13 +76,13 @@
 	"scripts": {
 		"build": "pnpm build:ts && pnpm build:native",
 		"build:ts": "rm -rf dist && tsc && node scripts/build-mcp-daemon.mjs",
-		"build:native": "cargo build --release -p pi-mcp-client && cargo build --release -p introspection-recipe-check --bin introspection-recipe-check && node scripts/package-mcp-client.mjs && node scripts/package-introspection-recipe-check.mjs",
+		"build:native": "cargo build --release -p pi-mcp-client && node scripts/package-mcp-client.mjs",
 		"bench:mcp-client": "pnpm build:ts && cargo build --release -p pi-mcp-client && node scripts/benchmark-mcp-client.mjs",
 		"prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-		"test": "pnpm build:ts && cargo test -p pi-mcp-client -p introspection-recipe-check && cargo build -p pi-mcp-client && cargo build -p introspection-recipe-check --bin introspection-recipe-check && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
+		"test": "pnpm build:ts && cargo test -p pi-mcp-client -p introspection-recipe-check && cargo build -p pi-mcp-client && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
 		"pack:check": "pnpm pack --dry-run --json | node scripts/check-npm-pack.mjs",
-		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client vendor/introspection-recipe-check"
+		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client"
 	},
 	"dependencies": {
 		"@introspection-sdk/introspection-pi": "^0.22.0",

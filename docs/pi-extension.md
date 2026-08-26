@@ -115,9 +115,8 @@ skills, prompt templates, and context files by default.
 
 ## Validation
 
-Every `pi --recipe` launch automatically runs the shared Recipe Format
-validator. Invalid Recipes are rendered in Pi and stop the session before any
-model call.
+A `pi --recipe` launch does **not** validate the Recipe. Validation runs where
+it can be acted on: while authoring, and in whatever host starts the session.
 
 For an explicit manual or CI check, run:
 
@@ -125,8 +124,12 @@ For an explicit manual or CI check, run:
 introspection check
 ```
 
-Both paths use the same Rust validation core. The binary embedded in the npm
-package is an internal bridge for Pi startup, not a second user-facing CLI.
+That command uses the Rust validation core (`introspection-recipe-check`),
+which is also published as a crate and a Python binding so a host can embed it
+- the Introspection platform validates there, and blocks task creation on a
+failure. This npm package no longer ships a validator binary: a launch-time
+check was a third run of the same engine in the one place whose failure mode is
+a dead session, including when the binary simply could not be spawned.
 
 ## Host parity
 
