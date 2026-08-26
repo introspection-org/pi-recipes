@@ -93,9 +93,7 @@ jobs:
 
       - run: |
           cargo build -p pi-mcp-client
-          cargo build -p introspection-recipe-check --bin introspection-recipe-check
           MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs
-          INTROSPECTION_RECIPE_CHECK_BIN=target/debug/introspection-recipe-check node scripts/package-introspection-recipe-check.mjs
 
       - run: pnpm typecheck
 
@@ -123,15 +121,7 @@ jobs:
           MCP_CLIENT_PLATFORM: linux
           MCP_CLIENT_ARCH: arm64
 
-      - run: node scripts/package-introspection-recipe-check.mjs
-        env:
-          INTROSPECTION_RECIPE_CHECK_PLATFORM: linux
-          INTROSPECTION_RECIPE_CHECK_ARCH: arm64
-          INTROSPECTION_RECIPE_CHECK_PLATFORM_ID: linux-arm64
-
       - run: test -x vendor/mcp-client/linux-arm64/mcp-client
-
-      - run: test -x vendor/introspection-recipe-check/linux-arm64/introspection-recipe-check
 
   native-validator-portability:
     strategy:
@@ -143,14 +133,12 @@ jobs:
             arch: x64
             platform_id: linux-x64-musl
             target: x86_64-unknown-linux-musl
-            executable: introspection-recipe-check
             is_musl: true
           - os: windows-latest
             platform: win32
             arch: x64
             platform_id: win32-x64
             target: x86_64-pc-windows-msvc
-            executable: introspection-recipe-check.exe
             is_musl: false
     runs-on: ${{ matrix.os }}
     steps:
@@ -170,16 +158,3 @@ jobs:
 
       - run: cargo build --release --target ${{ matrix.target }} -p introspection-recipe-check --bin introspection-recipe-check
 
-      - run: node scripts/package-introspection-recipe-check.mjs
-        env:
-          INTROSPECTION_RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
-          INTROSPECTION_RECIPE_CHECK_ARCH: ${{ matrix.arch }}
-          INTROSPECTION_RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
-
-      - name: Verify packaged validator
-        shell: node {0}
-        run: |
-          const { existsSync } = require("node:fs");
-          const path = "vendor/introspection-recipe-check/${{ matrix.platform_id }}/${{ matrix.executable }}";
-          if (!existsSync(path)) throw new Error(`missing ${path}`);

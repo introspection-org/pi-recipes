@@ -92,43 +92,21 @@ jobs:
             arch: x64
             platform_id: linux-x64
             target: x86_64-unknown-linux-gnu
-            package_mcp: true
-            is_musl: false
           - os: ubuntu-24.04-arm
             platform: linux
             arch: arm64
             platform_id: linux-arm64
             target: aarch64-unknown-linux-gnu
-            package_mcp: true
-            is_musl: false
-          - os: ubuntu-latest
-            platform: linux
-            arch: x64
-            platform_id: linux-x64-musl
-            target: x86_64-unknown-linux-musl
-            package_mcp: false
-            is_musl: true
           - os: macos-14
             platform: darwin
             arch: arm64
             platform_id: darwin-arm64
             target: aarch64-apple-darwin
-            package_mcp: true
-            is_musl: false
           - os: macos-15-intel
             platform: darwin
             arch: x64
             platform_id: darwin-x64
             target: x86_64-apple-darwin
-            package_mcp: true
-            is_musl: false
-          - os: windows-latest
-            platform: win32
-            arch: x64
-            platform_id: win32-x64
-            target: x86_64-pc-windows-msvc
-            package_mcp: false
-            is_musl: false
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -139,27 +117,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install musl linker
-        if: ${{ matrix.is_musl }}
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
       - run: cargo build --release --target ${{ matrix.target }} -p pi-mcp-client
-        if: ${{ matrix.package_mcp }}
-
-      - run: cargo build --release --target ${{ matrix.target }} -p introspection-recipe-check --bin introspection-recipe-check
 
       - run: node scripts/package-mcp-client.mjs
-        if: ${{ matrix.package_mcp }}
         env:
           MCP_CLIENT_PLATFORM: ${{ matrix.platform }}
           MCP_CLIENT_ARCH: ${{ matrix.arch }}
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
-
-      - run: node scripts/package-introspection-recipe-check.mjs
-        env:
-          INTROSPECTION_RECIPE_CHECK_PLATFORM: ${{ matrix.platform }}
-          INTROSPECTION_RECIPE_CHECK_ARCH: ${{ matrix.arch }}
-          INTROSPECTION_RECIPE_CHECK_PLATFORM_ID: ${{ matrix.platform_id }}
           CARGO_BUILD_TARGET: ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v7
@@ -167,7 +130,6 @@ jobs:
           name: native-tools-${{ matrix.platform_id }}
           path: |
             vendor/mcp-client/${{ matrix.platform }}-${{ matrix.arch }}
-            vendor/introspection-recipe-check/${{ matrix.platform_id }}
           if-no-files-found: error
 
   publish:
@@ -211,21 +173,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf vendor/mcp-client vendor/introspection-recipe-check
-          mkdir -p vendor/mcp-client vendor/introspection-recipe-check
+          rm -rf vendor/mcp-client
+          mkdir -p vendor/mcp-client
           for artifact in native-tool-artifacts/native-tools-*; do
             platform_id="${artifact##*/native-tools-}"
             mkdir -p "vendor/mcp-client/${platform_id}"
-            mkdir -p "vendor/introspection-recipe-check/${platform_id}"
             find "$artifact" -type f -name 'mcp-client*' -exec cp {} "vendor/mcp-client/${platform_id}/" \;
-            find "$artifact" -type f -name 'introspection-recipe-check*' -exec cp {} "vendor/introspection-recipe-check/${platform_id}/" \;
           done
           find vendor/mcp-client -type f -name 'mcp-client*' \
             | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
-          find vendor/introspection-recipe-check -type f -name 'introspection-recipe-check*' \
-            | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
           find vendor/mcp-client -maxdepth 2 -type f -print
-          find vendor/introspection-recipe-check -maxdepth 2 -type f -print
 
       - run: pnpm pack:check
 

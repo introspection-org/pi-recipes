@@ -27,11 +27,14 @@ process.stdin.on("end", () => {
     process.exitCode = 1;
   }
 
-  const recipeValidator = `vendor/introspection-recipe-check/${process.platform}-${process.arch}/${
-    process.platform === "win32" ? "introspection-recipe-check.exe" : "introspection-recipe-check"
-  }`;
-  if (!files.includes(recipeValidator)) {
-    console.error(`npm package is missing the Pi startup validator: ${recipeValidator}`);
+  const vendoredValidator = files.filter((path) =>
+    path.startsWith("vendor/introspection-recipe-check/")
+  );
+  if (vendoredValidator.length > 0) {
+    console.error(
+      "npm package vendors the recipe validator; recipe validation is a host concern:"
+    );
+    for (const path of vendoredValidator) console.error(`- ${path}`);
     process.exitCode = 1;
   }
 
