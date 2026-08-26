@@ -39,9 +39,13 @@ let report = check_recipe_files(&input);
 assert!(!report.valid);
 ```
 
-The `introspection-recipe-check` binary is a private snapshot-in/snapshot-out bridge embedded
-in the npm package so `pi --recipe` can run the same checker at startup. It is
-not a user-facing filesystem CLI.
+The `introspection-recipe-check` binary is a private snapshot-in/snapshot-out bridge
+for hosts that shell out to the checker rather than linking it. It is not a
+user-facing filesystem CLI. It is no longer shipped inside
+`@introspection-ai/recipes`, and `pi --recipe` does not validate at startup:
+validation belongs where it can be acted on - while authoring, in CI, and in
+the host before it starts a session. Embed this crate directly, or use the
+`introspection-recipe-check` Python binding, to validate from a host.
 
 Diagnostics include a stable code, Recipe-relative path, optional 1-based
 source span, message, and optional help text.
