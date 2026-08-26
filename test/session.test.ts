@@ -1170,6 +1170,36 @@ describe("in-process run controller", () => {
     expect(scripted).not.toBeNull();
   });
 
+  it("marks a child provider error as failed with the provider message", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const controller = createInProcessRunController({
+      recipe: resolveRecipe({ recipeDir }),
+      cwd: workspaceDir,
+      env: cleanEnv(),
+      sessionFactory: async () =>
+        ({
+          session: {
+            messages: [
+              {
+                ...assistantMessage("", "error"),
+                errorMessage: "413 Payload Too Large",
+              },
+            ],
+            prompt: vi.fn(async () => {}),
+            abort: vi.fn(async () => {}),
+          },
+          dispose: vi.fn(async () => {}),
+        }) as unknown as RecipeSessionHandle,
+    });
+
+    const run = await controller.start({ name: "helper", prompt: "go" });
+    const settled = await controller.wait(run.agent_run_id);
+
+    expect(settled.status).toBe("failed");
+    expect(settled.error).toBe("413 Payload Too Large");
+    await controller.close(run.agent_run_id);
+  });
+
   it("bounds concurrency", async () => {
     const { recipeDir, workspaceDir } = fixture();
     let live = 0;

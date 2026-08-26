@@ -210,6 +210,48 @@ describe("background agent run lifecycle", () => {
     }
   });
 
+  it("keeps an intentional interrupt from becoming a child failure", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
+    try {
+      const runner = hangingRunner();
+      const { pi, ctx } = await startSession(runner.createChildAgentRunner, root);
+      const started = await agentTool(pi).execute(
+        "call-1",
+        { name: "explorer", prompt: "look around" },
+        undefined,
+        undefined,
+        ctx
+      );
+      const id = started?.details?.agent?.agent_run_id as string;
+
+      const interrupted = await agentTool(pi).execute(
+        "call-2",
+        { action: "interrupt", id },
+        undefined,
+        undefined,
+        ctx
+      );
+
+      expect(runner.cancel).toHaveBeenCalledOnce();
+      expect(interrupted?.details?.agent).toEqual(
+        expect.objectContaining({ status: "interrupted", error: undefined })
+      );
+
+      const status = await agentTool(pi).execute(
+        "call-3",
+        { action: "status", id },
+        undefined,
+        undefined,
+        ctx
+      );
+      expect(status?.details?.agent).toEqual(
+        expect.objectContaining({ status: "interrupted", error: undefined })
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("interrupts and closes an in-flight run on close", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-lifecycle-"));
     try {
