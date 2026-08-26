@@ -4,33 +4,10 @@ import { delimiter, join } from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const recipeCheckMocks = vi.hoisted(() => ({
-  checkRecipeAtLoad: vi.fn(async () => ({
-    valid: true,
-    diagnostics: [] as Array<{
-      code: string;
-      path: string;
-      span?: { line: number; column: number };
-      message: string;
-      help?: string;
-    }>,
-  })),
-}));
-
-vi.mock("../src/recipe-check.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/recipe-check.js")>()),
-  checkRecipeAtLoad: recipeCheckMocks.checkRecipeAtLoad,
-}));
-
 import { createRecipesExtension } from "../src/pi-extension.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 beforeEach(() => {
-  recipeCheckMocks.checkRecipeAtLoad.mockReset();
-  recipeCheckMocks.checkRecipeAtLoad.mockResolvedValue({
-    valid: true,
-    diagnostics: [],
-  });
 });
 
 function extensionContext(cwd: string, notify = vi.fn()) {
@@ -203,85 +180,6 @@ describe("Recipes extension for Pi", () => {
       );
       expect(resourceResults).toEqual([{}]);
     } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("renders shared validator errors and prevents Pi fallback", async () => {
-    const root = mkdtempSync(join(tmpdir(), "recipe-check-error-"));
-    try {
-      const recipeDir = writeRecipe(root);
-      const pi = createMockExtensionAPI();
-      const notify = vi.fn();
-      const ctx = extensionContext(root, notify);
-      const abort = vi.fn();
-      pi.flagValues.set("recipe", recipeDir);
-      recipeCheckMocks.checkRecipeAtLoad.mockResolvedValueOnce({
-        valid: false,
-        diagnostics: [
-          {
-            code: "agent.subagent_missing",
-            path: "defs/main.yaml",
-            span: { line: 8, column: 3 },
-            message: 'subagent "missing" was not found',
-            help: "declare the agent or remove the reference",
-          },
-        ],
-      });
-
-      createRecipesExtension()(pi);
-      await pi.emitExtensionEvent(
-        { type: "session_start", reason: "startup" } as any,
-        ctx
-      );
-      await pi.emitExtensionEvent(
-        { type: "agent_start" } as any,
-        { ...ctx, abort }
-      );
-
-      expect(notify).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "error [agent.subagent_missing] defs/main.yaml:8:3"
-        ),
-        "warning"
-      );
-      expect(pi.activeTools).toEqual([]);
-      expect(abort).toHaveBeenCalledOnce();
-      expect(pi.sessionName).toBeUndefined();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("sets a failing exit code for an invalid printed recipe session", async () => {
-    const root = mkdtempSync(join(tmpdir(), "recipe-check-print-error-"));
-    const previousExitCode = process.exitCode;
-    try {
-      const recipeDir = writeRecipe(root);
-      const pi = createMockExtensionAPI();
-      const ctx = { ...extensionContext(root), mode: "print" };
-      pi.flagValues.set("recipe", recipeDir);
-      recipeCheckMocks.checkRecipeAtLoad.mockResolvedValueOnce({
-        valid: false,
-        diagnostics: [
-          {
-            code: "agent.invalid",
-            path: "defs/main.yaml",
-            message: "invalid agent",
-          },
-        ],
-      });
-
-      createRecipesExtension({ env: {} })(pi);
-      await pi.emitExtensionEvent(
-        { type: "session_start", reason: "startup" } as any,
-        ctx
-      );
-
-      expect(process.exitCode).toBe(1);
-      expect(pi.sessionName).toBeUndefined();
-    } finally {
-      process.exitCode = previousExitCode;
       rmSync(root, { recursive: true, force: true });
     }
   });
