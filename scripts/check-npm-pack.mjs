@@ -27,14 +27,12 @@ process.stdin.on("end", () => {
     process.exitCode = 1;
   }
 
-  const vendoredValidator = files.filter((path) =>
-    path.startsWith("vendor/introspection-recipe-check/")
-  );
-  if (vendoredValidator.length > 0) {
+  const vendored = files.filter((path) => path.startsWith("vendor/"));
+  if (vendored.length > 0) {
     console.error(
-      "npm package vendors the recipe validator; recipe validation is a host concern:"
+      "npm package vendors native binaries; they ship as os/cpu-gated platform packages:"
     );
-    for (const path of vendoredValidator) console.error(`- ${path}`);
+    for (const path of vendored) console.error(`- ${path}`);
     process.exitCode = 1;
   }
 

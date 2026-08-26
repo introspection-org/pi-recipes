@@ -297,6 +297,25 @@ export function nativeMcpClientPath(
   arch = process.arch
 ): string | undefined {
   const executable = platform === "win32" ? "mcp-client.exe" : "mcp-client";
+  // A published install carries exactly one binary: the platform packages are
+  // gated by npm `os`/`cpu`, so only the one this host can execute is ever
+  // downloaded. Resolution is wrapped because a package manager that skipped
+  // optional dependencies - or a host with no published binary - simply has
+  // nothing to resolve, which is a fallthrough rather than an error.
+  try {
+    const packaged = fileURLToPath(
+      import.meta.resolve(
+        `@introspection-ai/mcp-client-${platform}-${arch}/bin/${executable}`
+      )
+    );
+    if (existsSync(packaged)) return packaged;
+  } catch {
+    // No platform package for this host; fall through to the working tree.
+  }
+  // Working-tree fallback: `pnpm build:native` writes here, so a checkout runs
+  // against a locally compiled client without publishing anything. This is also
+  // the path a cross-platform lookup takes, since only the host's platform
+  // package is ever installed.
   const packageEntrypoint = fileURLToPath(
     import.meta.resolve("@introspection-ai/recipes")
   );

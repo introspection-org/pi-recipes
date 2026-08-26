@@ -119,17 +119,19 @@ jobs:
 
       - run: cargo build --release --target ${{ matrix.target }} -p pi-mcp-client
 
-      - run: node scripts/package-mcp-client.mjs
-        env:
-          MCP_CLIENT_PLATFORM: ${{ matrix.platform }}
-          MCP_CLIENT_ARCH: ${{ matrix.arch }}
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
+      # Staged by rust target, which is the layout build-mcp-client-packages.mjs
+      # reads; the os/cpu mapping lives in npm/targets.json, not in this matrix.
+      - name: Stage the binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "staged/${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/mcp-client" "staged/${{ matrix.target }}/"
 
       - uses: actions/upload-artifact@v7
         with:
           name: native-tools-${{ matrix.platform_id }}
-          path: |
-            vendor/mcp-client/${{ matrix.platform }}-${{ matrix.arch }}
+          path: staged/${{ matrix.target }}/*
           if-no-files-found: error
 
   publish:
@@ -169,20 +171,18 @@ jobs:
           pattern: native-tools-*
           path: native-tool-artifacts
 
-      - name: Prepare packaged native binaries
+      - name: Assemble the per-platform mcp-client packages
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf vendor/mcp-client
-          mkdir -p vendor/mcp-client
+          version="$(node -p "require('./package.json').version")"
+          rm -rf npm/artifacts && mkdir -p npm/artifacts
           for artifact in native-tool-artifacts/native-tools-*; do
-            platform_id="${artifact##*/native-tools-}"
-            mkdir -p "vendor/mcp-client/${platform_id}"
-            find "$artifact" -type f -name 'mcp-client*' -exec cp {} "vendor/mcp-client/${platform_id}/" \;
+            # Each artifact holds one rust-target directory staged by the build job.
+            cp -R "$artifact"/. npm/artifacts/
           done
-          find vendor/mcp-client -type f -name 'mcp-client*' \
-            | while read -r f; do case "$f" in *.exe) ;; *) chmod 755 "$f" ;; esac; done
-          find vendor/mcp-client -maxdepth 2 -type f -print
+          find npm/artifacts -maxdepth 2 -type f -print
+          node npm/build-mcp-client-packages.mjs "$version" npm/artifacts
 
       - run: pnpm pack:check
 
@@ -198,6 +198,17 @@ jobs:
           if [[ "$version" == *-* ]]; then
             tag="beta"
           fi
+
+          # Platform packages first, so the optionalDependencies the root
+          # manifest names already resolve when it is published.
+          for d in npm/dist/mcp-client-*; do
+            platform_name="$(node -p "require('./$d/package.json').name")"
+            if npm view "$platform_name@$version" version >/dev/null 2>&1; then
+              echo "$platform_name@$version is already published"
+            else
+              npm publish "$d" --access public --tag "$tag"
+            fi
+          done
 
           if npm view "$package_name@$version" version >/dev/null 2>&1; then
             echo "$package_name@$version is already published"

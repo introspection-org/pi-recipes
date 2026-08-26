@@ -10,7 +10,6 @@
 	},
 	"files": [
 		"dist",
-		"vendor/mcp-client",
 		"docs",
 		"README.md",
 		"package.json"
