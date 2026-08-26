@@ -8,7 +8,7 @@ import type {
 } from "./agents.js";
 import { notifyAgentRunEvent } from "./agents.js";
 import { autoResolveInteractions } from "./interactions.js";
-import { promptResultText } from "./child-agent.js";
+import { promptResultError, promptResultText } from "./child-agent.js";
 import { createIsolatedChildSession } from "./child-session.js";
 import type {
   CreateAgentSessionInternalOptions,
@@ -164,9 +164,12 @@ export function createInProcessRunController(
       // internally so a child cannot strand the parent waiting on a user.
       await autoResolveInteractions(() => run.handle!.session.prompt(prompt));
       if (run.summary.status !== "running") return;
-      const output = promptResultText({
+      const result = {
         messages: [...run.handle.session.messages],
-      });
+      };
+      const error = promptResultError(result);
+      if (error) throw new Error(error);
+      const output = promptResultText(result);
       touch(run, {
         status: "completed",
         output,

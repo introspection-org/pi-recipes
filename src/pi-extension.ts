@@ -1147,8 +1147,10 @@ export function createRecipesExtension(
         }
         if (run.status === "running") run.status = "completed";
       } catch (err) {
-        if (run.status !== "interrupted") run.status = "failed";
-        run.error = err instanceof Error ? err.message : String(err);
+        if (run.status !== "interrupted") {
+          run.status = "failed";
+          run.error = err instanceof Error ? err.message : String(err);
+        }
       } finally {
         run.completedAt = new Date().toISOString();
         // Queue the parent wake-up BEFORE persisting. The deliverer reads the

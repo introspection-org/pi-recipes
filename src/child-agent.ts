@@ -85,6 +85,34 @@ function contentText(content: unknown): string {
     .join("\n");
 }
 
+function latestAssistantMessage(
+  result: unknown
+): Record<string, unknown> | null {
+  if (!result || typeof result !== "object") return null;
+  const record = result as Record<string, unknown>;
+  const messages = Array.isArray(record.messages) ? record.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = asRecord(messages[index]);
+    if (!message) continue;
+    if (!message.role || message.role === "assistant") return message;
+  }
+  return null;
+}
+
+/** Return a terminal provider/session failure that Pi recorded as a message. */
+export function promptResultError(result: unknown): string | null {
+  const message = latestAssistantMessage(result);
+  const stopReason = message?.stopReason;
+  if (stopReason !== "error" && stopReason !== "aborted") return null;
+  const errorMessage = message?.errorMessage;
+  if (typeof errorMessage === "string" && errorMessage.trim()) {
+    return errorMessage.trim();
+  }
+  return stopReason === "aborted"
+    ? "Child agent model request was aborted"
+    : "Child agent model request failed";
+}
+
 export function promptResultText(result: unknown): string {
   if (typeof result === "string") return result;
   if (!result || typeof result !== "object") return "";
@@ -225,7 +253,10 @@ class RecipeChildAgentSessionRunner implements RecipeChildAgentRunner {
     // Resolve their approval tools internally so they cannot open UI or emit
     // an interrupt that would strand the child waiting for the root user.
     await autoResolveInteractions(() => this.session!.prompt(prompt));
-    return promptResultText({ messages: [...this.session.messages] });
+    const result = { messages: [...this.session.messages] };
+    const error = promptResultError(result);
+    if (error) throw new Error(error);
+    return promptResultText(result);
   }
 
   async steer(message: string): Promise<void> {
