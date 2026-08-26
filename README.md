@@ -148,10 +148,11 @@ adapters and deployment cookbooks belong outside this package.
 introspection check
 ```
 
-Every `pi --recipe` launch automatically runs the same Recipe Format validator
-before constructing a session. Invalid Recipes stop Pi rather than falling back
-to an unconfigured agent. `introspection check` remains the explicit command
-for manual and CI validation.
+Validation is an authoring and host concern, not a launch-time one. Run
+`introspection check` while authoring and in CI; a host that executes Recipes
+should validate before it starts a session, as the Introspection platform does
+when a task is created. A `pi --recipe` launch does **not** re-validate, so a
+Recipe that was never checked can start with errors the validator would catch.
 
 ## Documentation
 

@@ -128,10 +128,14 @@ jobs:
           mkdir -p "staged/${{ matrix.target }}"
           cp "target/${{ matrix.target }}/release/mcp-client" "staged/${{ matrix.target }}/"
 
+      # The wildcard must sit at `staged/` so the rust-target directory survives:
+      # upload-artifact roots the archive at the least common ancestor of the
+      # matched files, so `staged/<target>/*` would upload a bare mcp-client and
+      # the assembly step below could not tell the platforms apart.
       - uses: actions/upload-artifact@v7
         with:
           name: native-tools-${{ matrix.platform_id }}
-          path: staged/${{ matrix.target }}/*
+          path: staged/**
           if-no-files-found: error
 
   publish:
@@ -178,7 +182,7 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           rm -rf npm/artifacts && mkdir -p npm/artifacts
           for artifact in native-tool-artifacts/native-tools-*; do
-            # Each artifact holds one rust-target directory staged by the build job.
+            # Each artifact holds a <rust-target>/mcp-client tree (see the upload above).
             cp -R "$artifact"/. npm/artifacts/
           done
           find npm/artifacts -maxdepth 2 -type f -print
