@@ -85,5 +85,10 @@ const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, "utf8"));
 rootPkg.optionalDependencies = optionalDependencies;
 fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, "\t") + "\n");
 console.log(`stamped optionalDependencies onto ${rootPkg.name}`);
+console.warn(
+  "\nNote: package.json has been modified in place — that stamp belongs to a\n" +
+    "release, not to the repository. Outside CI, `git checkout -- package.json`\n" +
+    "before committing."
+);
 
 console.log(`\nDone. ${targets.length} platform packages in ${distDir}`);
