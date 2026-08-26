@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.21.0](https://github.com/introspection-org/recipes/compare/v0.20.0...v0.21.0) (2026-08-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* recipes are no longer validated when a Pi session starts. Authors get diagnostics from the CLI, and the platform blocks invalid recipes at task creation.
+
+### Features
+
+* stop vendoring native binaries — drop the session-start validator, ship mcp-client per platform ([#229](https://github.com/introspection-org/recipes/issues/229)) ([40b5ff5](https://github.com/introspection-org/recipes/commit/40b5ff58a8fd8828d35bda4347e821c0438dd063))
+
+
+### Bug Fixes
+
+* Propagate child-agent provider errors ([#228](https://github.com/introspection-org/recipes/issues/228)) ([4a2d5c3](https://github.com/introspection-org/recipes/commit/4a2d5c38a6481d84634fb048bd3dbb0682e66dca))
+
 ## [0.20.0](https://github.com/introspection-org/recipes/compare/v0.19.3...v0.20.0) (2026-08-20)
 
 
