@@ -110,17 +110,33 @@ describe("SlackFileSession", () => {
     expect(fetchImpl.calls).toHaveLength(0);
   });
 
-  it("downloads with an empty bearer in a cloud sandbox for the egress to swap", async () => {
+  it("sends the session locator in an Introspection sandbox for the egress to swap", async () => {
     const fetchImpl = fakeFetch();
     const cwd = await mkdtemp(join(tmpdir(), "slack-glue-"));
     const session = new SlackFileSession({
-      env: { INTROSPECTION_TASK_CHANNEL_PROVIDER: "slack" },
+      env: { INTROSPECTION_TOKEN: "locator-jwt" },
       fetchImpl,
       cwd,
     });
     const result = await session.downloadFile({ file_id: "F123" });
-    expect((fetchImpl.calls[0]!.init.headers as Record<string, string>).Authorization).toBe("Bearer ");
+    expect((fetchImpl.calls[0]!.init.headers as Record<string, string>).Authorization).toBe(
+      "Bearer locator-jwt"
+    );
     expect(result.size).toBe(4);
+  });
+
+  it("prefers a local bot token over the session locator", async () => {
+    const fetchImpl = fakeFetch();
+    const cwd = await mkdtemp(join(tmpdir(), "slack-glue-"));
+    const session = new SlackFileSession({
+      env: { SLACK_BOT_TOKEN: "xoxb-local", INTROSPECTION_TOKEN: "locator-jwt" },
+      fetchImpl,
+      cwd,
+    });
+    await session.downloadFile({ file_id: "F123" });
+    expect((fetchImpl.calls[0]!.init.headers as Record<string, string>).Authorization).toBe(
+      "Bearer xoxb-local"
+    );
   });
 
   it("lands downloads under the root with a safe name, sha256, and verified size", async () => {

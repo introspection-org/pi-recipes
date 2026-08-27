@@ -68,10 +68,13 @@ files — these bytes belong on disk, referenced by path.
 
 **Auth** is a plain bearer on both requests:
 
-- In an Introspection cloud sandbox the env is unset — the header goes out
-  empty and the egress proxy swaps in the workspace bot token.
-- Locally, set `SLACK_BOT_TOKEN` (a bot token with `files:read`). Its
-  absence is a typed error before any network call.
+- In an Introspection cloud sandbox the bearer is the session locator
+  (`INTROSPECTION_TOKEN`) — the egress proxy verifies the locator and swaps
+  the header for the workspace bot token. The swap is keyed on that
+  verified locator, so an empty or arbitrary bearer is never credentialed.
+- Locally, set `SLACK_BOT_TOKEN` (a bot token with `files:read`); it takes
+  precedence when both are present. Holding neither is a typed error before
+  any network call.
 
 ## Formatting helpers
 

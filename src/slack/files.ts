@@ -132,10 +132,13 @@ function declaredSize(file: SlackFileMetadata): number {
  * is exactly wrong for large or private files — these bytes belong in the
  * task workspace, referenced by path.
  *
- * Auth is a plain bearer on both requests. In a cloud sandbox the env is
- * unset and the egress proxy swaps the Authorization header for the
- * workspace bot token; locally SLACK_BOT_TOKEN (files:read) is required and
- * its absence is a typed error before any network call.
+ * Auth is a plain bearer on both requests, and which token depends on where
+ * the session runs. Locally it is SLACK_BOT_TOKEN (files:read). In an
+ * Introspection sandbox it is the session locator (INTROSPECTION_TOKEN):
+ * the egress proxy verifies the locator and swaps the header for the
+ * workspace bot token — the swap is keyed on that verified locator, so an
+ * empty or arbitrary bearer is never credentialed. Holding neither token is
+ * a typed error before any network call.
  */
 export class SlackFileSession {
   private readonly env: SlackEnv;
@@ -148,16 +151,12 @@ export class SlackFileSession {
     this.cwd = options.cwd ?? process.cwd();
   }
 
-  private localToken(): string {
-    return this.env.SLACK_BOT_TOKEN?.trim() || "";
-  }
-
-  private inCloudRuntime(): boolean {
-    return Boolean(this.env.INTROSPECTION_TASK_CHANNEL_PROVIDER?.trim());
+  private bearerToken(): string {
+    return this.env.SLACK_BOT_TOKEN?.trim() || this.env.INTROSPECTION_TOKEN?.trim() || "";
   }
 
   private authHeader(): string {
-    return `Bearer ${this.localToken()}`;
+    return `Bearer ${this.bearerToken()}`;
   }
 
   private async callSlack(method: string, params: Record<string, string>): Promise<unknown> {
@@ -177,7 +176,7 @@ export class SlackFileSession {
     const fileId = requiredFileId(input.file_id);
     const variant = fileVariant(input.variant);
 
-    if (!this.localToken() && !this.inCloudRuntime()) {
+    if (!this.bearerToken()) {
       throw new Error(
         "slack_workspace_download_file requires SLACK_BOT_TOKEN (a bot token with files:read) when running outside the Introspection runtime"
       );
