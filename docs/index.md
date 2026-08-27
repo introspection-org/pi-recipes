@@ -18,6 +18,7 @@ task lifecycle, protocols, and deployment.
 | Ask for user input across hosts | [Interactions](interactions.md) |
 | Declare capability policy and bindings | [MCP configuration](mcp-configuration.md) |
 | Define portable evaluation judges | [Recipe judges](recipe-judges.md) |
+| Use the Slack recipe helpers | [Slack helpers](slack.md) |
 
 ## Boundary
 
@@ -35,6 +36,9 @@ createAgentSession()     complete live Pi agent
 
 Recipes stops at the live session boundary. It does not ship a generic server,
 task store, scheduler, sandbox, or provider-specific hosting integration.
+Provider *tool helpers* — opt-in, recipe-side utilities a recipe wires up from
+its own extension file, like the [Slack helpers](slack.md) — are inside the
+boundary: they run beside the live session and hold no hosting concern.
 
 The same contracts power:
 

@@ -59,6 +59,10 @@
 			"types": "./dist/api/session.d.ts",
 			"import": "./dist/api/session.js"
 		},
+		"./slack": {
+			"types": "./dist/slack/index.d.ts",
+			"import": "./dist/slack/index.js"
+		},
 		"./test-utils": {
 			"types": "./dist/test-utils.d.ts",
 			"import": "./dist/test-utils.js"
