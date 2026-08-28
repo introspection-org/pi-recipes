@@ -59,10 +59,6 @@
 			"types": "./dist/api/session.d.ts",
 			"import": "./dist/api/session.js"
 		},
-		"./slack": {
-			"types": "./dist/slack/index.d.ts",
-			"import": "./dist/slack/index.js"
-		},
 		"./test-utils": {
 			"types": "./dist/test-utils.d.ts",
 			"import": "./dist/test-utils.js"
@@ -79,13 +75,14 @@
 	},
 	"scripts": {
 		"build": "pnpm build:ts && pnpm build:native",
-		"build:ts": "rm -rf dist && tsc && node scripts/build-mcp-daemon.mjs",
+		"build:connector-slack": "pnpm --filter @introspection-ai/recipe-connector-slack build",
+		"build:ts": "pnpm build:connector-slack && rm -rf dist && tsc && node scripts/build-mcp-daemon.mjs",
 		"build:native": "cargo build --release -p pi-mcp-client && node scripts/package-mcp-client.mjs",
 		"bench:mcp-client": "pnpm build:ts && cargo build --release -p pi-mcp-client && node scripts/benchmark-mcp-client.mjs",
 		"prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
-		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+		"typecheck": "pnpm --filter @introspection-ai/recipe-connector-slack typecheck && tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
 		"test": "pnpm build:ts && cargo test -p pi-mcp-client -p introspection-recipe-check && cargo build -p pi-mcp-client && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
-		"pack:check": "pnpm pack --dry-run --json | node scripts/check-npm-pack.mjs",
+		"pack:check": "pnpm pack --dry-run --json | node scripts/check-npm-pack.mjs && pnpm --filter @introspection-ai/recipe-connector-slack pack:check",
 		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client"
 	},
 	"dependencies": {

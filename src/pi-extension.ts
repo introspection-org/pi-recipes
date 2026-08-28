@@ -117,7 +117,7 @@ interface RecipeLaunchState {
   mcpSearchToolName?: string;
   initialConnectorToolNames: string[];
   connectorToolNames: string[];
-  connectorLoadToolName?: string;
+  connectorLoadToolNames: string[];
   extensionAllowedToolNames: Set<string>;
   mcpPrivateEnv?: NodeJS.ProcessEnv;
   mcpPrivateDirectory?: string;
@@ -702,11 +702,11 @@ export function createRecipesExtension(
       initialMcpToolNames: [],
       initialConnectorToolNames: connectorLoadout.initialActiveToolNames,
       connectorToolNames: connectorLoadout.toolNames,
-      connectorLoadToolName: connectorLoadout.loadToolName,
+      connectorLoadToolNames: connectorLoadout.loadToolNames,
       extensionAllowedToolNames: new Set([
         ...resolved.tools,
         ...connectorLoadout.toolNames,
-        ...(connectorLoadout.loadToolName ? [connectorLoadout.loadToolName] : []),
+        ...connectorLoadout.loadToolNames,
         ...(resolved.subagents.size > 0 ? ["agent"] : []),
       ]),
     };
@@ -769,10 +769,14 @@ export function createRecipesExtension(
     }
     let loadedCount = 0;
     try {
-      for (const connector of recipeConnectorExtensions(
+      for (const connector of await recipeConnectorExtensions(
         launchState.resolved.manifest,
         launchState.resolved.tools,
-        { env, cwd: launchState.cwd }
+        {
+          recipeDir: launchState.resolved.recipeDir,
+          env,
+          cwd: launchState.cwd,
+        }
       )) {
         const factory = bindRecipeExtensionFactory(
           connector.factory,
@@ -876,9 +880,7 @@ export function createRecipesExtension(
         (tool) => !launchState.connectorToolNames.includes(tool)
       ),
       ...launchState.initialConnectorToolNames,
-      ...(launchState.connectorLoadToolName
-        ? [launchState.connectorLoadToolName]
-        : []),
+      ...launchState.connectorLoadToolNames,
       ...(launchState.resolved.subagents.size > 0 ? ["agent"] : []),
       ...launchState.initialMcpToolNames,
       ...(launchState.mcpSearchToolName

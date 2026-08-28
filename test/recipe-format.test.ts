@@ -16,6 +16,7 @@ import {
   validatePiPackageManifest,
 } from "../src/recipe-package.js";
 import { resolveRecipe } from "../src/recipe/resolve.js";
+import { SLACK_RECIPE_CONNECTOR_PACKAGE } from "./helpers/recipe-connectors.js";
 
 const cleanups: Array<() => void> = [];
 
@@ -74,6 +75,7 @@ describe("Recipe Format", () => {
         tools: { include: ["origin", "read_thread", "send_message"] },
       },
     ];
+    pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
     const manifest = readPiPackageManifest(recipeDir);
@@ -104,6 +106,7 @@ describe("Recipe Format", () => {
         tools: { include: ["delete_workspace"] },
       },
     ];
+    pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
     const report = validatePiPackageManifest(
@@ -126,6 +129,7 @@ describe("Recipe Format", () => {
     pkg.pi.connectors = [
       { provider: "slack", tools: { include: ["origin"] } },
     ];
+    pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
@@ -159,6 +163,24 @@ describe("Recipe Format", () => {
     expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
       "slack_custom_report",
     ]);
+  });
+
+  it("requires the Slack connector package when Slack is declared", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [
+      { provider: "slack", tools: { include: ["origin"] } },
+    ];
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+
+    const report = validatePiPackageManifest(readPiPackageManifest(recipeDir));
+
+    expect(report.valid).toBe(false);
+    expect(report.findings.map((finding) => finding.message)).toContain(
+      `package.json#pi.connectors provider 'slack' requires dependency '${SLACK_RECIPE_CONNECTOR_PACKAGE}'`
+    );
   });
 
   it("reserves generated connector tools without relying on their prefix", () => {

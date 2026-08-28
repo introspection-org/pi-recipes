@@ -14,7 +14,7 @@ import {
   slackMessageBody,
   toPlainText,
   type SlackFetch,
-} from "../src/slack/index.js";
+} from "../packages/recipe-connector-slack/src/index.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 interface FakeFetchOptions {

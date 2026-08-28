@@ -85,6 +85,7 @@ struct Package {
     name: Option<String>,
     version: Option<String>,
     pi: Option<JsonValue>,
+    dependencies: BTreeSet<String>,
     runtime_dependencies: bool,
 }
 
@@ -368,6 +369,11 @@ fn read_package(ctx: &mut CheckContext) -> Option<Package> {
         name: string_value(object.get("name")),
         version: string_value(object.get("version")),
         pi,
+        dependencies: object
+            .get("dependencies")
+            .and_then(JsonValue::as_object)
+            .map(|dependencies| dependencies.keys().cloned().collect())
+            .unwrap_or_default(),
         runtime_dependencies: has_non_empty_object(object.get("dependencies"))
             || has_non_empty_object(object.get("optionalDependencies")),
     })
@@ -605,7 +611,8 @@ fn validate_pi_config(
         resolved.insert(key, paths);
     }
 
-    let connector_tools = validate_connector_config(pi.get("connectors"), ctx);
+    let connector_tools =
+        validate_connector_config(pi.get("connectors"), &package.dependencies, ctx);
     validate_mcp_config(pi.get("mcp"), ctx);
     validate_runtime_config(pi.get("runtime"), ctx);
 
@@ -634,6 +641,7 @@ fn is_known_connector_tool(tool: &str) -> bool {
 
 fn validate_connector_config(
     value: Option<&JsonValue>,
+    dependencies: &BTreeSet<String>,
     ctx: &mut CheckContext,
 ) -> BTreeSet<String> {
     let mut registered = BTreeSet::new();
@@ -682,6 +690,13 @@ fn validate_connector_config(
                         PACKAGE_JSON,
                         "package.json#pi.connectors contains duplicate provider 'slack'",
                         Some("declare each connector provider once"),
+                    );
+                } else if !dependencies.contains("@introspection-ai/recipe-connector-slack") {
+                    ctx.error(
+                        "pi.connectors_invalid",
+                        PACKAGE_JSON,
+                        "package.json#pi.connectors provider 'slack' requires dependency '@introspection-ai/recipe-connector-slack'",
+                        Some("add @introspection-ai/recipe-connector-slack to package.json#dependencies and commit the lockfile"),
                     );
                 }
             }
@@ -3218,6 +3233,9 @@ mod tests {
         let package = json!({
             "name": "connector-test",
             "version": "0.1.0",
+            "dependencies": {
+                "@introspection-ai/recipe-connector-slack": "0.1.0"
+            },
             "pi": {
                 "agents": ["agents/*.yaml"],
                 "connectors": [{
@@ -3245,8 +3263,35 @@ mod tests {
                 "package.json",
                 &serde_json::to_string_pretty(&package).expect("serialize package"),
             ),
+            ("pnpm-lock.yaml", "lockfileVersion: '9.0'\n"),
             ("agents/agent.yaml", &agent),
         ])
+    }
+
+    #[test]
+    fn connector_requires_its_runtime_dependency() {
+        let mut files = connector_recipe(json!(["origin"]), &["slack_origin"]);
+        let package_file = files
+            .files
+            .iter_mut()
+            .find(|file| file.path == PACKAGE_JSON)
+            .expect("package.json");
+        let mut package: JsonValue =
+            serde_json::from_str(package_file.content.as_deref().expect("package content"))
+                .expect("parse package");
+        package
+            .as_object_mut()
+            .expect("package object")
+            .remove("dependencies");
+        package_file.content = Some(serde_json::to_string_pretty(&package).expect("serialize"));
+
+        let report = check_recipe_files(&files);
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "pi.connectors_invalid"
+                && diagnostic.message.contains("recipe-connector-slack")
+        }));
     }
 
     #[test]

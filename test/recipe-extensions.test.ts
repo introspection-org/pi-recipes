@@ -86,18 +86,18 @@ describe("recipe extension package resolution", () => {
         name: "@introspection-ai/recipes",
         version: "999.0.0",
         type: "module",
-        exports: { "./slack": "./slack.js" },
+        exports: { "./interactions": "./interactions.js" },
       })
     );
     writeFileSync(
-      join(packageRoot, "slack.js"),
+      join(packageRoot, "interactions.js"),
       "export const source = 'recipe-local';"
     );
     const extensionPath = join(root, "extension.mjs");
     writeFileSync(
       extensionPath,
       [
-        "import { source } from '@introspection-ai/recipes/slack';",
+        "import { source } from '@introspection-ai/recipes/interactions';",
         "export default function extension() { return source; }",
       ].join("\n")
     );
@@ -126,18 +126,18 @@ describe("recipe extension package resolution", () => {
         name: "@introspection-ai/recipes",
         version: "999.0.0",
         type: "module",
-        exports: { "./slack": "./slack.js" },
+        exports: { "./interactions": "./interactions.js" },
       })
     );
     writeFileSync(
-      join(packageRoot, "slack.js"),
+      join(packageRoot, "interactions.js"),
       "export const source = 'workspace-root';"
     );
     const extensionPath = join(recipeDir, "extension.mjs");
     writeFileSync(
       extensionPath,
       [
-        "import { source } from '@introspection-ai/recipes/slack';",
+        "import { source } from '@introspection-ai/recipes/interactions';",
         "export default function extension() { return source; }",
       ].join("\n")
     );

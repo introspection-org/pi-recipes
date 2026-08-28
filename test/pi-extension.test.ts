@@ -6,6 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createRecipesExtension } from "../src/pi-extension.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
+import {
+  installSlackRecipeConnector,
+  SLACK_RECIPE_CONNECTOR_PACKAGE,
+} from "./helpers/recipe-connectors.js";
 
 beforeEach(() => {
 });
@@ -400,7 +404,9 @@ describe("Recipes extension for Pi", () => {
           tools: { include: ["origin", "read_thread", "react"] },
         },
       ];
+      pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
       writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+      installSlackRecipeConnector(recipeDir);
       writeFileSync(
         join(recipeDir, "defs", "main.yaml"),
         [

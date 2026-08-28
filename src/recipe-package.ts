@@ -1,7 +1,10 @@
 import { existsSync, realpathSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import { SLACK_CONNECTOR_TOOL_IDS } from "./slack/catalog.js";
+import {
+  RECIPE_CONNECTOR_DEFINITIONS,
+  recipeConnectorDefinition,
+} from "./connector-catalog.js";
 
 export interface RecipePackageResources {
   agents: string[];
@@ -132,6 +135,7 @@ type PackageJson = {
   name?: unknown;
   version?: unknown;
   description?: unknown;
+  dependencies?: unknown;
   pi?: unknown;
 };
 
@@ -174,7 +178,8 @@ function resourceDeclarations(
 
 function sourceShapeFindings(
   pi: Record<string, unknown>,
-  packageName: string
+  packageName: string,
+  dependencies: unknown
 ): RecipeValidationFinding[] {
   const findings: RecipeValidationFinding[] = [];
   for (const key of Object.keys(pi)) {
@@ -208,19 +213,27 @@ function sourceShapeFindings(
       );
     }
   }
-  findings.push(...connectorSourceShapeFindings(pi.connectors, packageName));
+  findings.push(
+    ...connectorSourceShapeFindings(pi.connectors, packageName, dependencies)
+  );
   findings.push(...mcpSourceShapeFindings(pi.mcp, packageName));
   findings.push(...runtimeSourceShapeFindings(pi.runtime, packageName));
   return findings;
 }
 
 const CONNECTOR_TOOL_CATALOG: Readonly<Record<string, readonly string[]>> = {
-  slack: SLACK_CONNECTOR_TOOL_IDS,
+  ...Object.fromEntries(
+    RECIPE_CONNECTOR_DEFINITIONS.map((definition) => [
+      definition.provider,
+      definition.tools.map((tool) => tool.id),
+    ])
+  ),
 };
 
 function connectorSourceShapeFindings(
   value: unknown,
-  packageName: string
+  packageName: string,
+  dependencies: unknown
 ): RecipeValidationFinding[] {
   if (value === undefined) return [];
   const invalid = (message: string) =>
@@ -274,6 +287,24 @@ function connectorSourceShapeFindings(
       );
     } else {
       providers.add(provider);
+      const definition = recipeConnectorDefinition(provider);
+      const declaredDependencies =
+        dependencies && typeof dependencies === "object" && !Array.isArray(dependencies)
+          ? (dependencies as Record<string, unknown>)
+          : {};
+      const dependencyVersion = definition
+        ? declaredDependencies[definition.packageName]
+        : undefined;
+      if (
+        definition &&
+        (typeof dependencyVersion !== "string" || !dependencyVersion.trim())
+      ) {
+        findings.push(
+          invalid(
+            `package.json#pi.connectors provider '${provider}' requires dependency '${definition.packageName}'`
+          )
+        );
+      }
     }
 
     if (
@@ -841,7 +872,7 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
     runtime: parseRuntimeRequirements(pi.runtime),
   };
   Object.defineProperty(manifest, SOURCE_FINDINGS, {
-    value: sourceShapeFindings(pi, manifest.name),
+    value: sourceShapeFindings(pi, manifest.name, raw.dependencies),
     enumerable: false,
   });
   return manifest;

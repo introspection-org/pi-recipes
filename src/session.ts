@@ -595,10 +595,10 @@ async function createSessionForAgent(
       recipe.manifest,
       recipe.tools
     );
-    for (const connector of recipeConnectorExtensions(
+    for (const connector of await recipeConnectorExtensions(
       recipe.manifest,
       recipe.tools,
-      { env, cwd }
+      { recipeDir: recipe.recipeDir, env, cwd }
     )) {
       inlineExtensions.push(
         bindRecipeExtensionFactory(
@@ -611,9 +611,7 @@ async function createSessionForAgent(
             recipe.subagents.size > 0 && opts.runController !== null,
             [
               ...connectorLoadout.toolNames,
-              ...(connectorLoadout.loadToolName
-                ? [connectorLoadout.loadToolName]
-                : []),
+              ...connectorLoadout.loadToolNames,
               ...(mcp.tools?.map((tool) => tool.name) ?? []),
               ...(mcp.searchToolName ? [mcp.searchToolName] : []),
             ]
@@ -756,7 +754,7 @@ async function createSessionForAgent(
     const selectedToolNames = [
       ...tools,
       ...connectorLoadout.toolNames,
-      ...(connectorLoadout.loadToolName ? [connectorLoadout.loadToolName] : []),
+      ...connectorLoadout.loadToolNames,
       ...mcpToolNames,
     ];
     const environmentBash: ToolDefinition | undefined =
@@ -837,9 +835,7 @@ async function createSessionForAgent(
       const activeTools = [
         ...tools,
         ...connectorLoadout.initialActiveToolNames,
-        ...(connectorLoadout.loadToolName
-          ? [connectorLoadout.loadToolName]
-          : []),
+        ...connectorLoadout.loadToolNames,
         ...(mcp.initialActiveToolNames ?? []),
         ...(mcp.searchToolName ? [mcp.searchToolName] : []),
       ];

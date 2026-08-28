@@ -89,6 +89,9 @@ credential. A host binds those values when it starts a task.
 
 ```json
 {
+  "dependencies": {
+    "@introspection-ai/recipe-connector-slack": "^0.1.0"
+  },
   "pi": {
     "connectors": [
       {
@@ -108,8 +111,10 @@ declaration sets the maximum tool set. An agent MUST list each registered tool
 by its full name, such as `slack_read_thread`, in its `tools` list before the
 model can call it.
 
-The standard host supports the `slack` provider. A Slack declaration loads the
-official Slack adapter from `@introspection-ai/recipes`. It does not load MCP or
+Each connector declaration MUST have its provider package in the Recipe's
+production dependencies and lockfile. The standard host supports the `slack`
+provider through `@introspection-ai/recipe-connector-slack`. The host imports
+that package only when the Recipe declares Slack. It does not load MCP or
 require a Recipe extension. The host MUST fail closed when an agent selects a
 Slack tool that the package declaration does not include.
 

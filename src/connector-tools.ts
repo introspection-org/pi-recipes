@@ -1,14 +1,15 @@
+import { createRequire } from "node:module";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
-import type { RecipePackageManifest } from "./recipe-package.js";
 import {
-  SLACK_CONNECTOR_TOOL_IDS,
-  SLACK_DEFAULT_TOOL_IDS,
-  SLACK_LOAD_TOOLS_NAME,
-  slackConnectorToolName,
-  type SlackConnectorToolId,
-} from "./slack/catalog.js";
-import { registerSlackBotTools } from "./slack/tools.js";
+  recipeConnectorDefinition,
+  recipeConnectorToolDefinition,
+  type RecipeConnectorDefinition,
+} from "./connector-catalog.js";
+import type { RecipePackageManifest } from "./recipe-package.js";
 
 export interface RecipeConnectorExtension {
   owner: string;
@@ -16,6 +17,7 @@ export interface RecipeConnectorExtension {
 }
 
 export interface RecipeConnectorExtensionOptions {
+  recipeDir: string;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }
@@ -23,100 +25,175 @@ export interface RecipeConnectorExtensionOptions {
 export interface RecipeConnectorToolLoadout {
   toolNames: string[];
   initialActiveToolNames: string[];
-  loadToolName?: string;
+  loadToolNames: string[];
 }
 
-export interface RecipeConnectorToolReference {
-  readonly provider: "slack";
-  readonly name: string;
-  readonly id?: SlackConnectorToolId;
+export interface RecipeConnectorModuleOptions {
+  tools: readonly string[];
+  loadout: boolean;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
 }
 
-const slackToolIds = new Set<string>(SLACK_CONNECTOR_TOOL_IDS);
-const connectorToolsByName = new Map<string, RecipeConnectorToolReference>([
-  ...SLACK_CONNECTOR_TOOL_IDS.map((id) => {
-    const name = slackConnectorToolName(id);
-    return [name, { provider: "slack" as const, id, name }] as const;
-  }),
-  [
-    SLACK_LOAD_TOOLS_NAME,
-    { provider: "slack" as const, name: SLACK_LOAD_TOOLS_NAME },
-  ],
-]);
-
-export function recipeConnectorToolReference(
-  name: string
-): RecipeConnectorToolReference | undefined {
-  return connectorToolsByName.get(name);
+export interface RecipeConnectorModule {
+  readonly provider: string;
+  readonly toolIds: readonly string[];
+  createExtension(options: RecipeConnectorModuleOptions): ExtensionFactory;
 }
 
-function selectedSlackToolIds(
+export function recipeConnectorToolReference(name: string) {
+  return recipeConnectorToolDefinition(name);
+}
+
+function selectedConnectorToolIds(
   manifest: RecipePackageManifest,
-  agentTools: readonly string[]
-): SlackConnectorToolId[] {
+  agentTools: readonly string[],
+  definition: RecipeConnectorDefinition
+): string[] {
   const connector = manifest.connectors.find(
-    (entry) => entry.provider === "slack"
+    (entry) => entry.provider === definition.provider
   );
-  return (connector?.tools.include ?? []).filter(
-    (tool): tool is SlackConnectorToolId =>
-      slackToolIds.has(tool) &&
-      agentTools.includes(slackConnectorToolName(tool as SlackConnectorToolId))
+  const toolsById = new Map(
+    definition.tools.map((tool) => [tool.id, tool] as const)
   );
+  return (connector?.tools.include ?? []).filter((id) => {
+    const tool = toolsById.get(id);
+    return tool !== undefined && agentTools.includes(tool.name);
+  });
 }
 
 export function declaredRecipeConnectorToolNames(
   manifest: RecipePackageManifest
 ): ReadonlySet<string> {
   return new Set(
-    manifest.connectors.flatMap((connector) =>
-      connector.provider === "slack"
-        ? connector.tools.include
-            .filter((tool) => slackToolIds.has(tool))
-            .map((tool) => slackConnectorToolName(tool as SlackConnectorToolId))
-        : []
-    )
+    manifest.connectors.flatMap((connector) => {
+      const definition = recipeConnectorDefinition(connector.provider);
+      if (!definition) return [];
+      const toolsById = new Map(
+        definition.tools.map((tool) => [tool.id, tool] as const)
+      );
+      return connector.tools.include.flatMap((id) => {
+        const tool = toolsById.get(id);
+        return tool ? [tool.name] : [];
+      });
+    })
   );
 }
 
-export function recipeConnectorExtensions(
+function parseRecipeConnectorModule(
+  value: unknown,
+  definition: RecipeConnectorDefinition
+): RecipeConnectorModule {
+  if (!value || typeof value !== "object") {
+    throw new Error(
+      `Recipe connector package ${definition.packageName} does not export a module`
+    );
+  }
+  const module = value as Partial<RecipeConnectorModule>;
+  if (
+    module.provider !== definition.provider ||
+    !Array.isArray(module.toolIds) ||
+    module.toolIds.some((tool) => typeof tool !== "string") ||
+    typeof module.createExtension !== "function"
+  ) {
+    throw new Error(
+      `Recipe connector package ${definition.packageName} has an invalid module contract`
+    );
+  }
+  const expected = definition.tools.map((tool) => tool.id).sort();
+  const actual = [...module.toolIds].sort();
+  if (
+    expected.length !== actual.length ||
+    expected.some((tool, index) => tool !== actual[index])
+  ) {
+    throw new Error(
+      `Recipe connector package ${definition.packageName} does not match the ${definition.provider} tool catalog`
+    );
+  }
+  return module as RecipeConnectorModule;
+}
+
+async function loadRecipeConnectorModule(
+  recipeDir: string,
+  definition: RecipeConnectorDefinition
+): Promise<RecipeConnectorModule> {
+  const recipeRequire = createRequire(join(recipeDir, "package.json"));
+  let entry: string;
+  try {
+    entry = recipeRequire.resolve(definition.packageName);
+  } catch (error) {
+    throw new Error(
+      `Recipe connector '${definition.provider}' requires ${definition.packageName} in the Recipe dependencies`,
+      { cause: error }
+    );
+  }
+  const imported = await import(pathToFileURL(entry).href);
+  return parseRecipeConnectorModule(imported.default, definition);
+}
+
+export async function recipeConnectorExtensions(
   manifest: RecipePackageManifest,
   agentTools: readonly string[],
-  options: RecipeConnectorExtensionOptions = {}
-): RecipeConnectorExtension[] {
-  return manifest.connectors.flatMap((connector) => {
-    if (connector.provider !== "slack") {
-      throw new Error(
-        `Recipe connector provider is unsupported: ${connector.provider}`
+  options: RecipeConnectorExtensionOptions
+): Promise<RecipeConnectorExtension[]> {
+  return Promise.all(
+    manifest.connectors.map(async (connector) => {
+      const definition = recipeConnectorDefinition(connector.provider);
+      if (!definition) {
+        throw new Error(
+          `Recipe connector provider is unsupported: ${connector.provider}`
+        );
+      }
+      const module = await loadRecipeConnectorModule(
+        options.recipeDir,
+        definition
       );
-    }
-    const tools = selectedSlackToolIds(manifest, agentTools);
-    return [{
-      owner: `<connector:${connector.provider}>`,
-      factory: (pi) => registerSlackBotTools(pi, {
-        tools,
-        loadout: true,
-        ...options,
-      }),
-    }];
-  });
+      const tools = selectedConnectorToolIds(
+        manifest,
+        agentTools,
+        definition
+      );
+      return {
+        owner: `<connector:${connector.provider}>`,
+        factory: module.createExtension({
+          tools,
+          loadout: true,
+          env: options.env,
+          cwd: options.cwd,
+        }),
+      };
+    })
+  );
 }
 
 export function recipeConnectorToolLoadout(
   manifest: RecipePackageManifest,
   agentTools: readonly string[]
 ): RecipeConnectorToolLoadout {
-  const toolNames = selectedSlackToolIds(manifest, agentTools).map(
-    slackConnectorToolName
-  );
-  const initialActiveToolNames = SLACK_DEFAULT_TOOL_IDS
-    .map(slackConnectorToolName)
-    .filter((name) => toolNames.includes(name));
-  const hasOptional = toolNames.some(
-    (name) => !initialActiveToolNames.includes(name)
-  );
+  const selected = manifest.connectors.flatMap((connector) => {
+    const definition = recipeConnectorDefinition(connector.provider);
+    if (!definition) return [];
+    const selectedIds = new Set(
+      selectedConnectorToolIds(manifest, agentTools, definition)
+    );
+    return definition.tools
+      .filter((tool) => selectedIds.has(tool.id))
+      .map((tool) => ({ provider: definition.provider, tool }));
+  });
+  const loadToolNames = manifest.connectors.flatMap((connector) => {
+    const definition = recipeConnectorDefinition(connector.provider);
+    if (!definition?.loadToolName) return [];
+    const hasOptional = selected.some(
+      (entry) =>
+        entry.provider === definition.provider && !entry.tool.defaultActive
+    );
+    return hasOptional ? [definition.loadToolName] : [];
+  });
   return {
-    toolNames,
-    initialActiveToolNames,
-    ...(hasOptional ? { loadToolName: SLACK_LOAD_TOOLS_NAME } : {}),
+    toolNames: selected.map((entry) => entry.tool.name),
+    initialActiveToolNames: selected
+      .filter((entry) => entry.tool.defaultActive)
+      .map((entry) => entry.tool.name),
+    loadToolNames,
   };
 }

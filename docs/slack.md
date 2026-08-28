@@ -12,10 +12,13 @@ webhook. Recipe tools make ordinary HTTP requests to the Slack Web API.
 
 ## Declare the tools
 
-Add a Slack connector declaration to `package.json`:
+Add the Slack connector package and declaration to `package.json`:
 
 ```json
 {
+  "dependencies": {
+    "@introspection-ai/recipe-connector-slack": "^0.1.0"
+  },
   "pi": {
     "connectors": [
       {
@@ -35,6 +38,9 @@ Add a Slack connector declaration to `package.json`:
   }
 }
 ```
+
+Commit the package manager lockfile. The host loads the Slack package only for
+a Recipe that declares the Slack connector.
 
 The package declaration sets the maximum Slack tool set for the Recipe. Each
 agent must also list the exact `slack_*` tools it may call. The host registers
@@ -104,10 +110,11 @@ local Slack MCP server or `--mcp` override is involved.
 ## Test with introspection local
 
 An `introspection local` run has no inbound Slack event, cloud task origin, or
-cloud credential proxy. Set the bot token and a target conversation before the
-run:
+cloud credential proxy. Install the Recipe dependencies first. Then set the bot
+token and a target conversation before the run:
 
 ```bash
+pnpm install --frozen-lockfile
 export SLACK_BOT_TOKEN='xoxb-...'
 export SLACK_CHANNEL_ID='C0123456789'
 export SLACK_THREAD_TS='1234567890.123456' # optional
@@ -120,7 +127,7 @@ task or a reply bridge because no Data Plane task exists.
 
 ## Direct host use
 
-`@introspection-ai/recipes/slack` still exports `registerSlackBotTools` for
+`@introspection-ai/recipe-connector-slack` exports `registerSlackBotTools` for
 custom hosts and tests. A normal Recipe should use `pi.connectors` instead.
 
 ## File downloads
