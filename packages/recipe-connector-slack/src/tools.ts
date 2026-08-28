@@ -19,10 +19,16 @@ export interface RegisterSlackBotToolsOptions {
   loadout?: boolean;
 }
 
-export type SlackToolHost = Pick<
-  ExtensionAPI,
-  "getActiveTools" | "registerTool" | "setActiveTools"
->;
+/**
+ * Host methods used by the Slack tools. The register argument stays opaque so
+ * supported Pi versions do not expose different TypeBox copies at this package
+ * boundary.
+ */
+export interface SlackToolHost {
+  getActiveTools(): string[];
+  registerTool(...args: never[]): unknown;
+  setActiveTools(toolNames: string[]): void;
+}
 
 function toolResult(details: unknown) {
   return {
@@ -37,6 +43,7 @@ export function registerSlackBotTools(
   pi: SlackToolHost,
   options: RegisterSlackBotToolsOptions = {},
 ): void {
+  const host = pi as unknown as ExtensionAPI;
   const session =
     options.session ??
     new SlackFileSession({
@@ -54,7 +61,7 @@ export function registerSlackBotTools(
   };
 
   if (options.loadout && optional.length > 0) {
-    pi.registerTool({
+    host.registerTool({
       name: SLACK_LOAD_TOOLS_NAME,
       label: "Load Slack tools",
       description:
@@ -70,7 +77,7 @@ export function registerSlackBotTools(
     });
   }
 
-  register("origin", () => pi.registerTool({
+  register("origin", () => host.registerTool({
     name: "slack_origin",
     label: "Slack origin",
     description:
@@ -82,7 +89,7 @@ export function registerSlackBotTools(
     },
   }));
 
-  register("send_message", () => pi.registerTool({
+  register("send_message", () => host.registerTool({
     name: "slack_send_message",
     label: "Send Slack message",
     description:
@@ -103,7 +110,7 @@ export function registerSlackBotTools(
     },
   }));
 
-  register("react", () => pi.registerTool({
+  register("react", () => host.registerTool({
     name: "slack_react",
     label: "React in Slack",
     description:
@@ -132,7 +139,7 @@ export function registerSlackBotTools(
     },
   }));
 
-  register("read_thread", () => pi.registerTool({
+  register("read_thread", () => host.registerTool({
     name: "slack_read_thread",
     label: "Read Slack thread",
     description:
@@ -164,7 +171,7 @@ export function registerSlackBotTools(
     },
   }));
 
-  register("read_history", () => pi.registerTool({
+  register("read_history", () => host.registerTool({
     name: "slack_read_history",
     label: "Read Slack history",
     description:
@@ -190,7 +197,7 @@ export function registerSlackBotTools(
     },
   }));
 
-  register("list_channels", () => pi.registerTool({
+  register("list_channels", () => host.registerTool({
     name: "slack_list_channels",
     label: "List Slack channels",
     description: "List channels visible to the installed Slack bot.",
@@ -213,7 +220,7 @@ export function registerSlackBotTools(
     },
   }));
 
-  register("join_channel", () => pi.registerTool({
+  register("join_channel", () => host.registerTool({
     name: "slack_join_channel",
     label: "Join Slack channel",
     description: "Join a public Slack channel as the installed bot.",
@@ -229,7 +236,7 @@ export function registerSlackBotTools(
     },
   }));
 
-  register("resolve_user", () => pi.registerTool({
+  register("resolve_user", () => host.registerTool({
     name: "slack_resolve_user",
     label: "Resolve Slack user",
     description: "Read the Slack profile for one user id.",
@@ -245,7 +252,7 @@ export function registerSlackBotTools(
     },
   }));
 
-  register("get_permalink", () => pi.registerTool({
+  register("get_permalink", () => host.registerTool({
     name: "slack_get_permalink",
     label: "Get Slack permalink",
     description:
@@ -269,7 +276,7 @@ export function registerSlackBotTools(
     },
   }));
 
-  register("download_file", () => pi.registerTool({
+  register("download_file", () => host.registerTool({
     name: "slack_download_file",
     label: "Download Slack file",
     description:
