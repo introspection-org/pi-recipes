@@ -12,6 +12,7 @@ on:
         options:
           - all
           - root
+          - connector
           - checker
         default: all
 
@@ -37,6 +38,7 @@ jobs:
       pull-requests: write
     outputs:
       root_release_created: ${{ steps.root_release.outputs.release_created }}
+      connector_release_created: ${{ steps.root_release.outputs['packages/recipe-connector-slack--release_created'] }}
       crate_release_created: ${{ steps.checker_release.outputs['crates/introspection-recipe-check--release_created'] }}
       python_release_created: ${{ steps.checker_release.outputs['bindings/python--release_created'] }}
     steps:
@@ -138,11 +140,68 @@ jobs:
           path: staged/**
           if-no-files-found: error
 
+  publish-connector:
+    needs: release-please
+    if: ${{ always() && (needs.release-please.outputs.connector_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'connector'))) }}
+    runs-on: ubuntu-latest
+    environment: publish
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: npm-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - run: npm install -g npm@11
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter @introspection-ai/recipe-connector-slack typecheck
+
+      - run: pnpm --filter @introspection-ai/recipe-connector-slack build
+
+      - run: pnpm --filter @introspection-ai/recipe-connector-slack pack:check
+
+      - name: Publish Slack connector
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="packages/recipe-connector-slack"
+          package_name="$(node -p "require('./$package_dir/package.json').name")"
+          version="$(node -p "require('./$package_dir/package.json').version")"
+          tag="latest"
+          if [[ "$version" == *-* ]]; then
+            tag="beta"
+          fi
+
+          if npm view "$package_name@$version" version >/dev/null 2>&1; then
+            echo "$package_name@$version is already published"
+          else
+            pnpm --filter "$package_name" publish --access public --tag "$tag" --no-git-checks
+          fi
+          npm dist-tag add "$package_name@$version" "$tag"
+          if [[ "$tag" != "latest" ]]; then
+            npm dist-tag rm "$package_name" latest || true
+          fi
+
   publish:
     needs:
       - release-please
       - build-native-tools
-    if: ${{ always() && (needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root'))) }}
+      - publish-connector
+    if: ${{ always() && needs.build-native-tools.result == 'success' && (needs.publish-connector.result == 'success' || needs.publish-connector.result == 'skipped') && (needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root'))) }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:
@@ -201,6 +260,13 @@ jobs:
           tag="latest"
           if [[ "$version" == *-* ]]; then
             tag="beta"
+          fi
+
+          connector_name="$(node -p "require('./packages/recipe-connector-slack/package.json').name")"
+          connector_version="$(node -p "require('./packages/recipe-connector-slack/package.json').version")"
+          if ! npm view "$connector_name@$connector_version" version >/dev/null 2>&1; then
+            echo "$connector_name@$connector_version must be published before $package_name@$version" >&2
+            exit 1
           fi
 
           # Platform packages first, so the optionalDependencies the root

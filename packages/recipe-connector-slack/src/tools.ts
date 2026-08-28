@@ -149,6 +149,7 @@ export function registerSlackBotTools(
         channel: Type.Optional(Type.String({ minLength: 1 })),
         thread_ts: Type.Optional(Type.String({ minLength: 1 })),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+        cursor: Type.Optional(Type.String({ minLength: 1 })),
       },
       { additionalProperties: false },
     ),
@@ -166,6 +167,7 @@ export function registerSlackBotTools(
           channel: params.channel || origin.channel,
           ts: threadTs,
           limit: params.limit ?? 50,
+          ...(params.cursor ? { cursor: params.cursor } : {}),
         }),
       );
     },
@@ -181,6 +183,7 @@ export function registerSlackBotTools(
         channel: Type.Optional(Type.String({ minLength: 1 })),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
         oldest: Type.Optional(Type.String({ minLength: 1 })),
+        cursor: Type.Optional(Type.String({ minLength: 1 })),
       },
       { additionalProperties: false },
     ),
@@ -192,6 +195,7 @@ export function registerSlackBotTools(
           channel: params.channel || origin.channel,
           limit: params.limit ?? 50,
           ...(params.oldest ? { oldest: params.oldest } : {}),
+          ...(params.cursor ? { cursor: params.cursor } : {}),
         }),
       );
     },

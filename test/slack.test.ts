@@ -15,6 +15,7 @@ import {
   toPlainText,
   type SlackFetch,
 } from "../packages/recipe-connector-slack/src/index.js";
+import { writeAll } from "../packages/recipe-connector-slack/src/files.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 interface FakeFetchOptions {
@@ -244,6 +245,22 @@ describe("SlackBotSession transport", () => {
 });
 
 describe("Slack file downloads", () => {
+  it("retries partial file writes until the whole chunk is written", async () => {
+    const source = new Uint8Array([1, 2, 3, 4, 5]);
+    const written: number[] = [];
+    const writer = {
+      async write(buffer: Uint8Array, offset = 0, length = buffer.byteLength) {
+        const bytesWritten = Math.min(length, 2);
+        written.push(...buffer.slice(offset, offset + bytesWritten));
+        return { bytesWritten };
+      },
+    };
+
+    await writeAll(writer, source);
+
+    expect(written).toEqual([...source]);
+  });
+
   it("writes a safe file with a verified digest", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "slack-bot-api-"));
     const fetchImpl = fakeFetch({
@@ -293,6 +310,56 @@ describe("Slack file downloads", () => {
 });
 
 describe("Slack tool registration", () => {
+  it("passes a thread cursor to Slack", async () => {
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch();
+    registerSlackBotTools(pi, {
+      session: new SlackFileSession({
+        env: {
+          SLACK_BOT_TOKEN: "token",
+          SLACK_CHANNEL_ID: "C1",
+          SLACK_THREAD_TS: "100.1",
+        },
+        fetchImpl,
+      }),
+      tools: ["read_thread"],
+    });
+
+    await pi.tools.get("slack_read_thread")?.execute(
+      "tool-call",
+      { cursor: "next-thread-page" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(String(fetchImpl.calls[0]!.init.body)).toContain(
+      "cursor=next-thread-page",
+    );
+  });
+
+  it("passes a history cursor to Slack", async () => {
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch();
+    registerSlackBotTools(pi, {
+      session: new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C1" },
+        fetchImpl,
+      }),
+      tools: ["read_history"],
+    });
+
+    await pi.tools.get("slack_read_history")?.execute(
+      "tool-call",
+      { cursor: "next-page" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(String(fetchImpl.calls[0]!.init.body)).toContain("cursor=next-page");
+  });
+
   it("registers the original Bot API surface with Slack prefixes", () => {
     const pi = createMockExtensionAPI();
     registerSlackBotTools(pi, {

@@ -38,6 +38,14 @@ export interface SlackFileSessionOptions extends SlackBotSessionOptions {
   cwd?: string;
 }
 
+interface SlackFileWriter {
+  write(
+    buffer: Uint8Array,
+    offset?: number,
+    length?: number,
+  ): Promise<{ bytesWritten: number }>;
+}
+
 function requiredFileId(value: unknown): string {
   if (typeof value !== "string") throw new Error("file_id must be a string");
   const cleaned = value.trim();
@@ -205,7 +213,7 @@ async function writeDownload(
         );
       }
       hash.update(chunk);
-      await handle.write(chunk);
+      await writeAll(handle, chunk);
     }
     if (expectedSize !== null && size !== expectedSize) {
       throw new Error(
@@ -219,5 +227,23 @@ async function writeDownload(
     await handle.close().catch(() => {});
     await unlink(partial).catch(() => {});
     throw error;
+  }
+}
+
+export async function writeAll(
+  writer: SlackFileWriter,
+  chunk: Uint8Array,
+): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.byteLength) {
+    const { bytesWritten } = await writer.write(
+      chunk,
+      offset,
+      chunk.byteLength - offset,
+    );
+    if (bytesWritten <= 0 || bytesWritten > chunk.byteLength - offset) {
+      throw new Error("file write made no valid progress");
+    }
+    offset += bytesWritten;
   }
 }
