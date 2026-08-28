@@ -63,15 +63,14 @@ function resolvePackageModuleRoot(packageName: string): string | undefined {
 }
 
 function recipeExtensionAliases(): Record<string, string> {
-  const recipesRoot = resolvePackageModuleRoot("@introspection-ai/recipes");
   return Object.fromEntries(
     [
       // Jiti aliases are package-prefix mappings. They must point at the
       // directory containing a package's resolved modules, not an entry file,
       // so Jiti can append exported subpaths without corrupting the path.
-      // The self-alias also keeps recipe interaction imports on this package
-      // instance, sharing interrupt state with the child-agent runner.
-      ["@introspection-ai/recipes", recipesRoot],
+      // Recipe package imports deliberately resolve from the recipe's own
+      // node_modules. Shared Recipe registries use process-wide symbols, so a
+      // recipe can use a newer helper subpath without splitting host state.
       ["@earendil-works/pi-coding-agent", resolvePackageModuleRoot("@earendil-works/pi-coding-agent")],
       ["@earendil-works/pi-agent-core", resolvePackageModuleRoot("@earendil-works/pi-agent-core")],
       ["@earendil-works/pi-ai", resolvePackageModuleRoot("@earendil-works/pi-ai")],
