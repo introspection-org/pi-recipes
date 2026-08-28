@@ -612,7 +612,7 @@ fn validate_pi_config(
     (resolved, connector_tools)
 }
 
-const SLACK_CONNECTOR_TOOLS: &[&str] = &[
+const SLACK_CONNECTOR_TOOL_IDS: &[&str] = &[
     "origin",
     "send_message",
     "react",
@@ -624,6 +624,13 @@ const SLACK_CONNECTOR_TOOLS: &[&str] = &[
     "get_permalink",
     "download_file",
 ];
+
+fn is_known_connector_tool(tool: &str) -> bool {
+    tool == "slack_load_tools"
+        || SLACK_CONNECTOR_TOOL_IDS
+            .iter()
+            .any(|id| tool == format!("slack_{id}"))
+}
 
 fn validate_connector_config(
     value: Option<&JsonValue>,
@@ -746,7 +753,7 @@ fn validate_connector_config(
                 );
             }
             if provider.as_deref() == Some("slack") {
-                if SLACK_CONNECTOR_TOOLS.contains(&tool.as_str()) {
+                if SLACK_CONNECTOR_TOOL_IDS.contains(&tool.as_str()) {
                     registered.insert(format!("slack_{tool}"));
                 } else {
                     ctx.error(
@@ -1083,7 +1090,7 @@ fn validate_agents(
         if let Some(agent) = raw_by_name.get(&name) {
             validate_declared_agent_references(agent, &raw_by_name, &skill_names, ctx);
             for tool in agent.tools.as_deref().unwrap_or_default() {
-                if tool.starts_with("slack_") && !connector_tools.contains(tool) {
+                if is_known_connector_tool(tool) && !connector_tools.contains(tool) {
                     ctx.error(
                         "agent.connector_tool_undeclared",
                         &agent.path,
@@ -3270,6 +3277,23 @@ mod tests {
                 report.diagnostics
             );
         }
+    }
+
+    #[test]
+    fn allows_unrecognized_tools_that_share_the_slack_prefix() {
+        let report = check_recipe_files(&connector_recipe(
+            json!(["origin"]),
+            &["slack_origin", "slack_custom_report"],
+        ));
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn recognizes_only_cataloged_connector_tools() {
+        assert!(is_known_connector_tool("slack_origin"));
+        assert!(is_known_connector_tool("slack_load_tools"));
+        assert!(!is_known_connector_tool("slack_custom_report"));
     }
 
     #[test]

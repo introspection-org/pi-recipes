@@ -143,6 +143,40 @@ describe("Recipe Format", () => {
     );
   });
 
+  it("does not reserve unrecognized tools that share the Slack prefix", () => {
+    const recipeDir = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/claude-sonnet-4-5",
+        "tools: [slack_custom_report]",
+        "",
+      ].join("\n")
+    );
+
+    expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
+      "slack_custom_report",
+    ]);
+  });
+
+  it("reserves generated connector tools without relying on their prefix", () => {
+    const recipeDir = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/claude-sonnet-4-5",
+        "tools: [slack_load_tools]",
+        "",
+      ].join("\n")
+    );
+
+    expect(() => resolveRecipe({ recipeDir })).toThrow(/slack_load_tools/);
+  });
+
   it("resolves locked Python and approved system runtime requirements", () => {
     const recipeDir = fixture();
     mkdirSync(join(recipeDir, "python"), { recursive: true });

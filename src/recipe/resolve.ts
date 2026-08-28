@@ -26,7 +26,10 @@ import {
   validatePiPackageManifest,
   type PiPackageManifest,
 } from "../recipe-package.js";
-import { declaredRecipeConnectorToolNames } from "../connector-tools.js";
+import {
+  declaredRecipeConnectorToolNames,
+  recipeConnectorToolReference,
+} from "../connector-tools.js";
 
 export type { RecipePackageManifest } from "../recipe-package.js";
 export type { RecipeAgentMcp } from "../recipe-agent.js";
@@ -409,7 +412,8 @@ export function resolveRecipe(
       definition.tools
         .filter(
           (tool) =>
-            tool.startsWith("slack_") && !declaredConnectorTools.has(tool)
+            recipeConnectorToolReference(tool) !== undefined &&
+            !declaredConnectorTools.has(tool)
         )
         .map((tool) => `${definition.name}: ${tool}`)
   );

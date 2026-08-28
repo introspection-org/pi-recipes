@@ -26,7 +26,29 @@ export interface RecipeConnectorToolLoadout {
   loadToolName?: string;
 }
 
+export interface RecipeConnectorToolReference {
+  readonly provider: "slack";
+  readonly name: string;
+  readonly id?: SlackConnectorToolId;
+}
+
 const slackToolIds = new Set<string>(SLACK_CONNECTOR_TOOL_IDS);
+const connectorToolsByName = new Map<string, RecipeConnectorToolReference>([
+  ...SLACK_CONNECTOR_TOOL_IDS.map((id) => {
+    const name = slackConnectorToolName(id);
+    return [name, { provider: "slack" as const, id, name }] as const;
+  }),
+  [
+    SLACK_LOAD_TOOLS_NAME,
+    { provider: "slack" as const, name: SLACK_LOAD_TOOLS_NAME },
+  ],
+]);
+
+export function recipeConnectorToolReference(
+  name: string
+): RecipeConnectorToolReference | undefined {
+  return connectorToolsByName.get(name);
+}
 
 function selectedSlackToolIds(
   manifest: RecipePackageManifest,
