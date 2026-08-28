@@ -6,7 +6,7 @@ export type SlackEnv = Record<string, string | undefined>;
 export interface SlackOrigin {
   provider: string;
   channel: string;
-  /** Null for a top-level (non-threaded) conversation. */
+  /** Null for a non-threaded conversation lane. */
   thread_ts: string | null;
 }
 
@@ -15,9 +15,8 @@ export interface SlackOrigin {
  *
  * Cloud sandboxes carry the task origin as INTROSPECTION_TASK_CHANNEL_* env;
  * a local run names its target with SLACK_CHANNEL_ID / SLACK_THREAD_TS. One
- * resolver serves both so the agent-facing contract — call slack_origin, pass
- * its channel and thread explicitly to every Slack call — never branches on
- * where the session runs.
+ * resolver serves both so the recipe can map one origin onto the exact fields
+ * exposed by its active Slack MCP server.
  */
 export function resolveSlackOrigin(env: SlackEnv = process.env): SlackOrigin | null {
   const cloudChannel = env.INTROSPECTION_TASK_CHANNEL_ID?.trim();

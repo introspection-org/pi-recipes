@@ -38,10 +38,16 @@ instance, so the module must exist in the host's installed version.
 
 ### `slack_origin`
 
-Returns `{provider, channel, thread_ts}` — the conversation this session
-answers. `thread_ts` is `null` for a top-level message. The agent calls it
-first and passes `channel` / `thread_ts` explicitly to every Slack MCP call;
-the hosted server has no implicit origin.
+Returns `{provider, channel, thread_ts}`: the conversation this session
+answers. The agent calls it first because the hosted server has no implicit
+origin. A Slack channel mention has a thread root. `thread_ts` is `null` for
+a non-threaded lane such as a direct message. The recipe then uses a channel
+history tool instead of a thread tool.
+
+The two Slack servers use different field names. The in-pod tools take
+`channel`, `thread_ts`, and `text`. The hosted tools take `channel_id`,
+`message_ts` for reads, and `message` for sends. The recipe owns that mapping;
+this helper only returns the origin values.
 
 Resolution order:
 

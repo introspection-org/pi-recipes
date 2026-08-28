@@ -35,7 +35,7 @@ export function registerSlackTools(pi: ExtensionAPI, options: RegisterSlackTools
     name: "slack_origin",
     label: "Slack origin",
     description:
-      "The Slack conversation this session answers: provider, channel, and thread_ts (null for a top-level message). Call this first and pass its channel and thread_ts explicitly to every Slack MCP call.",
+      "The Slack conversation this session answers: provider, channel, and thread_ts. A null thread_ts means the recipe must read and reply in the non-threaded channel lane. Call this before Slack MCP tools and map its values to that server's field names.",
     parameters: Type.Object({}, { additionalProperties: false }),
     executionMode: "sequential",
     async execute() {
