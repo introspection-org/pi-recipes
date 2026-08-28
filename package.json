@@ -86,7 +86,7 @@
 		"prepublishOnly": "pnpm typecheck && pnpm test && pnpm build",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
 		"test": "pnpm build:ts && cargo test -p pi-mcp-client -p introspection-recipe-check && cargo build -p pi-mcp-client && MCP_CLIENT_BIN=target/debug/mcp-client node scripts/package-mcp-client.mjs && vitest run",
-		"pack:check": "pnpm pack --dry-run --json | node scripts/check-npm-pack.mjs",
+		"pack:check": "pnpm --config.ignore-scripts=true pack --dry-run --json | node scripts/check-npm-pack.mjs",
 		"clean": "rm -rf dist .turbo node_modules target vendor/mcp-client"
 	},
 	"dependencies": {
