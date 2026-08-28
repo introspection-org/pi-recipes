@@ -27,10 +27,7 @@ import {
   type AgentRunController,
   type AgentRunEventObserver,
 } from "./agents.js";
-import {
-  recipeConnectorExtensions,
-  recipeConnectorToolLoadout,
-} from "./connector-tools.js";
+import { loadRecipeConnectors } from "./connector-tools.js";
 import {
   clearMcpCatalogPreload,
   preloadMcpCatalogs,
@@ -591,15 +588,13 @@ async function createSessionForAgent(
     ]) {
       recipeRegistrations.claim("tool", toolName, "<host>");
     }
-    const connectorLoadout = recipeConnectorToolLoadout(
-      recipe.manifest,
-      recipe.tools
-    );
-    for (const connector of await recipeConnectorExtensions(
+    const connectors = await loadRecipeConnectors(
       recipe.manifest,
       recipe.tools,
       { recipeDir: recipe.recipeDir, env, cwd }
-    )) {
+    );
+    const connectorLoadout = connectors.loadout;
+    for (const connector of connectors.extensions) {
       inlineExtensions.push(
         bindRecipeExtensionFactory(
           connector.factory,

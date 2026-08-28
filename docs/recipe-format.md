@@ -96,6 +96,7 @@ credential. A host binds those values when it starts a task.
     "connectors": [
       {
         "provider": "slack",
+        "package": "@introspection-ai/recipe-connector-slack",
         "tools": {
           "include": ["origin", "read_thread", "react", "send_message"]
         }
@@ -105,18 +106,20 @@ credential. A host binds those values when it starts a task.
 }
 ```
 
-Each provider may appear once. `tools.include` MUST contain one or more exact
-tool names supported by that provider. Wildcards are not supported. The package
-declaration sets the maximum tool set. An agent MUST list each registered tool
-by its full name, such as `slack_read_thread`, in its `tools` list before the
-model can call it.
+Each provider may appear once. `package` names the production dependency that
+implements the connector. That package owns its tool catalog, default tools,
+and optional loader tool. `tools.include` MUST contain one or more exact tool
+IDs supported by the package. Wildcards are not supported. The declaration sets
+the maximum tool set. An agent MUST list each registered tool by its full name,
+such as `slack_read_thread`, in its `tools` list before the model can call it.
 
-Each connector declaration MUST have its provider package in the Recipe's
-production dependencies and lockfile. The standard host supports the `slack`
-provider through `@introspection-ai/recipe-connector-slack`. The host imports
-that package only when the Recipe declares Slack. It does not load MCP or
-require a Recipe extension. The host MUST fail closed when an agent selects a
-Slack tool that the package declaration does not include.
+Each connector declaration MUST name a package in the Recipe's production
+dependencies and lockfile. The host imports that package only when the Recipe
+declares the connector. It verifies that the package provider matches the
+manifest, then uses the package's exported tool definitions to validate and
+register the selected tools. It does not load MCP or require a Recipe
+extension. The host MUST fail closed when an agent selects a connector tool
+that the declaration does not include.
 
 ## Agents
 

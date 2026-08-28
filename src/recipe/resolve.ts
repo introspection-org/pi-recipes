@@ -26,10 +26,6 @@ import {
   validatePiPackageManifest,
   type PiPackageManifest,
 } from "../recipe-package.js";
-import {
-  declaredRecipeConnectorToolNames,
-  recipeConnectorToolReference,
-} from "../connector-tools.js";
 
 export type { RecipePackageManifest } from "../recipe-package.js";
 export type { RecipeAgentMcp } from "../recipe-agent.js";
@@ -404,25 +400,6 @@ export function resolveRecipe(
   if (definitions.size === 0) {
     throw new RecipeResolutionError(
       `Recipe "${manifest.name}" does not define any agents`
-    );
-  }
-  const declaredConnectorTools = declaredRecipeConnectorToolNames(manifest);
-  const undeclaredConnectorTools = [...definitions.values()].flatMap(
-    (definition) =>
-      definition.tools
-        .filter(
-          (tool) =>
-            recipeConnectorToolReference(tool) !== undefined &&
-            !declaredConnectorTools.has(tool)
-        )
-        .map((tool) => `${definition.name}: ${tool}`)
-  );
-  if (undeclaredConnectorTools.length > 0) {
-    throw new RecipeResolutionError(
-      [
-        `Recipe "${manifest.name}" agents select Slack tools that package.json#pi.connectors does not declare.`,
-        ...undeclaredConnectorTools.map((tool) => `- ${tool}`),
-      ].join("\n")
     );
   }
   for (const definition of definitions.values()) {

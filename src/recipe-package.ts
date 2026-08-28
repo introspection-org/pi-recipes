@@ -1,11 +1,6 @@
 import { existsSync, realpathSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import {
-  RECIPE_CONNECTOR_DEFINITIONS,
-  recipeConnectorDefinition,
-} from "./connector-catalog.js";
-
 export interface RecipePackageResources {
   agents: string[];
   extensions: string[];
@@ -82,6 +77,7 @@ export interface RecipePackageConnectorTools {
 
 export interface RecipePackageConnector {
   provider: string;
+  package: string;
   tools: RecipePackageConnectorTools;
 }
 
@@ -221,15 +217,6 @@ function sourceShapeFindings(
   return findings;
 }
 
-const CONNECTOR_TOOL_CATALOG: Readonly<Record<string, readonly string[]>> = {
-  ...Object.fromEntries(
-    RECIPE_CONNECTOR_DEFINITIONS.map((definition) => [
-      definition.provider,
-      definition.tools.map((tool) => tool.id),
-    ])
-  ),
-};
-
 function connectorSourceShapeFindings(
   value: unknown,
   packageName: string,
@@ -253,7 +240,7 @@ function connectorSourceShapeFindings(
     }
     const connector = raw as Record<string, unknown>;
     const unknown = Object.keys(connector).filter(
-      (key) => !["provider", "tools"].includes(key)
+      (key) => !["provider", "package", "tools"].includes(key)
     );
     if (unknown.length > 0) {
       findings.push(
@@ -273,12 +260,6 @@ function connectorSourceShapeFindings(
           `package.json#pi.connectors[${index}].provider must be non-empty`
         )
       );
-    } else if (!Object.hasOwn(CONNECTOR_TOOL_CATALOG, provider)) {
-      findings.push(
-        invalid(
-          `package.json#pi.connectors[${index}].provider '${provider}' is unsupported`
-        )
-      );
     } else if (providers.has(provider)) {
       findings.push(
         invalid(
@@ -287,21 +268,33 @@ function connectorSourceShapeFindings(
       );
     } else {
       providers.add(provider);
-      const definition = recipeConnectorDefinition(provider);
+    }
+
+    const connectorPackage =
+      typeof connector.package === "string" && connector.package.trim()
+        ? connector.package.trim()
+        : undefined;
+    if (!connectorPackage) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors[${index}].package must be non-empty`
+        )
+      );
+    } else {
       const declaredDependencies =
-        dependencies && typeof dependencies === "object" && !Array.isArray(dependencies)
+        dependencies &&
+        typeof dependencies === "object" &&
+        !Array.isArray(dependencies)
           ? (dependencies as Record<string, unknown>)
           : {};
-      const dependencyVersion = definition
-        ? declaredDependencies[definition.packageName]
-        : undefined;
+      const dependencyVersion = declaredDependencies[connectorPackage];
       if (
-        definition &&
-        (typeof dependencyVersion !== "string" || !dependencyVersion.trim())
+        typeof dependencyVersion !== "string" ||
+        !dependencyVersion.trim()
       ) {
         findings.push(
           invalid(
-            `package.json#pi.connectors provider '${provider}' requires dependency '${definition.packageName}'`
+            `package.json#pi.connectors provider '${provider ?? "unknown"}' requires dependency '${connectorPackage}'`
           )
         );
       }
@@ -348,17 +341,6 @@ function connectorSourceShapeFindings(
           `package.json#pi.connectors[${index}].tools.include must not contain duplicates`
         )
       );
-    }
-    const supported = provider ? CONNECTOR_TOOL_CATALOG[provider] : undefined;
-    if (supported) {
-      const unsupported = normalized.filter((tool) => !supported.includes(tool));
-      if (unsupported.length > 0) {
-        findings.push(
-          invalid(
-            `package.json#pi.connectors[${index}] contains unsupported ${provider} tool(s): ${unsupported.join(", ")}`
-          )
-        );
-      }
     }
   }
   return findings;
@@ -781,11 +763,13 @@ function parseConnectors(value: unknown): RecipePackageConnector[] {
   for (const raw of Array.isArray(value) ? value : []) {
     const connector = asRecord(raw);
     const provider = stringValue(connector.provider);
+    const connectorPackage = stringValue(connector.package);
     const tools = asRecord(connector.tools);
-    if (!provider || seen.has(provider)) continue;
+    if (!provider || !connectorPackage || seen.has(provider)) continue;
     seen.add(provider);
     connectors.push({
       provider,
+      package: connectorPackage,
       tools: {
         include: stringArray(tools.include).map((tool) => tool.trim()),
       },

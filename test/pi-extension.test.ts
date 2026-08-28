@@ -401,6 +401,7 @@ describe("Recipes extension for Pi", () => {
       pkg.pi.connectors = [
         {
           provider: "slack",
+          package: SLACK_RECIPE_CONNECTOR_PACKAGE,
           tools: { include: ["origin", "read_thread", "react"] },
         },
       ];

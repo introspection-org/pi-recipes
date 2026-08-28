@@ -197,8 +197,7 @@ jobs:
     needs:
       - release-please
       - build-native-tools
-      - publish-connector
-    if: ${{ always() && needs.build-native-tools.result == 'success' && (needs.publish-connector.result == 'success' || needs.publish-connector.result == 'skipped') && (needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root'))) }}
+    if: ${{ always() && needs.build-native-tools.result == 'success' && (needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root'))) }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:
@@ -257,13 +256,6 @@ jobs:
           tag="latest"
           if [[ "$version" == *-* ]]; then
             tag="beta"
-          fi
-
-          connector_name="$(node -p "require('./packages/recipe-connector-slack/package.json').name")"
-          connector_version="$(node -p "require('./packages/recipe-connector-slack/package.json').version")"
-          if ! npm view "$connector_name@$connector_version" version >/dev/null 2>&1; then
-            echo "$connector_name@$connector_version must be published before $package_name@$version" >&2
-            exit 1
           fi
 
           # Platform packages first, so the optionalDependencies the root

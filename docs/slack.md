@@ -23,6 +23,7 @@ Add the Slack connector package and declaration to `package.json`:
     "connectors": [
       {
         "provider": "slack",
+        "package": "@introspection-ai/recipe-connector-slack",
         "tools": {
           "include": [
             "origin",

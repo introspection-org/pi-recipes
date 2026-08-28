@@ -254,6 +254,7 @@ describe("createAgentSession", () => {
         connectors: [
           {
             provider: "slack",
+            package: SLACK_RECIPE_CONNECTOR_PACKAGE,
             tools: {
               include: ["origin", "read_thread", "react", "send_message"],
             },
@@ -274,6 +275,48 @@ describe("createAgentSession", () => {
     );
     expect(handle.session.getActiveToolNames()).not.toContain("slack_react");
 
+  });
+
+  it("rejects connector tools outside the manifest policy at runtime", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      dependencies: { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" },
+      tools: ["slack_origin", "slack_send_message"],
+      manifestPi: {
+        connectors: [
+          {
+            provider: "slack",
+            package: SLACK_RECIPE_CONNECTOR_PACKAGE,
+            tools: { include: ["origin"] },
+          },
+        ],
+      },
+    });
+    installSlackRecipeConnector(recipeDir);
+
+    await expect(open({ recipeDir, cwd: workspaceDir })).rejects.toThrow(
+      /connector tool\(s\).*does not declare: slack_send_message/
+    );
+  });
+
+  it("rejects tools unsupported by the declared connector package", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      dependencies: { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" },
+      tools: ["slack_origin"],
+      manifestPi: {
+        connectors: [
+          {
+            provider: "slack",
+            package: SLACK_RECIPE_CONNECTOR_PACKAGE,
+            tools: { include: ["origin", "delete_workspace"] },
+          },
+        ],
+      },
+    });
+    installSlackRecipeConnector(recipeDir);
+
+    await expect(open({ recipeDir, cwd: workspaceDir })).rejects.toThrow(
+      /does not support declared tool\(s\): delete_workspace/
+    );
   });
 
   it("applies authored session policy to the session-local Pi agent", async () => {

@@ -25,3 +25,11 @@ export const SLACK_LOAD_TOOLS_NAME = "slack_load_tools";
 export function slackConnectorToolName(tool: SlackConnectorToolId): string {
   return `slack_${tool}`;
 }
+
+const slackDefaultToolIds = new Set<string>(SLACK_DEFAULT_TOOL_IDS);
+
+export const SLACK_CONNECTOR_TOOLS = SLACK_CONNECTOR_TOOL_IDS.map((id) => ({
+  id,
+  name: slackConnectorToolName(id),
+  defaultActive: slackDefaultToolIds.has(id),
+}));

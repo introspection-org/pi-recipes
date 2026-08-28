@@ -4,12 +4,16 @@ import { pathToFileURL } from "node:url";
 
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
-import {
-  recipeConnectorDefinition,
-  recipeConnectorToolDefinition,
-  type RecipeConnectorDefinition,
-} from "./connector-catalog.js";
-import type { RecipePackageManifest } from "./recipe-package.js";
+import type {
+  RecipePackageConnector,
+  RecipePackageManifest,
+} from "./recipe-package.js";
+
+export interface RecipeConnectorToolDefinition {
+  readonly id: string;
+  readonly name: string;
+  readonly defaultActive: boolean;
+}
 
 export interface RecipeConnectorExtension {
   owner: string;
@@ -37,77 +41,72 @@ export interface RecipeConnectorModuleOptions {
 
 export interface RecipeConnectorModule {
   readonly provider: string;
-  readonly toolIds: readonly string[];
+  readonly tools: readonly RecipeConnectorToolDefinition[];
+  readonly loadToolName?: string;
   createExtension(options: RecipeConnectorModuleOptions): ExtensionFactory;
 }
 
-export function recipeConnectorToolReference(name: string) {
-  return recipeConnectorToolDefinition(name);
+export interface LoadedRecipeConnectors {
+  extensions: RecipeConnectorExtension[];
+  loadout: RecipeConnectorToolLoadout;
 }
 
-function selectedConnectorToolIds(
-  manifest: RecipePackageManifest,
-  agentTools: readonly string[],
-  definition: RecipeConnectorDefinition
-): string[] {
-  const connector = manifest.connectors.find(
-    (entry) => entry.provider === definition.provider
+function connectorModuleError(
+  connector: RecipePackageConnector,
+  detail: string
+): Error {
+  return new Error(
+    `Recipe connector package ${connector.package} ${detail}`
   );
-  const toolsById = new Map(
-    definition.tools.map((tool) => [tool.id, tool] as const)
-  );
-  return (connector?.tools.include ?? []).filter((id) => {
-    const tool = toolsById.get(id);
-    return tool !== undefined && agentTools.includes(tool.name);
-  });
 }
 
-export function declaredRecipeConnectorToolNames(
-  manifest: RecipePackageManifest
-): ReadonlySet<string> {
-  return new Set(
-    manifest.connectors.flatMap((connector) => {
-      const definition = recipeConnectorDefinition(connector.provider);
-      if (!definition) return [];
-      const toolsById = new Map(
-        definition.tools.map((tool) => [tool.id, tool] as const)
-      );
-      return connector.tools.include.flatMap((id) => {
-        const tool = toolsById.get(id);
-        return tool ? [tool.name] : [];
-      });
-    })
+function isConnectorToolDefinition(
+  value: unknown
+): value is RecipeConnectorToolDefinition {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const tool = value as Partial<RecipeConnectorToolDefinition>;
+  return (
+    typeof tool.id === "string" &&
+    Boolean(tool.id.trim()) &&
+    typeof tool.name === "string" &&
+    Boolean(tool.name.trim()) &&
+    typeof tool.defaultActive === "boolean"
   );
 }
 
 function parseRecipeConnectorModule(
   value: unknown,
-  definition: RecipeConnectorDefinition
+  connector: RecipePackageConnector
 ): RecipeConnectorModule {
   if (!value || typeof value !== "object") {
-    throw new Error(
-      `Recipe connector package ${definition.packageName} does not export a module`
-    );
+    throw connectorModuleError(connector, "does not export a module");
   }
   const module = value as Partial<RecipeConnectorModule>;
   if (
-    module.provider !== definition.provider ||
-    !Array.isArray(module.toolIds) ||
-    module.toolIds.some((tool) => typeof tool !== "string") ||
+    module.provider !== connector.provider ||
+    !Array.isArray(module.tools) ||
+    module.tools.length === 0 ||
+    module.tools.some((tool) => !isConnectorToolDefinition(tool)) ||
+    (module.loadToolName !== undefined &&
+      (typeof module.loadToolName !== "string" ||
+        !module.loadToolName.trim())) ||
     typeof module.createExtension !== "function"
   ) {
-    throw new Error(
-      `Recipe connector package ${definition.packageName} has an invalid module contract`
-    );
+    throw connectorModuleError(connector, "has an invalid module contract");
   }
-  const expected = definition.tools.map((tool) => tool.id).sort();
-  const actual = [...module.toolIds].sort();
+  const tools = module.tools as readonly RecipeConnectorToolDefinition[];
+  const ids = tools.map((tool) => tool.id);
+  const names = tools.map((tool) => tool.name);
   if (
-    expected.length !== actual.length ||
-    expected.some((tool, index) => tool !== actual[index])
+    new Set(ids).size !== ids.length ||
+    new Set(names).size !== names.length ||
+    (module.loadToolName !== undefined && names.includes(module.loadToolName))
   ) {
-    throw new Error(
-      `Recipe connector package ${definition.packageName} does not match the ${definition.provider} tool catalog`
+    throw connectorModuleError(
+      connector,
+      "has duplicate or conflicting tool names"
     );
   }
   return module as RecipeConnectorModule;
@@ -115,85 +114,96 @@ function parseRecipeConnectorModule(
 
 async function loadRecipeConnectorModule(
   recipeDir: string,
-  definition: RecipeConnectorDefinition
+  connector: RecipePackageConnector
 ): Promise<RecipeConnectorModule> {
   const recipeRequire = createRequire(join(recipeDir, "package.json"));
   let entry: string;
   try {
-    entry = recipeRequire.resolve(definition.packageName);
+    entry = recipeRequire.resolve(connector.package);
   } catch (error) {
     throw new Error(
-      `Recipe connector '${definition.provider}' requires ${definition.packageName} in the Recipe dependencies`,
+      `Recipe connector '${connector.provider}' requires ${connector.package} in the Recipe dependencies`,
       { cause: error }
     );
   }
   const imported = await import(pathToFileURL(entry).href);
-  return parseRecipeConnectorModule(imported.default, definition);
+  return parseRecipeConnectorModule(imported.default, connector);
 }
 
-export async function recipeConnectorExtensions(
+export async function loadRecipeConnectors(
   manifest: RecipePackageManifest,
   agentTools: readonly string[],
   options: RecipeConnectorExtensionOptions
-): Promise<RecipeConnectorExtension[]> {
-  return Promise.all(
+): Promise<LoadedRecipeConnectors> {
+  const loaded = await Promise.all(
     manifest.connectors.map(async (connector) => {
-      const definition = recipeConnectorDefinition(connector.provider);
-      if (!definition) {
-        throw new Error(
-          `Recipe connector provider is unsupported: ${connector.provider}`
+      const module = await loadRecipeConnectorModule(options.recipeDir, connector);
+      const toolsById = new Map(
+        module.tools.map((tool) => [tool.id, tool] as const)
+      );
+      const unsupported = connector.tools.include.filter(
+        (id) => !toolsById.has(id)
+      );
+      if (unsupported.length > 0) {
+        throw connectorModuleError(
+          connector,
+          `does not support declared tool(s): ${unsupported.join(", ")}`
         );
       }
-      const module = await loadRecipeConnectorModule(
-        options.recipeDir,
-        definition
+      const declaredTools = connector.tools.include.map(
+        (id) => toolsById.get(id)!
       );
-      const tools = selectedConnectorToolIds(
-        manifest,
-        agentTools,
-        definition
+      const declaredNames = new Set(declaredTools.map((tool) => tool.name));
+      const undeclared = module.tools
+        .filter(
+          (tool) =>
+            agentTools.includes(tool.name) && !declaredNames.has(tool.name)
+        )
+        .map((tool) => tool.name);
+      if (undeclared.length > 0) {
+        throw new Error(
+          `Recipe agent selects ${connector.provider} connector tool(s) that package.json#pi.connectors does not declare: ${undeclared.join(", ")}`
+        );
+      }
+      const selected = declaredTools.filter((tool) =>
+        agentTools.includes(tool.name)
       );
+      const loadToolNames =
+        module.loadToolName && selected.some((tool) => !tool.defaultActive)
+          ? [module.loadToolName]
+          : [];
       return {
-        owner: `<connector:${connector.provider}>`,
-        factory: module.createExtension({
-          tools,
-          loadout: true,
-          env: options.env,
-          cwd: options.cwd,
-        }),
+        extension: {
+          owner: `<connector:${connector.provider}>`,
+          factory: module.createExtension({
+            tools: selected.map((tool) => tool.id),
+            loadout: true,
+            env: options.env,
+            cwd: options.cwd,
+          }),
+        },
+        selected,
+        loadToolNames,
       };
     })
   );
-}
-
-export function recipeConnectorToolLoadout(
-  manifest: RecipePackageManifest,
-  agentTools: readonly string[]
-): RecipeConnectorToolLoadout {
-  const selected = manifest.connectors.flatMap((connector) => {
-    const definition = recipeConnectorDefinition(connector.provider);
-    if (!definition) return [];
-    const selectedIds = new Set(
-      selectedConnectorToolIds(manifest, agentTools, definition)
-    );
-    return definition.tools
-      .filter((tool) => selectedIds.has(tool.id))
-      .map((tool) => ({ provider: definition.provider, tool }));
-  });
-  const loadToolNames = manifest.connectors.flatMap((connector) => {
-    const definition = recipeConnectorDefinition(connector.provider);
-    if (!definition?.loadToolName) return [];
-    const hasOptional = selected.some(
-      (entry) =>
-        entry.provider === definition.provider && !entry.tool.defaultActive
-    );
-    return hasOptional ? [definition.loadToolName] : [];
-  });
+  const selected = loaded.flatMap((connector) => connector.selected);
+  const loadToolNames = loaded.flatMap((connector) => connector.loadToolNames);
+  const registeredNames = [
+    ...selected.map((tool) => tool.name),
+    ...loadToolNames,
+  ];
+  if (new Set(registeredNames).size !== registeredNames.length) {
+    throw new Error("Recipe connector packages register duplicate tool names");
+  }
   return {
-    toolNames: selected.map((entry) => entry.tool.name),
-    initialActiveToolNames: selected
-      .filter((entry) => entry.tool.defaultActive)
-      .map((entry) => entry.tool.name),
-    loadToolNames,
+    extensions: loaded.map((connector) => connector.extension),
+    loadout: {
+      toolNames: selected.map((tool) => tool.name),
+      initialActiveToolNames: selected
+        .filter((tool) => tool.defaultActive)
+        .map((tool) => tool.name),
+      loadToolNames,
+    },
   };
 }

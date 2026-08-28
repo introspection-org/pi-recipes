@@ -74,10 +74,7 @@ import {
   type AgentRunController,
   type AgentRunSummary,
 } from "./agents.js";
-import {
-  recipeConnectorExtensions,
-  recipeConnectorToolLoadout,
-} from "./connector-tools.js";
+import { loadRecipeConnectors } from "./connector-tools.js";
 
 export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
@@ -685,10 +682,6 @@ export function createRecipesExtension(
     env.PI_RECIPE_DIR = recipeDir;
     env.PI_AGENT_NAME = resolved.name;
 
-    const connectorLoadout = recipeConnectorToolLoadout(
-      resolved.manifest,
-      resolved.tools
-    );
     state = {
       key,
       cwd,
@@ -700,13 +693,11 @@ export function createRecipesExtension(
       mcpConfigured: false,
       agentMcpMode: "cli",
       initialMcpToolNames: [],
-      initialConnectorToolNames: connectorLoadout.initialActiveToolNames,
-      connectorToolNames: connectorLoadout.toolNames,
-      connectorLoadToolNames: connectorLoadout.loadToolNames,
+      initialConnectorToolNames: [],
+      connectorToolNames: [],
+      connectorLoadToolNames: [],
       extensionAllowedToolNames: new Set([
         ...resolved.tools,
-        ...connectorLoadout.toolNames,
-        ...connectorLoadout.loadToolNames,
         ...(resolved.subagents.size > 0 ? ["agent"] : []),
       ]),
     };
@@ -769,7 +760,7 @@ export function createRecipesExtension(
     }
     let loadedCount = 0;
     try {
-      for (const connector of await recipeConnectorExtensions(
+      const connectors = await loadRecipeConnectors(
         launchState.resolved.manifest,
         launchState.resolved.tools,
         {
@@ -777,7 +768,18 @@ export function createRecipesExtension(
           env,
           cwd: launchState.cwd,
         }
-      )) {
+      );
+      launchState.initialConnectorToolNames =
+        connectors.loadout.initialActiveToolNames;
+      launchState.connectorToolNames = connectors.loadout.toolNames;
+      launchState.connectorLoadToolNames = connectors.loadout.loadToolNames;
+      for (const toolName of [
+        ...connectors.loadout.toolNames,
+        ...connectors.loadout.loadToolNames,
+      ]) {
+        launchState.extensionAllowedToolNames.add(toolName);
+      }
+      for (const connector of connectors.extensions) {
         const factory = bindRecipeExtensionFactory(
           connector.factory,
           Object.freeze({

@@ -72,6 +72,7 @@ describe("Recipe Format", () => {
     pkg.pi.connectors = [
       {
         provider: "slack",
+        package: SLACK_RECIPE_CONNECTOR_PACKAGE,
         tools: { include: ["origin", "read_thread", "send_message"] },
       },
     ];
@@ -82,6 +83,7 @@ describe("Recipe Format", () => {
     expect(manifest.connectors).toEqual([
       {
         provider: "slack",
+        package: SLACK_RECIPE_CONNECTOR_PACKAGE,
         tools: { include: ["origin", "read_thread", "send_message"] },
       },
     ]);
@@ -91,7 +93,7 @@ describe("Recipe Format", () => {
     });
   });
 
-  it("rejects unsupported connector providers and tools", () => {
+  it("accepts provider and tool names owned by the connector package", () => {
     const recipeDir = fixture();
     const pkg = JSON.parse(
       readFileSync(join(recipeDir, "package.json"), "utf8")
@@ -99,35 +101,30 @@ describe("Recipe Format", () => {
     pkg.pi.connectors = [
       {
         provider: "discord",
-        tools: { include: ["read_thread"] },
-      },
-      {
-        provider: "slack",
+        package: "@example/recipe-connector-discord",
         tools: { include: ["delete_workspace"] },
       },
     ];
-    pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
+    pkg.dependencies = { "@example/recipe-connector-discord": "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
     const report = validatePiPackageManifest(
       readPiPackageManifest(recipeDir)
     );
-    expect(report.valid).toBe(false);
-    expect(report.findings.map((finding) => finding.message)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("provider 'discord' is unsupported"),
-        expect.stringContaining("unsupported slack tool(s): delete_workspace"),
-      ])
-    );
+    expect(report).toEqual({ valid: true, findings: [] });
   });
 
-  it("rejects agent Slack tools outside the package connector policy", () => {
+  it("leaves connector tool enforcement to the loaded connector package", () => {
     const recipeDir = fixture();
     const pkg = JSON.parse(
       readFileSync(join(recipeDir, "package.json"), "utf8")
     );
     pkg.pi.connectors = [
-      { provider: "slack", tools: { include: ["origin"] } },
+      {
+        provider: "slack",
+        package: SLACK_RECIPE_CONNECTOR_PACKAGE,
+        tools: { include: ["origin"] },
+      },
     ];
     pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
@@ -142,9 +139,10 @@ describe("Recipe Format", () => {
       ].join("\n")
     );
 
-    expect(() => resolveRecipe({ recipeDir })).toThrow(
-      /agent: slack_send_message/
-    );
+    expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
+      "slack_origin",
+      "slack_send_message",
+    ]);
   });
 
   it("does not reserve unrecognized tools that share the Slack prefix", () => {
@@ -171,7 +169,11 @@ describe("Recipe Format", () => {
       readFileSync(join(recipeDir, "package.json"), "utf8")
     );
     pkg.pi.connectors = [
-      { provider: "slack", tools: { include: ["origin"] } },
+      {
+        provider: "slack",
+        package: SLACK_RECIPE_CONNECTOR_PACKAGE,
+        tools: { include: ["origin"] },
+      },
     ];
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
@@ -183,7 +185,7 @@ describe("Recipe Format", () => {
     );
   });
 
-  it("reserves generated connector tools without relying on their prefix", () => {
+  it("does not carry connector-generated tool names in the root catalog", () => {
     const recipeDir = fixture();
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
@@ -196,7 +198,9 @@ describe("Recipe Format", () => {
       ].join("\n")
     );
 
-    expect(() => resolveRecipe({ recipeDir })).toThrow(/slack_load_tools/);
+    expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
+      "slack_load_tools",
+    ]);
   });
 
   it("resolves locked Python and approved system runtime requirements", () => {

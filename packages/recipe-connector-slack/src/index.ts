@@ -7,6 +7,7 @@ export {
   type SlackPostResult,
 } from "./client.js";
 export {
+  SLACK_CONNECTOR_TOOLS,
   SLACK_CONNECTOR_TOOL_IDS,
   slackConnectorToolName,
 } from "./catalog.js";
@@ -30,7 +31,9 @@ export type {
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import {
+  SLACK_CONNECTOR_TOOLS,
   SLACK_CONNECTOR_TOOL_IDS,
+  SLACK_LOAD_TOOLS_NAME,
   type SlackConnectorToolId,
 } from "./catalog.js";
 import { registerSlackBotTools } from "./tools.js";
@@ -46,7 +49,8 @@ const slackToolIds = new Set<string>(SLACK_CONNECTOR_TOOL_IDS);
 
 export const slackRecipeConnectorModule = {
   provider: "slack",
-  toolIds: SLACK_CONNECTOR_TOOL_IDS,
+  tools: SLACK_CONNECTOR_TOOLS,
+  loadToolName: SLACK_LOAD_TOOLS_NAME,
   createExtension(
     options: SlackRecipeConnectorModuleOptions
   ): ExtensionFactory {

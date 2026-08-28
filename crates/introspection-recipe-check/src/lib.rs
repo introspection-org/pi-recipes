@@ -101,7 +101,6 @@ struct RawAgent {
     path: String,
     from: Option<String>,
     fields: HashSet<AgentField>,
-    tools: Option<Vec<String>>,
     skills: Option<Vec<String>>,
     subagents: Option<Vec<String>>,
     mcp: Option<AgentMcpConfig>,
@@ -265,7 +264,7 @@ pub fn check_recipe_files(input: &RecipeFiles) -> Report {
     if let Some(package) = package {
         validate_package_identity(&package, &mut ctx);
         validate_dependency_package(&package, &mut ctx);
-        let (resources, connector_tools) = validate_pi_config(&package, &mut ctx);
+        let resources = validate_pi_config(&package, &mut ctx);
         validate_mcp_local_example(&mut ctx);
 
         let mcp_tool_policy = package
@@ -280,13 +279,7 @@ pub fn check_recipe_files(input: &RecipeFiles) -> Report {
                 resource_counts.insert(key.to_owned(), paths.len());
             }
         }
-        validate_agents(
-            &agent_paths,
-            &resources,
-            &connector_tools,
-            mcp_tool_policy.as_ref(),
-            &mut ctx,
-        );
+        validate_agents(&agent_paths, &resources, mcp_tool_policy.as_ref(), &mut ctx);
     }
 
     let judge_count = judges::validate_judges(&mut ctx);
@@ -559,10 +552,10 @@ fn validate_mcp_local_example(ctx: &mut CheckContext) {
 fn validate_pi_config(
     package: &Package,
     ctx: &mut CheckContext,
-) -> (HashMap<&'static str, Vec<String>>, BTreeSet<String>) {
+) -> HashMap<&'static str, Vec<String>> {
     let mut resolved = HashMap::new();
     let Some(JsonValue::Object(pi)) = package.pi.as_ref() else {
-        return (resolved, BTreeSet::new());
+        return resolved;
     };
     let known: HashSet<&str> = [
         "agents",
@@ -611,42 +604,20 @@ fn validate_pi_config(
         resolved.insert(key, paths);
     }
 
-    let connector_tools =
-        validate_connector_config(pi.get("connectors"), &package.dependencies, ctx);
+    validate_connector_config(pi.get("connectors"), &package.dependencies, ctx);
     validate_mcp_config(pi.get("mcp"), ctx);
     validate_runtime_config(pi.get("runtime"), ctx);
 
-    (resolved, connector_tools)
-}
-
-const SLACK_CONNECTOR_TOOL_IDS: &[&str] = &[
-    "origin",
-    "send_message",
-    "react",
-    "read_thread",
-    "read_history",
-    "list_channels",
-    "join_channel",
-    "resolve_user",
-    "get_permalink",
-    "download_file",
-];
-
-fn is_known_connector_tool(tool: &str) -> bool {
-    tool == "slack_load_tools"
-        || SLACK_CONNECTOR_TOOL_IDS
-            .iter()
-            .any(|id| tool == format!("slack_{id}"))
+    resolved
 }
 
 fn validate_connector_config(
     value: Option<&JsonValue>,
     dependencies: &BTreeSet<String>,
     ctx: &mut CheckContext,
-) -> BTreeSet<String> {
-    let mut registered = BTreeSet::new();
+) {
     let Some(value) = value else {
-        return registered;
+        return;
     };
     let JsonValue::Array(connectors) = value else {
         ctx.error(
@@ -655,7 +626,7 @@ fn validate_connector_config(
             "package.json#pi.connectors must be an array",
             Some("use a list of connector declarations"),
         );
-        return registered;
+        return;
     };
 
     let mut providers = BTreeSet::new();
@@ -671,46 +642,50 @@ fn validate_connector_config(
         };
         for key in connector
             .keys()
-            .filter(|key| !matches!(key.as_str(), "provider" | "tools"))
+            .filter(|key| !matches!(key.as_str(), "provider" | "package" | "tools"))
         {
             ctx.error(
                 "pi.connectors_invalid",
                 PACKAGE_JSON,
                 format!("package.json#pi.connectors[{index}] contains unknown field '{key}'"),
-                Some("use only provider and tools"),
+                Some("use only provider, package, and tools"),
             );
         }
 
         let provider = string_value(connector.get("provider"));
         match provider.as_deref() {
-            Some("slack") => {
-                if !providers.insert("slack") {
-                    ctx.error(
-                        "pi.connectors_invalid",
-                        PACKAGE_JSON,
-                        "package.json#pi.connectors contains duplicate provider 'slack'",
-                        Some("declare each connector provider once"),
-                    );
-                } else if !dependencies.contains("@introspection-ai/recipe-connector-slack") {
-                    ctx.error(
-                        "pi.connectors_invalid",
-                        PACKAGE_JSON,
-                        "package.json#pi.connectors provider 'slack' requires dependency '@introspection-ai/recipe-connector-slack'",
-                        Some("add @introspection-ai/recipe-connector-slack to package.json#dependencies and commit the lockfile"),
-                    );
-                }
-            }
-            Some(provider) => ctx.error(
+            Some(provider) if !providers.insert(provider.to_owned()) => ctx.error(
                 "pi.connectors_invalid",
                 PACKAGE_JSON,
-                format!("package.json#pi.connectors[{index}].provider '{provider}' is unsupported"),
-                Some("use a supported connector provider"),
+                format!("package.json#pi.connectors contains duplicate provider '{provider}'"),
+                Some("declare each connector provider once"),
             ),
+            Some(_) => {}
             None => ctx.error(
                 "pi.connectors_invalid",
                 PACKAGE_JSON,
                 format!("package.json#pi.connectors[{index}].provider must be non-empty"),
-                Some("set provider to slack"),
+                Some("name the connector provider"),
+            ),
+        }
+
+        let package = string_value(connector.get("package"));
+        match package.as_deref() {
+            Some(package) if !dependencies.contains(package) => ctx.error(
+                "pi.connectors_invalid",
+                PACKAGE_JSON,
+                format!(
+                    "package.json#pi.connectors provider '{}' requires dependency '{package}'",
+                    provider.as_deref().unwrap_or("unknown")
+                ),
+                Some("add the connector package to package.json#dependencies and commit the lockfile"),
+            ),
+            Some(_) => {}
+            None => ctx.error(
+                "pi.connectors_invalid",
+                PACKAGE_JSON,
+                format!("package.json#pi.connectors[{index}].package must be non-empty"),
+                Some("name the package that implements this connector"),
             ),
         }
 
@@ -767,21 +742,8 @@ fn validate_connector_config(
                     Some("remove the duplicate connector tool"),
                 );
             }
-            if provider.as_deref() == Some("slack") {
-                if SLACK_CONNECTOR_TOOL_IDS.contains(&tool.as_str()) {
-                    registered.insert(format!("slack_{tool}"));
-                } else {
-                    ctx.error(
-                        "pi.connectors_invalid",
-                        PACKAGE_JSON,
-                        format!("package.json#pi.connectors[{index}] contains unsupported slack tool '{tool}'"),
-                        Some("use a supported Slack connector tool"),
-                    );
-                }
-            }
         }
     }
-    registered
 }
 
 fn validate_runtime_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
@@ -1053,7 +1015,6 @@ fn resolve_agents(
 fn validate_agents(
     agent_paths: &[String],
     resources: &HashMap<&'static str, Vec<String>>,
-    connector_tools: &BTreeSet<String>,
     mcp_tool_policy: Option<&McpToolPolicy>,
     ctx: &mut CheckContext,
 ) {
@@ -1104,18 +1065,6 @@ fn validate_agents(
         }
         if let Some(agent) = raw_by_name.get(&name) {
             validate_declared_agent_references(agent, &raw_by_name, &skill_names, ctx);
-            for tool in agent.tools.as_deref().unwrap_or_default() {
-                if is_known_connector_tool(tool) && !connector_tools.contains(tool) {
-                    ctx.error(
-                        "agent.connector_tool_undeclared",
-                        &agent.path,
-                        format!(
-                            "Agent tool '{tool}' is not declared by package.json#pi.connectors"
-                        ),
-                        Some("add the Slack tool to pi.connectors or remove it from the agent"),
-                    );
-                }
-            }
         }
         validate_resolved_agent_mcp(&name, &raw_by_name, mcp_tool_policy, ctx);
     }
@@ -1279,7 +1228,6 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
         path: path.to_owned(),
         from,
         fields,
-        tools,
         skills,
         subagents,
         mcp,
@@ -3240,6 +3188,7 @@ mod tests {
                 "agents": ["agents/*.yaml"],
                 "connectors": [{
                     "provider": "slack",
+                    "package": "@introspection-ai/recipe-connector-slack",
                     "tools": { "include": package_tools }
                 }]
             }
@@ -3295,39 +3244,9 @@ mod tests {
     }
 
     #[test]
-    fn accepts_declared_connector_tools() {
+    fn accepts_generic_connector_declarations() {
         let report = check_recipe_files(&connector_recipe(
-            json!(["origin", "read_thread", "send_message"]),
-            &["slack_origin", "slack_read_thread"],
-        ));
-
-        assert!(report.valid, "{:?}", report.diagnostics);
-    }
-
-    #[test]
-    fn rejects_unknown_and_undeclared_connector_tools() {
-        let report = check_recipe_files(&connector_recipe(
-            json!(["origin", "delete_workspace"]),
-            &["slack_origin", "slack_send_message"],
-        ));
-
-        assert!(!report.valid);
-        for code in ["pi.connectors_invalid", "agent.connector_tool_undeclared"] {
-            assert!(
-                report
-                    .diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.code == code),
-                "missing {code}: {:?}",
-                report.diagnostics
-            );
-        }
-    }
-
-    #[test]
-    fn allows_unrecognized_tools_that_share_the_slack_prefix() {
-        let report = check_recipe_files(&connector_recipe(
-            json!(["origin"]),
+            json!(["origin", "custom_report"]),
             &["slack_origin", "slack_custom_report"],
         ));
 
@@ -3335,10 +3254,29 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_only_cataloged_connector_tools() {
-        assert!(is_known_connector_tool("slack_origin"));
-        assert!(is_known_connector_tool("slack_load_tools"));
-        assert!(!is_known_connector_tool("slack_custom_report"));
+    fn connector_requires_an_implementation_package() {
+        let mut files = connector_recipe(json!(["origin"]), &["slack_origin"]);
+        let package_file = files
+            .files
+            .iter_mut()
+            .find(|file| file.path == PACKAGE_JSON)
+            .expect("package.json");
+        let mut package: JsonValue =
+            serde_json::from_str(package_file.content.as_deref().expect("package content"))
+                .expect("parse package");
+        package["pi"]["connectors"][0]
+            .as_object_mut()
+            .expect("connector object")
+            .remove("package");
+        package_file.content = Some(serde_json::to_string_pretty(&package).expect("serialize"));
+
+        let report = check_recipe_files(&files);
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "pi.connectors_invalid"
+                && diagnostic.message.contains("package must be non-empty")
+        }));
     }
 
     #[test]

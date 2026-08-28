@@ -15,6 +15,7 @@ extension or call the Slack client directly.
     "connectors": [
       {
         "provider": "slack",
+        "package": "@introspection-ai/recipe-connector-slack",
         "tools": {
           "include": ["origin", "read_thread", "send_message"]
         }
