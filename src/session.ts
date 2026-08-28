@@ -588,7 +588,10 @@ async function createSessionForAgent(
     ]) {
       recipeRegistrations.claim("tool", toolName, "<host>");
     }
-    for (const connector of recipeConnectorExtensions(recipe.manifest)) {
+    for (const connector of recipeConnectorExtensions(recipe.manifest, {
+      env,
+      cwd,
+    })) {
       inlineExtensions.push(
         bindRecipeExtensionFactory(
           connector.factory,

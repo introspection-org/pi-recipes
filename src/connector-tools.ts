@@ -13,6 +13,11 @@ export interface RecipeConnectorExtension {
   factory: ExtensionFactory;
 }
 
+export interface RecipeConnectorExtensionOptions {
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+}
+
 const slackToolIds = new Set<string>(SLACK_CONNECTOR_TOOL_IDS);
 
 export function declaredRecipeConnectorToolNames(
@@ -30,7 +35,8 @@ export function declaredRecipeConnectorToolNames(
 }
 
 export function recipeConnectorExtensions(
-  manifest: RecipePackageManifest
+  manifest: RecipePackageManifest,
+  options: RecipeConnectorExtensionOptions = {}
 ): RecipeConnectorExtension[] {
   return manifest.connectors.map((connector) => {
     if (connector.provider !== "slack") {
@@ -43,7 +49,7 @@ export function recipeConnectorExtensions(
     ) as SlackConnectorToolId[];
     return {
       owner: `<connector:${connector.provider}>`,
-      factory: (pi) => registerSlackBotTools(pi, { tools }),
+      factory: (pi) => registerSlackBotTools(pi, { tools, ...options }),
     };
   });
 }

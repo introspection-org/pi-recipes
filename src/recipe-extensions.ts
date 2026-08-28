@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { createRequire, findPackageJSON } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -62,9 +62,25 @@ function resolvePackageModuleRoot(packageName: string): string | undefined {
   return dirname(resolved.startsWith("file:") ? fileURLToPath(resolved) : resolved);
 }
 
+function packageResolvesFromDir(packageName: string, packageDir: string): boolean {
+  const loaderPath = join(packageDir, ".recipe-extension-loader.js");
+  try {
+    createRequire(loaderPath).resolve(packageName);
+    return true;
+  } catch {
+    // ESM-only packages can expose import subpaths without a CommonJS root.
+  }
+  try {
+    return findPackageJSON(packageName, loaderPath) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 function recipeExtensionAliases(recipeDir: string): Record<string, string> {
-  const recipeHasRecipesPackage = existsSync(
-    join(recipeDir, "node_modules", "@introspection-ai", "recipes", "package.json")
+  const recipeHasRecipesPackage = packageResolvesFromDir(
+    "@introspection-ai/recipes",
+    recipeDir
   );
   const recipesRoot = resolvePackageModuleRoot("@introspection-ai/recipes");
   return Object.fromEntries(

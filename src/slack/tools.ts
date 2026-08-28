@@ -11,6 +11,7 @@ import type { SlackEnv } from "./origin.js";
 
 export interface RegisterSlackBotToolsOptions {
   env?: SlackEnv;
+  cwd?: string;
   session?: SlackFileSession;
   tools?: readonly SlackConnectorToolId[];
 }
@@ -30,7 +31,10 @@ export function registerSlackBotTools(
 ): void {
   const session =
     options.session ??
-    new SlackFileSession({ env: options.env ?? process.env });
+    new SlackFileSession({
+      env: options.env ?? process.env,
+      cwd: options.cwd ?? process.cwd(),
+    });
   const enabled = new Set(
     (options.tools ?? SLACK_CONNECTOR_TOOL_IDS).map(slackConnectorToolName)
   );

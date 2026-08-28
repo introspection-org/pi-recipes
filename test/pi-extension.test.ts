@@ -417,7 +417,9 @@ describe("Recipes extension for Pi", () => {
       const pi = createMockExtensionAPI();
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
-      createRecipesExtension()(pi);
+      createRecipesExtension({
+        env: { SLACK_CHANNEL_ID: "C_CONFIGURED" },
+      })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,
         extensionContext(root)
@@ -432,6 +434,18 @@ describe("Recipes extension for Pi", () => {
         "slack_origin",
         "slack_read_thread",
       ]);
+      const origin = await pi.tools.get("slack_origin")?.execute(
+        "tool-call",
+        {},
+        undefined,
+        undefined,
+        extensionContext(root)
+      );
+      expect(origin?.details).toEqual({
+        provider: "slack",
+        channel: "C_CONFIGURED",
+        thread_ts: null,
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

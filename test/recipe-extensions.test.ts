@@ -106,4 +106,44 @@ describe("recipe extension package resolution", () => {
 
     expect((factory as unknown as () => unknown)()).toBe("recipe-local");
   });
+
+  it("resolves Recipe helper subpaths from a workspace root", async () => {
+    const root = mkdtempSync(join(tmpdir(), "recipes-hoisted-helper-"));
+    cleanups.push(root);
+    const recipeDir = join(root, "packages", "recipe");
+    const packageRoot = join(
+      root,
+      "node_modules",
+      "@introspection-ai",
+      "recipes"
+    );
+    mkdirSync(recipeDir, { recursive: true });
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify({ type: "module" }));
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({
+        name: "@introspection-ai/recipes",
+        version: "999.0.0",
+        type: "module",
+        exports: { "./slack": "./slack.js" },
+      })
+    );
+    writeFileSync(
+      join(packageRoot, "slack.js"),
+      "export const source = 'workspace-root';"
+    );
+    const extensionPath = join(recipeDir, "extension.mjs");
+    writeFileSync(
+      extensionPath,
+      [
+        "import { source } from '@introspection-ai/recipes/slack';",
+        "export default function extension() { return source; }",
+      ].join("\n")
+    );
+
+    const factory = await loadRecipeExtensionFactory(recipeDir, extensionPath);
+
+    expect((factory as unknown as () => unknown)()).toBe("workspace-root");
+  });
 });

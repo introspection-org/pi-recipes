@@ -755,7 +755,8 @@ export function createRecipesExtension(
     let loadedCount = 0;
     try {
       for (const connector of recipeConnectorExtensions(
-        launchState.resolved.manifest
+        launchState.resolved.manifest,
+        { env, cwd: launchState.cwd }
       )) {
         const factory = bindRecipeExtensionFactory(
           connector.factory,
