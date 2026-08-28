@@ -147,7 +147,7 @@ describe("SlackBotSession transport", () => {
     });
   });
 
-  it("sends the locator only to the cloud egress proxy", async () => {
+  it("keeps the provider URL for the cloud egress dispatcher", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
       env: {
@@ -158,12 +158,12 @@ describe("SlackBotSession transport", () => {
     });
     await session.call("conversations.history", { channel: "C1" });
     expect(fetchImpl.calls[0]!.url).toBe(
-      "http://egress.internal:8081/api/conversations.history",
+      "https://slack.com/api/conversations.history",
     );
     expect(fetchImpl.calls[0]!.init.headers).toMatchObject({
       Authorization: "Bearer session-locator",
-      Host: "slack.com",
     });
+    expect(fetchImpl.calls[0]!.init.headers).not.toHaveProperty("Host");
   });
 
   it("does not send a cloud locator without the provider egress URL", async () => {

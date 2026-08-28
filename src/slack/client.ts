@@ -119,16 +119,16 @@ export class SlackBotSession {
         "Slack tools require SLACK_BOT_TOKEN locally or the Introspection cloud egress environment",
       );
     }
-    const proxyUrl = new URL(
-      `${url.pathname}${url.search}`,
-      `${egressUrl.replace(/\/$/, "")}/`,
-    );
-    return this.fetchImpl(proxyUrl.toString(), {
+    // Keep the provider URL intact. The runtime's proxy fetch dispatcher uses
+    // INTROSPECTION_EGRESS_URL to dial the proxy while preserving this host as
+    // the HTTP authority. Rewriting the URL here would make the proxy itself
+    // the authority, so Envoy could neither route the request nor select the
+    // connector credential.
+    return this.fetchImpl(url.toString(), {
       ...init,
       headers: {
         ...init.headers,
         Authorization: `Bearer ${locator}`,
-        Host: url.hostname,
       },
     });
   }
