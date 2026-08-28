@@ -192,9 +192,6 @@ jobs:
             pnpm --filter "$package_name" publish --access public --tag "$tag" --no-git-checks
           fi
           npm dist-tag add "$package_name@$version" "$tag"
-          if [[ "$tag" != "latest" ]]; then
-            npm dist-tag rm "$package_name" latest || true
-          fi
 
   publish:
     needs:
@@ -286,9 +283,6 @@ jobs:
             pnpm publish --access public --tag "$tag" --no-git-checks
           fi
           npm dist-tag add "$package_name@$version" "$tag"
-          if [[ "$tag" != "latest" ]]; then
-            npm dist-tag rm "$package_name" latest || true
-          fi
 
   publish-crate:
     needs: release-please
