@@ -185,7 +185,7 @@ describe("Recipe Format", () => {
     );
   });
 
-  it("does not carry connector-generated tool names in the root catalog", () => {
+  it("rejects the session-generated tool search name", () => {
     const recipeDir = fixture();
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
@@ -193,14 +193,14 @@ describe("Recipe Format", () => {
         "name: agent",
         "model:",
         "  name: anthropic/claude-sonnet-4-5",
-        "tools: [slack_load_tools]",
+        "tools: [tool_search]",
         "",
       ].join("\n")
     );
 
-    expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
-      "slack_load_tools",
-    ]);
+    expect(() => resolveRecipe({ recipeDir })).toThrow(
+      "tools must not declare session-generated tool(s): tool_search"
+    );
   });
 
   it("resolves locked Python and approved system runtime requirements", () => {

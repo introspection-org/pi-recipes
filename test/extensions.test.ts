@@ -171,14 +171,14 @@ describe("Recipe extension context", () => {
       recipeExtensionToolAllowlist(
         ["read"],
         true,
-        ["mcp_google_drive_search", "mcp_search"]
+        ["mcp_google_drive_search", "tool_search"]
       )
     ).toEqual(
       new Set([
         "read",
         "agent",
         "mcp_google_drive_search",
-        "mcp_search",
+        "tool_search",
       ])
     );
     expect(recipeExtensionToolAllowlist(["read"], false)).toEqual(

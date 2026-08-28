@@ -47,12 +47,12 @@ The package declaration sets the maximum Slack tool set for the Recipe. Each
 agent must also list the exact `slack_*` tools it may call. The host registers
 the package tool set, and the agent tool list narrows the model's access.
 
-The model initially sees
-`slack_origin`, `slack_read_thread`, and `slack_send_message` when the agent is
-allowed to use them. It also sees `slack_load_tools` when the agent has other
-Slack tools. Calling `slack_load_tools` lists and enables all remaining Slack
-tools for that session. Recipe authors do not configure eager or deferred
-lists, and existing agent tool lists do not change.
+The model initially sees `slack_origin`, `slack_read_thread`, and
+`slack_send_message` when the agent is allowed to use them. Other allowed Slack
+tools start inactive. Recipes adds the generic `tool_search` tool when any
+connector or MCP tools are inactive. The model can search for a capability such
+as adding a reaction, and Recipes enables the best matching allowed tools for
+the next model request. Recipe authors do not configure eager or deferred lists.
 
 The module registers these tools:
 
@@ -68,7 +68,6 @@ The module registers these tools:
 | `slack_get_permalink` | `chat.getPermalink`                              |
 | `slack_download_file` | `files.info` and a private file download         |
 | `slack_origin`        | Read the current task's Slack channel and thread |
-| `slack_load_tools`    | List and enable the allowed optional Slack tools |
 
 `slack_send_message` and `slack_react` always use the task's origin channel.
 The read tools keep the old server behavior. They default to the origin,

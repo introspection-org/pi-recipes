@@ -48,6 +48,10 @@ import {
 } from "./mcp.js";
 import { createMcpToolSet } from "./mcp-tools.js";
 import {
+  createRecipeToolSearch,
+  RECIPE_TOOL_SEARCH_NAME,
+} from "./tool-search.js";
+import {
   assertRecipeModelTransport,
   RecipeCredentialError,
   RecipeModelError,
@@ -303,7 +307,7 @@ interface MaterializedSessionMcp {
   materialized: boolean;
   tools?: ToolDefinition[];
   initialActiveToolNames?: string[];
-  searchToolName?: string;
+  deferredToolNames?: string[];
   release?: () => Promise<void>;
 }
 
@@ -357,11 +361,7 @@ async function configureSessionMcp(
   recipe: ResolvedRecipeAgent,
   cwd: string,
   env: NodeJS.ProcessEnv,
-  opts: CreateAgentSessionInternalOptions,
-  activation: {
-    getActiveTools(): string[];
-    setActiveTools(names: string[]): void;
-  }
+  opts: CreateAgentSessionInternalOptions
 ): Promise<MaterializedSessionMcp> {
   const selections = scopedMcpSelections(recipe);
   if (selections.length === 0) {
@@ -448,16 +448,13 @@ async function configureSessionMcp(
         catalogs,
         mcp: recipe.mcp!,
         env: runtimeEnv,
-        activation,
       });
       return {
         available: true,
         materialized: !hostProvisioned,
         tools: materialized.tools,
         initialActiveToolNames: materialized.initialActiveToolNames,
-        ...(materialized.searchToolName
-          ? { searchToolName: materialized.searchToolName }
-          : {}),
+        deferredToolNames: materialized.deferredToolNames,
         release,
       };
     }
@@ -526,10 +523,7 @@ async function createSessionForAgent(
   let agentRuns: AgentRunController | undefined;
   let unsubscribe: (() => void) | undefined;
   let detachInstrumentation: (() => void) | undefined;
-  const mcp = await configureSessionMcp(recipe, cwd, env, opts, {
-    getActiveTools: () => session?.getActiveToolNames() ?? [],
-    setActiveTools: (names) => session?.setActiveToolsByName(names),
-  });
+  const mcp = await configureSessionMcp(recipe, cwd, env, opts);
 
   const cleanup = async (): Promise<void> => {
     try {
@@ -585,6 +579,7 @@ async function createSessionForAgent(
       ...(recipe.subagents.size > 0 && opts.runController !== null
         ? ["agent"]
         : []),
+      RECIPE_TOOL_SEARCH_NAME,
     ]) {
       recipeRegistrations.claim("tool", toolName, "<host>");
     }
@@ -606,9 +601,7 @@ async function createSessionForAgent(
             recipe.subagents.size > 0 && opts.runController !== null,
             [
               ...connectorLoadout.toolNames,
-              ...connectorLoadout.loadToolNames,
               ...(mcp.tools?.map((tool) => tool.name) ?? []),
-              ...(mcp.searchToolName ? [mcp.searchToolName] : []),
             ]
           )
         )
@@ -626,7 +619,6 @@ async function createSessionForAgent(
             recipe.subagents.size > 0 && opts.runController !== null,
             [
               ...(mcp.tools?.map((tool) => tool.name) ?? []),
-              ...(mcp.searchToolName ? [mcp.searchToolName] : []),
             ]
           )
         )
@@ -728,10 +720,13 @@ async function createSessionForAgent(
       ...(wantsSubagents ? ["agent"] : []),
     ];
     const mcpToolNames = mcp.tools?.map((tool) => tool.name) ?? [];
+    const recipeExtensionTools = services.resourceLoader
+      .getExtensions()
+      .extensions.flatMap((extension) =>
+        [...extension.tools.values()].map((tool) => tool.definition)
+      );
     const recipeExtensionToolNames = new Set(
-      services.resourceLoader
-        .getExtensions()
-        .extensions.flatMap((extension) => [...extension.tools.keys()])
+      recipeExtensionTools.map((tool) => tool.name)
     );
     const occupiedToolNames = new Set([
       ...tools,
@@ -746,11 +741,27 @@ async function createSessionForAgent(
         `Recipe MCP tool name collision: ${collisions.join(", ")}`
       );
     }
+    const toolSearch = createRecipeToolSearch({
+      tools: [...recipeExtensionTools, ...(mcp.tools ?? [])],
+      deferredToolNames: [
+        ...connectorLoadout.deferredToolNames,
+        ...(mcp.deferredToolNames ?? []),
+      ],
+      activation: {
+        getActiveTools: () => session?.getActiveToolNames() ?? [],
+        setActiveTools: (names) => session?.setActiveToolsByName(names),
+      },
+    });
+    if (toolSearch && occupiedToolNames.has(RECIPE_TOOL_SEARCH_NAME)) {
+      throw new Error(
+        `Recipe tool name '${RECIPE_TOOL_SEARCH_NAME}' is reserved by the session`
+      );
+    }
     const selectedToolNames = [
       ...tools,
       ...connectorLoadout.toolNames,
-      ...connectorLoadout.loadToolNames,
       ...mcpToolNames,
+      ...(toolSearch ? [toolSearch.name] : []),
     ];
     const environmentBash: ToolDefinition | undefined =
       (recipe.mcp?.mode ?? "cli") === "cli" &&
@@ -780,6 +791,7 @@ async function createSessionForAgent(
           ]
         : []),
       ...(mcp.tools ?? []),
+      ...(toolSearch ? [toolSearch] : []),
     ];
 
     const created = await createAgentSessionFromServices({
@@ -830,9 +842,8 @@ async function createSessionForAgent(
       const activeTools = [
         ...tools,
         ...connectorLoadout.initialActiveToolNames,
-        ...connectorLoadout.loadToolNames,
         ...(mcp.initialActiveToolNames ?? []),
-        ...(mcp.searchToolName ? [mcp.searchToolName] : []),
+        ...(toolSearch ? [toolSearch.name] : []),
       ];
       session.setActiveToolsByName(activeTools);
       const applied = new Set(session.getActiveToolNames());

@@ -107,8 +107,8 @@ credential. A host binds those values when it starts a task.
 ```
 
 Each provider may appear once. `package` names the production dependency that
-implements the connector. That package owns its tool catalog, default tools,
-and optional loader tool. `tools.include` MUST contain one or more exact tool
+implements the connector. That package owns its tool catalog and marks which
+tools are active by default. `tools.include` MUST contain one or more exact tool
 IDs supported by the package. Wildcards are not supported. The declaration sets
 the maximum tool set. An agent MUST list each registered tool by its full name,
 such as `slack_read_thread`, in its `tools` list before the model can call it.

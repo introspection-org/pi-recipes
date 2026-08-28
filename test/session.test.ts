@@ -270,7 +270,7 @@ describe("createAgentSession", () => {
         "slack_origin",
         "slack_read_thread",
         "slack_send_message",
-        "slack_load_tools",
+        "tool_search",
       ])
     );
     expect(handle.session.getActiveToolNames()).not.toContain("slack_react");

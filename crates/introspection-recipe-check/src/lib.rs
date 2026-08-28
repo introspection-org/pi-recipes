@@ -1205,17 +1205,22 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
     validate_agent_ai(map, path, &name, &mut fields, ctx);
     validate_agent_session(map, path, ctx);
     let tools = validate_agent_string_array(map, "tools", path, ctx);
-    if tools
+    let reserved_tools = tools
         .as_deref()
         .unwrap_or_default()
         .iter()
-        .any(|tool| tool == "agent")
-    {
+        .filter(|tool| tool.as_str() == "agent" || tool.as_str() == "tool_search")
+        .cloned()
+        .collect::<Vec<_>>();
+    if !reserved_tools.is_empty() {
         ctx.error(
             "agent.tools_reserved",
             path,
-            "Agent tools must not declare the session-generated agent tool",
-            Some("declare subagents to enable delegation"),
+            &format!(
+                "Agent tools must not declare session-generated tools: {}",
+                reserved_tools.join(", ")
+            ),
+            Some("remove the generated tool from the tools list"),
         );
     }
     let mcp = validate_agent_mcp(map, path, ctx);
@@ -3642,6 +3647,32 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.name_invalid"));
+    }
+
+    #[test]
+    fn rejects_session_generated_tool_names() {
+        let package = json!({
+            "name": "reserved-tools",
+            "version": "0.1.0",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\ntools: [agent, tool_search]\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.tools_reserved"
+                && diagnostic.message.contains("agent, tool_search")
+        }));
     }
 
     #[test]

@@ -435,15 +435,15 @@ describe("Recipes extension for Pi", () => {
 
       expect([...pi.tools.keys()].sort()).toEqual([
         "agent",
-        "slack_load_tools",
         "slack_origin",
         "slack_react",
         "slack_read_thread",
+        "tool_search",
       ]);
       expect(pi.activeTools.sort()).toEqual([
-        "slack_load_tools",
         "slack_origin",
         "slack_read_thread",
+        "tool_search",
       ]);
       const origin = await pi.tools.get("slack_origin")?.execute(
         "tool-call",
@@ -457,9 +457,9 @@ describe("Recipes extension for Pi", () => {
         channel: "C_CONFIGURED",
         thread_ts: null,
       });
-      await pi.tools.get("slack_load_tools")?.execute(
+      await pi.tools.get("tool_search")?.execute(
         "tool-call",
-        {},
+        { query: "add a reaction" },
         undefined,
         undefined,
         extensionContext(root)

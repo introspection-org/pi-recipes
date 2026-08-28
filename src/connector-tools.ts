@@ -29,12 +29,11 @@ export interface RecipeConnectorExtensionOptions {
 export interface RecipeConnectorToolLoadout {
   toolNames: string[];
   initialActiveToolNames: string[];
-  loadToolNames: string[];
+  deferredToolNames: string[];
 }
 
 export interface RecipeConnectorModuleOptions {
   tools: readonly string[];
-  loadout: boolean;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }
@@ -42,7 +41,6 @@ export interface RecipeConnectorModuleOptions {
 export interface RecipeConnectorModule {
   readonly provider: string;
   readonly tools: readonly RecipeConnectorToolDefinition[];
-  readonly loadToolName?: string;
   createExtension(options: RecipeConnectorModuleOptions): ExtensionFactory;
 }
 
@@ -89,9 +87,6 @@ function parseRecipeConnectorModule(
     !Array.isArray(module.tools) ||
     module.tools.length === 0 ||
     module.tools.some((tool) => !isConnectorToolDefinition(tool)) ||
-    (module.loadToolName !== undefined &&
-      (typeof module.loadToolName !== "string" ||
-        !module.loadToolName.trim())) ||
     typeof module.createExtension !== "function"
   ) {
     throw connectorModuleError(connector, "has an invalid module contract");
@@ -101,8 +96,7 @@ function parseRecipeConnectorModule(
   const names = tools.map((tool) => tool.name);
   if (
     new Set(ids).size !== ids.length ||
-    new Set(names).size !== names.length ||
-    (module.loadToolName !== undefined && names.includes(module.loadToolName))
+    new Set(names).size !== names.length
   ) {
     throw connectorModuleError(
       connector,
@@ -168,31 +162,21 @@ export async function loadRecipeConnectors(
       const selected = declaredTools.filter((tool) =>
         agentTools.includes(tool.name)
       );
-      const loadToolNames =
-        module.loadToolName && selected.some((tool) => !tool.defaultActive)
-          ? [module.loadToolName]
-          : [];
       return {
         extension: {
           owner: `<connector:${connector.provider}>`,
           factory: module.createExtension({
             tools: selected.map((tool) => tool.id),
-            loadout: true,
             env: options.env,
             cwd: options.cwd,
           }),
         },
         selected,
-        loadToolNames,
       };
     })
   );
   const selected = loaded.flatMap((connector) => connector.selected);
-  const loadToolNames = loaded.flatMap((connector) => connector.loadToolNames);
-  const registeredNames = [
-    ...selected.map((tool) => tool.name),
-    ...loadToolNames,
-  ];
+  const registeredNames = selected.map((tool) => tool.name);
   if (new Set(registeredNames).size !== registeredNames.length) {
     throw new Error("Recipe connector packages register duplicate tool names");
   }
@@ -203,7 +187,9 @@ export async function loadRecipeConnectors(
       initialActiveToolNames: selected
         .filter((tool) => tool.defaultActive)
         .map((tool) => tool.name),
-      loadToolNames,
+      deferredToolNames: selected
+        .filter((tool) => !tool.defaultActive)
+        .map((tool) => tool.name),
     },
   };
 }

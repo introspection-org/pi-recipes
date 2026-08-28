@@ -8,25 +8,19 @@ import { Type } from "typebox";
 
 import { callMcpDaemonTool } from "./mcp-daemon-client.js";
 import type { McpCatalogServer } from "./mcp-daemon-protocol.js";
-import { searchMcpTools } from "./mcp-cli-core.js";
 import { mcpSelectionAllowsTool } from "./mcp-policy.js";
 import type {
   McpSessionConfig,
   McpToolCatalogEntry,
 } from "./mcp.js";
 import type { RecipeAgentMcp } from "./recipe-agent.js";
+import { RECIPE_TOOL_SEARCH_NAME } from "./tool-search.js";
 
-const MCP_SEARCH_TOOL_NAME = "mcp_search";
 const DEFAULT_OUTPUT_MAX_BYTES = 50 * 1024;
 const DEFAULT_OUTPUT_MAX_LINES = 2_000;
 const DEFAULT_CALL_TIMEOUT_MS = 120_000;
 
 type Recordish = Record<string, unknown>;
-
-export interface McpToolActivation {
-  getActiveTools(): string[];
-  setActiveTools(names: string[]): void;
-}
 
 export interface McpToolDetails {
   server: string;
@@ -45,7 +39,7 @@ export interface McpToolSet {
   tools: ToolDefinition[];
   toolNames: string[];
   initialActiveToolNames: string[];
-  searchToolName?: string;
+  deferredToolNames: string[];
   diagnostics: string[];
   canonicalToPiName: ReadonlyMap<string, string>;
 }
@@ -445,26 +439,6 @@ function activeCanonicalNames(
   return result;
 }
 
-function prepareCatalogSession(
-  session: McpSessionConfig,
-  catalogs: readonly McpCatalogServer[],
-  tools: readonly UsableMcpTool[]
-): McpSessionConfig {
-  const usable = new Set(tools.map((tool) => tool.canonicalName));
-  return {
-    ...session,
-    servers: session.servers.map((server) => {
-      const catalog = catalogs.find((entry) => entry.id === server.id);
-      return {
-        ...server,
-        catalog: (catalog?.tools ?? []).filter((tool) =>
-          usable.has(`${server.id}.${tool.name}`)
-        ),
-      };
-    }),
-  };
-}
-
 function compileUsableTools(
   session: McpSessionConfig,
   catalogs: readonly McpCatalogServer[]
@@ -520,7 +494,6 @@ export function createMcpToolSet(options: {
   catalogs: readonly McpCatalogServer[];
   mcp: RecipeAgentMcp;
   env: NodeJS.ProcessEnv;
-  activation: McpToolActivation;
 }): McpToolSet {
   // A host-provisioned daemon may serve more than one agent. Re-apply this
   // resolved agent's policy before any catalog entry becomes a Pi tool.
@@ -603,7 +576,10 @@ export function createMcpToolSet(options: {
   );
   const piNames = new Set<string>();
   for (const tool of usable) {
-    if (piNames.has(tool.piName) || tool.piName === MCP_SEARCH_TOOL_NAME) {
+    if (
+      piNames.has(tool.piName) ||
+      tool.piName === RECIPE_TOOL_SEARCH_NAME
+    ) {
       throw new Error(
         `MCP tool name collision for '${tool.canonicalName}' (${tool.piName}).`
       );
@@ -653,82 +629,11 @@ export function createMcpToolSet(options: {
   const inactive = usable.filter(
     (tool) => !activeCanonical.has(tool.canonicalName)
   );
-  if (inactive.length > 0) {
-    const inactiveSession = prepareCatalogSession(
-      session,
-      catalogs,
-      inactive
-    );
-    tools.push({
-      name: MCP_SEARCH_TOOL_NAME,
-      label: "MCP Search",
-      description:
-        "Search authorized inactive MCP tools and enable the best matches for the next model request.",
-      parameters: Type.Object({
-        query: Type.String({
-          description: "Capability or task to find an MCP tool for.",
-        }),
-        limit: Type.Optional(
-          Type.Integer({ minimum: 1, maximum: 10, default: 3 })
-        ),
-      }),
-      executionMode: "sequential",
-      async execute(_toolCallId, params) {
-        const input = asRecord(params) ?? {};
-        const query = typeof input.query === "string" ? input.query : "";
-        const requestedLimit =
-          typeof input.limit === "number" ? input.limit : 3;
-        const active = new Set(options.activation.getActiveTools());
-        const matches = searchMcpTools(inactiveSession, query, {
-          limit: inactive.length,
-        })
-          .filter((match) => {
-            const name = canonicalToPiName.get(match.ref);
-            return Boolean(name) && !active.has(name!);
-          })
-          .slice(0, requestedLimit);
-        const added = matches
-          .map((match) => canonicalToPiName.get(match.ref))
-          .filter((name): name is string => Boolean(name));
-        const details = {
-          matches: matches.map((match) => ({
-            name: match.ref,
-            description: match.description,
-            required: match.required,
-          })),
-          added,
-        };
-        const text =
-          matches.length === 0
-            ? `No inactive MCP tools matched "${query}".`
-            : [
-                `Enabled ${matches.length} MCP tool(s) for the next model request:`,
-                ...matches.map(
-                  (match) =>
-                    `- ${match.ref}${
-                      match.description ? ` — ${match.description}` : ""
-                    }`
-                ),
-              ].join("\n");
-        const result = {
-          content: [{ type: "text" as const, text }],
-          details,
-        };
-        if (added.length > 0) {
-          options.activation.setActiveTools([
-            ...new Set([...active, ...added]),
-          ]);
-        }
-        return result;
-      },
-    });
-  }
-
   return {
     tools,
     toolNames: usable.map((tool) => tool.piName),
     initialActiveToolNames,
-    ...(inactive.length > 0 ? { searchToolName: MCP_SEARCH_TOOL_NAME } : {}),
+    deferredToolNames: inactive.map((tool) => tool.piName),
     diagnostics: [
       ...options.catalogs
         .filter((catalog) => catalog.error)

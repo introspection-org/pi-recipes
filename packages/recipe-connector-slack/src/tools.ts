@@ -3,8 +3,6 @@ import { Type } from "typebox";
 
 import {
   SLACK_CONNECTOR_TOOL_IDS,
-  SLACK_DEFAULT_TOOL_IDS,
-  SLACK_LOAD_TOOLS_NAME,
   slackConnectorToolName,
   type SlackConnectorToolId,
 } from "./catalog.js";
@@ -16,7 +14,6 @@ export interface RegisterSlackBotToolsOptions {
   cwd?: string;
   session?: SlackFileSession;
   tools?: readonly SlackConnectorToolId[];
-  loadout?: boolean;
 }
 
 /**
@@ -25,9 +22,7 @@ export interface RegisterSlackBotToolsOptions {
  * boundary.
  */
 export interface SlackToolHost {
-  getActiveTools(): string[];
   registerTool(...args: never[]): unknown;
-  setActiveTools(toolNames: string[]): void;
 }
 
 function toolResult(details: unknown) {
@@ -53,29 +48,9 @@ export function registerSlackBotTools(
   const enabled = new Set(
     (options.tools ?? SLACK_CONNECTOR_TOOL_IDS).map(slackConnectorToolName)
   );
-  const optional = [...enabled].filter(
-    (name) => !SLACK_DEFAULT_TOOL_IDS.map(slackConnectorToolName).includes(name)
-  );
   const register = (tool: SlackConnectorToolId, add: () => void) => {
     if (enabled.has(slackConnectorToolName(tool))) add();
   };
-
-  if (options.loadout && optional.length > 0) {
-    host.registerTool({
-      name: SLACK_LOAD_TOOLS_NAME,
-      label: "Load Slack tools",
-      description:
-        "List and enable the optional Slack tools allowed for this agent.",
-      parameters: Type.Object({}, { additionalProperties: false }),
-      executionMode: "sequential",
-      async execute() {
-        const active = new Set(pi.getActiveTools());
-        for (const name of optional) active.add(name);
-        pi.setActiveTools([...active]);
-        return toolResult({ enabled: optional });
-      },
-    });
-  }
 
   register("origin", () => host.registerTool({
     name: "slack_origin",

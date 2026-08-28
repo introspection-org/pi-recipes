@@ -33,14 +33,12 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import {
   SLACK_CONNECTOR_TOOLS,
   SLACK_CONNECTOR_TOOL_IDS,
-  SLACK_LOAD_TOOLS_NAME,
   type SlackConnectorToolId,
 } from "./catalog.js";
 import { registerSlackBotTools } from "./tools.js";
 
 export interface SlackRecipeConnectorModuleOptions {
   tools: readonly string[];
-  loadout: boolean;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }
@@ -50,7 +48,6 @@ const slackToolIds = new Set<string>(SLACK_CONNECTOR_TOOL_IDS);
 export const slackRecipeConnectorModule = {
   provider: "slack",
   tools: SLACK_CONNECTOR_TOOLS,
-  loadToolName: SLACK_LOAD_TOOLS_NAME,
   createExtension(
     options: SlackRecipeConnectorModuleOptions
   ): ExtensionFactory {
@@ -61,7 +58,6 @@ export const slackRecipeConnectorModule = {
     const tools = options.tools as readonly SlackConnectorToolId[];
     return (pi) => registerSlackBotTools(pi, {
       tools,
-      loadout: options.loadout,
       env: options.env,
       cwd: options.cwd,
     });

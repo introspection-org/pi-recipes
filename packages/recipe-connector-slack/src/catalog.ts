@@ -20,8 +20,6 @@ export const SLACK_DEFAULT_TOOL_IDS: readonly SlackConnectorToolId[] = [
   "send_message",
 ];
 
-export const SLACK_LOAD_TOOLS_NAME = "slack_load_tools";
-
 export function slackConnectorToolName(tool: SlackConnectorToolId): string {
   return `slack_${tool}`;
 }

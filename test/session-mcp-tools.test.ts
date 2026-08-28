@@ -113,8 +113,8 @@ describe("canonical Recipe session MCP tools mode", () => {
       piMcpToolName("contacts", "search_contacts")
     );
     expect(registered).toContain(piMcpToolName("contacts", "get_contact"));
-    expect(registered).toContain("mcp_search");
-    expect(handle.session.getActiveToolNames()).toContain("mcp_search");
+    expect(registered).toContain("tool_search");
+    expect(handle.session.getActiveToolNames()).toContain("tool_search");
     expect(handle.session.getActiveToolNames()).not.toContain(
       piMcpToolName("contacts", "search_contacts")
     );

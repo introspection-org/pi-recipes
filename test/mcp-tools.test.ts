@@ -61,28 +61,13 @@ const catalogs = [
 ];
 
 function createTools(mcp: RecipeAgentMcp, env: NodeJS.ProcessEnv = {}) {
-  let active: string[] = [];
   const materialized = createMcpToolSet({
     session,
     catalogs,
     mcp,
     env,
-    activation: {
-      getActiveTools: () => active,
-      setActiveTools: (names) => {
-        active = names;
-      },
-    },
   });
-  return {
-    materialized,
-    get active() {
-      return active;
-    },
-    setActive(names: string[]) {
-      active = names;
-    },
-  };
+  return { materialized };
 }
 
 describe("MCP tools mode", () => {
@@ -111,7 +96,7 @@ describe("MCP tools mode", () => {
     expect(materialized.initialActiveToolNames).toEqual(
       materialized.toolNames
     );
-    expect(materialized.searchToolName).toBeUndefined();
+    expect(materialized.deferredToolNames).toEqual([]);
   });
 
   it("reapplies the selected agent policy to a broader host catalog", () => {
@@ -128,8 +113,8 @@ describe("MCP tools mode", () => {
     );
   });
 
-  it("keeps deferred tools hidden and activates search matches additively", async () => {
-    const state = createTools({
+  it("returns deferred tools for Recipe tool search", () => {
+    const { materialized } = createTools({
       mode: "tools",
       servers: {
         nextplay: {
@@ -139,29 +124,11 @@ describe("MCP tools mode", () => {
         },
       },
     });
-    const { materialized } = state;
-    const search = materialized.tools.find(
-      (tool) => tool.name === materialized.searchToolName
-    );
-    expect(search).toBeDefined();
-    const initiallyActive = materialized.initialActiveToolNames;
-    const searchName = materialized.searchToolName!;
-    state.setActive([...initiallyActive, searchName]);
-    const result = await (search!.execute as any)(
-      "call-1",
-      { query: "find candidates", limit: 3 },
-      undefined,
-      undefined
-    );
-    expect(result.details.added).toEqual([
+    expect(materialized.deferredToolNames).toEqual([
       materialized.canonicalToPiName.get("nextplay.search_talent"),
     ]);
-    expect(state.active).toEqual(
-      expect.arrayContaining([
-        ...initiallyActive,
-        searchName,
-        materialized.canonicalToPiName.get("nextplay.search_talent"),
-      ])
+    expect(materialized.tools.map((tool) => tool.name)).not.toContain(
+      "tool_search"
     );
   });
 
@@ -259,10 +226,6 @@ describe("MCP tools mode", () => {
           },
         },
         env: {},
-        activation: {
-          getActiveTools: () => [],
-          setActiveTools: () => {},
-        },
       })
     ).toThrow("includes unusable tool 'nextplay.broken'");
 
@@ -280,10 +243,6 @@ describe("MCP tools mode", () => {
         },
       },
       env: {},
-      activation: {
-        getActiveTools: () => [],
-        setActiveTools: () => {},
-      },
     });
     const schema = materialized.tools[0]?.parameters as any;
     expect(schema.$defs).toBeUndefined();
@@ -370,10 +329,6 @@ describe("MCP tools mode", () => {
         },
       },
       env: {},
-      activation: {
-        getActiveTools: () => [],
-        setActiveTools: () => {},
-      },
     });
     expect(optional.toolNames).toHaveLength(2);
     expect(optional.diagnostics).toContain("optional: connection refused");
@@ -389,10 +344,6 @@ describe("MCP tools mode", () => {
           },
         },
         env: {},
-        activation: {
-          getActiveTools: () => [],
-          setActiveTools: () => {},
-        },
       })
     ).toThrow("requires a healthy catalog");
 
@@ -413,10 +364,6 @@ describe("MCP tools mode", () => {
           },
         },
         env: {},
-        activation: {
-          getActiveTools: () => [],
-          setActiveTools: () => {},
-        },
       })
     ).toThrow("Required MCP catalog discovery failed");
   });
