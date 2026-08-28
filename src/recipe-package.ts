@@ -1,6 +1,8 @@
 import { existsSync, realpathSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { SLACK_CONNECTOR_TOOL_IDS } from "./slack/catalog.js";
+
 export interface RecipePackageResources {
   agents: string[];
   extensions: string[];
@@ -71,6 +73,15 @@ export interface RecipePackageMcpConfig {
   servers: RecipePackageMcpServer[];
 }
 
+export interface RecipePackageConnectorTools {
+  include: string[];
+}
+
+export interface RecipePackageConnector {
+  provider: string;
+  tools: RecipePackageConnectorTools;
+}
+
 export interface RecipePythonRuntimeRequirement {
   project: string;
   lockfile: string;
@@ -98,6 +109,7 @@ export interface RecipePackageManifest {
   resources: RecipePackageResources;
   /** Whether each resource key was explicitly authored in package.json#pi. */
   resourceDeclarations?: Record<keyof RecipePackageResources, boolean>;
+  connectors: RecipePackageConnector[];
   mcp: RecipePackageMcpConfig;
   runtime?: RecipeRuntimeRequirements;
 }
@@ -130,7 +142,7 @@ const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "prompts",
 ];
 
-const PI_KEYS = new Set([...RESOURCE_KEYS, "mcp", "runtime"]);
+const PI_KEYS = new Set([...RESOURCE_KEYS, "connectors", "mcp", "runtime"]);
 const SOURCE_FINDINGS = Symbol("recipeSourceFindings");
 type ParsedRecipePackageManifest = RecipePackageManifest & {
   [SOURCE_FINDINGS]?: RecipeValidationFinding[];
@@ -196,8 +208,128 @@ function sourceShapeFindings(
       );
     }
   }
+  findings.push(...connectorSourceShapeFindings(pi.connectors, packageName));
   findings.push(...mcpSourceShapeFindings(pi.mcp, packageName));
   findings.push(...runtimeSourceShapeFindings(pi.runtime, packageName));
+  return findings;
+}
+
+const CONNECTOR_TOOL_CATALOG: Readonly<Record<string, readonly string[]>> = {
+  slack: SLACK_CONNECTOR_TOOL_IDS,
+};
+
+function connectorSourceShapeFindings(
+  value: unknown,
+  packageName: string
+): RecipeValidationFinding[] {
+  if (value === undefined) return [];
+  const invalid = (message: string) =>
+    finding("pi.connectors_invalid", message, packageName);
+  if (!Array.isArray(value)) {
+    return [invalid("package.json#pi.connectors must be an array")];
+  }
+
+  const findings: RecipeValidationFinding[] = [];
+  const providers = new Set<string>();
+  for (const [index, raw] of value.entries()) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      findings.push(
+        invalid(`package.json#pi.connectors[${index}] must be an object`)
+      );
+      continue;
+    }
+    const connector = raw as Record<string, unknown>;
+    const unknown = Object.keys(connector).filter(
+      (key) => !["provider", "tools"].includes(key)
+    );
+    if (unknown.length > 0) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors[${index}] contains unknown field(s): ${unknown.join(", ")}`
+        )
+      );
+    }
+
+    const provider =
+      typeof connector.provider === "string" && connector.provider.trim()
+        ? connector.provider.trim()
+        : undefined;
+    if (!provider) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors[${index}].provider must be non-empty`
+        )
+      );
+    } else if (!Object.hasOwn(CONNECTOR_TOOL_CATALOG, provider)) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors[${index}].provider '${provider}' is unsupported`
+        )
+      );
+    } else if (providers.has(provider)) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors contains duplicate provider '${provider}'`
+        )
+      );
+    } else {
+      providers.add(provider);
+    }
+
+    if (
+      !connector.tools ||
+      typeof connector.tools !== "object" ||
+      Array.isArray(connector.tools)
+    ) {
+      findings.push(
+        invalid(`package.json#pi.connectors[${index}].tools must be an object`)
+      );
+      continue;
+    }
+    const tools = connector.tools as Record<string, unknown>;
+    const toolsUnknown = Object.keys(tools).filter((key) => key !== "include");
+    if (toolsUnknown.length > 0) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors[${index}].tools contains unknown field(s): ${toolsUnknown.join(", ")}`
+        )
+      );
+    }
+    if (
+      !Array.isArray(tools.include) ||
+      tools.include.length === 0 ||
+      tools.include.some(
+        (tool) => typeof tool !== "string" || !tool.trim()
+      )
+    ) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors[${index}].tools.include must be a non-empty array of tool names`
+        )
+      );
+      continue;
+    }
+    const include = tools.include as string[];
+    const normalized = include.map((tool) => tool.trim());
+    if (new Set(normalized).size !== normalized.length) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors[${index}].tools.include must not contain duplicates`
+        )
+      );
+    }
+    const supported = provider ? CONNECTOR_TOOL_CATALOG[provider] : undefined;
+    if (supported) {
+      const unsupported = normalized.filter((tool) => !supported.includes(tool));
+      if (unsupported.length > 0) {
+        findings.push(
+          invalid(
+            `package.json#pi.connectors[${index}] contains unsupported ${provider} tool(s): ${unsupported.join(", ")}`
+          )
+        );
+      }
+    }
+  }
   return findings;
 }
 
@@ -612,6 +744,25 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
   return { manifests, servers };
 }
 
+function parseConnectors(value: unknown): RecipePackageConnector[] {
+  const seen = new Set<string>();
+  const connectors: RecipePackageConnector[] = [];
+  for (const raw of Array.isArray(value) ? value : []) {
+    const connector = asRecord(raw);
+    const provider = stringValue(connector.provider);
+    const tools = asRecord(connector.tools);
+    if (!provider || seen.has(provider)) continue;
+    seen.add(provider);
+    connectors.push({
+      provider,
+      tools: {
+        include: stringArray(tools.include).map((tool) => tool.trim()),
+      },
+    });
+  }
+  return connectors;
+}
+
 function parseRuntimeRequirements(value: unknown): RecipeRuntimeRequirements {
   const runtime = asRecord(value);
   const python = asRecord(runtime.python);
@@ -685,6 +836,7 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
     path: packageDir,
     resources,
     resourceDeclarations: resourceDeclarations(pi),
+    connectors: parseConnectors(pi.connectors),
     mcp: parseMcpConfig(pi.mcp),
     runtime: parseRuntimeRequirements(pi.runtime),
   };

@@ -81,6 +81,38 @@ MUST commit one supported dependency lockfile: `package-lock.json`,
 `npm-shrinkwrap.json`, `pnpm-lock.yaml`, or `yarn.lock`. npm lockfiles MUST
 carry the same package name and version as `package.json`.
 
+## Connector tools
+
+`pi.connectors` declares official provider tools that the host may register for
+the Recipe. The declaration does not contain a connector ID, workspace ID, or
+credential. A host binds those values when it starts a task.
+
+```json
+{
+  "pi": {
+    "connectors": [
+      {
+        "provider": "slack",
+        "tools": {
+          "include": ["origin", "read_thread", "react", "send_message"]
+        }
+      }
+    ]
+  }
+}
+```
+
+Each provider may appear once. `tools.include` MUST contain one or more exact
+tool names supported by that provider. Wildcards are not supported. The package
+declaration sets the maximum tool set. An agent MUST list each registered tool
+by its full name, such as `slack_read_thread`, in its `tools` list before the
+model can call it.
+
+The standard host supports the `slack` provider. A Slack declaration loads the
+official Slack adapter from `@introspection-ai/recipes`. It does not load MCP or
+require a Recipe extension. The host MUST fail closed when an agent selects a
+Slack tool that the package declaration does not include.
+
 ## Agents
 
 `pi.agents` may declare YAML agent definitions explicitly. When omitted,

@@ -387,6 +387,56 @@ describe("Recipes extension for Pi", () => {
     }
   });
 
+  it("registers declared connector tools without a Recipe extension", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-connectors-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const pkg = JSON.parse(
+        readFileSync(join(recipeDir, "package.json"), "utf8")
+      );
+      pkg.pi.connectors = [
+        {
+          provider: "slack",
+          tools: { include: ["origin", "read_thread"] },
+        },
+      ];
+      writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "tools:",
+          "  - slack_origin",
+          "  - slack_read_thread",
+          "",
+        ].join("\n")
+      );
+
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension()(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        extensionContext(root)
+      );
+
+      expect([...pi.tools.keys()].sort()).toEqual([
+        "agent",
+        "slack_origin",
+        "slack_read_thread",
+      ]);
+      expect(pi.activeTools.sort()).toEqual([
+        "slack_origin",
+        "slack_read_thread",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("aborts instead of falling back when the recipe model has no credentials", async () => {
     const root = mkdtempSync(join(tmpdir(), "pi-recipe-model-auth-"));
     const previousExitCode = process.exitCode;

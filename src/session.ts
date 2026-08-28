@@ -27,6 +27,7 @@ import {
   type AgentRunController,
   type AgentRunEventObserver,
 } from "./agents.js";
+import { recipeConnectorExtensions } from "./connector-tools.js";
 import {
   clearMcpCatalogPreload,
   preloadMcpCatalogs,
@@ -586,6 +587,24 @@ async function createSessionForAgent(
         : []),
     ]) {
       recipeRegistrations.claim("tool", toolName, "<host>");
+    }
+    for (const connector of recipeConnectorExtensions(recipe.manifest)) {
+      inlineExtensions.push(
+        bindRecipeExtensionFactory(
+          connector.factory,
+          recipeExtensionContext,
+          recipeRegistrations,
+          connector.owner,
+          recipeExtensionToolAllowlist(
+            recipe.tools,
+            recipe.subagents.size > 0 && opts.runController !== null,
+            [
+              ...(mcp.tools?.map((tool) => tool.name) ?? []),
+              ...(mcp.searchToolName ? [mcp.searchToolName] : []),
+            ]
+          )
+        )
+      );
     }
     for (const extensionPath of recipe.extensionPaths) {
       inlineExtensions.push(

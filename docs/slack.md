@@ -1,29 +1,44 @@
 # Slack Bot API tools
 
-`@introspection-ai/recipes/slack` lets a Recipe call the Slack Web API with the
-bot that received the task. Slack behavior stays in Recipe code. The cloud host
-only supplies the task origin, the installed bot credential at the egress
+Recipes can declare Slack tools in `package.json`. The standard Recipes host
+then loads the Slack adapter and calls the Slack Web API with the bot that
+received the task. Recipe authors do not need to write a Slack extension. The
+cloud host supplies the task origin, the installed bot credential at the egress
 boundary, and task event handling.
 
 The module does not use Slack's hosted MCP server, Socket Mode, WebSockets, or
 a streamed tool protocol. Slack sends inbound events to the existing Events API
 webhook. Recipe tools make ordinary HTTP requests to the Slack Web API.
 
-## Register the tools
+## Declare the tools
 
-Add one Recipe extension:
+Add a Slack connector declaration to `package.json`:
 
-```js
-import { registerSlackBotTools } from "@introspection-ai/recipes/slack";
-
-export default function slackTools(pi) {
-  registerSlackBotTools(pi);
+```json
+{
+  "pi": {
+    "connectors": [
+      {
+        "provider": "slack",
+        "tools": {
+          "include": [
+            "origin",
+            "read_thread",
+            "react",
+            "get_permalink",
+            "download_file",
+            "send_message"
+          ]
+        }
+      }
+    ]
+  }
 }
 ```
 
-The Recipe package must declare the extension. Each agent must also list the
-exact Slack tools it may call. Registration makes the tools available to the
-Recipe. The agent tool list sets the model's access.
+The package declaration sets the maximum Slack tool set for the Recipe. Each
+agent must also list the exact `slack_*` tools it may call. The host registers
+the package tool set, and the agent tool list narrows the model's access.
 
 The module registers these tools:
 
@@ -41,28 +56,28 @@ The module registers these tools:
 | `slack_origin`        | Read the current task's Slack channel and thread |
 
 `slack_send_message` and `slack_react` always use the task's origin channel.
-The read tools keep the old in pod server behavior. They default to the origin,
+The read tools keep the old server behavior. They default to the origin,
 but a Recipe can pass another channel that the installed bot can access.
 `slack_list_channels` and `slack_join_channel` are workspace operations. A
 Recipe that does not need them should leave them out of the agent tool list.
 
 ## Cloud access
 
-The Recipe never receives the Slack bot token. The extension sends the task
+The Recipe never receives the Slack bot token. The Slack adapter sends the task
 locator to `INTROSPECTION_EGRESS_URL`, which is the provider proxy inside the
 Introspection environment. It sets the Slack host as the proxy route. The
 proxy verifies and removes the locator, checks the connector's granted scope
 and allowed path, and adds the bot token before the request leaves for Slack.
 
-The extension refuses to send a task locator when the provider proxy URL is
+The Slack adapter refuses to send a task locator when the provider proxy URL is
 missing. It never falls back to sending the locator to Slack.
 
-After `slack_send_message` succeeds in cloud, the extension posts the existing
+After `slack_send_message` succeeds in cloud, the Slack adapter posts the existing
 `connector_posted` task event to the Data Plane. The Data Plane checks the
 agent session, current run, provider, and origin channel before it records the
 new thread root. A later Slack reply can then resume the same task.
 
-Slack writes are attempted once. The extension does not retry
+Slack writes are attempted once. The Slack adapter does not retry
 `chat.postMessage`, because Slack does not accept an idempotency key for that
 method. If Slack accepts the post but task event recording fails, the tool
 returns the posted message reference and a bridge error. It does not post the
@@ -72,10 +87,10 @@ message again.
 
 Run `introspection dev` from the Recipe repository. A Slack event sent to the
 development runtime starts a cloud sandbox with the local Recipe overlay. The
-extension uses the cloud task origin and provider proxy, so no local Slack
+Slack adapter uses the cloud task origin and provider proxy, so no local Slack
 credential is required.
 
-Use `introspection dev --logs` when you need the extension's sandbox logs. No
+Use `introspection dev --logs` when you need the Slack adapter's sandbox logs. No
 local Slack MCP server or `--mcp` override is involved.
 
 ## Test with introspection local
@@ -94,6 +109,11 @@ introspection local -p 'Read the Slack origin and reply with a short test.'
 The local tools call Slack directly with `SLACK_BOT_TOKEN`. They can read,
 react, post, and download files. Local outbound posts do not create an inbound
 task or a reply bridge because no Data Plane task exists.
+
+## Direct host use
+
+`@introspection-ai/recipes/slack` still exports `registerSlackBotTools` for
+custom hosts and tests. A normal Recipe should use `pi.connectors` instead.
 
 ## File downloads
 

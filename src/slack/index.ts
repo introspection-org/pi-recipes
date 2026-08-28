@@ -6,6 +6,11 @@ export {
   type SlackHttpResponse,
   type SlackPostResult,
 } from "./client.js";
+export {
+  SLACK_CONNECTOR_TOOL_IDS,
+  slackConnectorToolName,
+} from "./catalog.js";
+export type { SlackConnectorToolId } from "./catalog.js";
 export { MAX_SLACK_FILE_BYTES, SlackFileSession } from "./files.js";
 export type {
   SlackDownloadResult,

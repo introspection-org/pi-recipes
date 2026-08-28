@@ -63,6 +63,86 @@ function fixture(): string {
 }
 
 describe("Recipe Format", () => {
+  it("reads a declarative Slack connector tool policy", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [
+      {
+        provider: "slack",
+        tools: { include: ["origin", "read_thread", "send_message"] },
+      },
+    ];
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(manifest.connectors).toEqual([
+      {
+        provider: "slack",
+        tools: { include: ["origin", "read_thread", "send_message"] },
+      },
+    ]);
+    expect(validatePiPackageManifest(manifest)).toEqual({
+      valid: true,
+      findings: [],
+    });
+  });
+
+  it("rejects unsupported connector providers and tools", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [
+      {
+        provider: "discord",
+        tools: { include: ["read_thread"] },
+      },
+      {
+        provider: "slack",
+        tools: { include: ["delete_workspace"] },
+      },
+    ];
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+
+    const report = validatePiPackageManifest(
+      readPiPackageManifest(recipeDir)
+    );
+    expect(report.valid).toBe(false);
+    expect(report.findings.map((finding) => finding.message)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("provider 'discord' is unsupported"),
+        expect.stringContaining("unsupported slack tool(s): delete_workspace"),
+      ])
+    );
+  });
+
+  it("rejects agent Slack tools outside the package connector policy", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [
+      { provider: "slack", tools: { include: ["origin"] } },
+    ];
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/claude-sonnet-4-5",
+        "tools: [slack_origin, slack_send_message]",
+        "",
+      ].join("\n")
+    );
+
+    expect(() => resolveRecipe({ recipeDir })).toThrow(
+      /agent: slack_send_message/
+    );
+  });
+
   it("resolves locked Python and approved system runtime requirements", () => {
     const recipeDir = fixture();
     mkdirSync(join(recipeDir, "python"), { recursive: true });

@@ -74,6 +74,7 @@ import {
   type AgentRunController,
   type AgentRunSummary,
 } from "./agents.js";
+import { recipeConnectorExtensions } from "./connector-tools.js";
 
 export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
@@ -753,6 +754,22 @@ export function createRecipesExtension(
     }
     let loadedCount = 0;
     try {
+      for (const connector of recipeConnectorExtensions(
+        launchState.resolved.manifest
+      )) {
+        const factory = bindRecipeExtensionFactory(
+          connector.factory,
+          Object.freeze({
+            recipe: Object.freeze({ name: launchState.resolved.manifest.name }),
+            agent: Object.freeze({ name: launchState.resolved.name }),
+            session: Object.freeze({ role: "root" as const }),
+          }),
+          launchState.extensionRegistrations,
+          connector.owner,
+          launchState.extensionAllowedToolNames
+        );
+        await factory(pi);
+      }
       for (const extensionPath of launchState.resolved.extensionPaths) {
         const factory = bindRecipeExtensionFactory(
           await loadRecipeExtensionFactory(

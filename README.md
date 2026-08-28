@@ -129,6 +129,8 @@ tests.
 - `@introspection-ai/recipes/pi-extension` — Pi extension entrypoint
 - `@introspection-ai/recipes/extensions` — session identity and conditional
   Recipe extension helpers
+- `@introspection-ai/recipes/slack` — Slack Bot API tools used by declarative
+  `pi.connectors` support and custom hosts
 - `@introspection-ai/recipes/agents` — portable agent-run controller and tool
   contract
 - `@introspection-ai/recipes/interactions` — portable user-input and approval contract

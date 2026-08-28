@@ -1,12 +1,18 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import {
+  SLACK_CONNECTOR_TOOL_IDS,
+  slackConnectorToolName,
+  type SlackConnectorToolId,
+} from "./catalog.js";
 import { SlackFileSession } from "./files.js";
 import type { SlackEnv } from "./origin.js";
 
 export interface RegisterSlackBotToolsOptions {
   env?: SlackEnv;
   session?: SlackFileSession;
+  tools?: readonly SlackConnectorToolId[];
 }
 
 function toolResult(details: unknown) {
@@ -25,8 +31,14 @@ export function registerSlackBotTools(
   const session =
     options.session ??
     new SlackFileSession({ env: options.env ?? process.env });
+  const enabled = new Set(
+    (options.tools ?? SLACK_CONNECTOR_TOOL_IDS).map(slackConnectorToolName)
+  );
+  const register = (tool: SlackConnectorToolId, add: () => void) => {
+    if (enabled.has(slackConnectorToolName(tool))) add();
+  };
 
-  pi.registerTool({
+  register("origin", () => pi.registerTool({
     name: "slack_origin",
     label: "Slack origin",
     description:
@@ -36,9 +48,9 @@ export function registerSlackBotTools(
     async execute() {
       return toolResult(session.origin());
     },
-  });
+  }));
 
-  pi.registerTool({
+  register("send_message", () => pi.registerTool({
     name: "slack_send_message",
     label: "Send Slack message",
     description:
@@ -57,9 +69,9 @@ export function registerSlackBotTools(
     async execute(_toolCallId, params) {
       return toolResult(await session.sendMessage(params));
     },
-  });
+  }));
 
-  pi.registerTool({
+  register("react", () => pi.registerTool({
     name: "slack_react",
     label: "React in Slack",
     description:
@@ -86,9 +98,9 @@ export function registerSlackBotTools(
         ),
       );
     },
-  });
+  }));
 
-  pi.registerTool({
+  register("read_thread", () => pi.registerTool({
     name: "slack_read_thread",
     label: "Read Slack thread",
     description:
@@ -118,9 +130,9 @@ export function registerSlackBotTools(
         }),
       );
     },
-  });
+  }));
 
-  pi.registerTool({
+  register("read_history", () => pi.registerTool({
     name: "slack_read_history",
     label: "Read Slack history",
     description:
@@ -144,9 +156,9 @@ export function registerSlackBotTools(
         }),
       );
     },
-  });
+  }));
 
-  pi.registerTool({
+  register("list_channels", () => pi.registerTool({
     name: "slack_list_channels",
     label: "List Slack channels",
     description: "List channels visible to the installed Slack bot.",
@@ -167,9 +179,9 @@ export function registerSlackBotTools(
         }),
       );
     },
-  });
+  }));
 
-  pi.registerTool({
+  register("join_channel", () => pi.registerTool({
     name: "slack_join_channel",
     label: "Join Slack channel",
     description: "Join a public Slack channel as the installed bot.",
@@ -183,9 +195,9 @@ export function registerSlackBotTools(
         await session.call("conversations.join", { channel: params.channel }),
       );
     },
-  });
+  }));
 
-  pi.registerTool({
+  register("resolve_user", () => pi.registerTool({
     name: "slack_resolve_user",
     label: "Resolve Slack user",
     description: "Read the Slack profile for one user id.",
@@ -199,9 +211,9 @@ export function registerSlackBotTools(
         await session.call("users.info", { user: params.user }),
       );
     },
-  });
+  }));
 
-  pi.registerTool({
+  register("get_permalink", () => pi.registerTool({
     name: "slack_get_permalink",
     label: "Get Slack permalink",
     description:
@@ -223,9 +235,9 @@ export function registerSlackBotTools(
         }),
       );
     },
-  });
+  }));
 
-  pi.registerTool({
+  register("download_file", () => pi.registerTool({
     name: "slack_download_file",
     label: "Download Slack file",
     description:
@@ -243,5 +255,5 @@ export function registerSlackBotTools(
     async execute(_toolCallId, params) {
       return toolResult(await session.downloadFile(params));
     },
-  });
+  }));
 }

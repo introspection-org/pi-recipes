@@ -311,6 +311,20 @@ describe("Slack tool registration", () => {
       "slack_send_message",
     ]);
   });
+
+  it("registers only the tools selected by a connector declaration", () => {
+    const pi = createMockExtensionAPI();
+    registerSlackBotTools(pi, {
+      env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C1" },
+      tools: ["origin", "read_thread", "send_message"],
+    });
+
+    expect([...pi.tools.keys()].sort()).toEqual([
+      "slack_origin",
+      "slack_read_thread",
+      "slack_send_message",
+    ]);
+  });
 });
 
 describe("Slack formatting", () => {
