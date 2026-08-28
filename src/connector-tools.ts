@@ -1,9 +1,6 @@
-import { createRequire } from "node:module";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
+import { loadRecipeModule } from "./recipe-extensions.js";
 import type {
   RecipePackageConnector,
   RecipePackageManifest,
@@ -110,18 +107,22 @@ async function loadRecipeConnectorModule(
   recipeDir: string,
   connector: RecipePackageConnector
 ): Promise<RecipeConnectorModule> {
-  const recipeRequire = createRequire(join(recipeDir, "package.json"));
-  let entry: string;
+  let imported: unknown;
   try {
-    entry = recipeRequire.resolve(connector.package);
+    imported = await loadRecipeModule(recipeDir, connector.package);
   } catch (error) {
     throw new Error(
       `Recipe connector '${connector.provider}' requires ${connector.package} in the Recipe dependencies`,
       { cause: error }
     );
   }
-  const imported = await import(pathToFileURL(entry).href);
-  return parseRecipeConnectorModule(imported.default, connector);
+  const connectorModule =
+    imported &&
+    typeof imported === "object" &&
+    "default" in imported
+      ? imported.default
+      : imported;
+  return parseRecipeConnectorModule(connectorModule, connector);
 }
 
 export async function loadRecipeConnectors(

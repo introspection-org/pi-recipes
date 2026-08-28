@@ -148,6 +148,24 @@ describe("SlackBotSession transport", () => {
     });
   });
 
+  it("passes the tool cancellation signal to Slack requests", async () => {
+    const fetchImpl = fakeFetch();
+    const session = new SlackBotSession({
+      env: { SLACK_BOT_TOKEN: "local-bot-token" },
+      fetchImpl,
+    });
+    const controller = new AbortController();
+
+    await session.call(
+      "conversations.history",
+      { channel: "C1" },
+      "form",
+      controller.signal,
+    );
+
+    expect(fetchImpl.calls[0]!.init.signal).toBe(controller.signal);
+  });
+
   it("keeps the provider URL for the cloud egress dispatcher", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
@@ -313,6 +331,7 @@ describe("Slack tool registration", () => {
   it("reads an explicit thread without a task origin", async () => {
     const pi = createMockExtensionAPI();
     const fetchImpl = fakeFetch();
+    const controller = new AbortController();
     registerSlackBotTools(pi, {
       session: new SlackFileSession({
         env: { SLACK_BOT_TOKEN: "token" },
@@ -324,13 +343,14 @@ describe("Slack tool registration", () => {
     await pi.tools.get("slack_read_thread")?.execute(
       "tool-call",
       { channel: "C2", thread_ts: "200.2" },
-      undefined,
+      controller.signal,
       undefined,
       undefined as never,
     );
 
     expect(String(fetchImpl.calls[0]!.init.body)).toContain("channel=C2");
     expect(String(fetchImpl.calls[0]!.init.body)).toContain("ts=200.2");
+    expect(fetchImpl.calls[0]!.init.signal).toBe(controller.signal);
   });
 
   it("reads explicit channel history without a task origin", async () => {

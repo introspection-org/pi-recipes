@@ -365,7 +365,14 @@ fn read_package(ctx: &mut CheckContext) -> Option<Package> {
         dependencies: object
             .get("dependencies")
             .and_then(JsonValue::as_object)
-            .map(|dependencies| dependencies.keys().cloned().collect())
+            .map(|dependencies| {
+                dependencies
+                    .iter()
+                    .filter_map(|(name, version)| {
+                        string_value(Some(version)).map(|_| name.to_owned())
+                    })
+                    .collect()
+            })
             .unwrap_or_default(),
         runtime_dependencies: has_non_empty_object(object.get("dependencies"))
             || has_non_empty_object(object.get("optionalDependencies")),
@@ -3246,6 +3253,29 @@ mod tests {
             diagnostic.code == "pi.connectors_invalid"
                 && diagnostic.message.contains("recipe-connector-slack")
         }));
+
+        for invalid_version in [JsonValue::Null, json!("")] {
+            let mut files = connector_recipe(json!(["origin"]), &["slack_origin"]);
+            let package_file = files
+                .files
+                .iter_mut()
+                .find(|file| file.path == PACKAGE_JSON)
+                .expect("package.json");
+            let mut package: JsonValue =
+                serde_json::from_str(package_file.content.as_deref().expect("package content"))
+                    .expect("parse package");
+            package["dependencies"]["@introspection-ai/recipe-connector-slack"] =
+                invalid_version;
+            package_file.content =
+                Some(serde_json::to_string_pretty(&package).expect("serialize"));
+
+            let report = check_recipe_files(&files);
+
+            assert!(report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "pi.connectors_invalid"
+                    && diagnostic.message.contains("recipe-connector-slack")
+            }));
+        }
     }
 
     #[test]

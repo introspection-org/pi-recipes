@@ -50,7 +50,7 @@ describe("Recipe connector packages", () => {
         name: connectorPackage,
         version: "0.1.0",
         type: "module",
-        exports: "./index.js",
+        exports: { import: "./index.js" },
       })
     );
     writeFileSync(

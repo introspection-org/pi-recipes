@@ -80,8 +80,8 @@ export function registerSlackBotTools(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
-      return toolResult(await session.sendMessage(params));
+    async execute(_toolCallId, params, signal) {
+      return toolResult(await session.sendMessage(params, signal));
     },
   }));
 
@@ -98,7 +98,7 @@ export function registerSlackBotTools(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       const origin = session.origin();
       return toolResult(
         await session.call(
@@ -109,6 +109,7 @@ export function registerSlackBotTools(
             name: params.emoji,
           },
           "json",
+          signal,
         ),
       );
     },
@@ -129,7 +130,7 @@ export function registerSlackBotTools(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       const origin =
         params.channel && params.thread_ts ? null : session.origin();
       const channel = params.channel ?? origin?.channel;
@@ -140,12 +141,17 @@ export function registerSlackBotTools(
         );
       }
       return toolResult(
-        await session.call("conversations.replies", {
-          channel,
-          ts: threadTs,
-          limit: params.limit ?? 50,
-          ...(params.cursor ? { cursor: params.cursor } : {}),
-        }),
+        await session.call(
+          "conversations.replies",
+          {
+            channel,
+            ts: threadTs,
+            limit: params.limit ?? 50,
+            ...(params.cursor ? { cursor: params.cursor } : {}),
+          },
+          "form",
+          signal,
+        ),
       );
     },
   }));
@@ -165,15 +171,20 @@ export function registerSlackBotTools(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       const channel = params.channel ?? session.origin().channel;
       return toolResult(
-        await session.call("conversations.history", {
-          channel,
-          limit: params.limit ?? 50,
-          ...(params.oldest ? { oldest: params.oldest } : {}),
-          ...(params.cursor ? { cursor: params.cursor } : {}),
-        }),
+        await session.call(
+          "conversations.history",
+          {
+            channel,
+            limit: params.limit ?? 50,
+            ...(params.oldest ? { oldest: params.oldest } : {}),
+            ...(params.cursor ? { cursor: params.cursor } : {}),
+          },
+          "form",
+          signal,
+        ),
       );
     },
   }));
@@ -190,13 +201,18 @@ export function registerSlackBotTools(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       return toolResult(
-        await session.call("conversations.list", {
-          types: "public_channel,private_channel",
-          limit: params.limit ?? 100,
-          ...(params.cursor ? { cursor: params.cursor } : {}),
-        }),
+        await session.call(
+          "conversations.list",
+          {
+            types: "public_channel,private_channel",
+            limit: params.limit ?? 100,
+            ...(params.cursor ? { cursor: params.cursor } : {}),
+          },
+          "form",
+          signal,
+        ),
       );
     },
   }));
@@ -210,9 +226,14 @@ export function registerSlackBotTools(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       return toolResult(
-        await session.call("conversations.join", { channel: params.channel }),
+        await session.call(
+          "conversations.join",
+          { channel: params.channel },
+          "form",
+          signal,
+        ),
       );
     },
   }));
@@ -226,9 +247,14 @@ export function registerSlackBotTools(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       return toolResult(
-        await session.call("users.info", { user: params.user }),
+        await session.call(
+          "users.info",
+          { user: params.user },
+          "form",
+          signal,
+        ),
       );
     },
   }));
@@ -246,13 +272,18 @@ export function registerSlackBotTools(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       const channel = params.channel ?? session.origin().channel;
       return toolResult(
-        await session.call("chat.getPermalink", {
-          channel,
-          message_ts: params.message_ts,
-        }),
+        await session.call(
+          "chat.getPermalink",
+          {
+            channel,
+            message_ts: params.message_ts,
+          },
+          "form",
+          signal,
+        ),
       );
     },
   }));
@@ -272,8 +303,8 @@ export function registerSlackBotTools(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
-      return toolResult(await session.downloadFile(params));
+    async execute(_toolCallId, params, signal) {
+      return toolResult(await session.downloadFile(params, signal));
     },
   }));
 }

@@ -124,13 +124,7 @@ export async function loadRecipeExtensionFactory(
   recipeDir: string,
   extensionPath: string
 ): Promise<ExtensionFactory> {
-  const { createJiti } = loadJiti();
-  const recipeLoaderUrl = pathToFileURL(join(recipeDir, ".recipe-extension-loader.js")).href;
-  const jiti = createJiti(recipeLoaderUrl, {
-    moduleCache: false,
-    alias: recipeExtensionAliases(recipeDir),
-  });
-  const loaded = await jiti.import(extensionPath, { default: true });
+  const loaded = await loadRecipeModule(recipeDir, extensionPath);
   const factory =
     typeof loaded === "function"
       ? loaded
@@ -141,4 +135,17 @@ export async function loadRecipeExtensionFactory(
     throw new Error(`Recipe extension does not export a factory function: ${extensionPath}`);
   }
   return factory as ExtensionFactory;
+}
+
+export async function loadRecipeModule(
+  recipeDir: string,
+  moduleId: string
+): Promise<unknown> {
+  const { createJiti } = loadJiti();
+  const recipeLoaderUrl = pathToFileURL(join(recipeDir, ".recipe-extension-loader.js")).href;
+  const jiti = createJiti(recipeLoaderUrl, {
+    moduleCache: false,
+    alias: recipeExtensionAliases(recipeDir),
+  });
+  return jiti.import(moduleId, { default: true });
 }

@@ -134,10 +134,19 @@ export class SlackFileSession extends SlackBotSession {
   async downloadFile(input: {
     file_id: string;
     variant?: string;
-  }): Promise<SlackDownloadResult> {
+  }, signal?: AbortSignal): Promise<SlackDownloadResult> {
     const fileId = requiredFileId(input.file_id);
     const variant = fileVariant(input.variant);
-    const info = (await this.call("files.info", { file: fileId })) as {
+    const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+    const requestSignal = signal
+      ? AbortSignal.any([signal, timeoutSignal])
+      : timeoutSignal;
+    const info = (await this.call(
+      "files.info",
+      { file: fileId },
+      "form",
+      requestSignal,
+    )) as {
       ok?: boolean;
       file?: SlackFileMetadata;
     };
@@ -160,7 +169,7 @@ export class SlackFileSession extends SlackBotSession {
     const response = await this.request(url, {
       headers: {},
       redirect: "error",
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      signal: requestSignal,
     });
     if (!response.ok || !response.body) {
       throw new Error(`Slack file download returned HTTP ${response.status}`);
@@ -170,6 +179,7 @@ export class SlackFileSession extends SlackBotSession {
       response,
       destination,
       variant === "original" ? size : null,
+      requestSignal,
     );
     return {
       id: fileId,
@@ -189,6 +199,7 @@ async function writeDownload(
   response: SlackHttpResponse,
   destination: string,
   expectedSize: number | null,
+  signal?: AbortSignal,
 ): Promise<{ size: number; sha256: string }> {
   const declared = Number(response.headers.get("content-length") ?? "");
   if (Number.isSafeInteger(declared) && declared > MAX_SLACK_FILE_BYTES) {
@@ -206,6 +217,7 @@ async function writeDownload(
   try {
     if (!response.body) throw new Error("file download returned no body");
     for await (const chunk of response.body) {
+      signal?.throwIfAborted();
       size += chunk.length;
       if (size > MAX_SLACK_FILE_BYTES) {
         throw new Error(

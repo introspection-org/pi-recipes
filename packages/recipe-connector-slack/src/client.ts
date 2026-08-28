@@ -137,6 +137,7 @@ export class SlackBotSession {
     method: string,
     params: Record<string, unknown>,
     encoding: SlackEncoding = "form",
+    signal?: AbortSignal,
   ): Promise<SlackApiResult> {
     const encoded = bodyFor(params, encoding);
     const response = await this.request(
@@ -146,6 +147,7 @@ export class SlackBotSession {
         headers: { "Content-Type": encoded.contentType },
         body: encoded.body,
         redirect: "error",
+        signal,
       },
     );
     if (!response.ok) {
@@ -166,7 +168,7 @@ export class SlackBotSession {
     blocks?: unknown[];
     thread_ts?: string;
     start_new_thread?: boolean;
-  }): Promise<SlackPostResult> {
+  }, signal?: AbortSignal): Promise<SlackPostResult> {
     const origin = this.origin();
     const threadTs = input.thread_ts?.trim()
       ? input.thread_ts.trim()
@@ -185,6 +187,7 @@ export class SlackBotSession {
         ...(threadTs ? { thread_ts: threadTs } : {}),
       },
       "json",
+      signal,
     );
     const channel = payload.channel || origin.channel;
     const ts = payload.ts;
@@ -193,12 +196,15 @@ export class SlackBotSession {
     const postedThread = payload.message?.thread_ts || threadTs || ts;
 
     try {
-      const bridgeRecorded = await this.recordPostedMessage({
-        provider: "slack",
-        channel,
-        ts,
-        thread_ts: postedThread,
-      });
+      const bridgeRecorded = await this.recordPostedMessage(
+        {
+          provider: "slack",
+          channel,
+          ts,
+          thread_ts: postedThread,
+        },
+        signal,
+      );
       return {
         ok: true,
         channel,
@@ -207,6 +213,7 @@ export class SlackBotSession {
         bridge_recorded: bridgeRecorded,
       };
     } catch (error) {
+      if (signal?.aborted) throw error;
       return {
         ok: true,
         channel,
@@ -223,7 +230,7 @@ export class SlackBotSession {
     channel: string;
     ts: string;
     thread_ts: string;
-  }): Promise<boolean> {
+  }, signal?: AbortSignal): Promise<boolean> {
     const baseUrl = this.env.INTROSPECTION_BASE_API_URL?.trim();
     const taskId = this.env.INTROSPECTION_TASK_ID?.trim();
     const token = this.env.INTROSPECTION_TOKEN?.trim();
@@ -247,6 +254,7 @@ export class SlackBotSession {
           occurred_at: new Date().toISOString(),
           data,
         }),
+        signal,
       },
     );
     if (!response.ok) {
