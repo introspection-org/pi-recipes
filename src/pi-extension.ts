@@ -74,7 +74,10 @@ import {
   type AgentRunController,
   type AgentRunSummary,
 } from "./agents.js";
-import { recipeConnectorExtensions } from "./connector-tools.js";
+import {
+  recipeConnectorExtensions,
+  recipeConnectorToolLoadout,
+} from "./connector-tools.js";
 
 export interface RecipesExtensionOptions {
   env?: NodeJS.ProcessEnv;
@@ -112,6 +115,9 @@ interface RecipeLaunchState {
   agentMcpMode: RecipeAgentMcpMode;
   initialMcpToolNames: string[];
   mcpSearchToolName?: string;
+  initialConnectorToolNames: string[];
+  connectorToolNames: string[];
+  connectorLoadToolName?: string;
   extensionAllowedToolNames: Set<string>;
   mcpPrivateEnv?: NodeJS.ProcessEnv;
   mcpPrivateDirectory?: string;
@@ -679,6 +685,10 @@ export function createRecipesExtension(
     env.PI_RECIPE_DIR = recipeDir;
     env.PI_AGENT_NAME = resolved.name;
 
+    const connectorLoadout = recipeConnectorToolLoadout(
+      resolved.manifest,
+      resolved.tools
+    );
     state = {
       key,
       cwd,
@@ -690,8 +700,13 @@ export function createRecipesExtension(
       mcpConfigured: false,
       agentMcpMode: "cli",
       initialMcpToolNames: [],
+      initialConnectorToolNames: connectorLoadout.initialActiveToolNames,
+      connectorToolNames: connectorLoadout.toolNames,
+      connectorLoadToolName: connectorLoadout.loadToolName,
       extensionAllowedToolNames: new Set([
         ...resolved.tools,
+        ...connectorLoadout.toolNames,
+        ...(connectorLoadout.loadToolName ? [connectorLoadout.loadToolName] : []),
         ...(resolved.subagents.size > 0 ? ["agent"] : []),
       ]),
     };
@@ -756,6 +771,7 @@ export function createRecipesExtension(
     try {
       for (const connector of recipeConnectorExtensions(
         launchState.resolved.manifest,
+        launchState.resolved.tools,
         { env, cwd: launchState.cwd }
       )) {
         const factory = bindRecipeExtensionFactory(
@@ -856,7 +872,13 @@ export function createRecipesExtension(
     }
 
     const activeTools = new Set([
-      ...launchState.resolved.tools,
+      ...launchState.resolved.tools.filter(
+        (tool) => !launchState.connectorToolNames.includes(tool)
+      ),
+      ...launchState.initialConnectorToolNames,
+      ...(launchState.connectorLoadToolName
+        ? [launchState.connectorLoadToolName]
+        : []),
       ...(launchState.resolved.subagents.size > 0 ? ["agent"] : []),
       ...launchState.initialMcpToolNames,
       ...(launchState.mcpSearchToolName

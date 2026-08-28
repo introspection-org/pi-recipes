@@ -27,7 +27,10 @@ import {
   type AgentRunController,
   type AgentRunEventObserver,
 } from "./agents.js";
-import { recipeConnectorExtensions } from "./connector-tools.js";
+import {
+  recipeConnectorExtensions,
+  recipeConnectorToolLoadout,
+} from "./connector-tools.js";
 import {
   clearMcpCatalogPreload,
   preloadMcpCatalogs,
@@ -588,10 +591,15 @@ async function createSessionForAgent(
     ]) {
       recipeRegistrations.claim("tool", toolName, "<host>");
     }
-    for (const connector of recipeConnectorExtensions(recipe.manifest, {
-      env,
-      cwd,
-    })) {
+    const connectorLoadout = recipeConnectorToolLoadout(
+      recipe.manifest,
+      recipe.tools
+    );
+    for (const connector of recipeConnectorExtensions(
+      recipe.manifest,
+      recipe.tools,
+      { env, cwd }
+    )) {
       inlineExtensions.push(
         bindRecipeExtensionFactory(
           connector.factory,
@@ -602,6 +610,10 @@ async function createSessionForAgent(
             recipe.tools,
             recipe.subagents.size > 0 && opts.runController !== null,
             [
+              ...connectorLoadout.toolNames,
+              ...(connectorLoadout.loadToolName
+                ? [connectorLoadout.loadToolName]
+                : []),
               ...(mcp.tools?.map((tool) => tool.name) ?? []),
               ...(mcp.searchToolName ? [mcp.searchToolName] : []),
             ]
@@ -717,7 +729,9 @@ async function createSessionForAgent(
         : inertRunController();
     }
     const tools = [
-      ...recipe.tools,
+      ...recipe.tools.filter(
+        (tool) => !connectorLoadout.toolNames.includes(tool)
+      ),
       ...(wantsSubagents ? ["agent"] : []),
     ];
     const mcpToolNames = mcp.tools?.map((tool) => tool.name) ?? [];
@@ -739,7 +753,12 @@ async function createSessionForAgent(
         `Recipe MCP tool name collision: ${collisions.join(", ")}`
       );
     }
-    const selectedToolNames = [...tools, ...mcpToolNames];
+    const selectedToolNames = [
+      ...tools,
+      ...connectorLoadout.toolNames,
+      ...(connectorLoadout.loadToolName ? [connectorLoadout.loadToolName] : []),
+      ...mcpToolNames,
+    ];
     const environmentBash: ToolDefinition | undefined =
       (recipe.mcp?.mode ?? "cli") === "cli" &&
       mcp.available &&
@@ -798,7 +817,15 @@ async function createSessionForAgent(
         `Recipe agent "${recipe.name}" declares unavailable tool(s): ${missingDeclaredTools.join(", ")}`
       );
     }
-    if (mcp.tools) {
+    const missingConnectorTools = connectorLoadout.toolNames.filter(
+      (name) => !registered.has(name)
+    );
+    if (missingConnectorTools.length > 0) {
+      throw new Error(
+        `Pi did not register Recipe connector tool(s): ${missingConnectorTools.join(", ")}`
+      );
+    }
+    if (mcp.tools || connectorLoadout.toolNames.length > 0) {
       const missingRegistered = mcpToolNames.filter(
         (name) => !registered.has(name)
       );
@@ -809,6 +836,10 @@ async function createSessionForAgent(
       }
       const activeTools = [
         ...tools,
+        ...connectorLoadout.initialActiveToolNames,
+        ...(connectorLoadout.loadToolName
+          ? [connectorLoadout.loadToolName]
+          : []),
         ...(mcp.initialActiveToolNames ?? []),
         ...(mcp.searchToolName ? [mcp.searchToolName] : []),
       ];

@@ -14,6 +14,14 @@ export const SLACK_CONNECTOR_TOOL_IDS = [
 export type SlackConnectorToolId =
   (typeof SLACK_CONNECTOR_TOOL_IDS)[number];
 
+export const SLACK_DEFAULT_TOOL_IDS: readonly SlackConnectorToolId[] = [
+  "origin",
+  "read_thread",
+  "send_message",
+];
+
+export const SLACK_LOAD_TOOLS_NAME = "slack_load_tools";
+
 export function slackConnectorToolName(tool: SlackConnectorToolId): string {
   return `slack_${tool}`;
 }

@@ -397,7 +397,7 @@ describe("Recipes extension for Pi", () => {
       pkg.pi.connectors = [
         {
           provider: "slack",
-          tools: { include: ["origin", "read_thread"] },
+          tools: { include: ["origin", "read_thread", "react"] },
         },
       ];
       writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
@@ -410,6 +410,7 @@ describe("Recipes extension for Pi", () => {
           "tools:",
           "  - slack_origin",
           "  - slack_read_thread",
+          "  - slack_react",
           "",
         ].join("\n")
       );
@@ -427,10 +428,13 @@ describe("Recipes extension for Pi", () => {
 
       expect([...pi.tools.keys()].sort()).toEqual([
         "agent",
+        "slack_load_tools",
         "slack_origin",
+        "slack_react",
         "slack_read_thread",
       ]);
       expect(pi.activeTools.sort()).toEqual([
+        "slack_load_tools",
         "slack_origin",
         "slack_read_thread",
       ]);
@@ -446,6 +450,14 @@ describe("Recipes extension for Pi", () => {
         channel: "C_CONFIGURED",
         thread_ts: null,
       });
+      await pi.tools.get("slack_load_tools")?.execute(
+        "tool-call",
+        {},
+        undefined,
+        undefined,
+        extensionContext(root)
+      );
+      expect(pi.activeTools).toContain("slack_react");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

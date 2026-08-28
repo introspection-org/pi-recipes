@@ -237,6 +237,39 @@ describe("createAgentSession", () => {
     expect(handle.session.systemPrompt).toContain("Conformance agent");
   });
 
+  it("starts connector sessions with the default Slack loadout", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      tools: [
+        "slack_origin",
+        "slack_read_thread",
+        "slack_react",
+        "slack_send_message",
+      ],
+      manifestPi: {
+        connectors: [
+          {
+            provider: "slack",
+            tools: {
+              include: ["origin", "read_thread", "react", "send_message"],
+            },
+          },
+        ],
+      },
+    });
+    const handle = await open({ recipeDir, cwd: workspaceDir });
+
+    expect(handle.session.getActiveToolNames()).toEqual(
+      expect.arrayContaining([
+        "slack_origin",
+        "slack_read_thread",
+        "slack_send_message",
+        "slack_load_tools",
+      ])
+    );
+    expect(handle.session.getActiveToolNames()).not.toContain("slack_react");
+
+  });
+
   it("applies authored session policy to the session-local Pi agent", async () => {
     const { recipeDir, workspaceDir } = fixture();
     writeFileSync(

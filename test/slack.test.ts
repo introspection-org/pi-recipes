@@ -312,6 +312,25 @@ describe("Slack tool registration", () => {
     ]);
   });
 
+  it("loads optional connector tools together", async () => {
+    const pi = createMockExtensionAPI();
+    registerSlackBotTools(pi, {
+      env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C1" },
+      tools: ["origin", "read_history", "react"],
+      loadout: true,
+    });
+    pi.activeTools = ["slack_origin", "slack_load_tools"];
+    await pi.tools.get("slack_load_tools")?.execute(
+      "tool-call",
+      {},
+      undefined,
+      undefined,
+      undefined as never
+    );
+    expect(pi.activeTools).toContain("slack_react");
+    expect(pi.activeTools).toContain("slack_read_history");
+  });
+
   it("registers only the tools selected by a connector declaration", () => {
     const pi = createMockExtensionAPI();
     registerSlackBotTools(pi, {
