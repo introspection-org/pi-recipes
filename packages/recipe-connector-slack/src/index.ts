@@ -22,7 +22,10 @@ export type { SlackMessageBody } from "./format.js";
 export { resolveSlackOrigin, slackDownloadRoot } from "./origin.js";
 export type { SlackEnv, SlackOrigin } from "./origin.js";
 export { registerSlackBotTools } from "./tools.js";
-export type { RegisterSlackBotToolsOptions } from "./tools.js";
+export type {
+  RegisterSlackBotToolsOptions,
+  SlackToolHost,
+} from "./tools.js";
 
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 

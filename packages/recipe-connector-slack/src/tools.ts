@@ -19,6 +19,11 @@ export interface RegisterSlackBotToolsOptions {
   loadout?: boolean;
 }
 
+export type SlackToolHost = Pick<
+  ExtensionAPI,
+  "getActiveTools" | "registerTool" | "setActiveTools"
+>;
+
 function toolResult(details: unknown) {
   return {
     content: [
@@ -29,7 +34,7 @@ function toolResult(details: unknown) {
 }
 
 export function registerSlackBotTools(
-  pi: ExtensionAPI,
+  pi: SlackToolHost,
   options: RegisterSlackBotToolsOptions = {},
 ): void {
   const session =
