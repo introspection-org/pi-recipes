@@ -155,8 +155,10 @@ export function registerSlackBotTools(
     ),
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      const origin = session.origin();
-      const threadTs = params.thread_ts || origin.thread_ts;
+      const origin =
+        params.channel && params.thread_ts ? null : session.origin();
+      const channel = params.channel ?? origin?.channel;
+      const threadTs = params.thread_ts ?? origin?.thread_ts;
       if (!threadTs) {
         throw new Error(
           "This Slack origin has no thread timestamp. Use slack_read_history for this conversation.",
@@ -164,7 +166,7 @@ export function registerSlackBotTools(
       }
       return toolResult(
         await session.call("conversations.replies", {
-          channel: params.channel || origin.channel,
+          channel,
           ts: threadTs,
           limit: params.limit ?? 50,
           ...(params.cursor ? { cursor: params.cursor } : {}),
@@ -189,10 +191,10 @@ export function registerSlackBotTools(
     ),
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      const origin = session.origin();
+      const channel = params.channel ?? session.origin().channel;
       return toolResult(
         await session.call("conversations.history", {
-          channel: params.channel || origin.channel,
+          channel,
           limit: params.limit ?? 50,
           ...(params.oldest ? { oldest: params.oldest } : {}),
           ...(params.cursor ? { cursor: params.cursor } : {}),
@@ -270,10 +272,10 @@ export function registerSlackBotTools(
     ),
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      const origin = session.origin();
+      const channel = params.channel ?? session.origin().channel;
       return toolResult(
         await session.call("chat.getPermalink", {
-          channel: params.channel || origin.channel,
+          channel,
           message_ts: params.message_ts,
         }),
       );

@@ -310,6 +310,73 @@ describe("Slack file downloads", () => {
 });
 
 describe("Slack tool registration", () => {
+  it("reads an explicit thread without a task origin", async () => {
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch();
+    registerSlackBotTools(pi, {
+      session: new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "token" },
+        fetchImpl,
+      }),
+      tools: ["read_thread"],
+    });
+
+    await pi.tools.get("slack_read_thread")?.execute(
+      "tool-call",
+      { channel: "C2", thread_ts: "200.2" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(String(fetchImpl.calls[0]!.init.body)).toContain("channel=C2");
+    expect(String(fetchImpl.calls[0]!.init.body)).toContain("ts=200.2");
+  });
+
+  it("reads explicit channel history without a task origin", async () => {
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch();
+    registerSlackBotTools(pi, {
+      session: new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "token" },
+        fetchImpl,
+      }),
+      tools: ["read_history"],
+    });
+
+    await pi.tools.get("slack_read_history")?.execute(
+      "tool-call",
+      { channel: "C2" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(String(fetchImpl.calls[0]!.init.body)).toContain("channel=C2");
+  });
+
+  it("gets a permalink for an explicit channel without a task origin", async () => {
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch();
+    registerSlackBotTools(pi, {
+      session: new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "token" },
+        fetchImpl,
+      }),
+      tools: ["get_permalink"],
+    });
+
+    await pi.tools.get("slack_get_permalink")?.execute(
+      "tool-call",
+      { channel: "C2", message_ts: "200.2" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(String(fetchImpl.calls[0]!.init.body)).toContain("channel=C2");
+  });
+
   it("passes a thread cursor to Slack", async () => {
     const pi = createMockExtensionAPI();
     const fetchImpl = fakeFetch();
