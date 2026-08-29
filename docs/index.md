@@ -17,7 +17,9 @@ task lifecycle, protocols, and deployment.
 | Compose agents and subagents | [Agent composition](agent-composition.md) |
 | Ask for user input across hosts | [Interactions](interactions.md) |
 | Declare capability policy and bindings | [MCP configuration](mcp-configuration.md) |
-| Add Slack Bot API tools to a Recipe | [Slack Bot API tools](slack.md) |
+| Answer a chat message from a Recipe | [Channel tools](channels.md) |
+| Add Slack tools to a Recipe | [Slack channel connector](slack.md) |
+| Add Microsoft Teams tools to a Recipe | [Teams channel connector](teams.md) |
 | Define portable evaluation judges | [Recipe judges](recipe-judges.md) |
 
 ## Boundary

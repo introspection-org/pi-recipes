@@ -245,10 +245,10 @@ describe("createAgentSession", () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
       tools: [
-        "slack_origin",
-        "slack_read_thread",
-        "slack_react",
-        "slack_send_message",
+        "channel_info",
+        "channel_history",
+        "channel_react",
+        "channel_reply",
       ],
       manifestPi: {
         connectors: [{ provider: "slack" }],
@@ -259,20 +259,19 @@ describe("createAgentSession", () => {
 
     expect(handle.session.getActiveToolNames()).toEqual(
       expect.arrayContaining([
-        "slack_origin",
-        "slack_read_thread",
-        "slack_send_message",
+        "channel_info",
+        "channel_history",
+        "channel_reply",
         "tool_search",
       ])
     );
-    expect(handle.session.getActiveToolNames()).not.toContain("slack_react");
-
+    expect(handle.session.getActiveToolNames()).not.toContain("channel_react");
   });
 
   it("rejects connector tools unsupported by the provider", async () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
-      tools: ["slack_origin", "slack_delete_workspace"],
+      tools: ["channel_info", "channel_delete_workspace"],
       manifestPi: {
         connectors: [{ provider: "slack" }],
       },
@@ -280,7 +279,7 @@ describe("createAgentSession", () => {
     installSlackRecipeConnector(recipeDir);
 
     await expect(open({ recipeDir, cwd: workspaceDir })).rejects.toThrow(
-      /declares unavailable tool\(s\): slack_delete_workspace/
+      /declares unavailable tool\(s\): channel_delete_workspace/
     );
   });
 

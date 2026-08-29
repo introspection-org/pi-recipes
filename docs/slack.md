@@ -1,18 +1,16 @@
-# Slack Bot API tools
+# Slack channel connector
 
-Recipes can declare Slack tools in `package.json`. The standard Recipes host
-then loads the Slack adapter and calls the Slack Web API with the bot that
-received the task. Recipe authors do not need to write a Slack extension. The
-cloud host supplies the task origin, the installed bot credential at the egress
-boundary, and task event handling.
+`@introspection-ai/recipe-channel-slack` is the Slack adapter for the
+[channel tools](channels.md). It supplies Slack Web API transport and a
+capability descriptor; the tool names and schemas are the neutral `channel_*`
+set, so a Recipe written against it is not written against Slack.
 
-The module does not use Slack's hosted MCP server, Socket Mode, WebSockets, or
+The package does not use Slack's hosted MCP server, Socket Mode, WebSockets, or
 a streamed tool protocol. Slack sends inbound events to the existing Events API
-webhook. Recipe tools make ordinary HTTP requests to the Slack Web API.
+webhook; the tools make ordinary HTTP requests to the Slack Web API with the
+bot that received the task.
 
-## Declare the tools
-
-Add the Slack connector package and declaration to `package.json`:
+## Declare it
 
 ```json
 {
@@ -29,100 +27,95 @@ Add the Slack connector package and declaration to `package.json`:
 }
 ```
 
-Commit the package manager lockfile. The host loads the Slack package only for
-a Recipe that declares the Slack connector.
+Commit the package manager lockfile. The host loads the package only for a
+Recipe that declares the connector.
 
 The connector package provides the complete Slack tool catalog. Each agent
-lists the exact `slack_*` tools it may call in its YAML file. The agent tool
-list is the only tool selection policy.
+lists the exact `channel_*` tools it may call in its YAML file. `channel_info`,
+`channel_reply` and `channel_history` are active from the start; the rest are
+inactive until the model finds them through `tool_search`.
 
-The model initially sees `slack_origin`, `slack_read_thread`, and
-`slack_send_message` when the agent is allowed to use them. Other allowed Slack
-tools start inactive. Recipes adds the generic `tool_search` tool when any
-connector or MCP tools are inactive. The model can search for a capability such
-as adding a reaction, and Recipes enables the best matching allowed tools for
-the next model request. Recipe authors do not configure eager or deferred lists.
+## What Slack registers
 
-The module registers these tools:
+| Tool | Slack operation |
+| --- | --- |
+| `channel_info` | `chat.getPermalink` for the thread root |
+| `channel_reply` | `chat.postMessage` into the origin channel and thread |
+| `channel_history` | `conversations.replies` in a thread, else `conversations.history` |
+| `channel_react` | `reactions.add` |
+| `channel_edit` | `chat.update` |
+| `channel_retract` | `chat.delete` |
+| `channel_fetch_file` | `files.info` plus a private file download |
 
-| Tool                  | Slack operation                                  |
-| --------------------- | ------------------------------------------------ |
-| `slack_send_message`  | `chat.postMessage`                               |
-| `slack_react`         | `reactions.add`                                  |
-| `slack_read_thread`   | `conversations.replies`                          |
-| `slack_read_history`  | `conversations.history`                          |
-| `slack_list_channels` | `conversations.list`                             |
-| `slack_join_channel`  | `conversations.join`                             |
-| `slack_resolve_user`  | `users.info`                                     |
-| `slack_get_permalink` | `chat.getPermalink`                              |
-| `slack_download_file` | `files.info` and a private file download         |
-| `slack_origin`        | Read the current task's Slack channel and thread |
+`channel_attach` and `channel_post_document` are not registered: `files.uploadV2`
+and canvases are not implemented in this package yet, and the capability
+descriptor says so rather than registering tools that fail.
 
-`slack_send_message` and `slack_react` always use the task's origin channel.
-The read tools keep the old server behavior. They default to the origin,
-but a Recipe can pass another channel that the installed bot can access.
-`slack_list_channels` and `slack_join_channel` are workspace operations. A
-Recipe that does not need them should leave them out of the agent tool list.
+None of these take a channel or thread argument — every one acts on the
+conversation the task came from. Author display names (`users.info`) and
+permalinks (`chat.getPermalink`) are resolved inside the adapter and attached to
+history rows and reply results, so there is no user-lookup or permalink tool.
+
+Workspace-wide reads and cross-channel posting are not part of this package. A
+Recipe that needs them declares Slack's hosted MCP server under `pi.mcp.servers`
+— note that it posts as the OAuth'd human rather than the bot, and that
+declaring it is what grants workspace reach.
 
 ## Cloud access
 
-The Recipe never receives the Slack bot token. The Slack adapter sends the task
-locator to `INTROSPECTION_EGRESS_URL`, which is the provider proxy inside the
-Introspection environment. It sets the Slack host as the proxy route. The
-proxy verifies and removes the locator, checks the connector's granted scope
-and allowed path, and adds the bot token before the request leaves for Slack.
+The Recipe never receives the Slack bot token. The adapter sends the task
+locator to `INTROSPECTION_EGRESS_URL`, the provider proxy inside the
+Introspection environment, with the Slack host as the proxy route. The proxy
+verifies and removes the locator, checks the connector's granted scope and
+allowed path, and adds the bot token before the request leaves for Slack.
 
-The Slack adapter refuses to send a task locator when the provider proxy URL is
+The adapter refuses to send a task locator when the provider proxy URL is
 missing. It never falls back to sending the locator to Slack.
 
-After `slack_send_message` succeeds in cloud, the Slack adapter posts the existing
-`connector_posted` task event to the Data Plane. The Data Plane checks the
-agent session, current run, provider, and origin channel before it records the
-new thread root. A later Slack reply can then resume the same task.
+After `channel_reply` succeeds in cloud, the adapter posts the `connector_posted`
+task event to the Data Plane, which checks the agent session, current run,
+provider, and origin channel before recording the new thread root. A later Slack
+reply then resumes the same task.
 
-Slack writes are attempted once. The Slack adapter does not retry
-`chat.postMessage`, because Slack does not accept an idempotency key for that
-method. If Slack accepts the post but task event recording fails, the tool
-returns the posted message reference and a bridge error. It does not post the
-message again.
+Slack writes are attempted once. The adapter does not retry `chat.postMessage`,
+because Slack accepts no idempotency key for it. If Slack accepts the post but
+event recording fails, the tool returns the message reference and a
+`bridge_error`. It does not post again.
 
 ## Test with introspection dev
 
 Run `introspection dev` from the Recipe repository. A Slack event sent to the
-development runtime starts a cloud sandbox with the local Recipe overlay. The
-Slack adapter uses the cloud task origin and provider proxy, so no local Slack
-credential is required.
-
-Use `introspection dev --logs` when you need the Slack adapter's sandbox logs. No
-local Slack MCP server or `--mcp` override is involved.
+development runtime starts a cloud sandbox with the local Recipe overlay, so the
+adapter uses the cloud task origin and provider proxy and needs no local Slack
+credential. Use `introspection dev --logs` for sandbox logs.
 
 ## Test with introspection local
 
 An `introspection local` run has no inbound Slack event, cloud task origin, or
-cloud credential proxy. Install the Recipe dependencies first. Then set the bot
-token and a target conversation before the run:
+credential proxy. Install dependencies, then set a bot token and a conversation:
 
 ```bash
 pnpm install --frozen-lockfile
 export SLACK_BOT_TOKEN='xoxb-...'
 export SLACK_CHANNEL_ID='C0123456789'
 export SLACK_THREAD_TS='1234567890.123456' # optional
-introspection local -p 'Read the Slack origin and reply with a short test.'
+introspection local -p 'Summarise this thread and reply.'
 ```
 
-The local tools call Slack directly with `SLACK_BOT_TOKEN`. They can read,
-react, post, and download files. Local outbound posts do not create an inbound
-task or a reply bridge because no Data Plane task exists.
-
-## Direct host use
-
-`@introspection-ai/recipe-channel-slack` exports `registerSlackBotTools` for
-custom hosts and tests. A normal Recipe should use `pi.connectors` instead.
+Local tools call Slack directly with `SLACK_BOT_TOKEN`. Local posts create no
+inbound task or reply bridge, because no Data Plane task exists.
 
 ## File downloads
 
-`slack_download_file` writes a file under the task files directory and returns
-its path, media type, size, and SHA 256 digest. It accepts only
-`files.slack.com` download URLs, rejects redirects, caps the body at 100 MiB,
-checks the declared size, and removes partial files after a failure. The
-`video_low` option uses Slack's smaller MP4 rendition when it exists.
+`channel_fetch_file` writes a file under the task files directory and returns its
+path, media type, size, and SHA-256 digest — bytes land in the workspace, never
+in model context. It accepts only `files.slack.com` download URLs, rejects
+redirects, caps the body at 100 MiB, checks the declared size, and removes
+partial files after a failure. The `video_low` variant uses Slack's smaller MP4
+rendition when one exists.
+
+## Direct host use
+
+The package exports `SlackChannelAdapter`, `createSlackChannelSession` and
+`slackChannelTarget` for custom hosts and tests, alongside the default
+`slackRecipeConnectorModule`. A normal Recipe uses `pi.connectors` instead.

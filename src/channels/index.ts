@@ -1,0 +1,34 @@
+export { ChannelRefStore } from "./refs.js";
+export {
+  CHANNEL_TOOL_IDS,
+  channelConnectorTools,
+  channelToolIdsFor,
+  channelToolName,
+  registerChannelTools,
+} from "./tools.js";
+export type {
+  ChannelToolHost,
+  ChannelToolId,
+  RegisterChannelToolsOptions,
+} from "./tools.js";
+export { createChannelConnectorModule } from "./module.js";
+export type {
+  ChannelConnectorModuleOptions,
+  ChannelConnectorSession,
+} from "./module.js";
+export type {
+  ChannelAdapter,
+  ChannelAdapterContext,
+  ChannelAttachment,
+  ChannelAuthor,
+  ChannelCapabilities,
+  ChannelCursor,
+  ChannelHistoryPage,
+  ChannelLocalFile,
+  ChannelMessage,
+  ChannelMessageIdentity,
+  ChannelPostResult,
+  ChannelRefResolver,
+  ChannelTarget,
+  MessageRef,
+} from "./types.js";

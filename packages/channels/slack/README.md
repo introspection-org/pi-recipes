@@ -1,11 +1,13 @@
 # Slack connector for Introspection Recipes
 
-This package provides Slack Bot API tools for Recipes. A recipe installs it
-when its `package.json#pi.connectors` list includes the `slack` provider.
+The Slack adapter for the provider-neutral
+[channel tools](https://github.com/introspection-org/recipes/blob/main/docs/channels.md).
+A Recipe installs it when its `package.json#pi.connectors` list includes the
+`slack` provider.
 
-Recipe authors declare the provider in `package.json` and select tools in the
-agent YAML file. They do not write an extension or call the Slack client
-directly.
+The package supplies Slack Web API transport and a capability descriptor. The
+tool names and schemas come from `@introspection-ai/recipes/channels`, so a
+Recipe written against `channel_reply` is not written against Slack.
 
 ```json
 {
@@ -22,12 +24,16 @@ directly.
 }
 ```
 
-Install the recipe dependencies before running `introspection local`. The
-cloud runtime installs the locked production dependencies when it builds a
-recipe image or starts an `introspection dev` overlay.
+Every registered tool acts on the conversation the task came from; none takes a
+channel, thread, or user argument. Recipe authors select tools in the agent YAML
+file and do not write an extension or call the Slack client directly.
+
+Install the recipe dependencies before running `introspection local`. The cloud
+runtime installs the locked production dependencies when it builds a recipe
+image or starts an `introspection dev` overlay.
 
 The package calls the Slack Web API. It does not use hosted MCP, Socket Mode,
 WebSockets, or streaming.
 
-See the [Slack tool guide](https://github.com/introspection-org/recipes/blob/main/docs/slack.md)
+See the [Slack connector guide](https://github.com/introspection-org/recipes/blob/main/docs/slack.md)
 for tool behavior and testing.

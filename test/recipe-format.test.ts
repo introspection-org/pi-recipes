@@ -138,14 +138,14 @@ describe("Recipe Format", () => {
         "name: agent",
         "model:",
         "  name: anthropic/claude-sonnet-4-5",
-        "tools: [slack_origin, slack_send_message]",
+        "tools: [channel_info, channel_reply]",
         "",
       ].join("\n")
     );
 
     expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
-      "slack_origin",
-      "slack_send_message",
+      "channel_info",
+      "channel_reply",
     ]);
   });
 

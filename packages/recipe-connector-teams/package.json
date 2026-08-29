@@ -1,7 +1,7 @@
 {
-  "name": "@introspection-ai/recipe-channel-slack",
+  "name": "@introspection-ai/recipe-connector-teams",
   "version": "0.1.0",
-  "description": "Slack Bot API tools for Introspection Recipes.",
+  "description": "Microsoft Teams channel tools for Introspection Recipes.",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -15,7 +15,7 @@
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/introspection-org/recipes.git",
-    "directory": "packages/channels/slack"
+    "directory": "packages/recipe-connector-teams"
   },
   "exports": {
     ".": {
@@ -27,12 +27,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
-    "pack:check": "pnpm pack --dry-run --json | node ../../../scripts/check-npm-pack.mjs"
+    "pack:check": "pnpm pack --dry-run --json | node ../../scripts/check-npm-pack.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.82.0 <0.85.0",
-    "typebox": "*",
-    "@introspection-ai/recipes": "workspace:^"
+    "@introspection-ai/recipes": "workspace:^",
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

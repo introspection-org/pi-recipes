@@ -111,8 +111,12 @@ The provider package must be in the Recipe's production dependencies and
 lockfile. The host imports the package only when the Recipe declares the
 provider. The agent YAML file is the only place that narrows the package tool
 catalog. An agent lists each allowed tool by its full name, such as
-`slack_read_thread`, in its `tools` list. The host fails when the agent names a
+`channel_reply`, in its `tools` list. The host fails when the agent names a
 tool that the connector does not register.
+
+Chat providers share one connector shape. A channel connector registers the
+provider-neutral `channel_*` tools that its capabilities support. See
+[Channel tools](channels.md).
 
 ## Agents
 

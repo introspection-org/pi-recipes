@@ -1,0 +1,342 @@
+import type {
+  ChannelAdapter,
+  ChannelAdapterContext,
+  ChannelCapabilities,
+  ChannelHistoryPage,
+  ChannelLocalFile,
+  ChannelMessage,
+  ChannelPostResult,
+  ChannelTarget,
+  MessageRef,
+} from "@introspection-ai/recipes/channels";
+
+import type { SlackApiResult } from "./client.js";
+import { SlackFileSession } from "./files.js";
+import { toPlainText } from "./format.js";
+import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
+
+/**
+ * What Slack's Bot API supports through the bound-conversation contract.
+ *
+ * `attach` and `documents` are false because this package does not implement
+ * them yet, not because Slack cannot: `files.uploadV2` is a three-call flow and
+ * canvases are a separate surface. Declaring them false is what keeps
+ * `channel_attach` and `channel_post_document` from being registered at all,
+ * which is the intended shape of an unimplemented capability.
+ */
+export const SLACK_CHANNEL_CAPABILITIES: ChannelCapabilities = {
+  react: true,
+  edit: true,
+  retract: true,
+  history: "channel",
+  attach: false,
+  fetchFile: true,
+  documents: false,
+  resolveAuthors: true,
+  permalinks: true,
+};
+
+const SLACK_FILE_VARIANTS = new Set(["original", "video_low"]);
+
+interface SlackHistoryMessage {
+  ts?: string;
+  text?: string;
+  user?: string;
+  bot_id?: string;
+  thread_ts?: string;
+  files?: Array<{
+    id?: string;
+    name?: string;
+    mimetype?: string;
+    size?: number;
+  }>;
+}
+
+/** Slack's own `:emoji:` spelling is not what `reactions.add` accepts. */
+function reactionName(emoji: string): string {
+  return emoji.trim().replace(/^:+|:+$/g, "");
+}
+
+function slackTimestamp(ts: string): string | undefined {
+  const seconds = Number.parseFloat(ts);
+  if (!Number.isFinite(seconds)) return undefined;
+  return new Date(seconds * 1000).toISOString();
+}
+
+/**
+ * Slack against the neutral channel contract.
+ *
+ * Every method acts on the conversation in `ctx.target`, which the host
+ * resolved from the task origin. Nothing here reads a destination from model
+ * input, so the agent's reach is the thread it was addressed in, whatever the
+ * bot credential could otherwise touch.
+ *
+ * User ids and permalinks are resolved here rather than exposed as lookup
+ * tools: an agent that needs "who said this" wants a name in the message it is
+ * already reading, not a second round trip it has to know to make.
+ */
+export class SlackChannelAdapter implements ChannelAdapter {
+  readonly provider = "slack";
+  readonly capabilities = SLACK_CHANNEL_CAPABILITIES;
+
+  private readonly authors = new Map<string, string | undefined>();
+  private conversationPermalink: string | null | undefined;
+
+  constructor(readonly session: SlackFileSession) {}
+
+  async info(ctx: ChannelAdapterContext): Promise<ChannelTarget> {
+    if (this.conversationPermalink === undefined) {
+      const root = ctx.target.thread;
+      this.conversationPermalink = root
+        ? await this.permalink(ctx.target.conversation, root, ctx.signal)
+        : null;
+    }
+    return { ...ctx.target, permalink: this.conversationPermalink };
+  }
+
+  async reply(
+    ctx: ChannelAdapterContext,
+    input: { text: string },
+  ): Promise<ChannelPostResult> {
+    const posted = await this.session.sendMessage(
+      { text: input.text },
+      ctx.signal,
+    );
+    const ref = ctx.refs.message({
+      conversation: posted.channel,
+      id: posted.ts,
+      thread: posted.thread_ts,
+      authoredByAgent: true,
+    });
+    const permalink = await this.permalink(
+      posted.channel,
+      posted.ts,
+      ctx.signal,
+    );
+    return {
+      ref,
+      ...(permalink ? { permalink } : {}),
+      bridge_recorded: posted.bridge_recorded,
+      ...(posted.bridge_error ? { bridge_error: posted.bridge_error } : {}),
+    };
+  }
+
+  async react(
+    ctx: ChannelAdapterContext,
+    input: { ref: MessageRef; emoji: string },
+  ): Promise<void> {
+    const message = ctx.refs.resolveMessage(input.ref);
+    await this.session.call(
+      "reactions.add",
+      {
+        channel: message.conversation,
+        timestamp: message.id,
+        name: reactionName(input.emoji),
+      },
+      "form",
+      ctx.signal,
+    );
+  }
+
+  async edit(
+    ctx: ChannelAdapterContext,
+    input: { ref: MessageRef; text: string },
+  ): Promise<ChannelPostResult> {
+    const message = ctx.refs.resolveAuthored(input.ref);
+    await this.session.call(
+      "chat.update",
+      {
+        channel: message.conversation,
+        ts: message.id,
+        text: toPlainText(input.text),
+        blocks: [{ type: "markdown", text: input.text }],
+      },
+      "json",
+      ctx.signal,
+    );
+    return {
+      ref: input.ref,
+      ...(message.permalink ? { permalink: message.permalink } : {}),
+    };
+  }
+
+  async retract(
+    ctx: ChannelAdapterContext,
+    input: { ref: MessageRef },
+  ): Promise<void> {
+    const message = ctx.refs.resolveAuthored(input.ref);
+    await this.session.call(
+      "chat.delete",
+      { channel: message.conversation, ts: message.id },
+      "form",
+      ctx.signal,
+    );
+  }
+
+  async history(
+    ctx: ChannelAdapterContext,
+    input: { limit?: number; cursor?: string },
+  ): Promise<ChannelHistoryPage> {
+    const thread = ctx.target.thread;
+    const payload = await this.session.call(
+      thread ? "conversations.replies" : "conversations.history",
+      {
+        channel: ctx.target.conversation,
+        ...(thread ? { ts: thread } : {}),
+        limit: input.limit ?? 50,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
+      "form",
+      ctx.signal,
+    );
+    const raw = Array.isArray(payload.messages)
+      ? (payload.messages as SlackHistoryMessage[])
+      : [];
+    const messages: ChannelMessage[] = [];
+    for (const message of raw) {
+      if (!message.ts) continue;
+      messages.push({
+        ref: ctx.refs.message({
+          conversation: ctx.target.conversation,
+          id: message.ts,
+          thread: message.thread_ts ?? thread ?? null,
+        }),
+        author: {
+          id: message.user ?? message.bot_id ?? "unknown",
+          ...(message.user
+            ? { display_name: await this.authorName(message.user, ctx.signal) }
+            : {}),
+        },
+        text: message.text ?? "",
+        ...(slackTimestamp(message.ts)
+          ? { timestamp: slackTimestamp(message.ts) }
+          : {}),
+        ...(message.files?.length
+          ? {
+              attachments: message.files
+                .filter((file) => file.id)
+                .map((file) => ({
+                  id: file.id!,
+                  ...(file.name ? { name: file.name } : {}),
+                  ...(file.mimetype ? { mime_type: file.mimetype } : {}),
+                  ...(typeof file.size === "number" ? { size: file.size } : {}),
+                })),
+            }
+          : {}),
+      });
+    }
+    const next = nextCursor(payload);
+    return {
+      messages,
+      ...(next ? { cursor: ctx.refs.cursor(next) } : {}),
+    };
+  }
+
+  async fetchFile(
+    ctx: ChannelAdapterContext,
+    input: { file: string; variant?: string },
+  ): Promise<ChannelLocalFile> {
+    if (input.variant && !SLACK_FILE_VARIANTS.has(input.variant)) {
+      throw new Error(
+        `Unknown Slack file variant '${input.variant}'. Use 'original' or 'video_low'.`,
+      );
+    }
+    return await this.session.downloadFile(
+      {
+        file_id: input.file,
+        variant: input.variant as "original" | "video_low" | undefined,
+      },
+      ctx.signal,
+    );
+  }
+
+  /** Best effort: a missing permalink is worth less than a failed tool call. */
+  private async permalink(
+    channel: string,
+    ts: string,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    try {
+      const payload = await this.session.call(
+        "chat.getPermalink",
+        { channel, message_ts: ts },
+        "form",
+        signal,
+      );
+      const link = payload.permalink;
+      return typeof link === "string" ? link : null;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return null;
+    }
+  }
+
+  private async authorName(
+    user: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    if (this.authors.has(user)) return this.authors.get(user);
+    let name: string | undefined;
+    try {
+      const payload = await this.session.call(
+        "users.info",
+        { user },
+        "form",
+        signal,
+      );
+      const profile = payload.user as
+        | { real_name?: string; name?: string; profile?: { display_name?: string } }
+        | undefined;
+      name =
+        profile?.profile?.display_name?.trim() ||
+        profile?.real_name?.trim() ||
+        profile?.name?.trim() ||
+        undefined;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      name = undefined;
+    }
+    this.authors.set(user, name);
+    return name;
+  }
+}
+
+function nextCursor(payload: SlackApiResult): string | undefined {
+  const metadata = payload.response_metadata as
+    | { next_cursor?: string }
+    | undefined;
+  const cursor = metadata?.next_cursor?.trim();
+  return cursor ? cursor : undefined;
+}
+
+/** Resolve the bound conversation for a session, or explain why there is none. */
+export function slackChannelTarget(env: SlackEnv): ChannelTarget {
+  const origin = resolveSlackOrigin(env);
+  if (!origin) {
+    throw new Error(
+      "No Slack origin is configured. Cloud tasks supply one automatically. For introspection local, set SLACK_CHANNEL_ID and optionally SLACK_THREAD_TS.",
+    );
+  }
+  return {
+    provider: "slack",
+    conversation: origin.channel,
+    thread: origin.thread_ts,
+  };
+}
+
+export function createSlackChannelSession(options: {
+  env?: SlackEnv;
+  cwd?: string;
+  session?: SlackFileSession;
+}): { adapter: SlackChannelAdapter; target: () => ChannelTarget } {
+  const env = options.env ?? process.env;
+  const session =
+    options.session ??
+    new SlackFileSession({ env, cwd: options.cwd ?? process.cwd() });
+  return {
+    adapter: new SlackChannelAdapter(session),
+    // Resolved per call: a Recipe that declares Slack can still run from an
+    // automation trigger, where the tools error rather than the session.
+    target: () => slackChannelTarget(env),
+  };
+}
