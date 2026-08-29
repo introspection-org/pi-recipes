@@ -109,7 +109,9 @@ inbound task or reply bridge, because no Data Plane task exists.
 
 `channel_fetch_file` writes a file under the task files directory and returns its
 path, media type, size, and SHA-256 digest — bytes land in the workspace, never
-in model context. It accepts only `files.slack.com` download URLs, rejects
+in model context. It accepts only a `file_…` handle from a `channel_history`
+attachment, so the bot's cross-channel file read is not reachable from model
+input. On the wire it accepts only `files.slack.com` download URLs, rejects
 redirects, caps the body at 100 MiB, checks the declared size, and removes
 partial files after a failure. The `video_low` variant uses Slack's smaller MP4
 rendition when one exists.

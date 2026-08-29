@@ -23,6 +23,7 @@ interface FakeFetchOptions {
   file?: Record<string, unknown>;
   fileBody?: string;
   bridgeStatus?: number;
+  messages?: Array<Record<string, unknown>>;
 }
 
 function fakeFile(overrides: Record<string, unknown> = {}) {
@@ -67,7 +68,9 @@ function fakeFetch(options: FakeFetchOptions = {}) {
     if (parsed.pathname.includes("/files-pri/")) {
       return response({ payload: {}, body: fileBody });
     }
-    return response({ payload: { ok: true, messages: [{ ts: "100.1" }] } });
+    return response({
+      payload: { ok: true, messages: options.messages ?? [{ ts: "100.1" }] },
+    });
   }) as unknown as SlackFetch & { calls: typeof calls };
   impl.calls = calls;
   return impl;
@@ -272,10 +275,7 @@ describe("SlackBotSession transport", () => {
       },
       fetchImpl,
     });
-    const result = await session.sendMessage({
-      text: "hello",
-      start_new_thread: true,
-    });
+    const result = await session.sendMessage({ text: "hello" });
     expect(result.bridge_recorded).toBe(false);
     expect(result.bridge_error).toMatch(/503/);
     expect(
@@ -415,6 +415,87 @@ describe("Slack channel tools", () => {
     pi.tools
       .get(name)
       ?.execute("tool-call", params as never, undefined, undefined, undefined as never);
+
+  it("posts to the context's conversation, not the session's own origin", async () => {
+    // A direct-host caller can bind a context that differs from the session
+    // environment. Every other tool acts on the context, so reply must too —
+    // otherwise channel_info describes one conversation and channel_reply
+    // writes to another.
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch();
+    registerChannelTools(
+      pi,
+      new SlackChannelAdapter(new SlackFileSession({ env: cloudEnv, fetchImpl })),
+      { target: { provider: "slack", conversation: "C-OTHER", thread: "900.9" } },
+    );
+    await call(pi, "channel_reply", { text: "hi" });
+
+    const post = fetchImpl.calls.find((c) => c.url.includes("chat.postMessage"))!;
+    expect(JSON.parse(String(post.init.body))).toMatchObject({
+      channel: "C-OTHER",
+      thread_ts: "900.9",
+    });
+  });
+
+  it("returns unthreaded history oldest-first, as the tool promises", async () => {
+    // conversations.history is newest-first while conversations.replies is
+    // oldest-first; a backwards transcript still reads as a conversation, so
+    // nothing downstream would catch it.
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch({
+      messages: [
+        { ts: "300.3", text: "third", user: "U1" },
+        { ts: "200.2", text: "second", user: "U1" },
+        { ts: "100.1", text: "first", user: "U1" },
+      ],
+    });
+    registerChannelTools(
+      pi,
+      new SlackChannelAdapter(new SlackFileSession({ env: cloudEnv, fetchImpl })),
+      { target: { provider: "slack", conversation: "C1", thread: null } },
+    );
+    const result = (await call(pi, "channel_history", {})) as {
+      details: { messages: Array<{ text: string }> };
+    };
+    expect(result.details.messages.map((m) => m.text)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+  });
+
+  it("refuses a file id the model supplied rather than saw", async () => {
+    const { pi } = slackTools();
+    // The P1 this closes: a bot can read files in every conversation it is in,
+    // so a raw Slack file id is an addressing argument by another name.
+    await expect(call(pi, "channel_fetch_file", { file: "F123" })).rejects.toThrow(
+      /Unknown file reference/,
+    );
+  });
+
+  it("downloads a file it handed out a reference for", async () => {
+    const { pi } = slackTools({
+      messages: [
+        {
+          ts: "100.1",
+          text: "see this",
+          user: "U1",
+          files: [{ id: "F123", name: "crash.png", mimetype: "image/png" }],
+        },
+      ],
+    });
+    const history = (await call(pi, "channel_history", {})) as {
+      details: { messages: Array<{ attachments?: Array<{ id: string }> }> };
+    };
+    const ref = history.details.messages[0]!.attachments![0]!.id;
+    expect(ref).toMatch(/^file_/);
+
+    const file = (await call(pi, "channel_fetch_file", { file: ref })) as {
+      details: { name: string; path: string };
+    };
+    expect(file.details.name).toContain("crash.png");
+    expect(file.details.path).toContain("crash.png");
+  });
 
   it("registers the neutral surface Slack supports and nothing else", () => {
     const { pi } = slackTools();

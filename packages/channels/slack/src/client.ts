@@ -162,37 +162,42 @@ export class SlackBotSession {
     return payload;
   }
 
+  /**
+   * Post into a conversation the caller has already resolved.
+   *
+   * `to` is required rather than defaulted from the environment: the caller —
+   * the adapter — holds the trusted `ChannelAdapterContext.target`, and if this
+   * method resolved its own destination the two could disagree, so
+   * `channel_info` and `channel_history` would describe one conversation while
+   * `channel_reply` posted into another. Falling back to the origin here is
+   * exactly the kind of second, quieter source of truth the bound tier exists
+   * to remove.
+   */
   async sendMessage(input: {
     text: string;
     plain_text?: string;
-    blocks?: unknown[];
-    thread_ts?: string;
-    start_new_thread?: boolean;
+    to?: { channel: string; thread_ts?: string | null };
   }, signal?: AbortSignal): Promise<SlackPostResult> {
-    const origin = this.origin();
+    const destination = input.to ?? {
+      channel: this.origin().channel,
+      thread_ts: this.origin().thread_ts,
+    };
     const messageBody = slackMessageBody(input.text, {
       plainText: input.plain_text,
     });
-    const threadTs = input.thread_ts?.trim()
-      ? input.thread_ts.trim()
-      : input.start_new_thread
-        ? undefined
-        : (origin.thread_ts ?? undefined);
+    const threadTs = destination.thread_ts?.trim() || undefined;
     const payload = await this.call(
       "chat.postMessage",
       {
-        channel: origin.channel,
+        channel: destination.channel,
         text: messageBody.text,
-        blocks:
-          input.blocks && input.blocks.length > 0
-            ? input.blocks
-            : messageBody.blocks,
+        blocks: messageBody.blocks,
         ...(threadTs ? { thread_ts: threadTs } : {}),
       },
       "json",
       signal,
     );
-    const channel = payload.channel || origin.channel;
+    const channel = payload.channel || destination.channel;
     const ts = payload.ts;
     if (!ts)
       throw new Error("Slack chat.postMessage returned no message timestamp");

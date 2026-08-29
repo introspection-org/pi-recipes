@@ -23,6 +23,7 @@ export type {
   ChannelAuthor,
   ChannelCapabilities,
   ChannelCursor,
+  ChannelFileIdentity,
   ChannelHistoryPage,
   ChannelLocalFile,
   ChannelMessage,
@@ -30,5 +31,6 @@ export type {
   ChannelPostResult,
   ChannelRefResolver,
   ChannelTarget,
+  FileRef,
   MessageRef,
 } from "./types.js";

@@ -45,6 +45,18 @@ export interface ChannelConnectorModuleOptions {
 
 const channelToolIds = new Set<string>(CHANNEL_TOOL_IDS);
 
+/** Whether two capability descriptors say the same thing. */
+function sameCapabilities(
+  left: ChannelCapabilities,
+  right: ChannelCapabilities,
+): boolean {
+  const keys = Object.keys(right) as (keyof ChannelCapabilities)[];
+  return (
+    Object.keys(left).length === keys.length &&
+    keys.every((key) => left[key] === right[key])
+  );
+}
+
 /**
  * Build a `RecipeConnectorModule` from a channel adapter.
  *
@@ -79,10 +91,13 @@ export function createChannelConnectorModule(
           env: moduleOptions.env ?? process.env,
           cwd: moduleOptions.cwd ?? process.cwd(),
         });
-        if (session.adapter.capabilities !== options.capabilities) {
+        if (!sameCapabilities(session.adapter.capabilities, options.capabilities)) {
           // The declared catalog is what the loader narrowed against; an
           // adapter answering with a different set would register tools the
-          // Recipe never declared.
+          // Recipe never declared. Compared by value, not identity: the
+          // contract is that the descriptors agree, and an adapter that
+          // rebuilds or clones its static descriptor is not doing anything
+          // wrong.
           throw new Error(
             `Channel adapter '${options.provider}' returned capabilities that differ from its declared catalog`,
           );

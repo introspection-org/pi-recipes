@@ -28,7 +28,7 @@ conventional:
 | `channel_edit` | `message`, `text` | `edit` |
 | `channel_retract` | `message` | `retract` |
 | `channel_attach` | `path`, `title?`, `comment?` | `attach` |
-| `channel_fetch_file` | `file`, `variant?` | `fetch_file` |
+| `channel_fetch_file` | `file` (a `file_…` handle), `variant?` | `fetch_file` |
 | `channel_post_document` | `title`, `markdown` | `documents` |
 
 `channel_info`, `channel_reply` and `channel_history` are active by default
@@ -40,13 +40,19 @@ Slack posts a `markdown` block, Teams sets `textFormat: "markdown"`. There is
 no raw block passthrough: a provider-specific payload is not portable, and
 interactive elements inside one have no routing back to the task.
 
-### Message references
+### Message and file references
 
 `channel_react`, `channel_edit` and `channel_retract` take a `message`, which is
 an opaque per-session handle (`msg_…`) minted by the host — never a Slack
 timestamp or a Teams activity id. Handles come back from `channel_reply` and
 from `channel_history` rows, so the model can only act on messages it has
 actually seen through a tool.
+
+`channel_fetch_file` works the same way: attachments on history rows carry a
+`file_…` handle, and that is the only thing the tool accepts. A provider file
+id would be an addressing argument in everything but name — a bot can usually
+read files from every conversation it belongs to, so a model that could pass
+one could reach a file this conversation never carried.
 
 `channel_edit` and `channel_retract` additionally require that the handle refer
 to a message **this agent posted**. Re-reading a thread the agent replied to

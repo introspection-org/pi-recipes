@@ -67,6 +67,16 @@ export type MessageRef = string;
 /** An opaque pagination token. Same reasoning as `MessageRef`. */
 export type ChannelCursor = string;
 
+/**
+ * An opaque handle for one file seen in this conversation.
+ *
+ * Same reasoning as `MessageRef`, and for the same threat: a provider file id
+ * is reachable across every conversation the bot belongs to, so accepting one
+ * from the model would reintroduce the addressing argument the bound tier
+ * exists to remove — just spelled `file` instead of `channel`.
+ */
+export type FileRef = string;
+
 export interface ChannelAuthor {
   readonly id: string;
   readonly display_name?: string;
@@ -74,7 +84,16 @@ export interface ChannelAuthor {
 }
 
 export interface ChannelAttachment {
-  readonly id: string;
+  /**
+   * Opaque session handle, not the provider's file id.
+   *
+   * Minted when the file is seen in this conversation's history, and the only
+   * thing `channel_fetch_file` accepts. A raw provider file id would be an
+   * addressing argument in everything but name: a bot can usually read files
+   * from every conversation it belongs to, so a model that could pass one
+   * could reach a file this conversation never carried.
+   */
+  readonly id: FileRef;
   readonly name?: string;
   readonly mime_type?: string;
   readonly size?: number;
@@ -124,6 +143,12 @@ export interface ChannelMessageIdentity {
   readonly permalink?: string;
 }
 
+/** The provider identity behind a `FileRef`, resolvable only in-session. */
+export interface ChannelFileIdentity {
+  readonly conversation: string;
+  readonly id: string;
+}
+
 /**
  * Resolves opaque handles for one session.
  *
@@ -137,6 +162,10 @@ export interface ChannelRefResolver {
   resolveAuthored(ref: MessageRef): ChannelMessageIdentity;
   cursor(providerCursor: string): ChannelCursor;
   resolveCursor(cursor: ChannelCursor): string;
+  /** Mint a handle for a file seen in this conversation. */
+  file(identity: ChannelFileIdentity): FileRef;
+  /** Resolve a handle back to a provider file id. Guards fetch_file. */
+  resolveFile(ref: FileRef): ChannelFileIdentity;
 }
 
 export interface ChannelAdapterContext {
@@ -186,7 +215,7 @@ export interface ChannelAdapter {
   ): Promise<ChannelPostResult>;
   fetchFile?(
     ctx: ChannelAdapterContext,
-    input: { file: string; variant?: string },
+    input: { file: FileRef; variant?: string },
   ): Promise<ChannelLocalFile>;
   postDocument?(
     ctx: ChannelAdapterContext,

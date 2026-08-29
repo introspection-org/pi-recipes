@@ -332,7 +332,7 @@ export function registerChannelTools(
     name: channelToolName("fetch_file"),
     label: "Fetch a channel file",
     description:
-      "Download a file shared in this conversation into the task workspace and return its local path, size, and digest. The bytes stay on disk; they are not read into this conversation.",
+      "Download a file shared in this conversation into the task workspace and return its local path, size, and digest. Takes a file reference from a message returned by channel_history — a provider file id is not accepted. The bytes stay on disk; they are not read into this conversation.",
     parameters: Type.Object(
       {
         file: Type.String({ minLength: 1, maxLength: 200 }),

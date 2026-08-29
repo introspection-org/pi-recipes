@@ -2,13 +2,16 @@ import { randomUUID } from "node:crypto";
 
 import type {
   ChannelCursor,
+  ChannelFileIdentity,
   ChannelMessageIdentity,
   ChannelRefResolver,
+  FileRef,
   MessageRef,
 } from "./types.js";
 
 const MESSAGE_PREFIX = "msg_";
 const CURSOR_PREFIX = "cur_";
+const FILE_PREFIX = "file_";
 
 function handle(prefix: string): string {
   return `${prefix}${randomUUID().replaceAll("-", "").slice(0, 16)}`;
@@ -31,6 +34,8 @@ export class ChannelRefStore implements ChannelRefResolver {
   private readonly messages = new Map<MessageRef, ChannelMessageIdentity>();
   private readonly byIdentity = new Map<string, MessageRef>();
   private readonly cursors = new Map<ChannelCursor, string>();
+  private readonly files = new Map<FileRef, ChannelFileIdentity>();
+  private readonly byFileIdentity = new Map<string, FileRef>();
 
   message(identity: ChannelMessageIdentity): MessageRef {
     const key = `${identity.conversation} ${identity.id}`;
@@ -88,5 +93,28 @@ export class ChannelRefStore implements ChannelRefResolver {
       );
     }
     return providerCursor;
+  }
+
+  file(identity: ChannelFileIdentity): FileRef {
+    const key = `${identity.conversation} ${identity.id}`;
+    const existing = this.byFileIdentity.get(key);
+    if (existing) return existing;
+    const ref = handle(FILE_PREFIX);
+    this.files.set(ref, identity);
+    this.byFileIdentity.set(key, ref);
+    return ref;
+  }
+
+  resolveFile(ref: FileRef): ChannelFileIdentity {
+    const identity = this.files.get(ref);
+    if (!identity) {
+      // The whole point: a provider file id the model invented resolves to
+      // nothing, so `channel_fetch_file` can only reach files this
+      // conversation actually carried.
+      throw new Error(
+        `Unknown file reference '${ref}'. Use a file reference from a message in this conversation.`,
+      );
+    }
+    return identity;
   }
 }

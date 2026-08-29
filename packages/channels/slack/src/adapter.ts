@@ -7,6 +7,7 @@ import type {
   ChannelMessage,
   ChannelPostResult,
   ChannelTarget,
+  FileRef,
   MessageRef,
 } from "@introspection-ai/recipes/channels";
 
@@ -99,7 +100,13 @@ export class SlackChannelAdapter implements ChannelAdapter {
     input: { text: string },
   ): Promise<ChannelPostResult> {
     const posted = await this.session.sendMessage(
-      { text: input.text },
+      {
+        text: input.text,
+        // The trusted context, not the session's own view of the origin: the
+        // two agree under the connector module, and where they would not, the
+        // context is the one every other tool acted on.
+        to: { channel: ctx.target.conversation, thread_ts: ctx.target.thread },
+      },
       ctx.signal,
     );
     const ref = ctx.refs.message({
@@ -192,8 +199,14 @@ export class SlackChannelAdapter implements ChannelAdapter {
     const raw = Array.isArray(payload.messages)
       ? (payload.messages as SlackHistoryMessage[])
       : [];
+    // `conversations.replies` returns oldest-first, `conversations.history`
+    // newest-first. The tool promises one order for both, so the unthreaded
+    // arm is reversed here rather than left for the model to notice — a
+    // silently backwards transcript reads as a plausible conversation and
+    // inverts every summary drawn from it.
+    const ordered = thread ? raw : [...raw].reverse();
     const messages: ChannelMessage[] = [];
-    for (const message of raw) {
+    for (const message of ordered) {
       if (!message.ts) continue;
       messages.push({
         ref: ctx.refs.message({
@@ -216,7 +229,14 @@ export class SlackChannelAdapter implements ChannelAdapter {
               attachments: message.files
                 .filter((file) => file.id)
                 .map((file) => ({
-                  id: file.id!,
+                  // Minted, not passed through: `channel_fetch_file` resolves
+                  // this handle back to the provider id, so a file id the
+                  // model invents (or reads out of injected content) names
+                  // nothing this conversation carried.
+                  id: ctx.refs.file({
+                    conversation: ctx.target.conversation,
+                    id: file.id!,
+                  }),
                   ...(file.name ? { name: file.name } : {}),
                   ...(file.mimetype ? { mime_type: file.mimetype } : {}),
                   ...(typeof file.size === "number" ? { size: file.size } : {}),
@@ -234,16 +254,20 @@ export class SlackChannelAdapter implements ChannelAdapter {
 
   async fetchFile(
     ctx: ChannelAdapterContext,
-    input: { file: string; variant?: string },
+    input: { file: FileRef; variant?: string },
   ): Promise<ChannelLocalFile> {
     if (input.variant && !SLACK_FILE_VARIANTS.has(input.variant)) {
       throw new Error(
         `Unknown Slack file variant '${input.variant}'. Use 'original' or 'video_low'.`,
       );
     }
+    // The bot can read files across every conversation it belongs to, so the
+    // conversation boundary has to be enforced here: only a file this session
+    // saw in this conversation resolves.
+    const file = ctx.refs.resolveFile(input.file);
     return await this.session.downloadFile(
       {
-        file_id: input.file,
+        file_id: file.id,
         variant: input.variant as "original" | "video_low" | undefined,
       },
       ctx.signal,

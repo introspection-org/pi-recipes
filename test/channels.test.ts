@@ -62,7 +62,8 @@ function stubAdapter(
     async attach(ctx) {
       return { ref: ctx.refs.message({ conversation: "C1", id: "file" }) };
     },
-    async fetchFile() {
+    async fetchFile(ctx, input) {
+      ctx.refs.resolveFile(input.file);
       return {
         id: "f",
         name: "f",
@@ -142,6 +143,39 @@ describe("channel tool surface", () => {
     expect(names).toContain("channel_reply");
   });
 
+  it("accepts a capability descriptor that matches by value, not identity", () => {
+    // An adapter that clones or rebuilds its static descriptor is not doing
+    // anything wrong; only a descriptor that actually disagrees is.
+    const capabilities = { ...TEAMS_CHANNEL_CAPABILITIES };
+    const module = createChannelConnectorModule({
+      provider: "test",
+      capabilities: TEAMS_CHANNEL_CAPABILITIES,
+      createSession: () => ({
+        adapter: { ...stubAdapter(), capabilities },
+        target,
+      }),
+    });
+    const pi = createMockExtensionAPI();
+    expect(() =>
+      module.createExtension({ tools: ["info", "reply"] })(pi as never),
+    ).not.toThrow();
+
+    const disagrees = createChannelConnectorModule({
+      provider: "test",
+      capabilities: TEAMS_CHANNEL_CAPABILITIES,
+      createSession: () => ({
+        adapter: {
+          ...stubAdapter(),
+          capabilities: { ...TEAMS_CHANNEL_CAPABILITIES, edit: false },
+        },
+        target,
+      }),
+    });
+    expect(() =>
+      disagrees.createExtension({ tools: ["info"] })(createMockExtensionAPI() as never),
+    ).toThrow(/differ from its declared catalog/);
+  });
+
   it("refuses an adapter that declares more than it implements", () => {
     const adapter = stubAdapter();
     const incomplete = { ...adapter, react: undefined } as unknown as ChannelAdapter;
@@ -211,6 +245,18 @@ describe("channel message references", () => {
       conversation: "C1",
       id: "100.1",
     });
+  });
+
+  it("mints file handles that a model cannot forge", () => {
+    const refs = new ChannelRefStore();
+    const ref = refs.file({ conversation: "C1", id: "F0123" });
+    expect(ref).toMatch(/^file_/);
+    expect(ref).not.toContain("F0123");
+    expect(refs.resolveFile(ref)).toEqual({ conversation: "C1", id: "F0123" });
+    // The finding this closes: a raw Slack file id reaches every conversation
+    // the bot belongs to, so accepting one from the model would be an
+    // addressing argument spelled `file`.
+    expect(() => refs.resolveFile("F0123")).toThrow(/Unknown file reference/);
   });
 
   it("refuses a handle it never minted", () => {
