@@ -125,6 +125,7 @@ describe("channel tool surface", () => {
     const read = vi.fn(async () => ({ messages: [] }));
     const adapter: ChannelAdapter = {
       ...stubAdapter(),
+      provider: "slack",
       async enrichTarget(ctx) {
         return {
           ...ctx.target,
@@ -192,6 +193,100 @@ describe("channel tool surface", () => {
     );
 
     expect(results).toEqual([undefined]);
+  });
+
+  it("retries target resolution after a missing channel origin", async () => {
+    const pi = createMockExtensionAPI();
+    let attempts = 0;
+    registerChannelTools(pi, stubAdapter(), {
+      target: () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("No channel origin");
+        return target;
+      },
+      tools: ["reply"],
+    });
+
+    const promptResults = await pi.emitExtensionEvent(
+      {
+        type: "before_agent_start",
+        prompt: "hello",
+        systemPrompt: "Base prompt",
+        systemPromptOptions: {},
+      } as never,
+      { signal: undefined },
+    );
+    const reply = pi.tools.get("channel_reply");
+    await reply?.execute(
+      "tool-call",
+      { text: "hello" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(promptResults).toEqual([undefined]);
+    expect(attempts).toBe(2);
+  });
+
+  it("uses one resolved target for the prompt and later tool calls", async () => {
+    const pi = createMockExtensionAPI();
+    const conversations: string[] = [];
+    const adapter: ChannelAdapter = {
+      ...stubAdapter(),
+      async reply(ctx, input) {
+        conversations.push(ctx.target.conversation);
+        return stubAdapter().reply(ctx, input);
+      },
+    };
+    let calls = 0;
+    registerChannelTools(pi, adapter, {
+      target: () => ({
+        provider: "test",
+        conversation: `C${++calls}`,
+      }),
+      tools: ["reply"],
+    });
+
+    await pi.emitExtensionEvent(
+      {
+        type: "before_agent_start",
+        prompt: "hello",
+        systemPrompt: "Base prompt",
+        systemPromptOptions: {},
+      } as never,
+      { signal: undefined },
+    );
+    await pi.tools.get("channel_reply")?.execute(
+      "tool-call",
+      { text: "hello" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(calls).toBe(1);
+    expect(conversations).toEqual(["C1"]);
+  });
+
+  it("refuses a target for a different provider", async () => {
+    const pi = createMockExtensionAPI();
+    registerChannelTools(pi, stubAdapter(), {
+      target: { provider: "slack", conversation: "C1" },
+      tools: ["reply"],
+    });
+
+    await expect(
+      pi.tools.get("channel_reply")?.execute(
+        "tool-call",
+        { text: "hello" },
+        undefined,
+        undefined,
+        undefined as never,
+      ),
+    ).rejects.toThrow(
+      /Channel target for 'test' returned provider 'slack'/,
+    );
   });
 
   it("appends channel context after an earlier prompt replacement", async () => {

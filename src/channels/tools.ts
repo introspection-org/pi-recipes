@@ -173,8 +173,22 @@ export function registerChannelTools(
   const refs = options.refs ?? new ChannelRefStore();
   const supported = new Set(channelToolIdsFor(adapter.capabilities));
   const selected = new Set(options.tools ?? [...supported]);
-  const resolveTarget =
-    typeof options.target === "function" ? options.target : () => options.target as ChannelTarget;
+  const loadTarget =
+    typeof options.target === "function"
+      ? options.target
+      : () => options.target as ChannelTarget;
+  let cachedTarget: ChannelTarget | undefined;
+  const resolveTarget = (): ChannelTarget => {
+    if (cachedTarget) return cachedTarget;
+    const target = loadTarget();
+    if (target.provider !== adapter.provider) {
+      throw new Error(
+        `Channel target for '${adapter.provider}' returned provider '${target.provider}'`,
+      );
+    }
+    cachedTarget = target;
+    return target;
+  };
   const context = (signal?: AbortSignal): ChannelAdapterContext => ({
     target: resolveTarget(),
     refs,
