@@ -50,12 +50,9 @@ export {
  * }]}}
  * ```
  *
- * Workspace-wide operations — search, directory lookups, posting to another
- * conversation — are deliberately absent. They do not correspond across
- * providers, so a neutral name would buy nothing, and they need a broader
- * grant than a task bound to one thread should carry. A Recipe that needs them
- * declares Slack's hosted MCP server under `pi.mcp.servers`, where the wider
- * reach is visible in the manifest and separately granted.
+ * Operations outside the bound channel tool set, including workspace search,
+ * directory lookups, and posting to another conversation, are unsupported.
+ * Their contract and access model are deferred to a separate proposal.
  */
 export const slackRecipeConnectorModule = createChannelConnectorModule({
   provider: "slack",

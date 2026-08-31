@@ -14,10 +14,9 @@
  *   so a channel that cannot edit simply has no edit tool. A tool that always
  *   answers "unsupported" costs a model turn and teaches nothing.
  *
- * Workspace-wide operations (search, cross-conversation sends, directory
- * lookups) are deliberately *not* here. They do not correspond across
- * providers, so a neutral name buys nothing, and they need a broader grant. A
- * Recipe that needs them declares a provider's hosted MCP server instead.
+ * Operations outside this bound channel set, including workspace search,
+ * directory lookups, and sends to another conversation, are unsupported. Their
+ * contract and access model are deferred to a separate proposal.
  */
 
 /** The conversation a task answers. Resolved by the host, never by the model. */

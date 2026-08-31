@@ -17,13 +17,20 @@ conventional:
   Recipe run on Microsoft Teams simply has no `channel_history`; it does not
   have one that answers "unsupported" after burning a turn.
 
+Before the first model call, the channel extension adds origin metadata to the
+system prompt. The metadata contains the provider, the conversation name when
+the adapter can resolve one, whether the origin is a thread, and the available
+channel tools. It contains no provider conversation IDs and no messages.
+`channel_history` remains the only way to fetch earlier messages when the
+provider supports it.
+
 ## The tools
 
 | Tool | Model arguments | Requires |
 | --- | --- | --- |
 | `channel_info` | none | always |
 | `channel_reply` | `text` (Markdown) | always |
-| `channel_history` | `limit?`, `before?` | `history` |
+| `channel_history` | `limit?`, `cursor?` | `history` |
 | `channel_react` | `message`, `emoji` | `react` |
 | `channel_edit` | `message`, `text` | `edit` |
 | `channel_retract` | `message` | `retract` |
@@ -68,20 +75,16 @@ provider has one. There is no `resolve_user` or `get_permalink` tool, because
 each would be a second round trip the model has to know to make — and each
 would take an addressing argument.
 
-### What is deliberately absent
+### Unsupported operations
 
-Workspace-wide operations — searching every channel, listing or joining
-channels, posting into a conversation other than this one — are **not** channel
-tools. They do not correspond across providers (a Slack search cannot be ported
-to Teams by renaming it), and they need a far broader grant than a task bound to
-one thread should carry. A Recipe that genuinely needs them declares a hosted
-MCP server under `pi.mcp.servers`, where the wider reach is visible in the
-manifest and separately granted.
+Workspace search, channel listing and joining, directory lookup, and posting to
+another conversation are unsupported. The proposal does not choose an API or
+access model for those operations. A separate proposal can define them when a
+concrete use case requires them.
 
-Also not tools: typing indicators and presence (a runtime effect, not a model
-decision), streaming (a property of how a reply is delivered), and idempotency
-keys (derived by the runtime; inbound duplicates are already deduped at the
-webhook).
+Typing indicators and presence are runtime effects rather than model decisions.
+Streaming controls how a reply is delivered. The runtime derives idempotency
+keys, and the webhook already removes duplicate inbound events.
 
 ## Declare a channel connector
 

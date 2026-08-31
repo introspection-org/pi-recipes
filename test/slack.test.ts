@@ -16,7 +16,10 @@ import {
   type SlackFetch,
 } from "../packages/channels/slack/src/index.js";
 import { writeAll } from "../packages/channels/slack/src/files.js";
-import { registerChannelTools } from "../src/channels/index.js";
+import {
+  ChannelRefStore,
+  registerChannelTools,
+} from "../src/channels/index.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 interface FakeFetchOptions {
@@ -24,6 +27,7 @@ interface FakeFetchOptions {
   fileBody?: string;
   bridgeStatus?: number;
   messages?: Array<Record<string, unknown>>;
+  channelName?: string;
 }
 
 function fakeFile(overrides: Record<string, unknown> = {}) {
@@ -64,6 +68,14 @@ function fakeFetch(options: FakeFetchOptions = {}) {
     }
     if (parsed.pathname.endsWith("/api/files.info")) {
       return response({ payload: { ok: true, file } });
+    }
+    if (parsed.pathname.endsWith("/api/conversations.info")) {
+      return response({
+        payload: {
+          ok: true,
+          channel: { id: "C1", name: options.channelName ?? "support" },
+        },
+      });
     }
     if (parsed.pathname.includes("/files-pri/")) {
       return response({ payload: {}, body: fileBody });
@@ -391,8 +403,27 @@ describe("Slack file downloads", () => {
   });
 });
 
-
 describe("Slack channel tools", () => {
+  it("resolves the Slack channel name as prompt metadata", async () => {
+    const fetchImpl = fakeFetch({ channelName: "incident-triage" });
+    const adapter = new SlackChannelAdapter(
+      new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_ID: "C1" },
+        fetchImpl,
+      }),
+    );
+
+    await expect(
+      adapter.info({
+        target: { provider: "slack", conversation: "C1", thread: null },
+        refs: new ChannelRefStore(),
+      }),
+    ).resolves.toMatchObject({ name: "incident-triage" });
+    expect(fetchImpl.calls[0]!.url).toBe(
+      "https://slack.com/api/conversations.info",
+    );
+  });
+
   const cloudEnv = {
     SLACK_BOT_TOKEN: "token",
     SLACK_CHANNEL_ID: "C1",

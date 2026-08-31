@@ -5,10 +5,10 @@
 capability descriptor; the tool names and schemas are the neutral `channel_*`
 set, so a Recipe written against it is not written against Slack.
 
-The package does not use Slack's hosted MCP server, Socket Mode, WebSockets, or
-a streamed tool protocol. Slack sends inbound events to the existing Events API
-webhook; the tools make ordinary HTTP requests to the Slack Web API with the
-bot that received the task.
+Slack sends inbound events to the existing Events API webhook. The tools make
+ordinary HTTP requests to the Slack Web API with the bot that received the
+task. The package does not use Socket Mode, WebSockets, or a streamed tool
+protocol.
 
 ## Declare it
 
@@ -39,7 +39,7 @@ inactive until the model finds them through `tool_search`.
 
 | Tool | Slack operation |
 | --- | --- |
-| `channel_info` | `chat.getPermalink` for the thread root |
+| `channel_info` | `conversations.info` and `chat.getPermalink` for a thread root |
 | `channel_reply` | `chat.postMessage` into the origin channel and thread |
 | `channel_history` | `conversations.replies` in a thread, else `conversations.history` |
 | `channel_react` | `reactions.add` |
@@ -56,10 +56,9 @@ conversation the task came from. Author display names (`users.info`) and
 permalinks (`chat.getPermalink`) are resolved inside the adapter and attached to
 history rows and reply results, so there is no user-lookup or permalink tool.
 
-Workspace-wide reads and cross-channel posting are not part of this package. A
-Recipe that needs them declares Slack's hosted MCP server under `pi.mcp.servers`
-— note that it posts as the OAuth'd human rather than the bot, and that
-declaring it is what grants workspace reach.
+Workspace search, channel listing and joining, directory lookup, and
+cross-channel posting are unsupported. Their contract and access model are
+deferred to a separate proposal.
 
 ## Cloud access
 

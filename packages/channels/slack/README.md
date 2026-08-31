@@ -32,8 +32,9 @@ Install the recipe dependencies before running `introspection local`. The cloud
 runtime installs the locked production dependencies when it builds a recipe
 image or starts an `introspection dev` overlay.
 
-The package calls the Slack Web API. It does not use hosted MCP, Socket Mode,
-WebSockets, or streaming.
+The package calls the Slack Web API. It does not use Socket Mode, WebSockets,
+or streaming. Operations outside the declared `channel_*` tool set are
+unsupported.
 
 See the [Slack connector guide](https://github.com/introspection-org/recipes/blob/main/docs/slack.md)
 for tool behavior and testing.

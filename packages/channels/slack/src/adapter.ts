@@ -81,18 +81,28 @@ export class SlackChannelAdapter implements ChannelAdapter {
   readonly capabilities = SLACK_CHANNEL_CAPABILITIES;
 
   private readonly authors = new Map<string, string | undefined>();
+  private conversationName: string | null | undefined;
   private conversationPermalink: string | null | undefined;
 
   constructor(readonly session: SlackFileSession) {}
 
   async info(ctx: ChannelAdapterContext): Promise<ChannelTarget> {
+    if (this.conversationName === undefined) {
+      this.conversationName =
+        ctx.target.name ??
+        (await this.channelName(ctx.target.conversation, ctx.signal));
+    }
     if (this.conversationPermalink === undefined) {
       const root = ctx.target.thread;
       this.conversationPermalink = root
         ? await this.permalink(ctx.target.conversation, root, ctx.signal)
         : null;
     }
-    return { ...ctx.target, permalink: this.conversationPermalink };
+    return {
+      ...ctx.target,
+      name: this.conversationName,
+      permalink: this.conversationPermalink,
+    };
   }
 
   async reply(
@@ -322,6 +332,31 @@ export class SlackChannelAdapter implements ChannelAdapter {
     }
     this.authors.set(user, name);
     return name;
+  }
+
+  private async channelName(
+    channel: string,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    try {
+      const payload = await this.session.call(
+        "conversations.info",
+        { channel },
+        "form",
+        signal,
+      );
+      const conversation = payload.channel as
+        | { name?: string; name_normalized?: string }
+        | undefined;
+      return (
+        conversation?.name?.trim() ||
+        conversation?.name_normalized?.trim() ||
+        null
+      );
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return null;
+    }
   }
 }
 
