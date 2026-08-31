@@ -725,20 +725,15 @@ describe("release train isolation", () => {
     expect(workflow).not.toContain("npm access set status=public");
   });
 
-  it("removes temporary npm tags after promotion", () => {
+  it("does not fail a release by deleting temporary npm tags", () => {
     const root = join(import.meta.dirname, "..");
     const workflow = readFileSync(
       join(root, ".github", "workflows", "release-please.yml"),
       "utf8"
     );
 
-    expect(workflow).toContain(
-      'npm dist-tag rm "$published_package" "$staging_tag"'
-    );
-    expect(workflow).toContain('remove_staging_tag "$platform_name"');
-    expect(workflow).toContain('for channel_name in "${channel_names[@]}"; do');
-    expect(workflow).toContain('remove_staging_tag "$channel_name"');
-    expect(workflow).not.toContain('remove_staging_tag "$connector_name"');
-    expect(workflow).toContain('remove_staging_tag "$package_name"');
+    expect(workflow).toContain('--tag "$staging_tag"');
+    expect(workflow).toContain('npm dist-tag add "$package_name@$version" "$root_tag"');
+    expect(workflow).not.toContain("npm dist-tag rm");
   });
 });
