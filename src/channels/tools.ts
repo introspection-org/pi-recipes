@@ -32,7 +32,12 @@ export const CHANNEL_TOOL_IDS = [
 export type ChannelToolId = (typeof CHANNEL_TOOL_IDS)[number];
 
 /** Active without a search. The rest are reachable through `tool_search`. */
-const DEFAULT_ACTIVE: readonly ChannelToolId[] = ["info", "reply", "history"];
+const DEFAULT_ACTIVE: readonly ChannelToolId[] = [
+  "info",
+  "reply",
+  "history",
+  "react",
+];
 
 export function channelToolName(id: ChannelToolId): string {
   return `channel_${id}`;

@@ -318,6 +318,9 @@ describe("channel tool surface", () => {
     const slackIds = slack.tools.map((tool) => tool.id);
     expect(slackIds).toContain("history");
     expect(slackIds).toContain("fetch_file");
+    expect(
+      slack.tools.filter((tool) => tool.defaultActive).map((tool) => tool.id),
+    ).toEqual(["info", "reply", "history", "react"]);
     expect(teams.tools.map((tool) => tool.id)).not.toContain("history");
   });
 });

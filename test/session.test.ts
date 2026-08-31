@@ -261,11 +261,11 @@ describe("createAgentSession", () => {
       expect.arrayContaining([
         "channel_info",
         "channel_history",
+        "channel_react",
         "channel_reply",
-        "tool_search",
       ])
     );
-    expect(handle.session.getActiveToolNames()).not.toContain("channel_react");
+    expect(handle.session.getActiveToolNames()).not.toContain("tool_search");
   });
 
   it("rejects connector tools unsupported by the provider", async () => {

@@ -432,12 +432,11 @@ describe("Recipes extension for Pi", () => {
         "channel_history",
         "channel_info",
         "channel_react",
-        "tool_search",
       ]);
       expect(pi.activeTools.sort()).toEqual([
         "channel_history",
         "channel_info",
-        "tool_search",
+        "channel_react",
       ]);
       const origin = await pi.tools.get("channel_info")?.execute(
         "tool-call",
@@ -454,13 +453,6 @@ describe("Recipes extension for Pi", () => {
         permalink: null,
         threaded: false,
       });
-      await pi.tools.get("tool_search")?.execute(
-        "tool-call",
-        { query: "add a reaction" },
-        undefined,
-        undefined,
-        extensionContext(root)
-      );
       expect(pi.activeTools).toContain("channel_react");
     } finally {
       rmSync(root, { recursive: true, force: true });
