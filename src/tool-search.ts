@@ -19,6 +19,7 @@ export interface RecipeSearchableTool {
   readonly name: string;
   readonly label?: string;
   readonly description: string;
+  readonly parameters?: unknown;
 }
 
 interface ScoredTool {
@@ -33,12 +34,64 @@ function words(value: string): string[] {
     .filter(Boolean);
 }
 
+function schemaSearchTerms(schema: unknown): {
+  propertyNames: string;
+  propertyDescriptions: string;
+} {
+  const propertyNames: string[] = [];
+  const propertyDescriptions: string[] = [];
+  const visited = new Set<object>();
+
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    const record = value as Record<string, unknown>;
+    if (record.properties && typeof record.properties === "object") {
+      for (const [name, property] of Object.entries(
+        record.properties as Record<string, unknown>
+      )) {
+        propertyNames.push(name);
+        if (property && typeof property === "object") {
+          const description = (property as Record<string, unknown>).description;
+          if (typeof description === "string") {
+            propertyDescriptions.push(description);
+          }
+        }
+        visit(property);
+      }
+    }
+    for (const keyword of [
+      "allOf",
+      "anyOf",
+      "oneOf",
+      "items",
+      "additionalProperties",
+    ]) {
+      const nested = record[keyword];
+      if (Array.isArray(nested)) {
+        for (const entry of nested) visit(entry);
+      } else {
+        visit(nested);
+      }
+    }
+  };
+
+  visit(schema);
+  return {
+    propertyNames: propertyNames.join(" ").toLowerCase(),
+    propertyDescriptions: propertyDescriptions.join(" ").toLowerCase(),
+  };
+}
+
 function scoreTool(tool: RecipeSearchableTool, query: string): number {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return 0;
   const name = tool.name.toLowerCase();
   const label = (tool.label ?? tool.name).toLowerCase();
   const description = tool.description.toLowerCase();
+  const { propertyNames, propertyDescriptions } = schemaSearchTerms(
+    tool.parameters
+  );
   let score = 0;
   if (name === normalizedQuery) score += 500;
   if (label === normalizedQuery) score += 300;
@@ -48,12 +101,16 @@ function scoreTool(tool: RecipeSearchableTool, query: string): number {
 
   const nameTerms = new Set(words(name));
   const labelTerms = new Set(words(label));
+  const propertyNameTerms = new Set(words(propertyNames));
   for (const term of words(normalizedQuery)) {
     if (nameTerms.has(term)) score += 40;
     else if (name.includes(term)) score += 20;
     if (labelTerms.has(term)) score += 30;
     else if (label.includes(term)) score += 15;
     if (description.includes(term)) score += 16;
+    if (propertyNameTerms.has(term)) score += 12;
+    else if (propertyNames.includes(term)) score += 6;
+    if (propertyDescriptions.includes(term)) score += 6;
   }
   return score;
 }

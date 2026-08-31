@@ -10,13 +10,14 @@ import {
 function tool(
   name: string,
   label: string,
-  description: string
+  description: string,
+  parameters = Type.Object({})
 ): ToolDefinition {
   return {
     name,
     label,
     description,
-    parameters: Type.Object({}),
+    parameters,
     async execute() {
       return { content: [{ type: "text", text: "ok" }], details: {} };
     },
@@ -100,6 +101,47 @@ describe("Recipe tool search", () => {
       undefined as never
     );
     expect(result.details).toMatchObject({ matches: [], added: [] });
+  });
+
+  it("matches deferred tools by input property names and descriptions", async () => {
+    const lookup = tool(
+      "mcp_directory_lookup",
+      "Directory lookup",
+      "Look up a directory entry.",
+      Type.Object({
+        email: Type.String({ description: "Work address for the person." }),
+      })
+    );
+    let active = ["tool_search", "mcp_search"];
+    const search = createRecipeToolSearch({
+      tools: [lookup],
+      deferredToolNames: [lookup.name],
+      activation: {
+        getActiveTools: () => active,
+        setActiveTools: (names) => {
+          active = names;
+        },
+      },
+    })!;
+
+    const byName = await search.execute(
+      "call-1",
+      { query: "email" },
+      undefined,
+      undefined,
+      undefined as never
+    );
+    expect(byName.details).toMatchObject({ added: [lookup.name] });
+
+    active = ["tool_search", "mcp_search"];
+    const byDescription = await search.execute(
+      "call-2",
+      { query: "work address" },
+      undefined,
+      undefined,
+      undefined as never
+    );
+    expect(byDescription.details).toMatchObject({ added: [lookup.name] });
   });
 
   it("keeps mcp_search as an active alias when MCP tools are deferred", async () => {
