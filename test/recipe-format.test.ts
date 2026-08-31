@@ -185,7 +185,7 @@ describe("Recipe Format", () => {
     );
   });
 
-  it("rejects the session-generated tool search name", () => {
+  it("allows an extension-owned tool search name", () => {
     const recipeDir = fixture();
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
@@ -198,9 +198,9 @@ describe("Recipe Format", () => {
       ].join("\n")
     );
 
-    expect(() => resolveRecipe({ recipeDir })).toThrow(
-      "tools must not declare session-generated tool(s): tool_search"
-    );
+    expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
+      "tool_search",
+    ]);
   });
 
   it("resolves locked Python and approved system runtime requirements", () => {

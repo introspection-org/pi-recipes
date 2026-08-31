@@ -766,12 +766,6 @@ export function createRecipesExtension(
         "<host>"
       );
     }
-    for (const toolName of [
-      RECIPE_TOOL_SEARCH_NAME,
-      LEGACY_MCP_TOOL_SEARCH_NAME,
-    ]) {
-      launchState.extensionRegistrations.claim("tool", toolName, "<host>");
-    }
     let loadedCount = 0;
     try {
       const connectors = await loadRecipeConnectors(
@@ -788,6 +782,13 @@ export function createRecipesExtension(
       launchState.connectorToolNames = connectors.loadout.toolNames;
       launchState.connectorDeferredToolNames =
         connectors.loadout.deferredToolNames;
+      if (launchState.connectorDeferredToolNames.length > 0) {
+        launchState.extensionRegistrations.claim(
+          "tool",
+          RECIPE_TOOL_SEARCH_NAME,
+          "<host>"
+        );
+      }
       for (const toolName of connectors.loadout.toolNames) {
         launchState.extensionAllowedToolNames.add(toolName);
       }

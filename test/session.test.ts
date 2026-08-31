@@ -674,6 +674,32 @@ describe("createAgentSession", () => {
     );
   });
 
+  it("preserves an extension-owned tool_search when generated search is not needed", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      manifestPi: { extensions: ["extensions/tool-search.ts"] },
+      tools: ["tool_search"],
+    });
+    mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "extensions", "tool-search.ts"),
+      [
+        "export default (pi) => {",
+        "  pi.registerTool({",
+        "    name: 'tool_search',",
+        "    label: 'Recipe tool search',",
+        "    description: 'Search this Recipe.',",
+        "    parameters: { type: 'object', properties: {} },",
+        "    async execute() { return { content: [], details: {} }; }",
+        "  });",
+        "};",
+      ].join("\n")
+    );
+
+    const handle = await open({ recipeDir, cwd: workspaceDir });
+
+    expect(handle.session.getActiveToolNames()).toContain("tool_search");
+  });
+
   it("does not auto-load ambient Recipe-directory extensions", async () => {
     const { recipeDir, workspaceDir } = fixture({
       tools: ["ambient_tool"],

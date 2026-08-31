@@ -26,7 +26,6 @@ import {
   mcpSelectionAllowsTool,
   normalizeMcpServerId,
 } from "./mcp-policy.js";
-import { RECIPE_TOOL_SEARCH_NAME } from "./tool-search.js";
 
 export interface RecipeSystemInstructions {
   mode: "append" | "replace";
@@ -192,8 +191,8 @@ function invalidAgentField(
       return `${key} must not contain duplicate entries`;
     }
   }
-  const reservedTools = stringArray(data.tools).filter((tool) =>
-    ["agent", RECIPE_TOOL_SEARCH_NAME].includes(tool)
+  const reservedTools = stringArray(data.tools).filter(
+    (tool) => tool === "agent"
   );
   if (reservedTools.length > 0) {
     return `tools must not declare session-generated tool(s): ${reservedTools.join(", ")}`;

@@ -580,8 +580,6 @@ async function createSessionForAgent(
       ...(recipe.subagents.size > 0 && opts.runController !== null
         ? ["agent"]
         : []),
-      RECIPE_TOOL_SEARCH_NAME,
-      LEGACY_MCP_TOOL_SEARCH_NAME,
     ]) {
       recipeRegistrations.claim("tool", toolName, "<host>");
     }
@@ -591,6 +589,17 @@ async function createSessionForAgent(
       { recipeDir: recipe.recipeDir, env, cwd }
     );
     const connectorLoadout = connectors.loadout;
+    for (const toolName of [
+      ...((connectorLoadout.deferredToolNames.length > 0 ||
+        (mcp.deferredToolNames?.length ?? 0) > 0)
+        ? [RECIPE_TOOL_SEARCH_NAME]
+        : []),
+      ...((mcp.deferredToolNames?.length ?? 0) > 0
+        ? [LEGACY_MCP_TOOL_SEARCH_NAME]
+        : []),
+    ]) {
+      recipeRegistrations.claim("tool", toolName, "<host>");
+    }
     for (const connector of connectors.extensions) {
       inlineExtensions.push(
         bindRecipeExtensionFactory(
