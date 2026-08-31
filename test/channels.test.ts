@@ -13,10 +13,6 @@ import {
   SLACK_CHANNEL_CAPABILITIES,
   SlackChannelAdapter,
 } from "../packages/channels/slack/src/adapter.js";
-import {
-  TEAMS_CHANNEL_CAPABILITIES,
-  TeamsChannelAdapter,
-} from "../packages/channels/teams/src/adapter.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 const FULL_CAPABILITIES: ChannelCapabilities = {
@@ -29,6 +25,18 @@ const FULL_CAPABILITIES: ChannelCapabilities = {
   documents: "native",
   resolveAuthors: true,
   permalinks: true,
+};
+
+const LIMITED_CAPABILITIES: ChannelCapabilities = {
+  react: false,
+  edit: true,
+  retract: true,
+  read: false,
+  attach: false,
+  fetchFile: false,
+  documents: false,
+  resolveAuthors: true,
+  permalinks: false,
 };
 
 const target = { provider: "test", conversation: "C1", thread: "100.1" };
@@ -94,13 +102,11 @@ function schemaProperties(tool: { parameters?: unknown }): string[] {
 
 describe("channel tool surface", () => {
   it("exposes no addressing argument on any tool, for any adapter", () => {
-    for (const adapter of [
-      stubAdapter(),
-      new SlackChannelAdapter({} as never),
-      new TeamsChannelAdapter({} as never),
-    ]) {
+    for (const adapter of [stubAdapter(), new SlackChannelAdapter({} as never)]) {
       const pi = createMockExtensionAPI();
-      registerChannelTools(pi, adapter, { target });
+      registerChannelTools(pi, adapter, {
+        target: { ...target, provider: adapter.provider },
+      });
       expect([...pi.tools.keys()].length).toBeGreaterThan(0);
       for (const [name, tool] of pi.tools) {
         for (const property of schemaProperties(tool)) {
@@ -333,10 +339,10 @@ describe("channel tool surface", () => {
   it("accepts a capability descriptor that matches by value, not identity", () => {
     // An adapter that clones or rebuilds its static descriptor is not doing
     // anything wrong; only a descriptor that actually disagrees is.
-    const capabilities = { ...TEAMS_CHANNEL_CAPABILITIES };
+    const capabilities = { ...LIMITED_CAPABILITIES };
     const module = createChannelConnectorModule({
       provider: "test",
-      capabilities: TEAMS_CHANNEL_CAPABILITIES,
+      capabilities: LIMITED_CAPABILITIES,
       createSession: () => ({
         adapter: { ...stubAdapter(), capabilities },
         target,
@@ -349,11 +355,11 @@ describe("channel tool surface", () => {
 
     const disagrees = createChannelConnectorModule({
       provider: "test",
-      capabilities: TEAMS_CHANNEL_CAPABILITIES,
+      capabilities: LIMITED_CAPABILITIES,
       createSession: () => ({
         adapter: {
           ...stubAdapter(),
-          capabilities: { ...TEAMS_CHANNEL_CAPABILITIES, react: true },
+          capabilities: { ...LIMITED_CAPABILITIES, react: true },
         },
         target,
       }),
@@ -388,22 +394,10 @@ describe("channel tool surface", () => {
     ).toThrow(/declares capabilities it does not implement: react/);
   });
 
-  it("keeps Slack and Teams on one vocabulary for what both support", () => {
-    const shared = ["channel_reply", "channel_edit", "channel_retract"];
-    for (const adapter of [
-      new SlackChannelAdapter({} as never),
-      new TeamsChannelAdapter({} as never),
-    ]) {
-      const pi = createMockExtensionAPI();
-      registerChannelTools(pi, adapter, { target });
-      for (const name of shared) expect([...pi.tools.keys()]).toContain(name);
-    }
-  });
-
   it("declares a catalog an agent can narrow", () => {
     const module = createChannelConnectorModule({
       provider: "test",
-      capabilities: TEAMS_CHANNEL_CAPABILITIES,
+      capabilities: LIMITED_CAPABILITIES,
       createSession: () => ({ adapter: stubAdapter(), target }),
     });
     expect(module.tools.map((tool) => tool.id)).toEqual([
@@ -416,27 +410,23 @@ describe("channel tool surface", () => {
     ]);
   });
 
-  it("keeps the Slack catalog wider than the Teams one", () => {
-    // Not a preference for Slack: the asymmetry is what the capability
-    // descriptor exists to express, so a regression that silently equalised
-    // them would mean capabilities had stopped being read.
+  it("keeps the Slack catalog aligned with its declared capabilities", () => {
     const slack = createChannelConnectorModule({
       provider: "slack",
       capabilities: SLACK_CHANNEL_CAPABILITIES,
-      createSession: () => ({ adapter: stubAdapter(), target }),
+      createSession: () => ({
+        adapter: new SlackChannelAdapter({} as never),
+        target: { ...target, provider: "slack" },
+      }),
     });
-    const teams = createChannelConnectorModule({
-      provider: "teams",
-      capabilities: TEAMS_CHANNEL_CAPABILITIES,
-      createSession: () => ({ adapter: stubAdapter(), target }),
-    });
-    const slackIds = slack.tools.map((tool) => tool.id);
-    expect(slackIds).toContain("read");
-    expect(slackIds).toContain("fetch_file");
-    expect(
-      slack.tools.filter((tool) => tool.defaultActive).map((tool) => tool.id),
-    ).toEqual(["reply", "read", "react"]);
-    expect(teams.tools.map((tool) => tool.id)).not.toContain("read");
+    expect(slack.tools.map((tool) => tool.id)).toEqual([
+      "reply",
+      "read",
+      "react",
+      "edit",
+      "retract",
+      "fetch_file",
+    ]);
   });
 });
 

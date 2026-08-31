@@ -1,5 +1,4 @@
 {
   ".": "0.21.0",
-  "packages/channels/slack": "0.0.0",
-  "packages/channels/teams": "0.0.0"
+  "packages/channels/slack": "0.0.0"
 }
