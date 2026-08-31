@@ -2,7 +2,7 @@
 
 `@introspection-ai/recipe-channel-teams` is the Microsoft Teams adapter for
 the [channel tools](channels.md). It uses the Bot Framework Connector credential
-that every Teams bot has. A Recipe that only selects `channel_reply` can use
+that every Teams bot has. A Recipe that selects reply, edit, and retract can use
 Slack or Teams without changing its prompt.
 
 ## Declare it
@@ -27,8 +27,12 @@ Slack or Teams without changing its prompt.
 | Tool | Bot Connector operation |
 | --- | --- |
 | `channel_reply` | `POST /v3/conversations/{id}/activities[/{replyToId}]` |
+| `channel_edit` | `PUT /v3/conversations/{id}/activities/{activityId}` |
+| `channel_retract` | `DELETE /v3/conversations/{id}/activities/{activityId}` |
 
 Replies are posted with `textFormat: "markdown"`, which Teams renders natively.
+Edit and retract accept only an opaque reference returned after this agent
+posts a message.
 
 ## What Teams does not register, and why
 

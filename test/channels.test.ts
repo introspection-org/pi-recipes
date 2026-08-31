@@ -21,6 +21,8 @@ import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 const FULL_CAPABILITIES: ChannelCapabilities = {
   react: true,
+  edit: true,
+  retract: true,
   read: "channel",
   attach: true,
   fetchFile: true,
@@ -42,10 +44,15 @@ function stubAdapter(
         ref: ctx.refs.message({
           conversation: ctx.target.conversation,
           id: `ts-${input.text.length}`,
+          authoredByAgent: true,
         }),
       };
     },
     async react() {},
+    async edit(_ctx, input) {
+      return { ref: input.ref };
+    },
+    async retract() {},
     async read() {
       return { messages: [] };
     },
@@ -287,7 +294,7 @@ describe("channel tool surface", () => {
   });
 
   it("keeps Slack and Teams on one vocabulary for what both support", () => {
-    const shared = ["channel_reply"];
+    const shared = ["channel_reply", "channel_edit", "channel_retract"];
     for (const adapter of [
       new SlackChannelAdapter({} as never),
       new TeamsChannelAdapter({} as never),
@@ -304,7 +311,11 @@ describe("channel tool surface", () => {
       capabilities: TEAMS_CHANNEL_CAPABILITIES,
       createSession: () => ({ adapter: stubAdapter(), target }),
     });
-    expect(module.tools.map((tool) => tool.id)).toEqual(["reply"]);
+    expect(module.tools.map((tool) => tool.id)).toEqual([
+      "reply",
+      "edit",
+      "retract",
+    ]);
     expect(module.tools.filter((tool) => tool.defaultActive).map((t) => t.id)).toEqual([
       "reply",
     ]);
@@ -364,11 +375,12 @@ describe("channel message references", () => {
     );
   });
 
-  it("keeps one handle when a later read returns the same message", () => {
+  it("keeps authorship when a later read returns the same message", () => {
     const refs = new ChannelRefStore();
     const posted = refs.message({
       conversation: "C1",
       id: "100.1",
+      authoredByAgent: true,
       permalink: "https://example.test/first",
     });
     const seen = refs.message({
@@ -380,5 +392,12 @@ describe("channel message references", () => {
     expect(refs.resolveMessage(posted).permalink).toBe(
       "https://example.test/current",
     );
+    expect(refs.resolveAuthored(posted).id).toBe("100.1");
+  });
+
+  it("bounds edit and retract to the agent's own messages", () => {
+    const refs = new ChannelRefStore();
+    const theirs = refs.message({ conversation: "C1", id: "200.2" });
+    expect(() => refs.resolveAuthored(theirs)).toThrow(/not sent by this agent/);
   });
 });

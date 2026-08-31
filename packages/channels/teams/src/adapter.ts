@@ -31,6 +31,8 @@ import { TeamsBotSession, type TeamsActivity, type TeamsEnv } from "./client.js"
  */
 export const TEAMS_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   react: false,
+  edit: true,
+  retract: true,
   read: false,
   attach: false,
   fetchFile: false,
@@ -87,6 +89,7 @@ export class TeamsChannelAdapter implements ChannelAdapter {
       conversation: ctx.target.conversation,
       id: activity.id,
       thread: thread ?? activity.id,
+      authoredByAgent: true,
     });
 
     let bridgeRecorded = false;
@@ -110,6 +113,33 @@ export class TeamsChannelAdapter implements ChannelAdapter {
       bridge_recorded: bridgeRecorded,
       ...(bridgeError ? { bridge_error: bridgeError } : {}),
     };
+  }
+
+  async edit(
+    ctx: ChannelAdapterContext,
+    input: { ref: MessageRef; text: string },
+  ): Promise<ChannelPostResult> {
+    const message = ctx.refs.resolveAuthored(input.ref);
+    await this.session.call(
+      `${this.activitiesUrl(message.conversation)}/${encodeURIComponent(message.id)}`,
+      {
+        method: "PUT",
+        body: { type: "message", textFormat: "markdown", text: input.text },
+        signal: ctx.signal,
+      },
+    );
+    return { ref: input.ref };
+  }
+
+  async retract(
+    ctx: ChannelAdapterContext,
+    input: { ref: MessageRef },
+  ): Promise<void> {
+    const message = ctx.refs.resolveAuthored(input.ref);
+    await this.session.call(
+      `${this.activitiesUrl(message.conversation)}/${encodeURIComponent(message.id)}`,
+      { method: "DELETE", signal: ctx.signal },
+    );
   }
 
 }

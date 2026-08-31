@@ -20,7 +20,8 @@ A Recipe installs it when its `package.json#pi.connectors` list includes the
 ```
 
 The package uses the Bot Framework Connector credential that every Teams bot
-has. It registers `channel_reply`. Reading earlier messages, reactions, and
-file access need Microsoft Graph consent, so those tools are absent.
+has. It registers `channel_reply`, `channel_edit`, and `channel_retract`.
+Reading earlier messages, reactions, and file access need Microsoft Graph
+consent, so those tools are absent.
 
 See the [Teams connector guide](../../docs/teams.md).

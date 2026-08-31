@@ -670,10 +670,12 @@ describe("Slack channel tools", () => {
   it("registers the neutral surface Slack supports and nothing else", () => {
     const { pi } = slackTools();
     expect([...pi.tools.keys()].sort()).toEqual([
+      "channel_edit",
       "channel_fetch_file",
       "channel_react",
       "channel_read",
       "channel_reply",
+      "channel_retract",
     ]);
   });
 
@@ -698,6 +700,47 @@ describe("Slack channel tools", () => {
     await expect(
       call(pi, "channel_react", { message: "msg_forged", emoji: "eyes" }),
     ).rejects.toThrow(/Unknown message reference/);
+  });
+
+  it("refuses to edit or retract a message the agent did not author", async () => {
+    const { pi } = slackTools();
+    const read = (await call(pi, "channel_read", {})) as {
+      details: { messages: Array<{ ref: string }> };
+    };
+    const theirs = read.details.messages[0]!.ref;
+
+    await expect(
+      call(pi, "channel_edit", { message: theirs, text: "rewritten" }),
+    ).rejects.toThrow(/not sent by this agent/);
+    await expect(call(pi, "channel_retract", { message: theirs })).rejects.toThrow(
+      /not sent by this agent/,
+    );
+  });
+
+  it("edits and retracts a message the agent posted", async () => {
+    const { pi, fetchImpl } = slackTools();
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string };
+    };
+
+    await call(pi, "channel_edit", {
+      message: posted.details.ref,
+      text: "second",
+    });
+    await call(pi, "channel_retract", { message: posted.details.ref });
+
+    const update = JSON.parse(
+      String(fetchImpl.calls.find((c) => c.url.includes("chat.update"))!.init.body),
+    );
+    expect(update).toMatchObject({ channel: "C1", ts: "200.2" });
+
+    const deletion = new URLSearchParams(
+      String(fetchImpl.calls.find((c) => c.url.includes("chat.delete"))!.init.body),
+    );
+    expect(Object.fromEntries(deletion)).toMatchObject({
+      channel: "C1",
+      ts: "200.2",
+    });
   });
 
   it("reads earlier messages from the bound conversation", async () => {

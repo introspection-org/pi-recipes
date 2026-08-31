@@ -15,6 +15,7 @@ import type {
 
 import type { SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
+import { toPlainText } from "./format.js";
 import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
 
 /**
@@ -28,6 +29,8 @@ import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
  */
 export const SLACK_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   react: true,
+  edit: true,
+  retract: true,
   read: "channel",
   attach: false,
   fetchFile: true,
@@ -140,6 +143,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
       conversation: posted.channel,
       id: posted.ts,
       thread: posted.thread_ts,
+      authoredByAgent: true,
     });
     const permalink = await this.permalink(
       posted.channel,
@@ -166,6 +170,41 @@ export class SlackChannelAdapter implements ChannelAdapter {
         timestamp: message.id,
         name: reactionName(input.emoji),
       },
+      "form",
+      ctx.signal,
+    );
+  }
+
+  async edit(
+    ctx: ChannelAdapterContext,
+    input: { ref: MessageRef; text: string },
+  ): Promise<ChannelPostResult> {
+    const message = ctx.refs.resolveAuthored(input.ref);
+    await this.session.call(
+      "chat.update",
+      {
+        channel: message.conversation,
+        ts: message.id,
+        text: toPlainText(input.text),
+        blocks: [{ type: "markdown", text: input.text }],
+      },
+      "json",
+      ctx.signal,
+    );
+    return {
+      ref: input.ref,
+      ...(message.permalink ? { permalink: message.permalink } : {}),
+    };
+  }
+
+  async retract(
+    ctx: ChannelAdapterContext,
+    input: { ref: MessageRef },
+  ): Promise<void> {
+    const message = ctx.refs.resolveAuthored(input.ref);
+    await this.session.call(
+      "chat.delete",
+      { channel: message.conversation, ts: message.id },
       "form",
       ctx.signal,
     );

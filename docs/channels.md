@@ -32,6 +32,8 @@ provider supports it.
 | `channel_reply` | `text` (Markdown) | always |
 | `channel_read` | `limit?`, `cursor?` | `read` |
 | `channel_react` | `message`, `emoji` | `react` |
+| `channel_edit` | `message`, `text` | `edit` |
+| `channel_retract` | `message` | `retract` |
 | `channel_attach` | `path`, `title?`, `comment?` | `attach` |
 | `channel_fetch_file` | `file` (a `file_…` handle), `variant?` | `fetch_file` |
 | `channel_post_document` | `title`, `markdown` | `documents` |
@@ -47,10 +49,15 @@ interactive elements inside one have no routing back to the task.
 
 ### Message and file references
 
-`channel_react` takes a `message`, which is an opaque handle minted by the host
-for the current session. It is not a Slack timestamp or a Teams activity ID.
-Handles come back from `channel_reply` and `channel_read`, so the model can only
-react to a message that a channel tool returned.
+`channel_react`, `channel_edit`, and `channel_retract` take a `message`, which is
+an opaque handle minted by the host for the current session. It is not a Slack
+timestamp or a Teams activity ID. Handles come back from `channel_reply` and
+`channel_read`, so the model can only act on a message that a channel tool
+returned.
+
+Edit and retract have an extra check. They accept only a handle for a message
+that this agent posted. Reading the same message again keeps its original
+handle and authorship record.
 
 `channel_fetch_file` works the same way. Attachments returned by `channel_read`
 carry a `file_…` handle, and that is the only value the tool accepts. A bot can
@@ -98,7 +105,7 @@ The connector declaration enables the provider package and its supported tool
 catalog. The agent YAML file is the only place that narrows the catalog:
 
 ```yaml
-tools: [channel_reply, channel_read, channel_react, channel_fetch_file]
+tools: [channel_reply, channel_read, channel_react, channel_edit, channel_retract, channel_fetch_file]
 ```
 
 The host fails when an agent selects a tool that the provider does not support.
@@ -112,6 +119,8 @@ The capability table below shows which tools each provider supplies.
 | Capability | Slack | Teams |
 | --- | --- | --- |
 | `reply` | yes | yes |
+| `edit` | yes | yes |
+| `retract` | yes | yes |
 | `react` | yes | no |
 | `read` | channel and thread | no |
 | `fetch_file` | yes | no |
@@ -140,7 +149,8 @@ import {
 } from "@introspection-ai/recipes/channels";
 
 const capabilities = {
-  react: false, read: false, attach: false, fetchFile: false,
+  react: false, edit: true, retract: true, read: false,
+  attach: false, fetchFile: false,
   documents: false, resolveAuthors: true, permalinks: false,
 };
 
@@ -148,6 +158,8 @@ class MyAdapter implements ChannelAdapter {
   readonly provider = "my-channel";
   readonly capabilities = capabilities;
   async reply(ctx, { text }) { /* post into ctx.target */ }
+  async edit(ctx, { ref, text }) { /* edit an agent-authored message */ }
+  async retract(ctx, { ref }) { /* retract an agent-authored message */ }
 }
 
 export default createChannelConnectorModule({

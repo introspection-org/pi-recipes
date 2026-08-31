@@ -155,7 +155,37 @@ describe("Teams channel tools", () => {
 
   it("registers only what Teams can do without tenant Graph consent", () => {
     const { pi } = teamsTools();
-    expect([...pi.tools.keys()].sort()).toEqual(["channel_reply"]);
+    expect([...pi.tools.keys()].sort()).toEqual([
+      "channel_edit",
+      "channel_reply",
+      "channel_retract",
+    ]);
+  });
+
+  it("edits and retracts only messages the agent posted", async () => {
+    const { pi, fetchImpl } = teamsTools();
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string };
+    };
+
+    await expect(
+      call(pi, "channel_edit", { message: "msg_forged", text: "x" }),
+    ).rejects.toThrow(/Unknown message reference/);
+
+    await call(pi, "channel_edit", {
+      message: posted.details.ref,
+      text: "second",
+    });
+    await call(pi, "channel_retract", { message: posted.details.ref });
+
+    expect(fetchImpl.calls[1]).toMatchObject({
+      url: expect.stringContaining("/activities/activity-2"),
+      init: { method: "PUT" },
+    });
+    expect(fetchImpl.calls[2]).toMatchObject({
+      url: expect.stringContaining("/activities/activity-2"),
+      init: { method: "DELETE" },
+    });
   });
 
   it("replies into the bound conversation thread", async () => {

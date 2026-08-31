@@ -42,6 +42,8 @@ export interface ChannelTarget {
  */
 export interface ChannelCapabilities {
   readonly react: boolean;
+  readonly edit: boolean;
+  readonly retract: boolean;
   /** `false`, or the widest scope the provider will return. */
   readonly read: false | "thread" | "channel";
   readonly attach: boolean;
@@ -57,7 +59,8 @@ export interface ChannelCapabilities {
  *
  * Never a provider id. The model cannot mint one, so it cannot name a message
  * it has not seen, and a provider changing its id format never reaches a tool
- * schema.
+ * schema. The store behind it also records whether the agent authored the
+ * message, which is what bounds `edit` and `retract`.
  */
 export type MessageRef = string;
 
@@ -136,6 +139,7 @@ export interface ChannelMessageIdentity {
   readonly conversation: string;
   readonly id: string;
   readonly thread?: string | null;
+  readonly authoredByAgent?: boolean;
   readonly permalink?: string;
 }
 
@@ -154,6 +158,8 @@ export interface ChannelFileIdentity {
 export interface ChannelRefResolver {
   message(identity: ChannelMessageIdentity): MessageRef;
   resolveMessage(ref: MessageRef): ChannelMessageIdentity;
+  /** Throws unless the agent authored the message. Guards edit and retract. */
+  resolveAuthored(ref: MessageRef): ChannelMessageIdentity;
   cursor(providerCursor: string): ChannelCursor;
   resolveCursor(cursor: ChannelCursor): string;
   /** Mint a handle for a file seen in this conversation. */
@@ -190,6 +196,14 @@ export interface ChannelAdapter {
   react?(
     ctx: ChannelAdapterContext,
     input: { ref: MessageRef; emoji: string },
+  ): Promise<void>;
+  edit?(
+    ctx: ChannelAdapterContext,
+    input: { ref: MessageRef; text: string },
+  ): Promise<ChannelPostResult>;
+  retract?(
+    ctx: ChannelAdapterContext,
+    input: { ref: MessageRef },
   ): Promise<void>;
   read?(
     ctx: ChannelAdapterContext,

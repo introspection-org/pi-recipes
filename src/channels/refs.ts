@@ -22,6 +22,10 @@ function handle(prefix: string): string {
  *
  * The model only ever sees a handle this store minted, so it cannot name a
  * message it was never shown, and provider id formats stay out of tool schemas.
+ * The store is also where authorship lives. `resolveAuthored` is the single
+ * check behind `channel_edit` and `channel_retract`, which keeps those tools
+ * scoped to the agent's own messages rather than everything the provider
+ * credential could reach.
  * Handles die with the session. A ref from an earlier task is unresolvable
  * rather than dangerous.
  */
@@ -40,6 +44,7 @@ export class ChannelRefStore implements ChannelRefResolver {
       this.messages.set(existing, {
         ...previous,
         ...identity,
+        authoredByAgent: previous.authoredByAgent || identity.authoredByAgent,
         permalink: identity.permalink ?? previous.permalink,
       });
       return existing;
@@ -55,6 +60,16 @@ export class ChannelRefStore implements ChannelRefResolver {
     if (!identity) {
       throw new Error(
         `Unknown message reference '${ref}'. Use a reference returned by a channel tool in this session.`,
+      );
+    }
+    return identity;
+  }
+
+  resolveAuthored(ref: MessageRef): ChannelMessageIdentity {
+    const identity = this.resolveMessage(ref);
+    if (!identity.authoredByAgent) {
+      throw new Error(
+        `Message '${ref}' was not sent by this agent. Only messages the agent posted can be edited or retracted.`,
       );
     }
     return identity;

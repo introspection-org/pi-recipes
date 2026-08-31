@@ -19,6 +19,8 @@ export const CHANNEL_TOOL_IDS = [
   "reply",
   "read",
   "react",
+  "edit",
+  "retract",
   "attach",
   "fetch_file",
   "post_document",
@@ -44,6 +46,8 @@ export function channelToolIdsFor(
   const supported: ChannelToolId[] = ["reply"];
   if (capabilities.read !== false) supported.push("read");
   if (capabilities.react) supported.push("react");
+  if (capabilities.edit) supported.push("edit");
+  if (capabilities.retract) supported.push("retract");
   if (capabilities.attach) supported.push("attach");
   if (capabilities.fetchFile) supported.push("fetch_file");
   if (capabilities.documents !== false) supported.push("post_document");
@@ -72,6 +76,10 @@ function assertImplemented(adapter: ChannelAdapter): void {
         return typeof adapter.read !== "function";
       case "react":
         return typeof adapter.react !== "function";
+      case "edit":
+        return typeof adapter.edit !== "function";
+      case "retract":
+        return typeof adapter.retract !== "function";
       case "attach":
         return typeof adapter.attach !== "function";
       case "fetch_file":
@@ -254,6 +262,53 @@ export function registerChannelTools(
         emoji: params.emoji,
       });
       return toolResult({ reacted: true });
+    },
+  }));
+
+  register("edit", () => ({
+    name: channelToolName("edit"),
+    label: "Edit a message",
+    description:
+      "Replace the text of a message this agent posted. Messages from other authors cannot be edited.",
+    parameters: Type.Object(
+      {
+        message: Type.String({ minLength: 1 }),
+        text: Type.String({ minLength: 1 }),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(
+      _toolCallId: string,
+      params: { message: string; text: string },
+      signal?: AbortSignal,
+    ) {
+      return toolResult(
+        await adapter.edit!(context(signal), {
+          ref: params.message,
+          text: params.text,
+        }),
+      );
+    },
+  }));
+
+  register("retract", () => ({
+    name: channelToolName("retract"),
+    label: "Retract a message",
+    description:
+      "Delete a message this agent posted. Messages from other authors cannot be retracted.",
+    parameters: Type.Object(
+      { message: Type.String({ minLength: 1 }) },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(
+      _toolCallId: string,
+      params: { message: string },
+      signal?: AbortSignal,
+    ) {
+      await adapter.retract!(context(signal), { ref: params.message });
+      return toolResult({ retracted: true });
     },
   }));
 

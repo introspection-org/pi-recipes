@@ -42,6 +42,8 @@ tools are available through `tool_search`.
 | `channel_reply` | `chat.postMessage` into the origin channel and thread |
 | `channel_read` | `conversations.replies` in a thread, else `conversations.history` |
 | `channel_react` | `reactions.add` |
+| `channel_edit` | `chat.update` for a message the agent posted |
+| `channel_retract` | `chat.delete` for a message the agent posted |
 | `channel_fetch_file` | `files.info` plus a private file download |
 
 Slack history returns at most 15 messages to the agent per call. For a thread,
@@ -64,6 +66,8 @@ None of these take a channel or thread argument. Every tool acts on the
 conversation the task came from. Author display names (`users.info`) and
 permalinks (`chat.getPermalink`) are resolved inside the adapter and attached to
 message rows and reply results, so there is no user lookup or permalink tool.
+Edit and retract also require an opaque reference for a message posted by this
+agent. They cannot act on another author's message.
 
 Workspace search, channel listing and joining, directory lookup, and
 cross-channel posting are unsupported. Their contract and access model are
