@@ -3,8 +3,9 @@
 This package provides Slack Bot API tools for Recipes. A recipe installs it
 when its `package.json#pi.connectors` list includes the `slack` provider.
 
-Recipe authors declare the tools in `package.json`. They do not write an
-extension or call the Slack client directly.
+Recipe authors declare the provider in `package.json` and select tools in the
+agent YAML file. They do not write an extension or call the Slack client
+directly.
 
 ```json
 {
@@ -14,11 +15,7 @@ extension or call the Slack client directly.
   "pi": {
     "connectors": [
       {
-        "provider": "slack",
-        "package": "@introspection-ai/recipe-connector-slack",
-        "tools": {
-          "include": ["origin", "read_thread", "send_message"]
-        }
+        "provider": "slack"
       }
     ]
   }

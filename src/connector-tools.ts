@@ -1,9 +1,10 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { loadRecipeModule } from "./recipe-extensions.js";
-import type {
-  RecipePackageConnector,
-  RecipePackageManifest,
+import {
+  recipeConnectorPackageName,
+  type RecipePackageConnector,
+  type RecipePackageManifest,
 } from "./recipe-package.js";
 
 export interface RecipeConnectorToolDefinition {
@@ -51,7 +52,7 @@ function connectorModuleError(
   detail: string
 ): Error {
   return new Error(
-    `Recipe connector package ${connector.package} ${detail}`
+    `Recipe connector package ${recipeConnectorPackageName(connector.provider)} ${detail}`
   );
 }
 
@@ -107,12 +108,13 @@ async function loadRecipeConnectorModule(
   recipeDir: string,
   connector: RecipePackageConnector
 ): Promise<RecipeConnectorModule> {
+  const packageName = recipeConnectorPackageName(connector.provider);
   let imported: unknown;
   try {
-    imported = await loadRecipeModule(recipeDir, connector.package);
+    imported = await loadRecipeModule(recipeDir, packageName);
   } catch (error) {
     throw new Error(
-      `Recipe connector '${connector.provider}' requires ${connector.package} in the Recipe dependencies`,
+      `Recipe connector '${connector.provider}' requires ${packageName} in the Recipe dependencies`,
       { cause: error }
     );
   }
@@ -133,34 +135,7 @@ export async function loadRecipeConnectors(
   const loaded = await Promise.all(
     (manifest.connectors ?? []).map(async (connector) => {
       const module = await loadRecipeConnectorModule(options.recipeDir, connector);
-      const toolsById = new Map(
-        module.tools.map((tool) => [tool.id, tool] as const)
-      );
-      const unsupported = connector.tools.include.filter(
-        (id) => !toolsById.has(id)
-      );
-      if (unsupported.length > 0) {
-        throw connectorModuleError(
-          connector,
-          `does not support declared tool(s): ${unsupported.join(", ")}`
-        );
-      }
-      const declaredTools = connector.tools.include.map(
-        (id) => toolsById.get(id)!
-      );
-      const declaredNames = new Set(declaredTools.map((tool) => tool.name));
-      const undeclared = module.tools
-        .filter(
-          (tool) =>
-            agentTools.includes(tool.name) && !declaredNames.has(tool.name)
-        )
-        .map((tool) => tool.name);
-      if (undeclared.length > 0) {
-        throw new Error(
-          `Recipe agent selects ${connector.provider} connector tool(s) that package.json#pi.connectors does not declare: ${undeclared.join(", ")}`
-        );
-      }
-      const selected = declaredTools.filter((tool) =>
+      const selected = module.tools.filter((tool) =>
         agentTools.includes(tool.name)
       );
       return {

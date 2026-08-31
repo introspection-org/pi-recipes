@@ -22,18 +22,7 @@ Add the Slack connector package and declaration to `package.json`:
   "pi": {
     "connectors": [
       {
-        "provider": "slack",
-        "package": "@introspection-ai/recipe-connector-slack",
-        "tools": {
-          "include": [
-            "origin",
-            "read_thread",
-            "react",
-            "get_permalink",
-            "download_file",
-            "send_message"
-          ]
-        }
+        "provider": "slack"
       }
     ]
   }
@@ -43,9 +32,9 @@ Add the Slack connector package and declaration to `package.json`:
 Commit the package manager lockfile. The host loads the Slack package only for
 a Recipe that declares the Slack connector.
 
-The package declaration sets the maximum Slack tool set for the Recipe. Each
-agent must also list the exact `slack_*` tools it may call. The host registers
-the package tool set, and the agent tool list narrows the model's access.
+The connector package provides the complete Slack tool catalog. Each agent
+lists the exact `slack_*` tools it may call in its YAML file. The agent tool
+list is the only tool selection policy.
 
 The model initially sees `slack_origin`, `slack_read_thread`, and
 `slack_send_message` when the agent is allowed to use them. Other allowed Slack

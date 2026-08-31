@@ -43,11 +43,11 @@ describe("Recipe connector packages", () => {
   it("loads provider and tool metadata from the declared package", async () => {
     const recipeDir = mkdtempSync(join(tmpdir(), "recipe-connector-package-"));
     cleanups.push(recipeDir);
-    const connectorPackage = "@example/recipe-connector-custom";
+    const connectorPackage = "@introspection-ai/recipe-connector-custom";
     const connectorDir = join(
       recipeDir,
       "node_modules",
-      "@example",
+      "@introspection-ai",
       "recipe-connector-custom"
     );
     mkdirSync(connectorDir, { recursive: true });
@@ -58,13 +58,7 @@ describe("Recipe connector packages", () => {
         version: "0.1.0",
         dependencies: { [connectorPackage]: "0.1.0" },
         pi: {
-          connectors: [
-            {
-              provider: "custom",
-              package: connectorPackage,
-              tools: { include: ["ping"] },
-            },
-          ],
+          connectors: [{ provider: "custom" }],
         },
       })
     );

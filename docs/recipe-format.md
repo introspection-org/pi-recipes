@@ -95,31 +95,24 @@ credential. A host binds those values when it starts a task.
   "pi": {
     "connectors": [
       {
-        "provider": "slack",
-        "package": "@introspection-ai/recipe-connector-slack",
-        "tools": {
-          "include": ["origin", "read_thread", "react", "send_message"]
-        }
+        "provider": "slack"
       }
     ]
   }
 }
 ```
 
-Each provider may appear once. `package` names the production dependency that
-implements the connector. That package owns its tool catalog and marks which
-tools are active by default. `tools.include` MUST contain one or more exact tool
-IDs supported by the package. Wildcards are not supported. The declaration sets
-the maximum tool set. An agent MUST list each registered tool by its full name,
-such as `slack_read_thread`, in its `tools` list before the model can call it.
+Each provider may appear once. The host derives the package name from the
+provider. For example, `slack` resolves to
+`@introspection-ai/recipe-connector-slack`. The package owns its tool catalog
+and marks which tools are active by default.
 
-Each connector declaration MUST name a package in the Recipe's production
-dependencies and lockfile. The host imports that package only when the Recipe
-declares the connector. It verifies that the package provider matches the
-manifest, then uses the package's exported tool definitions to validate and
-register the selected tools. It does not load MCP or require a Recipe
-extension. The host MUST fail closed when an agent selects a connector tool
-that the declaration does not include.
+The provider package must be in the Recipe's production dependencies and
+lockfile. The host imports the package only when the Recipe declares the
+provider. The agent YAML file is the only place that narrows the package tool
+catalog. An agent lists each allowed tool by its full name, such as
+`slack_read_thread`, in its `tools` list. The host fails when the agent names a
+tool that the connector does not register.
 
 ## Agents
 

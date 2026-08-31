@@ -71,14 +71,12 @@ export interface RecipePackageMcpConfig {
   servers: RecipePackageMcpServer[];
 }
 
-export interface RecipePackageConnectorTools {
-  include: string[];
-}
-
 export interface RecipePackageConnector {
   provider: string;
-  package: string;
-  tools: RecipePackageConnectorTools;
+}
+
+export function recipeConnectorPackageName(provider: string): string {
+  return `@introspection-ai/recipe-connector-${provider}`;
 }
 
 export interface RecipePythonRuntimeRequirement {
@@ -239,9 +237,7 @@ function connectorSourceShapeFindings(
       continue;
     }
     const connector = raw as Record<string, unknown>;
-    const unknown = Object.keys(connector).filter(
-      (key) => !["provider", "package", "tools"].includes(key)
-    );
+    const unknown = Object.keys(connector).filter((key) => key !== "provider");
     if (unknown.length > 0) {
       findings.push(
         invalid(
@@ -270,17 +266,8 @@ function connectorSourceShapeFindings(
       providers.add(provider);
     }
 
-    const connectorPackage =
-      typeof connector.package === "string" && connector.package.trim()
-        ? connector.package.trim()
-        : undefined;
-    if (!connectorPackage) {
-      findings.push(
-        invalid(
-          `package.json#pi.connectors[${index}].package must be non-empty`
-        )
-      );
-    } else {
+    if (provider) {
+      const connectorPackage = recipeConnectorPackageName(provider);
       const declaredDependencies =
         dependencies &&
         typeof dependencies === "object" &&
@@ -298,49 +285,6 @@ function connectorSourceShapeFindings(
           )
         );
       }
-    }
-
-    if (
-      !connector.tools ||
-      typeof connector.tools !== "object" ||
-      Array.isArray(connector.tools)
-    ) {
-      findings.push(
-        invalid(`package.json#pi.connectors[${index}].tools must be an object`)
-      );
-      continue;
-    }
-    const tools = connector.tools as Record<string, unknown>;
-    const toolsUnknown = Object.keys(tools).filter((key) => key !== "include");
-    if (toolsUnknown.length > 0) {
-      findings.push(
-        invalid(
-          `package.json#pi.connectors[${index}].tools contains unknown field(s): ${toolsUnknown.join(", ")}`
-        )
-      );
-    }
-    if (
-      !Array.isArray(tools.include) ||
-      tools.include.length === 0 ||
-      tools.include.some(
-        (tool) => typeof tool !== "string" || !tool.trim()
-      )
-    ) {
-      findings.push(
-        invalid(
-          `package.json#pi.connectors[${index}].tools.include must be a non-empty array of tool names`
-        )
-      );
-      continue;
-    }
-    const include = tools.include as string[];
-    const normalized = include.map((tool) => tool.trim());
-    if (new Set(normalized).size !== normalized.length) {
-      findings.push(
-        invalid(
-          `package.json#pi.connectors[${index}].tools.include must not contain duplicates`
-        )
-      );
     }
   }
   return findings;
@@ -763,17 +707,9 @@ function parseConnectors(value: unknown): RecipePackageConnector[] {
   for (const raw of Array.isArray(value) ? value : []) {
     const connector = asRecord(raw);
     const provider = stringValue(connector.provider);
-    const connectorPackage = stringValue(connector.package);
-    const tools = asRecord(connector.tools);
-    if (!provider || !connectorPackage || seen.has(provider)) continue;
+    if (!provider || seen.has(provider)) continue;
     seen.add(provider);
-    connectors.push({
-      provider,
-      package: connectorPackage,
-      tools: {
-        include: stringArray(tools.include).map((tool) => tool.trim()),
-      },
-    });
+    connectors.push({ provider });
   }
   return connectors;
 }

@@ -398,13 +398,7 @@ describe("Recipes extension for Pi", () => {
       const pkg = JSON.parse(
         readFileSync(join(recipeDir, "package.json"), "utf8")
       );
-      pkg.pi.connectors = [
-        {
-          provider: "slack",
-          package: SLACK_RECIPE_CONNECTOR_PACKAGE,
-          tools: { include: ["origin", "read_thread", "react"] },
-        },
-      ];
+      pkg.pi.connectors = [{ provider: "slack" }];
       pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
       writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
       installSlackRecipeConnector(recipeDir);

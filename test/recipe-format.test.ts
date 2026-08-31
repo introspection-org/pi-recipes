@@ -64,48 +64,58 @@ function fixture(): string {
 }
 
 describe("Recipe Format", () => {
-  it("reads a declarative Slack connector tool policy", () => {
+  it("reads a declarative Slack connector", () => {
     const recipeDir = fixture();
     const pkg = JSON.parse(
       readFileSync(join(recipeDir, "package.json"), "utf8")
     );
-    pkg.pi.connectors = [
-      {
-        provider: "slack",
-        package: SLACK_RECIPE_CONNECTOR_PACKAGE,
-        tools: { include: ["origin", "read_thread", "send_message"] },
-      },
-    ];
+    pkg.pi.connectors = [{ provider: "slack" }];
     pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
     const manifest = readPiPackageManifest(recipeDir);
-    expect(manifest.connectors).toEqual([
-      {
-        provider: "slack",
-        package: SLACK_RECIPE_CONNECTOR_PACKAGE,
-        tools: { include: ["origin", "read_thread", "send_message"] },
-      },
-    ]);
+    expect(manifest.connectors).toEqual([{ provider: "slack" }]);
     expect(validatePiPackageManifest(manifest)).toEqual({
       valid: true,
       findings: [],
     });
   });
 
-  it("accepts provider and tool names owned by the connector package", () => {
+  it("rejects connector-wide tool configuration", () => {
     const recipeDir = fixture();
     const pkg = JSON.parse(
       readFileSync(join(recipeDir, "package.json"), "utf8")
     );
     pkg.pi.connectors = [
       {
-        provider: "discord",
-        package: "@example/recipe-connector-discord",
-        tools: { include: ["delete_workspace"] },
+        provider: "slack",
+        tools: { include: ["slack_origin"] },
       },
     ];
-    pkg.dependencies = { "@example/recipe-connector-discord": "0.1.0" };
+    pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+
+    expect(
+      validatePiPackageManifest(readPiPackageManifest(recipeDir)).findings
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message:
+            "package.json#pi.connectors[0] contains unknown field(s): tools",
+        }),
+      ])
+    );
+  });
+
+  it("derives the connector package from the provider", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [{ provider: "discord" }];
+    pkg.dependencies = {
+      "@introspection-ai/recipe-connector-discord": "0.1.0",
+    };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
     const report = validatePiPackageManifest(
@@ -119,13 +129,7 @@ describe("Recipe Format", () => {
     const pkg = JSON.parse(
       readFileSync(join(recipeDir, "package.json"), "utf8")
     );
-    pkg.pi.connectors = [
-      {
-        provider: "slack",
-        package: SLACK_RECIPE_CONNECTOR_PACKAGE,
-        tools: { include: ["origin"] },
-      },
-    ];
+    pkg.pi.connectors = [{ provider: "slack" }];
     pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
     writeFileSync(
@@ -168,13 +172,7 @@ describe("Recipe Format", () => {
     const pkg = JSON.parse(
       readFileSync(join(recipeDir, "package.json"), "utf8")
     );
-    pkg.pi.connectors = [
-      {
-        provider: "slack",
-        package: SLACK_RECIPE_CONNECTOR_PACKAGE,
-        tools: { include: ["origin"] },
-      },
-    ];
+    pkg.pi.connectors = [{ provider: "slack" }];
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
     const report = validatePiPackageManifest(readPiPackageManifest(recipeDir));

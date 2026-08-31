@@ -647,15 +647,12 @@ fn validate_connector_config(
             );
             continue;
         };
-        for key in connector
-            .keys()
-            .filter(|key| !matches!(key.as_str(), "provider" | "package" | "tools"))
-        {
+        for key in connector.keys().filter(|key| key.as_str() != "provider") {
             ctx.error(
                 "pi.connectors_invalid",
                 PACKAGE_JSON,
                 format!("package.json#pi.connectors[{index}] contains unknown field '{key}'"),
-                Some("use only provider, package, and tools"),
+                Some("use only provider"),
             );
         }
 
@@ -676,77 +673,14 @@ fn validate_connector_config(
             ),
         }
 
-        let package = string_value(connector.get("package"));
-        match package.as_deref() {
-            Some(package) if !dependencies.contains(package) => ctx.error(
-                "pi.connectors_invalid",
-                PACKAGE_JSON,
-                format!(
-                    "package.json#pi.connectors provider '{}' requires dependency '{package}'",
-                    provider.as_deref().unwrap_or("unknown")
-                ),
-                Some("add the connector package to package.json#dependencies and commit the lockfile"),
-            ),
-            Some(_) => {}
-            None => ctx.error(
-                "pi.connectors_invalid",
-                PACKAGE_JSON,
-                format!("package.json#pi.connectors[{index}].package must be non-empty"),
-                Some("name the package that implements this connector"),
-            ),
-        }
-
-        let Some(JsonValue::Object(tools)) = connector.get("tools") else {
-            ctx.error(
-                "pi.connectors_invalid",
-                PACKAGE_JSON,
-                format!("package.json#pi.connectors[{index}].tools must be an object"),
-                Some("declare tools.include"),
-            );
-            continue;
-        };
-        for key in tools.keys().filter(|key| key.as_str() != "include") {
-            ctx.error(
-                "pi.connectors_invalid",
-                PACKAGE_JSON,
-                format!("package.json#pi.connectors[{index}].tools contains unknown field '{key}'"),
-                Some("use only include"),
-            );
-        }
-        let Some(JsonValue::Array(include)) = tools.get("include") else {
-            ctx.error(
-                "pi.connectors_invalid",
-                PACKAGE_JSON,
-                format!("package.json#pi.connectors[{index}].tools.include must be a non-empty array of tool names"),
-                Some("list the connector tools this Recipe permits"),
-            );
-            continue;
-        };
-        if include.is_empty() {
-            ctx.error(
-                "pi.connectors_invalid",
-                PACKAGE_JSON,
-                format!("package.json#pi.connectors[{index}].tools.include must be a non-empty array of tool names"),
-                Some("list the connector tools this Recipe permits"),
-            );
-        }
-        let mut seen_tools = BTreeSet::new();
-        for (tool_index, value) in include.iter().enumerate() {
-            let Some(tool) = string_value(Some(value)) else {
+        if let Some(provider) = provider.as_deref() {
+            let package = format!("@introspection-ai/recipe-connector-{provider}");
+            if !dependencies.contains(&package) {
                 ctx.error(
                     "pi.connectors_invalid",
                     PACKAGE_JSON,
-                    format!("package.json#pi.connectors[{index}].tools.include[{tool_index}] must be a non-empty string"),
-                    Some("use an exact connector tool name"),
-                );
-                continue;
-            };
-            if !seen_tools.insert(tool.clone()) {
-                ctx.error(
-                    "pi.connectors_invalid",
-                    PACKAGE_JSON,
-                    format!("package.json#pi.connectors[{index}].tools.include contains duplicate tool '{tool}'"),
-                    Some("remove the duplicate connector tool"),
+                    format!("package.json#pi.connectors provider '{provider}' requires dependency '{package}'"),
+                    Some("add the connector package to package.json#dependencies and commit the lockfile"),
                 );
             }
         }
@@ -3189,7 +3123,7 @@ mod tests {
         ])
     }
 
-    fn connector_recipe(package_tools: JsonValue, agent_tools: &[&str]) -> RecipeFiles {
+    fn connector_recipe(agent_tools: &[&str]) -> RecipeFiles {
         let package = json!({
             "name": "connector-test",
             "version": "0.1.0",
@@ -3199,9 +3133,7 @@ mod tests {
             "pi": {
                 "agents": ["agents/*.yaml"],
                 "connectors": [{
-                    "provider": "slack",
-                    "package": "@introspection-ai/recipe-connector-slack",
-                    "tools": { "include": package_tools }
+                    "provider": "slack"
                 }]
             }
         });
@@ -3231,7 +3163,7 @@ mod tests {
 
     #[test]
     fn connector_requires_its_runtime_dependency() {
-        let mut files = connector_recipe(json!(["origin"]), &["slack_origin"]);
+        let mut files = connector_recipe(&["slack_origin"]);
         let package_file = files
             .files
             .iter_mut()
@@ -3255,7 +3187,7 @@ mod tests {
         }));
 
         for invalid_version in [JsonValue::Null, json!("")] {
-            let mut files = connector_recipe(json!(["origin"]), &["slack_origin"]);
+            let mut files = connector_recipe(&["slack_origin"]);
             let package_file = files
                 .files
                 .iter_mut()
@@ -3280,17 +3212,17 @@ mod tests {
 
     #[test]
     fn accepts_generic_connector_declarations() {
-        let report = check_recipe_files(&connector_recipe(
-            json!(["origin", "custom_report"]),
-            &["slack_origin", "slack_custom_report"],
-        ));
+        let report = check_recipe_files(&connector_recipe(&[
+            "slack_origin",
+            "slack_custom_report",
+        ]));
 
         assert!(report.valid, "{:?}", report.diagnostics);
     }
 
     #[test]
-    fn connector_requires_an_implementation_package() {
-        let mut files = connector_recipe(json!(["origin"]), &["slack_origin"]);
+    fn connector_rejects_global_tool_configuration() {
+        let mut files = connector_recipe(&["slack_origin"]);
         let package_file = files
             .files
             .iter_mut()
@@ -3299,10 +3231,7 @@ mod tests {
         let mut package: JsonValue =
             serde_json::from_str(package_file.content.as_deref().expect("package content"))
                 .expect("parse package");
-        package["pi"]["connectors"][0]
-            .as_object_mut()
-            .expect("connector object")
-            .remove("package");
+        package["pi"]["connectors"][0]["tools"] = json!({ "include": ["origin"] });
         package_file.content = Some(serde_json::to_string_pretty(&package).expect("serialize"));
 
         let report = check_recipe_files(&files);
@@ -3310,7 +3239,7 @@ mod tests {
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "pi.connectors_invalid"
-                && diagnostic.message.contains("package must be non-empty")
+                && diagnostic.message.contains("unknown field 'tools'")
         }));
     }
 

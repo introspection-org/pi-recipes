@@ -251,15 +251,7 @@ describe("createAgentSession", () => {
         "slack_send_message",
       ],
       manifestPi: {
-        connectors: [
-          {
-            provider: "slack",
-            package: SLACK_RECIPE_CONNECTOR_PACKAGE,
-            tools: {
-              include: ["origin", "read_thread", "react", "send_message"],
-            },
-          },
-        ],
+        connectors: [{ provider: "slack" }],
       },
     });
     installSlackRecipeConnector(recipeDir);
@@ -277,45 +269,18 @@ describe("createAgentSession", () => {
 
   });
 
-  it("rejects connector tools outside the manifest policy at runtime", async () => {
+  it("rejects connector tools unsupported by the provider", async () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" },
-      tools: ["slack_origin", "slack_send_message"],
+      tools: ["slack_origin", "slack_delete_workspace"],
       manifestPi: {
-        connectors: [
-          {
-            provider: "slack",
-            package: SLACK_RECIPE_CONNECTOR_PACKAGE,
-            tools: { include: ["origin"] },
-          },
-        ],
+        connectors: [{ provider: "slack" }],
       },
     });
     installSlackRecipeConnector(recipeDir);
 
     await expect(open({ recipeDir, cwd: workspaceDir })).rejects.toThrow(
-      /connector tool\(s\).*does not declare: slack_send_message/
-    );
-  });
-
-  it("rejects tools unsupported by the declared connector package", async () => {
-    const { recipeDir, workspaceDir } = fixture({
-      dependencies: { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" },
-      tools: ["slack_origin"],
-      manifestPi: {
-        connectors: [
-          {
-            provider: "slack",
-            package: SLACK_RECIPE_CONNECTOR_PACKAGE,
-            tools: { include: ["origin", "delete_workspace"] },
-          },
-        ],
-      },
-    });
-    installSlackRecipeConnector(recipeDir);
-
-    await expect(open({ recipeDir, cwd: workspaceDir })).rejects.toThrow(
-      /does not support declared tool\(s\): delete_workspace/
+      /declares unavailable tool\(s\): slack_delete_workspace/
     );
   });
 
