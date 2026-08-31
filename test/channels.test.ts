@@ -285,6 +285,23 @@ describe("channel tool surface", () => {
     ).toThrow(/differ from its declared catalog/);
   });
 
+  it("refuses an adapter for a different provider", () => {
+    const module = createChannelConnectorModule({
+      provider: "slack",
+      capabilities: FULL_CAPABILITIES,
+      createSession: () => ({
+        adapter: { ...stubAdapter(), provider: "teams" },
+        target,
+      }),
+    });
+
+    expect(() =>
+      module.createExtension({ tools: ["reply"] })(
+        createMockExtensionAPI() as never,
+      ),
+    ).toThrow(/adapter for 'slack' returned provider 'teams'/);
+  });
+
   it("refuses an adapter that declares more than it implements", () => {
     const adapter = stubAdapter();
     const incomplete = { ...adapter, react: undefined } as unknown as ChannelAdapter;

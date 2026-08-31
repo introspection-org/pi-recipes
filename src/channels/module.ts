@@ -91,6 +91,11 @@ export function createChannelConnectorModule(
           env: moduleOptions.env ?? process.env,
           cwd: moduleOptions.cwd ?? process.cwd(),
         });
+        if (session.adapter.provider !== options.provider) {
+          throw new Error(
+            `Channel adapter for '${options.provider}' returned provider '${session.adapter.provider}'`,
+          );
+        }
         if (!sameCapabilities(session.adapter.capabilities, options.capabilities)) {
           // The declared catalog is what the loader narrowed against; an
           // adapter answering with a different set would register tools the
