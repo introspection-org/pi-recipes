@@ -1216,7 +1216,7 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
         .as_deref()
         .unwrap_or_default()
         .iter()
-        .filter(|tool| tool.as_str() == "agent" || tool.as_str() == "tool_search")
+        .filter(|tool| tool.as_str() == "agent")
         .cloned()
         .collect::<Vec<_>>();
     if !reserved_tools.is_empty() {
@@ -3693,16 +3693,38 @@ mod tests {
             ),
             (
                 "agents/agent.yaml",
-                "name: agent\nmodel:\n  name: test/provider-model\ntools: [agent, tool_search]\n",
+                "name: agent\nmodel:\n  name: test/provider-model\ntools: [agent]\n",
             ),
         ]);
 
         let report = check_recipe_files(&input);
 
         assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "agent.tools_reserved"
-                && diagnostic.message.contains("agent, tool_search")
+            diagnostic.code == "agent.tools_reserved" && diagnostic.message.contains("agent")
         }));
+    }
+
+    #[test]
+    fn accepts_extension_owned_tool_search() {
+        let package = json!({
+            "name": "extension-search",
+            "version": "0.1.0",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\ntools: [tool_search]\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
     }
 
     #[test]

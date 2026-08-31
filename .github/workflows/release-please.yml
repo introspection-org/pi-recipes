@@ -261,7 +261,7 @@ jobs:
             if [[ "$connector_version" == *-* ]]; then
               connector_tag="beta"
             fi
-            core_range="$(node -p "require('./$connector_dir/package.json').peerDependencies['@introspection-ai/recipes']")"
+            core_range="$(node -p "require('./$connector_dir/package.json').peerDependencies?.['@introspection-ai/recipes'] ?? require('./package.json').version")"
             if [[ "$core_range" == workspace:* ]]; then
               core_range="$(node -p "require('./package.json').version")"
             fi
