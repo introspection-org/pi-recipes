@@ -409,9 +409,8 @@ describe("Recipes extension for Pi", () => {
           "model:",
           "  name: openai/gpt-4.1",
           "tools:",
-          "  - slack_origin",
-          "  - slack_read_thread",
-          "  - slack_react",
+          "  - channel_read",
+          "  - channel_react",
           "",
         ].join("\n")
       );
@@ -429,36 +428,14 @@ describe("Recipes extension for Pi", () => {
 
       expect([...pi.tools.keys()].sort()).toEqual([
         "agent",
-        "slack_origin",
-        "slack_react",
-        "slack_read_thread",
-        "tool_search",
+        "channel_react",
+        "channel_read",
       ]);
       expect(pi.activeTools.sort()).toEqual([
-        "slack_origin",
-        "slack_read_thread",
-        "tool_search",
+        "channel_react",
+        "channel_read",
       ]);
-      const origin = await pi.tools.get("slack_origin")?.execute(
-        "tool-call",
-        {},
-        undefined,
-        undefined,
-        extensionContext(root)
-      );
-      expect(origin?.details).toEqual({
-        provider: "slack",
-        channel: "C_CONFIGURED",
-        thread_ts: null,
-      });
-      await pi.tools.get("tool_search")?.execute(
-        "tool-call",
-        { query: "add a reaction" },
-        undefined,
-        undefined,
-        extensionContext(root)
-      );
-      expect(pi.activeTools).toContain("slack_react");
+      expect(pi.activeTools).toContain("channel_react");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

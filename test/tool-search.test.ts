@@ -28,7 +28,7 @@ describe("Recipe tool search", () => {
   it("searches deferred tools from different integrations and enables matches additively", async () => {
     const tools = [
       tool(
-        "slack_react",
+        "channel_react",
         "React in Slack",
         "Add an emoji reaction to a Slack message."
       ),
@@ -57,8 +57,8 @@ describe("Recipe tool search", () => {
       undefined,
       undefined as never
     );
-    expect(first.details).toMatchObject({ added: ["slack_react"] });
-    expect(active).toEqual(["read", "tool_search", "slack_react"]);
+    expect(first.details).toMatchObject({ added: ["channel_react"] });
+    expect(active).toEqual(["read", "tool_search", "channel_react"]);
 
     const second = await search.execute(
       "call-2",
@@ -73,14 +73,14 @@ describe("Recipe tool search", () => {
     expect(active).toEqual([
       "read",
       "tool_search",
-      "slack_react",
+      "channel_react",
       "mcp_contacts_search_candidates",
     ]);
   });
 
   it("does not return a deferred tool after it is active", async () => {
     const react = tool(
-      "slack_react",
+      "channel_react",
       "React in Slack",
       "Add an emoji reaction to a Slack message."
     );

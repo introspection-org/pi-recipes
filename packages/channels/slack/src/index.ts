@@ -1,3 +1,12 @@
+import { createChannelConnectorModule } from "@introspection-ai/recipes/channels";
+
+import {
+  SLACK_CHANNEL_CAPABILITIES,
+  SlackChannelAdapter,
+  createSlackChannelSession,
+  slackChannelTarget,
+} from "./adapter.js";
+
 export {
   SlackBotSession,
   type SlackApiResult,
@@ -6,12 +15,6 @@ export {
   type SlackHttpResponse,
   type SlackPostResult,
 } from "./client.js";
-export {
-  SLACK_CONNECTOR_TOOLS,
-  SLACK_CONNECTOR_TOOL_IDS,
-  slackConnectorToolName,
-} from "./catalog.js";
-export type { SlackConnectorToolId } from "./catalog.js";
 export { MAX_SLACK_FILE_BYTES, SlackFileSession } from "./files.js";
 export type {
   SlackDownloadResult,
@@ -22,46 +25,40 @@ export { slackMessageBody, toPlainText } from "./format.js";
 export type { SlackMessageBody } from "./format.js";
 export { resolveSlackOrigin, slackDownloadRoot } from "./origin.js";
 export type { SlackEnv, SlackOrigin } from "./origin.js";
-export { registerSlackBotTools } from "./tools.js";
-export type {
-  RegisterSlackBotToolsOptions,
-  SlackToolHost,
-} from "./tools.js";
-
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-
-import {
-  SLACK_CONNECTOR_TOOLS,
-  SLACK_CONNECTOR_TOOL_IDS,
-  type SlackConnectorToolId,
-} from "./catalog.js";
-import { registerSlackBotTools } from "./tools.js";
-
-export interface SlackRecipeConnectorModuleOptions {
-  tools: readonly string[];
-  env?: NodeJS.ProcessEnv;
-  cwd?: string;
-}
-
-const slackToolIds = new Set<string>(SLACK_CONNECTOR_TOOL_IDS);
-
-export const slackRecipeConnectorModule = {
-  provider: "slack",
-  tools: SLACK_CONNECTOR_TOOLS,
-  createExtension(
-    options: SlackRecipeConnectorModuleOptions
-  ): ExtensionFactory {
-    const unknown = options.tools.filter((tool) => !slackToolIds.has(tool));
-    if (unknown.length > 0) {
-      throw new Error(`Unknown Slack connector tool(s): ${unknown.join(", ")}`);
-    }
-    const tools = options.tools as readonly SlackConnectorToolId[];
-    return (pi) => registerSlackBotTools(pi, {
-      tools,
-      env: options.env,
-      cwd: options.cwd,
-    });
-  },
+export {
+  SLACK_CHANNEL_CAPABILITIES,
+  SlackChannelAdapter,
+  createSlackChannelSession,
+  slackChannelTarget,
 };
+
+/**
+ * Slack as a channel connector.
+ *
+ * The package supplies transport and a capability descriptor; the tool names,
+ * schemas, and opaque message handles come from
+ * `@introspection-ai/recipes/channels`, so Slack cannot drift from any other
+ * channel and cannot grow an addressing argument of its own.
+ *
+ * Recipes declare the provider. Each agent then selects complete tool names in
+ * its YAML file.
+ *
+ * ```json
+ * { "pi": { "connectors": [{ "provider": "slack" }] } }
+ * ```
+ *
+ * ```yaml
+ * tools: [channel_reply, channel_read, channel_react, channel_fetch_file]
+ * ```
+ *
+ * Operations outside the bound channel tool set, including workspace search,
+ * directory lookups, and posting to another conversation, are unsupported.
+ * A separate proposal can define their contract and access model.
+ */
+export const slackRecipeConnectorModule = createChannelConnectorModule({
+  provider: "slack",
+  capabilities: SLACK_CHANNEL_CAPABILITIES,
+  createSession: ({ env, cwd }) => createSlackChannelSession({ env, cwd }),
+});
 
 export default slackRecipeConnectorModule;

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_SLACK_FILE_BYTES,
   SlackBotSession,
+  SlackChannelAdapter,
   SlackFileSession,
-  registerSlackBotTools,
   resolveSlackOrigin,
   slackDownloadRoot,
   slackMessageBody,
@@ -16,12 +16,23 @@ import {
   type SlackFetch,
 } from "../packages/channels/slack/src/index.js";
 import { writeAll } from "../packages/channels/slack/src/files.js";
+import {
+  ChannelRefStore,
+  registerChannelTools,
+} from "../src/channels/index.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 interface FakeFetchOptions {
   file?: Record<string, unknown>;
   fileBody?: string;
   bridgeStatus?: number;
+  messages?: Array<Record<string, unknown>>;
+  threadPages?: Record<
+    string,
+    { messages: Array<Record<string, unknown>>; nextCursor?: string }
+  >;
+  permalinks?: Record<string, string>;
+  channelName?: string;
 }
 
 function fakeFile(overrides: Record<string, unknown> = {}) {
@@ -63,10 +74,40 @@ function fakeFetch(options: FakeFetchOptions = {}) {
     if (parsed.pathname.endsWith("/api/files.info")) {
       return response({ payload: { ok: true, file } });
     }
+    if (parsed.pathname.endsWith("/api/conversations.info")) {
+      return response({
+        payload: {
+          ok: true,
+          channel: { id: "C1", name: options.channelName ?? "support" },
+        },
+      });
+    }
+    if (parsed.pathname.endsWith("/api/chat.getPermalink")) {
+      const form = new URLSearchParams(String(init.body));
+      const permalink = options.permalinks?.[form.get("message_ts") ?? ""];
+      return response({
+        payload: { ok: true, ...(permalink ? { permalink } : {}) },
+      });
+    }
+    if (parsed.pathname.endsWith("/api/conversations.replies") && options.threadPages) {
+      const form = new URLSearchParams(String(init.body));
+      const page = options.threadPages[form.get("cursor") ?? ""] ?? {
+        messages: [],
+      };
+      return response({
+        payload: {
+          ok: true,
+          messages: page.messages,
+          response_metadata: { next_cursor: page.nextCursor ?? "" },
+        },
+      });
+    }
     if (parsed.pathname.includes("/files-pri/")) {
       return response({ payload: {}, body: fileBody });
     }
-    return response({ payload: { ok: true, messages: [{ ts: "100.1" }] } });
+    return response({
+      payload: { ok: true, messages: options.messages ?? [{ ts: "100.1" }] },
+    });
   }) as unknown as SlackFetch & { calls: typeof calls };
   impl.calls = calls;
   return impl;
@@ -271,10 +312,7 @@ describe("SlackBotSession transport", () => {
       },
       fetchImpl,
     });
-    const result = await session.sendMessage({
-      text: "hello",
-      start_new_thread: true,
-    });
+    const result = await session.sendMessage({ text: "hello" });
     expect(result.bridge_recorded).toBe(false);
     expect(result.bridge_error).toMatch(/503/);
     expect(
@@ -344,215 +382,538 @@ describe("Slack file downloads", () => {
 
   it("writes a safe file with a verified digest", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "slack-bot-api-"));
-    const fetchImpl = fakeFetch({
-      file: fakeFile({ name: "../bad name.png" }),
-    });
-    const session = new SlackFileSession({
-      env: { SLACK_BOT_TOKEN: "local-bot-token" },
-      fetchImpl,
-      cwd,
-    });
-    const result = await session.downloadFile({ file_id: "F123" });
-    expect(result.path.startsWith(join(cwd, "files", "slack"))).toBe(true);
-    expect(result.path.includes(".."), result.path).toBe(false);
-    expect(result.sha256).toHaveLength(64);
-    expect(await readFile(result.path, "utf8")).toBe("data");
-    expect(
-      (await readdir(join(cwd, "files", "slack"))).filter((name) =>
-        name.includes("partial"),
-      ),
-    ).toEqual([]);
+    try {
+      const fetchImpl = fakeFetch({
+        file: fakeFile({ name: "../bad name.png" }),
+      });
+      const session = new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "local-bot-token" },
+        fetchImpl,
+        cwd,
+      });
+      const result = await session.downloadFile({ file_id: "F123" });
+      expect(result.path.startsWith(join(cwd, "files", "slack"))).toBe(true);
+      expect(result.path.includes(".."), result.path).toBe(false);
+      expect(result.sha256).toHaveLength(64);
+      expect(await readFile(result.path, "utf8")).toBe("data");
+      expect(
+        (await readdir(join(cwd, "files", "slack"))).filter((name) =>
+          name.includes("partial"),
+        ),
+      ).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it("rejects unsafe hosts and oversized files", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "slack-bot-api-"));
-    const unsafe = new SlackFileSession({
-      env: { SLACK_BOT_TOKEN: "local-bot-token" },
-      fetchImpl: fakeFetch({
-        file: fakeFile({ url_private_download: "https://evil.example/file" }),
-      }),
-      cwd,
-    });
-    await expect(unsafe.downloadFile({ file_id: "F123" })).rejects.toThrow(
-      /files\.slack\.com/,
-    );
+    try {
+      const unsafe = new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "local-bot-token" },
+        fetchImpl: fakeFetch({
+          file: fakeFile({ url_private_download: "https://evil.example/file" }),
+        }),
+        cwd,
+      });
+      await expect(unsafe.downloadFile({ file_id: "F123" })).rejects.toThrow(
+        /files\.slack\.com/,
+      );
 
-    const oversized = new SlackFileSession({
-      env: { SLACK_BOT_TOKEN: "local-bot-token" },
-      fetchImpl: fakeFetch({
-        file: fakeFile({ size: MAX_SLACK_FILE_BYTES + 1 }),
-      }),
-      cwd,
-    });
-    await expect(oversized.downloadFile({ file_id: "F123" })).rejects.toThrow(
-      /download limit/,
-    );
+      const oversized = new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "local-bot-token" },
+        fetchImpl: fakeFetch({
+          file: fakeFile({ size: MAX_SLACK_FILE_BYTES + 1 }),
+        }),
+        cwd,
+      });
+      await expect(oversized.downloadFile({ file_id: "F123" })).rejects.toThrow(
+        /download limit/,
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });
 
-describe("Slack tool registration", () => {
-  it("reads an explicit thread without a task origin", async () => {
-    const pi = createMockExtensionAPI();
-    const fetchImpl = fakeFetch();
-    const controller = new AbortController();
-    registerSlackBotTools(pi, {
-      session: new SlackFileSession({
-        env: { SLACK_BOT_TOKEN: "token" },
+describe("Slack channel tools", () => {
+  it("resolves the Slack channel name as prompt metadata", async () => {
+    const fetchImpl = fakeFetch({ channelName: "incident-triage" });
+    const adapter = new SlackChannelAdapter(
+      new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_ID: "C1" },
         fetchImpl,
       }),
-      tools: ["read_thread"],
+    );
+
+    await expect(
+      adapter.enrichTarget({
+        target: { provider: "slack", conversation: "C1", thread: null },
+        refs: new ChannelRefStore(),
+      }),
+    ).resolves.toMatchObject({ name: "incident-triage" });
+    expect(fetchImpl.calls[0]!.url).toBe(
+      "https://slack.com/api/conversations.info",
+    );
+  });
+
+  const cloudEnv = {
+    SLACK_BOT_TOKEN: "token",
+    SLACK_CHANNEL_ID: "C1",
+    SLACK_THREAD_TS: "100.1",
+  };
+
+  function slackTools(options: FakeFetchOptions = {}, cwd?: string) {
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch(options);
+    const adapter = new SlackChannelAdapter(
+      new SlackFileSession({ env: cloudEnv, fetchImpl, cwd }),
+    );
+    registerChannelTools(pi, adapter, {
+      target: { provider: "slack", conversation: "C1", thread: "100.1" },
+    });
+    return { pi, fetchImpl };
+  }
+
+  const call = (pi: ReturnType<typeof createMockExtensionAPI>, name: string, params: unknown) =>
+    pi.tools
+      .get(name)
+      ?.execute("tool-call", params as never, undefined, undefined, undefined as never);
+
+  it("posts to the context's conversation, not the session's own origin", async () => {
+    // A direct-host caller can bind a context that differs from the session
+    // environment. Every other tool acts on the context, so reply must too —
+    // otherwise the prompt describes one conversation and channel_reply writes
+    // to another.
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch();
+    registerChannelTools(
+      pi,
+      new SlackChannelAdapter(new SlackFileSession({ env: cloudEnv, fetchImpl })),
+      { target: { provider: "slack", conversation: "C-OTHER", thread: "900.9" } },
+    );
+    await call(pi, "channel_reply", { text: "hi" });
+
+    const post = fetchImpl.calls.find((c) => c.url.includes("chat.postMessage"))!;
+    expect(JSON.parse(String(post.init.body))).toMatchObject({
+      channel: "C-OTHER",
+      thread_ts: "900.9",
+    });
+  });
+
+  it("returns unthreaded messages oldest-first, as the tool promises", async () => {
+    // conversations.history is newest-first while conversations.replies is
+    // oldest-first; a backwards transcript still reads as a conversation, so
+    // nothing downstream would catch it.
+    const pi = createMockExtensionAPI();
+    const fetchImpl = fakeFetch({
+      messages: [
+        { ts: "300.3", text: "third", user: "U1" },
+        { ts: "200.2", text: "second", user: "U1" },
+        { ts: "100.1", text: "first", user: "U1" },
+      ],
+    });
+    registerChannelTools(
+      pi,
+      new SlackChannelAdapter(new SlackFileSession({ env: cloudEnv, fetchImpl })),
+      { target: { provider: "slack", conversation: "C1", thread: null } },
+    );
+    const result = (await call(pi, "channel_read", {})) as {
+      details: { messages: Array<{ text: string }> };
+    };
+    expect(result.details.messages.map((m) => m.text)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+  });
+
+  it("attaches Slack permalinks to message rows", async () => {
+    const permalink = "https://example.slack.com/archives/C1/p100100";
+    const { pi } = slackTools({
+      messages: [{ ts: "100.1", text: "first", user: "U1" }],
+      permalinks: { "100.1": permalink },
     });
 
-    await pi.tools.get("slack_read_thread")?.execute(
+    const history = (await call(pi, "channel_read", {})) as {
+      details: { messages: Array<{ permalink?: string }> };
+    };
+
+    expect(history.details.messages[0]?.permalink).toBe(permalink);
+  });
+
+  it("returns the latest thread page and pages backward from its cache", async () => {
+    const messages = Array.from({ length: 17 }, (_, index) => ({
+      ts: `${index + 1}.1`,
+      text: `message ${index + 1}`,
+      user: "U1",
+    }));
+    const { pi, fetchImpl } = slackTools({
+      threadPages: {
+        "": {
+          messages: messages.slice(0, 8),
+          nextCursor: "page-2",
+        },
+        "page-2": {
+          messages: messages.slice(8),
+        },
+      },
+    });
+
+    const first = (await call(pi, "channel_read", { limit: 100 })) as {
+      details: { messages: Array<{ text: string }>; cursor?: string };
+    };
+
+    expect(first.details.messages.map((message) => message.text)).toEqual(
+      messages.slice(2).map((message) => message.text),
+    );
+    expect(first.details.cursor).toMatch(/^cur_/);
+    const firstRequest = fetchImpl.calls.find((request) =>
+      request.url.includes("conversations.replies"),
+    )!;
+    expect(new URLSearchParams(String(firstRequest.init.body)).get("limit")).toBe(
+      "1000",
+    );
+
+    const second = (await call(pi, "channel_read", {
+      cursor: first.details.cursor,
+    })) as {
+      details: { messages: Array<{ text: string }>; cursor?: string };
+    };
+    expect(second.details.messages.map((message) => message.text)).toEqual(
+      messages.slice(0, 2).map((message) => message.text),
+    );
+    expect(second.details.cursor).toBeUndefined();
+    // The initial read filled the session cache. Paging backward does not make
+    // another conversations.replies request.
+    expect(
+      fetchImpl.calls.filter((request) =>
+        request.url.includes("conversations.replies"),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("uses the current limit when paging backward through a cached thread", async () => {
+    const messages = Array.from({ length: 17 }, (_, index) => ({
+      ts: `${index + 1}.1`,
+      text: `message ${index + 1}`,
+      user: "U1",
+    }));
+    const { pi } = slackTools({ threadPages: { "": { messages } } });
+
+    const first = (await call(pi, "channel_read", { limit: 1 })) as {
+      details: { messages: Array<{ text: string }>; cursor?: string };
+    };
+    expect(first.details.messages.map((message) => message.text)).toEqual([
+      "message 17",
+    ]);
+
+    const second = (await call(pi, "channel_read", {
+      cursor: first.details.cursor,
+      limit: 15,
+    })) as {
+      details: { messages: Array<{ text: string }>; cursor?: string };
+    };
+    expect(second.details.messages.map((message) => message.text)).toEqual(
+      messages.slice(1, 16).map((message) => message.text),
+    );
+    expect(second.details.cursor).toBeDefined();
+  });
+
+  it("uses Slack bot profile names for bot-authored messages", async () => {
+    const { pi, fetchImpl } = slackTools({
+      messages: [
+        {
+          ts: "100.1",
+          text: "Automated update",
+          bot_id: "B1",
+          bot_profile: { id: "B1", name: "Release Bot" },
+        },
+      ],
+    });
+
+    const history = (await call(pi, "channel_read", {})) as {
+      details: {
+        messages: Array<{
+          author: { id: string; display_name?: string };
+        }>;
+      };
+    };
+
+    expect(history.details.messages[0]?.author).toEqual({
+      id: "B1",
+      display_name: "Release Bot",
+    });
+    expect(fetchImpl.calls.some((call) => call.url.includes("users.info"))).toBe(
+      false,
+    );
+  });
+
+  it("refuses a file id the model supplied rather than saw", async () => {
+    const { pi } = slackTools();
+    // The P1 this closes: a bot can read files in every conversation it is in,
+    // so a raw Slack file id is an addressing argument by another name.
+    await expect(call(pi, "channel_fetch_file", { file: "F123" })).rejects.toThrow(
+      /Unknown file reference/,
+    );
+  });
+
+  it("downloads a file it handed out a reference for", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "slack-channel-tools-"));
+    try {
+      const { pi } = slackTools(
+        {
+          messages: [
+            {
+              ts: "100.1",
+              text: "see this",
+              user: "U1",
+              files: [
+                { id: "F123", name: "crash.png", mimetype: "image/png" },
+              ],
+            },
+          ],
+        },
+        cwd,
+      );
+      const history = (await call(pi, "channel_read", {})) as {
+        details: { messages: Array<{ attachments?: Array<{ id: string }> }> };
+      };
+      const ref = history.details.messages[0]!.attachments![0]!.id;
+      expect(ref).toMatch(/^file_/);
+
+      const file = (await call(pi, "channel_fetch_file", { file: ref })) as {
+        details: { name: string; path: string };
+      };
+      expect(file.details.name).toContain("crash.png");
+      expect(file.details.path.startsWith(join(cwd, "files", "slack"))).toBe(
+        true,
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("registers the neutral surface Slack supports and nothing else", () => {
+    const { pi } = slackTools();
+    expect([...pi.tools.keys()].sort()).toEqual([
+      "channel_edit",
+      "channel_fetch_file",
+      "channel_react",
+      "channel_read",
+      "channel_reply",
+      "channel_retract",
+    ]);
+  });
+
+  it("replies to the bound conversation and returns an opaque reference", async () => {
+    const { pi, fetchImpl } = slackTools();
+    const result = (await call(pi, "channel_reply", { text: "**hi**" })) as {
+      details: { ref: string };
+    };
+
+    const post = JSON.parse(
+      String(
+        fetchImpl.calls.find((c) => c.url.includes("chat.postMessage"))!.init.body,
+      ),
+    );
+    expect(post).toMatchObject({ channel: "C1", thread_ts: "100.1" });
+    expect(result.details.ref).toMatch(/^msg_/);
+    expect(JSON.stringify(result.details)).not.toContain("200.2");
+  });
+
+  it("returns a posted reply when permalink lookup is cancelled", async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      calls.push(url);
+      if (url.includes("chat.postMessage")) {
+        return response({
+          payload: {
+            ok: true,
+            channel: "C1",
+            ts: "200.2",
+            message: { thread_ts: "100.1" },
+          },
+        });
+      }
+      controller.abort();
+      throw new DOMException("The operation was aborted", "AbortError");
+    }) as SlackFetch;
+    const pi = createMockExtensionAPI();
+    registerChannelTools(
+      pi,
+      new SlackChannelAdapter(
+        new SlackFileSession({ env: cloudEnv, fetchImpl }),
+      ),
+      { target: { provider: "slack", conversation: "C1", thread: "100.1" } },
+    );
+
+    const result = (await pi.tools.get("channel_reply")!.execute(
       "tool-call",
-      { channel: "C2", thread_ts: "200.2" },
+      { text: "hello" },
       controller.signal,
       undefined,
       undefined as never,
-    );
+    )) as { details: { ref: string } };
 
-    expect(String(fetchImpl.calls[0]!.init.body)).toContain("channel=C2");
-    expect(String(fetchImpl.calls[0]!.init.body)).toContain("ts=200.2");
-    expect(fetchImpl.calls[0]!.init.signal).toBe(controller.signal);
+    expect(result.details.ref).toMatch(/^msg_/);
+    expect(calls.filter((url) => url.includes("chat.postMessage"))).toHaveLength(
+      1,
+    );
+    expect(calls.filter((url) => url.includes("chat.getPermalink"))).toHaveLength(
+      1,
+    );
   });
 
-  it("reads explicit channel history without a task origin", async () => {
-    const pi = createMockExtensionAPI();
-    const fetchImpl = fakeFetch();
-    registerSlackBotTools(pi, {
-      session: new SlackFileSession({
-        env: { SLACK_BOT_TOKEN: "token" },
-        fetchImpl,
+  it("rejects a reference the session never minted", async () => {
+    const { pi } = slackTools();
+    await expect(
+      call(pi, "channel_react", { message: "msg_forged", emoji: "eyes" }),
+    ).rejects.toThrow(/Unknown message reference/);
+  });
+
+  it("adds reactions by default and removes them when requested", async () => {
+    const { pi, fetchImpl } = slackTools();
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string };
+    };
+
+    await call(pi, "channel_react", {
+      message: posted.details.ref,
+      emoji: ":eyes:",
+    });
+    await call(pi, "channel_react", {
+      message: posted.details.ref,
+      emoji: ":eyes:",
+      action: "remove",
+    });
+
+    const reactions = fetchImpl.calls.filter((call) =>
+      call.url.includes("/api/reactions."),
+    );
+    expect(reactions.map((call) => new URL(call.url).pathname)).toEqual([
+      "/api/reactions.add",
+      "/api/reactions.remove",
+    ]);
+    for (const reaction of reactions) {
+      expect(
+        Object.fromEntries(new URLSearchParams(String(reaction.init.body))),
+      ).toMatchObject({
+        channel: "C1",
+        timestamp: "200.2",
+        name: "eyes",
+      });
+    }
+  });
+
+  it("rejects a Slack reaction without a normalized emoji name", async () => {
+    const { pi, fetchImpl } = slackTools();
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string };
+    };
+
+    await expect(
+      call(pi, "channel_react", {
+        message: posted.details.ref,
+        emoji: ":::",
       }),
-      tools: ["read_history"],
-    });
-
-    await pi.tools.get("slack_read_history")?.execute(
-      "tool-call",
-      { channel: "C2" },
-      undefined,
-      undefined,
-      undefined as never,
-    );
-
-    expect(String(fetchImpl.calls[0]!.init.body)).toContain("channel=C2");
+    ).rejects.toThrow(/Slack reaction must name an emoji/);
+    expect(
+      fetchImpl.calls.some((request) => request.url.includes("reactions.add")),
+    ).toBe(false);
   });
 
-  it("gets a permalink for an explicit channel without a task origin", async () => {
-    const pi = createMockExtensionAPI();
-    const fetchImpl = fakeFetch();
-    registerSlackBotTools(pi, {
-      session: new SlackFileSession({
-        env: { SLACK_BOT_TOKEN: "token" },
-        fetchImpl,
-      }),
-      tools: ["get_permalink"],
-    });
+  it("refuses to edit or retract a message the agent did not author", async () => {
+    const { pi } = slackTools();
+    const read = (await call(pi, "channel_read", {})) as {
+      details: { messages: Array<{ ref: string }> };
+    };
+    const theirs = read.details.messages[0]!.ref;
 
-    await pi.tools.get("slack_get_permalink")?.execute(
-      "tool-call",
-      { channel: "C2", message_ts: "200.2" },
-      undefined,
-      undefined,
-      undefined as never,
-    );
-
-    expect(String(fetchImpl.calls[0]!.init.body)).toContain("channel=C2");
-  });
-
-  it("passes a thread cursor to Slack", async () => {
-    const pi = createMockExtensionAPI();
-    const fetchImpl = fakeFetch();
-    registerSlackBotTools(pi, {
-      session: new SlackFileSession({
-        env: {
-          SLACK_BOT_TOKEN: "token",
-          SLACK_CHANNEL_ID: "C1",
-          SLACK_THREAD_TS: "100.1",
-        },
-        fetchImpl,
-      }),
-      tools: ["read_thread"],
-    });
-
-    await pi.tools.get("slack_read_thread")?.execute(
-      "tool-call",
-      { cursor: "next-thread-page" },
-      undefined,
-      undefined,
-      undefined as never,
-    );
-
-    expect(String(fetchImpl.calls[0]!.init.body)).toContain(
-      "cursor=next-thread-page",
+    await expect(
+      call(pi, "channel_edit", { message: theirs, text: "rewritten" }),
+    ).rejects.toThrow(/not sent by this agent/);
+    await expect(call(pi, "channel_retract", { message: theirs })).rejects.toThrow(
+      /not sent by this agent/,
     );
   });
 
-  it("passes a history cursor to Slack", async () => {
-    const pi = createMockExtensionAPI();
-    const fetchImpl = fakeFetch();
-    registerSlackBotTools(pi, {
-      session: new SlackFileSession({
-        env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C1" },
-        fetchImpl,
-      }),
-      tools: ["read_history"],
+  it("edits and retracts a message the agent posted", async () => {
+    const { pi, fetchImpl } = slackTools();
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string };
+    };
+
+    await call(pi, "channel_edit", {
+      message: posted.details.ref,
+      text: "second",
     });
+    await call(pi, "channel_retract", { message: posted.details.ref });
 
-    await pi.tools.get("slack_read_history")?.execute(
-      "tool-call",
-      { cursor: "next-page" },
-      undefined,
-      undefined,
-      undefined as never,
+    const update = JSON.parse(
+      String(fetchImpl.calls.find((c) => c.url.includes("chat.update"))!.init.body),
     );
+    expect(update).toMatchObject({ channel: "C1", ts: "200.2" });
 
-    expect(String(fetchImpl.calls[0]!.init.body)).toContain("cursor=next-page");
+    const deletion = new URLSearchParams(
+      String(fetchImpl.calls.find((c) => c.url.includes("chat.delete"))!.init.body),
+    );
+    expect(Object.fromEntries(deletion)).toMatchObject({
+      channel: "C1",
+      ts: "200.2",
+    });
   });
 
-  it("registers the original Bot API surface with Slack prefixes", () => {
-    const pi = createMockExtensionAPI();
-    registerSlackBotTools(pi, {
-      env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C1" },
+  it("retains a reply permalink when the message is later edited", async () => {
+    const permalink = "https://example.slack.com/archives/C1/p200200";
+    const { pi } = slackTools({ permalinks: { "200.2": permalink } });
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string; permalink?: string };
+    };
+
+    const edited = (await call(pi, "channel_edit", {
+      message: posted.details.ref,
+      text: "second",
+    })) as { details: { ref: string; permalink?: string } };
+
+    expect(posted.details.permalink).toBe(permalink);
+    expect(edited.details).toEqual({
+      ref: posted.details.ref,
+      permalink,
     });
-    expect([...pi.tools.keys()].sort()).toEqual([
-      "slack_download_file",
-      "slack_get_permalink",
-      "slack_join_channel",
-      "slack_list_channels",
-      "slack_origin",
-      "slack_react",
-      "slack_read_history",
-      "slack_read_thread",
-      "slack_resolve_user",
-      "slack_send_message",
+  });
+
+  it("splits long edited Markdown into Slack blocks", async () => {
+    const { pi, fetchImpl } = slackTools();
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string };
+    };
+    const text = "a".repeat(12_001);
+
+    await call(pi, "channel_edit", {
+      message: posted.details.ref,
+      text,
+    });
+
+    const update = JSON.parse(
+      String(fetchImpl.calls.find((c) => c.url.includes("chat.update"))!.init.body),
+    );
+    expect(update.blocks).toEqual([
+      { type: "markdown", text: "a".repeat(12_000) },
+      { type: "markdown", text: "a" },
     ]);
   });
 
-  it("registers only the tools selected by a connector declaration", () => {
-    const pi = createMockExtensionAPI();
-    registerSlackBotTools(pi, {
-      env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C1" },
-      tools: ["origin", "read_thread", "send_message"],
-    });
+  it("reads earlier messages from the bound conversation", async () => {
+    const { pi, fetchImpl } = slackTools();
+    await call(pi, "channel_read", { limit: 5 });
 
-    expect([...pi.tools.keys()].sort()).toEqual([
-      "slack_origin",
-      "slack_read_thread",
-      "slack_send_message",
-    ]);
-  });
-});
-
-describe("Slack formatting", () => {
-  it("builds a Markdown block with a plain fallback", () => {
-    expect(toPlainText("**bold** and [link](https://example.com)")).toBe(
-      "bold and link",
-    );
-    expect(slackMessageBody("**hello**")).toEqual({
-      text: "hello",
-      blocks: [{ type: "markdown", text: "**hello**" }],
-    });
+    const read = fetchImpl.calls.find((c) =>
+      c.url.includes("conversations.replies"),
+    )!;
+    expect(String(read.init.body)).toContain("channel=C1");
+    expect(String(read.init.body)).toContain("ts=100.1");
   });
 
   it("splits oversized Markdown into valid Slack blocks", () => {
