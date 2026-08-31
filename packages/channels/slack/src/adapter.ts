@@ -222,6 +222,11 @@ export class SlackChannelAdapter implements ChannelAdapter {
     const messages: ChannelMessage[] = [];
     for (const message of ordered) {
       if (!message.ts) continue;
+      const permalink = await this.permalink(
+        ctx.target.conversation,
+        message.ts,
+        ctx.signal,
+      );
       messages.push({
         ref: ctx.refs.message({
           conversation: ctx.target.conversation,
@@ -244,6 +249,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         ...(slackTimestamp(message.ts)
           ? { timestamp: slackTimestamp(message.ts) }
           : {}),
+        ...(permalink ? { permalink } : {}),
         ...(message.files?.length
           ? {
               attachments: message.files

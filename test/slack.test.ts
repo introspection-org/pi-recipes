@@ -31,6 +31,7 @@ interface FakeFetchOptions {
     string,
     { messages: Array<Record<string, unknown>>; nextCursor?: string }
   >;
+  permalinks?: Record<string, string>;
   channelName?: string;
 }
 
@@ -79,6 +80,13 @@ function fakeFetch(options: FakeFetchOptions = {}) {
           ok: true,
           channel: { id: "C1", name: options.channelName ?? "support" },
         },
+      });
+    }
+    if (parsed.pathname.endsWith("/api/chat.getPermalink")) {
+      const form = new URLSearchParams(String(init.body));
+      const permalink = options.permalinks?.[form.get("message_ts") ?? ""];
+      return response({
+        payload: { ok: true, ...(permalink ? { permalink } : {}) },
       });
     }
     if (parsed.pathname.endsWith("/api/conversations.replies") && options.threadPages) {
@@ -518,6 +526,20 @@ describe("Slack channel tools", () => {
       "second",
       "third",
     ]);
+  });
+
+  it("attaches Slack permalinks to history rows", async () => {
+    const permalink = "https://example.slack.com/archives/C1/p100100";
+    const { pi } = slackTools({
+      messages: [{ ts: "100.1", text: "first", user: "U1" }],
+      permalinks: { "100.1": permalink },
+    });
+
+    const history = (await call(pi, "channel_history", {})) as {
+      details: { messages: Array<{ permalink?: string }> };
+    };
+
+    expect(history.details.messages[0]?.permalink).toBe(permalink);
   });
 
   it("returns one threaded history page and preserves Slack's cursor", async () => {
