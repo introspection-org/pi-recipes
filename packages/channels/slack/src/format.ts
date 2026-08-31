@@ -3,6 +3,31 @@ export interface SlackMessageBody {
   blocks: Array<{ type: "markdown"; text: string }>;
 }
 
+const SLACK_MARKDOWN_BLOCK_MAX_LENGTH = 12_000;
+
+function markdownBlocks(
+  markdown: string,
+): Array<{ type: "markdown"; text: string }> {
+  const codePoints = Array.from(markdown);
+  if (codePoints.length === 0) {
+    return [{ type: "markdown", text: "" }];
+  }
+  const blocks: Array<{ type: "markdown"; text: string }> = [];
+  for (
+    let offset = 0;
+    offset < codePoints.length;
+    offset += SLACK_MARKDOWN_BLOCK_MAX_LENGTH
+  ) {
+    blocks.push({
+      type: "markdown",
+      text: codePoints
+        .slice(offset, offset + SLACK_MARKDOWN_BLOCK_MAX_LENGTH)
+        .join(""),
+    });
+  }
+  return blocks;
+}
+
 export function toPlainText(markdown: string): string {
   let text = markdown;
   text = text.replace(/```[a-zA-Z0-9]*\n?([\s\S]*?)```/g, "$1");
@@ -25,6 +50,6 @@ export function slackMessageBody(
 ): SlackMessageBody {
   return {
     text: options.plainText?.trim() || toPlainText(markdown),
-    blocks: [{ type: "markdown", text: markdown }],
+    blocks: markdownBlocks(markdown),
   };
 }

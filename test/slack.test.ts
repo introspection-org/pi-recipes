@@ -554,4 +554,23 @@ describe("Slack formatting", () => {
       blocks: [{ type: "markdown", text: "**hello**" }],
     });
   });
+
+  it("splits oversized Markdown into valid Slack blocks", () => {
+    expect(slackMessageBody("a".repeat(12_001))).toEqual({
+      text: "a".repeat(12_001),
+      blocks: [
+        { type: "markdown", text: "a".repeat(12_000) },
+        { type: "markdown", text: "a" },
+      ],
+    });
+  });
+
+  it("does not split Unicode surrogate pairs at a block boundary", () => {
+    const markdown = `${"a".repeat(11_999)}😀b`;
+
+    expect(slackMessageBody(markdown).blocks).toEqual([
+      { type: "markdown", text: `${"a".repeat(11_999)}😀` },
+      { type: "markdown", text: "b" },
+    ]);
+  });
 });

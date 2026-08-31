@@ -222,6 +222,15 @@ jobs:
 
           staging_tag="release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
+          remove_staging_tag() {
+            local published_package="$1"
+            local package_tags
+            package_tags="$(npm dist-tag ls "$published_package")"
+            if [[ "$package_tags" == *"$staging_tag:"* ]]; then
+              npm dist-tag rm "$published_package" "$staging_tag"
+            fi
+          }
+
           package_name="$(node -p "require('./package.json').name")"
           version="$(node -p "require('./package.json').version")"
           root_tag="latest"
@@ -289,6 +298,20 @@ jobs:
           fi
           if [[ "$publish_root" == "true" ]]; then
             npm dist-tag add "$package_name@$version" "$root_tag"
+          fi
+
+          # Remove the per-run staging tags once every requested package has
+          # been promoted to its normal release tag.
+          if [[ "$publish_root" == "true" ]]; then
+            for platform_name in "${platform_names[@]}"; do
+              remove_staging_tag "$platform_name"
+            done
+          fi
+          if [[ "$publish_connector" == "true" ]]; then
+            remove_staging_tag "$connector_name"
+          fi
+          if [[ "$publish_root" == "true" ]]; then
+            remove_staging_tag "$package_name"
           fi
 
   publish-crate:

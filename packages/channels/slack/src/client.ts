@@ -3,10 +3,9 @@ import {
   type SlackEnv,
   type SlackOrigin,
 } from "./origin.js";
-import { toPlainText } from "./format.js";
+import { slackMessageBody } from "./format.js";
 
 const SLACK_API_BASE = "https://slack.com/api";
-const SLACK_MARKDOWN_BLOCK_MAX_LENGTH = 12_000;
 
 export interface SlackHttpResponse {
   ok: boolean;
@@ -54,17 +53,6 @@ type SlackEncoding = "json" | "form";
 
 function configured(value: string | undefined): value is string {
   return Boolean(value && value !== "undefined" && value !== "null");
-}
-
-function markdownBlocks(text: string): Array<{ type: "markdown"; text: string }> {
-  const blocks: Array<{ type: "markdown"; text: string }> = [];
-  for (let offset = 0; offset < text.length; offset += SLACK_MARKDOWN_BLOCK_MAX_LENGTH) {
-    blocks.push({
-      type: "markdown",
-      text: text.slice(offset, offset + SLACK_MARKDOWN_BLOCK_MAX_LENGTH),
-    });
-  }
-  return blocks;
 }
 
 function bodyFor(
@@ -182,6 +170,9 @@ export class SlackBotSession {
     start_new_thread?: boolean;
   }, signal?: AbortSignal): Promise<SlackPostResult> {
     const origin = this.origin();
+    const messageBody = slackMessageBody(input.text, {
+      plainText: input.plain_text,
+    });
     const threadTs = input.thread_ts?.trim()
       ? input.thread_ts.trim()
       : input.start_new_thread
@@ -191,11 +182,11 @@ export class SlackBotSession {
       "chat.postMessage",
       {
         channel: origin.channel,
-        text: input.plain_text?.trim() || toPlainText(input.text),
+        text: messageBody.text,
         blocks:
           input.blocks && input.blocks.length > 0
             ? input.blocks
-            : markdownBlocks(input.text),
+            : messageBody.blocks,
         ...(threadTs ? { thread_ts: threadTs } : {}),
       },
       "json",

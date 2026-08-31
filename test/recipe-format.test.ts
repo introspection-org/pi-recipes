@@ -681,4 +681,19 @@ describe("release train isolation", () => {
     expect(workflow).toContain("pnpm publish --access public");
     expect(workflow).not.toContain("npm access set status=public");
   });
+
+  it("removes temporary npm tags after promotion", () => {
+    const root = join(import.meta.dirname, "..");
+    const workflow = readFileSync(
+      join(root, ".github", "workflows", "release-please.yml"),
+      "utf8"
+    );
+
+    expect(workflow).toContain(
+      'npm dist-tag rm "$published_package" "$staging_tag"'
+    );
+    expect(workflow).toContain('remove_staging_tag "$platform_name"');
+    expect(workflow).toContain('remove_staging_tag "$connector_name"');
+    expect(workflow).toContain('remove_staging_tag "$package_name"');
+  });
 });
