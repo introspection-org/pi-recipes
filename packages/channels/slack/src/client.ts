@@ -225,7 +225,6 @@ export class SlackBotSession {
         bridge_recorded: bridgeRecorded,
       };
     } catch (error) {
-      if (signal?.aborted) throw error;
       return {
         ok: true,
         channel,

@@ -281,6 +281,48 @@ describe("SlackBotSession transport", () => {
       fetchImpl.calls.filter((call) => call.url.includes("chat.postMessage")),
     ).toHaveLength(1);
   });
+
+  it("keeps a successful Slack post when bookkeeping is cancelled", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => ({ ok: true, channel: "C1", ts: "200.2" }),
+          body: null,
+        };
+      }
+      controller.abort();
+      throw new DOMException("The operation was aborted", "AbortError");
+    };
+    const session = new SlackBotSession({
+      env: {
+        SLACK_BOT_TOKEN: "bot-token",
+        INTROSPECTION_TASK_CHANNEL_ID: "C1",
+        INTROSPECTION_BASE_API_URL: "https://dp.example",
+        INTROSPECTION_TASK_ID: "task-1",
+        INTROSPECTION_TOKEN: "task-token",
+      },
+      fetchImpl,
+    });
+
+    const result = await session.sendMessage(
+      { text: "hello" },
+      controller.signal,
+    );
+
+    expect(result).toMatchObject({
+      channel: "C1",
+      ts: "200.2",
+      bridge_recorded: false,
+      bridge_error: "The operation was aborted",
+    });
+    expect(calls).toBe(2);
+  });
 });
 
 describe("Slack file downloads", () => {
