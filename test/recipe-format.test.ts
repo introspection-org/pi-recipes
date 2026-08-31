@@ -669,13 +669,23 @@ describe("release train isolation", () => {
     });
   });
 
-  it("does not record an unpublished Slack package version", () => {
+  it("does not record a false Slack release version", () => {
     const root = join(import.meta.dirname, "..");
     const manifest = JSON.parse(
       readFileSync(join(root, ".release-please-manifest.json"), "utf8")
     ) as Record<string, string>;
+    const slackPackage = JSON.parse(
+      readFileSync(
+        join(root, "packages", "channels", "slack", "package.json"),
+        "utf8"
+      )
+    ) as { version: string };
+    const releasedVersion = manifest["packages/channels/slack"];
 
-    expect(manifest["packages/channels/slack"]).toBeUndefined();
+    expect(releasedVersion).not.toBe("0.0.0");
+    if (releasedVersion !== undefined) {
+      expect(releasedVersion).toBe(slackPackage.version);
+    }
   });
 
   it("fails visibly when a merged root release PR remains pending", () => {
