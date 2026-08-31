@@ -14,9 +14,9 @@ import type {
   MessageRef,
 } from "@introspection-ai/recipes/channels";
 
-import { markdownBlocks, type SlackApiResult } from "./client.js";
+import type { SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
-import { toPlainText } from "./format.js";
+import { markdownBlocks, toPlainText } from "./format.js";
 import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
 
 /**

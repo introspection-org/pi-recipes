@@ -6,7 +6,7 @@ export interface SlackMessageBody {
 const SLACK_MARKDOWN_BLOCK_MAX_LENGTH = 12_000;
 const SLACK_MESSAGE_MAX_BLOCKS = 50;
 
-function markdownBlocks(
+export function markdownBlocks(
   markdown: string,
 ): Array<{ type: "markdown"; text: string }> {
   const codePoints = Array.from(markdown);
