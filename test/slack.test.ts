@@ -695,6 +695,50 @@ describe("Slack channel tools", () => {
     expect(JSON.stringify(result.details)).not.toContain("200.2");
   });
 
+  it("returns a posted reply when permalink lookup is cancelled", async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      calls.push(url);
+      if (url.includes("chat.postMessage")) {
+        return response({
+          payload: {
+            ok: true,
+            channel: "C1",
+            ts: "200.2",
+            message: { thread_ts: "100.1" },
+          },
+        });
+      }
+      controller.abort();
+      throw new DOMException("The operation was aborted", "AbortError");
+    }) as SlackFetch;
+    const pi = createMockExtensionAPI();
+    registerChannelTools(
+      pi,
+      new SlackChannelAdapter(
+        new SlackFileSession({ env: cloudEnv, fetchImpl }),
+      ),
+      { target: { provider: "slack", conversation: "C1", thread: "100.1" } },
+    );
+
+    const result = (await pi.tools.get("channel_reply")!.execute(
+      "tool-call",
+      { text: "hello" },
+      controller.signal,
+      undefined,
+      undefined as never,
+    )) as { details: { ref: string } };
+
+    expect(result.details.ref).toMatch(/^msg_/);
+    expect(calls.filter((url) => url.includes("chat.postMessage"))).toHaveLength(
+      1,
+    );
+    expect(calls.filter((url) => url.includes("chat.getPermalink"))).toHaveLength(
+      1,
+    );
+  });
+
   it("rejects a reference the session never minted", async () => {
     const { pi } = slackTools();
     await expect(
@@ -741,6 +785,27 @@ describe("Slack channel tools", () => {
       channel: "C1",
       ts: "200.2",
     });
+  });
+
+  it("splits long edited Markdown into Slack blocks", async () => {
+    const { pi, fetchImpl } = slackTools();
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string };
+    };
+    const text = "a".repeat(12_001);
+
+    await call(pi, "channel_edit", {
+      message: posted.details.ref,
+      text,
+    });
+
+    const update = JSON.parse(
+      String(fetchImpl.calls.find((c) => c.url.includes("chat.update"))!.init.body),
+    );
+    expect(update.blocks).toEqual([
+      { type: "markdown", text: "a".repeat(12_000) },
+      { type: "markdown", text: "a" },
+    ]);
   });
 
   it("reads earlier messages from the bound conversation", async () => {

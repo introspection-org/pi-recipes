@@ -13,7 +13,7 @@ import type {
   MessageRef,
 } from "@introspection-ai/recipes/channels";
 
-import type { SlackApiResult } from "./client.js";
+import { markdownBlocks, type SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
 import { toPlainText } from "./format.js";
 import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
@@ -145,11 +145,13 @@ export class SlackChannelAdapter implements ChannelAdapter {
       thread: posted.thread_ts,
       authoredByAgent: true,
     });
-    const permalink = await this.permalink(
-      posted.channel,
-      posted.ts,
-      ctx.signal,
-    );
+    let permalink: string | null = null;
+    try {
+      permalink = await this.permalink(posted.channel, posted.ts, ctx.signal);
+    } catch {
+      // Posting is irreversible. Cancellation during this optional lookup must
+      // not report the post as failed and invite the caller to send it again.
+    }
     return {
       ref,
       ...(permalink ? { permalink } : {}),
@@ -186,7 +188,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         channel: message.conversation,
         ts: message.id,
         text: toPlainText(input.text),
-        blocks: [{ type: "markdown", text: input.text }],
+        blocks: markdownBlocks(input.text),
       },
       "json",
       ctx.signal,
