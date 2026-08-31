@@ -29,4 +29,5 @@ recipe image or starts an `introspection dev` overlay.
 The package calls the Slack Web API. It does not use hosted MCP, Socket Mode,
 WebSockets, or streaming.
 
-See the [Slack tool guide](../../docs/slack.md) for tool behavior and testing.
+See the [Slack tool guide](https://github.com/introspection-org/recipes/blob/main/docs/slack.md)
+for tool behavior and testing.

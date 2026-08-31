@@ -573,4 +573,10 @@ describe("Slack formatting", () => {
       { type: "markdown", text: "b" },
     ]);
   });
+
+  it("rejects Markdown that would exceed Slack's 50 block limit", () => {
+    expect(() => slackMessageBody("a".repeat(12_000 * 50 + 1))).toThrow(
+      "Slack Markdown exceeds the 50 block limit for one message",
+    );
+  });
 });

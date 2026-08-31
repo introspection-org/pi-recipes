@@ -4,11 +4,20 @@ export interface SlackMessageBody {
 }
 
 const SLACK_MARKDOWN_BLOCK_MAX_LENGTH = 12_000;
+const SLACK_MESSAGE_MAX_BLOCKS = 50;
 
 function markdownBlocks(
   markdown: string,
 ): Array<{ type: "markdown"; text: string }> {
   const codePoints = Array.from(markdown);
+  if (
+    codePoints.length >
+    SLACK_MARKDOWN_BLOCK_MAX_LENGTH * SLACK_MESSAGE_MAX_BLOCKS
+  ) {
+    throw new RangeError(
+      "Slack Markdown exceeds the 50 block limit for one message",
+    );
+  }
   if (codePoints.length === 0) {
     return [{ type: "markdown", text: "" }];
   }
