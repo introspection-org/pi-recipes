@@ -6,6 +6,7 @@
   "label": "autorelease: pending-root",
   "release-label": "autorelease: tagged-root",
   "always-update": true,
+  "group-pull-request-title-pattern": "chore(${branch}): release ${version}",
   "packages": {
     ".": {
       "release-type": "node",
@@ -16,6 +17,7 @@
       "release-type": "node",
       "package-name": "@introspection-ai/recipe-channel-slack",
       "include-component-in-tag": true,
+      "initial-version": "0.1.0",
       "bump-minor-pre-major": true
     }
   },

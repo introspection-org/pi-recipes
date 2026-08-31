@@ -634,7 +634,12 @@ describe("release train isolation", () => {
     const root = join(import.meta.dirname, "..");
     const rootConfig = JSON.parse(
       readFileSync(join(root, "release-please-config.json"), "utf8")
-    ) as { label?: string; "release-label"?: string };
+    ) as {
+      label?: string;
+      "release-label"?: string;
+      "group-pull-request-title-pattern"?: string;
+      packages?: Record<string, { "initial-version"?: string }>;
+    };
     const checkerConfig = JSON.parse(
       readFileSync(join(root, "release-please-checker-config.json"), "utf8")
     ) as {
@@ -646,6 +651,13 @@ describe("release train isolation", () => {
     expect(rootConfig).toMatchObject({
       label: "autorelease: pending-root",
       "release-label": "autorelease: tagged-root",
+      "group-pull-request-title-pattern":
+        "chore(${branch}): release ${version}",
+      packages: {
+        "packages/channels/slack": {
+          "initial-version": "0.1.0",
+        },
+      },
     });
     expect(checkerConfig).toMatchObject({
       label: "autorelease: pending-checker",
@@ -655,6 +667,27 @@ describe("release train isolation", () => {
       "group-pull-request-title-pattern":
         "chore(${branch}): release introspection-recipe-check libraries",
     });
+  });
+
+  it("does not record an unpublished Slack package version", () => {
+    const root = join(import.meta.dirname, "..");
+    const manifest = JSON.parse(
+      readFileSync(join(root, ".release-please-manifest.json"), "utf8")
+    ) as Record<string, string>;
+
+    expect(manifest["packages/channels/slack"]).toBeUndefined();
+  });
+
+  it("fails visibly when a merged root release PR remains pending", () => {
+    const root = join(import.meta.dirname, "..");
+    const workflow = readFileSync(
+      join(root, ".github", "workflows", "release-please.yml"),
+      "utf8"
+    );
+
+    expect(workflow).toContain("name: Verify root release state");
+    expect(workflow).toContain('.name == "autorelease: pending-root"');
+    expect(workflow).toContain("Merged root release PRs remain untagged");
   });
 
   it("fails visibly when a merged checker release PR remains pending", () => {
