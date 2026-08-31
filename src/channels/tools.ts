@@ -12,18 +12,13 @@ import type {
 /**
  * The neutral operation vocabulary.
  *
- * These ids are what a Recipe writes in `package.json#pi.connectors[].tools.include`;
- * the registered Pi tool name is `channel_<id>`. The same id means the same
- * thing on every provider, which is the whole point: one prompt, one tool
- * allowlist, any channel.
+ * These ids are private to the channel implementation. An agent writes the
+ * complete `channel_<id>` name in its YAML tool list.
  */
 export const CHANNEL_TOOL_IDS = [
-  "info",
   "reply",
-  "history",
+  "read",
   "react",
-  "edit",
-  "retract",
   "attach",
   "fetch_file",
   "post_document",
@@ -33,9 +28,8 @@ export type ChannelToolId = (typeof CHANNEL_TOOL_IDS)[number];
 
 /** Active without a search. The rest are reachable through `tool_search`. */
 const DEFAULT_ACTIVE: readonly ChannelToolId[] = [
-  "info",
   "reply",
-  "history",
+  "read",
   "react",
 ];
 
@@ -47,11 +41,9 @@ export function channelToolName(id: ChannelToolId): string {
 export function channelToolIdsFor(
   capabilities: ChannelCapabilities,
 ): ChannelToolId[] {
-  const supported: ChannelToolId[] = ["info", "reply"];
-  if (capabilities.history !== false) supported.push("history");
+  const supported: ChannelToolId[] = ["reply"];
+  if (capabilities.read !== false) supported.push("read");
   if (capabilities.react) supported.push("react");
-  if (capabilities.edit) supported.push("edit");
-  if (capabilities.retract) supported.push("retract");
   if (capabilities.attach) supported.push("attach");
   if (capabilities.fetchFile) supported.push("fetch_file");
   if (capabilities.documents !== false) supported.push("post_document");
@@ -74,18 +66,12 @@ export function channelConnectorTools(capabilities: ChannelCapabilities) {
 function assertImplemented(adapter: ChannelAdapter): void {
   const missing = channelToolIdsFor(adapter.capabilities).filter((id) => {
     switch (id) {
-      case "info":
-        return typeof adapter.info !== "function";
       case "reply":
         return typeof adapter.reply !== "function";
-      case "history":
-        return typeof adapter.history !== "function";
+      case "read":
+        return typeof adapter.read !== "function";
       case "react":
         return typeof adapter.react !== "function";
-      case "edit":
-        return typeof adapter.edit !== "function";
-      case "retract":
-        return typeof adapter.retract !== "function";
       case "attach":
         return typeof adapter.attach !== "function";
       case "fetch_file":
@@ -152,7 +138,7 @@ function channelContextPrompt(
     `Channel metadata: ${JSON.stringify(metadata)}`,
     "",
     "Channel tools are bound to the conversation that created this task.",
-    "No message history is included here. Use channel_history when it is available and you need earlier messages.",
+    "No messages are included here. Use channel_read when it is available and you need earlier messages.",
   ].join("\n");
 }
 
@@ -194,24 +180,6 @@ export function registerChannelTools(
     if (supported.has(id) && selected.has(id)) definitions.set(id, define());
   };
 
-  register("info", () => ({
-    name: channelToolName("info"),
-    label: "Channel info",
-    description:
-      "Describe the conversation this task answers: provider, conversation name, permalink when available, and whether it is threaded. Every other channel tool already acts on this conversation, so its identifiers are not needed and cannot be supplied.",
-    parameters: Type.Object({}, { additionalProperties: false }),
-    executionMode: "sequential",
-    async execute(_toolCallId: string, _params: unknown, signal?: AbortSignal) {
-      const target = await adapter.info(context(signal));
-      return toolResult({
-        provider: target.provider,
-        name: target.name ?? null,
-        permalink: target.permalink ?? null,
-        threaded: Boolean(target.thread),
-      });
-    },
-  }));
-
   register("reply", () => ({
     name: channelToolName("reply"),
     label: "Reply in channel",
@@ -231,11 +199,11 @@ export function registerChannelTools(
     },
   }));
 
-  register("history", () => ({
-    name: channelToolName("history"),
-    label: "Read channel history",
+  register("read", () => ({
+    name: channelToolName("read"),
+    label: "Read earlier messages",
     description:
-      adapter.capabilities.history === "thread"
+      adapter.capabilities.read === "thread"
         ? "Read earlier messages in this conversation's thread, most recent last."
         : "Read earlier messages in this conversation, most recent last.",
     parameters: Type.Object(
@@ -255,7 +223,7 @@ export function registerChannelTools(
         ? refs.resolveCursor(params.cursor)
         : undefined;
       return toolResult(
-        await adapter.history!(context(signal), {
+        await adapter.read!(context(signal), {
           limit: params.limit,
           cursor,
         }),
@@ -289,53 +257,6 @@ export function registerChannelTools(
     },
   }));
 
-  register("edit", () => ({
-    name: channelToolName("edit"),
-    label: "Edit a message",
-    description:
-      "Replace the text of a message this agent posted. Messages from other authors cannot be edited.",
-    parameters: Type.Object(
-      {
-        message: Type.String({ minLength: 1 }),
-        text: Type.String({ minLength: 1 }),
-      },
-      { additionalProperties: false },
-    ),
-    executionMode: "sequential",
-    async execute(
-      _toolCallId: string,
-      params: { message: string; text: string },
-      signal?: AbortSignal,
-    ) {
-      return toolResult(
-        await adapter.edit!(context(signal), {
-          ref: params.message,
-          text: params.text,
-        }),
-      );
-    },
-  }));
-
-  register("retract", () => ({
-    name: channelToolName("retract"),
-    label: "Retract a message",
-    description:
-      "Delete a message this agent posted. Messages from other authors cannot be retracted.",
-    parameters: Type.Object(
-      { message: Type.String({ minLength: 1 }) },
-      { additionalProperties: false },
-    ),
-    executionMode: "sequential",
-    async execute(
-      _toolCallId: string,
-      params: { message: string },
-      signal?: AbortSignal,
-    ) {
-      await adapter.retract!(context(signal), { ref: params.message });
-      return toolResult({ retracted: true });
-    },
-  }));
-
   register("attach", () => ({
     name: channelToolName("attach"),
     label: "Attach a file",
@@ -363,7 +284,7 @@ export function registerChannelTools(
     name: channelToolName("fetch_file"),
     label: "Fetch a channel file",
     description:
-      "Download a file shared in this conversation into the task workspace and return its local path, size, and digest. Takes a file reference from a message returned by channel_history — a provider file id is not accepted. The bytes stay on disk; they are not read into this conversation.",
+      "Download a file shared in this conversation into the task workspace and return its local path, size, and digest. Takes a file reference from a message returned by channel_read. A provider file id is not accepted. The bytes stay on disk; they are not read into this conversation.",
     parameters: Type.Object(
       {
         file: Type.String({ minLength: 1, maxLength: 200 }),
@@ -415,19 +336,21 @@ export function registerChannelTools(
       return;
     }
 
-    let info = target;
+    let promptTarget = target;
     const signal = ctx.signal;
-    try {
-      info = await adapter.info({ target, refs, signal });
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      // Provider metadata is useful but optional. The trusted task origin is
-      // enough to tell the model which provider and conversation scope apply.
+    if (adapter.enrichTarget) {
+      try {
+        promptTarget = await adapter.enrichTarget({ target, refs, signal });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        // Provider metadata is useful but optional. The trusted task origin is
+        // enough to tell the model which provider and conversation scope apply.
+      }
     }
 
     return {
       systemPrompt: `${event.systemPrompt}\n\n${channelContextPrompt(
-        info,
+        promptTarget,
         registeredToolIds,
       )}`,
     };

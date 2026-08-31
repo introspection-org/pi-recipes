@@ -409,8 +409,7 @@ describe("Recipes extension for Pi", () => {
           "model:",
           "  name: openai/gpt-4.1",
           "tools:",
-          "  - channel_info",
-          "  - channel_history",
+          "  - channel_read",
           "  - channel_react",
           "",
         ].join("\n")
@@ -429,30 +428,13 @@ describe("Recipes extension for Pi", () => {
 
       expect([...pi.tools.keys()].sort()).toEqual([
         "agent",
-        "channel_history",
-        "channel_info",
         "channel_react",
+        "channel_read",
       ]);
       expect(pi.activeTools.sort()).toEqual([
-        "channel_history",
-        "channel_info",
         "channel_react",
+        "channel_read",
       ]);
-      const origin = await pi.tools.get("channel_info")?.execute(
-        "tool-call",
-        {},
-        undefined,
-        undefined,
-        extensionContext(root)
-      );
-      // channel_info deliberately withholds the conversation id: every tool
-      // already acts on this conversation, so the model has no use for one.
-      expect(origin?.details).toEqual({
-        provider: "slack",
-        name: null,
-        permalink: null,
-        threaded: false,
-      });
       expect(pi.activeTools).toContain("channel_react");
     } finally {
       rmSync(root, { recursive: true, force: true });

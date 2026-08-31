@@ -11,8 +11,9 @@
  *   the trusted `ChannelTarget` the host resolved; no tool schema built from
  *   these types carries a channel, thread, workspace, or user argument.
  * - **Unsupported is absent.** Tools are registered from `ChannelCapabilities`,
- *   so a channel that cannot edit simply has no edit tool. A tool that always
- *   answers "unsupported" costs a model turn and teaches nothing.
+ *   so a channel that cannot read earlier messages simply has no read tool. A
+ *   tool that always answers "unsupported" costs a model turn and teaches
+ *   nothing.
  *
  * Operations outside this bound channel set, including workspace search,
  * directory lookups, and sends to another conversation, are unsupported. Their
@@ -41,10 +42,8 @@ export interface ChannelTarget {
  */
 export interface ChannelCapabilities {
   readonly react: boolean;
-  readonly edit: boolean;
-  readonly retract: boolean;
   /** `false`, or the widest scope the provider will return. */
-  readonly history: false | "thread" | "channel";
+  readonly read: false | "thread" | "channel";
   readonly attach: boolean;
   readonly fetchFile: boolean;
   readonly documents: false | "native" | "attachment";
@@ -58,8 +57,7 @@ export interface ChannelCapabilities {
  *
  * Never a provider id. The model cannot mint one, so it cannot name a message
  * it has not seen, and a provider changing its id format never reaches a tool
- * schema. The store behind it also records whether the agent authored the
- * message, which is what bounds `edit` and `retract`.
+ * schema.
  */
 export type MessageRef = string;
 
@@ -86,7 +84,7 @@ export interface ChannelAttachment {
   /**
    * Opaque session handle, not the provider's file id.
    *
-   * Minted when the file is seen in this conversation's history, and the only
+   * Minted when the file is seen in this conversation, and the only
    * thing `channel_fetch_file` accepts. A raw provider file id would be an
    * addressing argument in everything but name: a bot can usually read files
    * from every conversation it belongs to, so a model that could pass one
@@ -119,7 +117,7 @@ export interface ChannelPostResult {
   readonly bridge_error?: string;
 }
 
-export interface ChannelHistoryPage {
+export interface ChannelReadPage {
   readonly messages: readonly ChannelMessage[];
   readonly cursor?: ChannelCursor;
 }
@@ -138,7 +136,6 @@ export interface ChannelMessageIdentity {
   readonly conversation: string;
   readonly id: string;
   readonly thread?: string | null;
-  readonly authoredByAgent?: boolean;
   readonly permalink?: string;
 }
 
@@ -157,8 +154,6 @@ export interface ChannelFileIdentity {
 export interface ChannelRefResolver {
   message(identity: ChannelMessageIdentity): MessageRef;
   resolveMessage(ref: MessageRef): ChannelMessageIdentity;
-  /** Throws unless the agent authored the message. Guards edit and retract. */
-  resolveAuthored(ref: MessageRef): ChannelMessageIdentity;
   cursor(providerCursor: string): ChannelCursor;
   resolveCursor(cursor: ChannelCursor): string;
   /** Mint a handle for a file seen in this conversation. */
@@ -185,8 +180,8 @@ export interface ChannelAdapter {
   readonly provider: string;
   readonly capabilities: ChannelCapabilities;
 
-  /** The bound conversation, for a model that needs to name it in prose. */
-  info(ctx: ChannelAdapterContext): Promise<ChannelTarget>;
+  /** Add provider metadata to the trusted target before it enters the prompt. */
+  enrichTarget?(ctx: ChannelAdapterContext): Promise<ChannelTarget>;
   reply(
     ctx: ChannelAdapterContext,
     input: { text: string },
@@ -196,18 +191,10 @@ export interface ChannelAdapter {
     ctx: ChannelAdapterContext,
     input: { ref: MessageRef; emoji: string },
   ): Promise<void>;
-  edit?(
-    ctx: ChannelAdapterContext,
-    input: { ref: MessageRef; text: string },
-  ): Promise<ChannelPostResult>;
-  retract?(
-    ctx: ChannelAdapterContext,
-    input: { ref: MessageRef },
-  ): Promise<void>;
-  history?(
+  read?(
     ctx: ChannelAdapterContext,
     input: { limit?: number; cursor?: string },
-  ): Promise<ChannelHistoryPage>;
+  ): Promise<ChannelReadPage>;
   attach?(
     ctx: ChannelAdapterContext,
     input: { path: string; title?: string; comment?: string },

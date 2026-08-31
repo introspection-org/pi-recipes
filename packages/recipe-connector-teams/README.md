@@ -12,19 +12,15 @@ A Recipe installs it when its `package.json#pi.connectors` list includes the
   "pi": {
     "connectors": [
       {
-        "provider": "teams",
-        "package": "@introspection-ai/recipe-connector-teams",
-        "tools": { "include": ["info", "reply", "edit", "retract"] }
+        "provider": "teams"
       }
     ]
   }
 }
 ```
 
-The package speaks the Bot Framework Connector — the credential every Teams bot
-has. It registers the same tool names Slack does, minus what Teams cannot do
-without tenant-granted Microsoft Graph consent: there is no `channel_history`,
-no `channel_react`, and no `channel_fetch_file`. Those tools are absent rather
-than failing, which is what the capability descriptor is for.
+The package uses the Bot Framework Connector credential that every Teams bot
+has. It registers `channel_reply`. Reading earlier messages, reactions, and
+file access need Microsoft Graph consent, so those tools are absent.
 
 See the [Teams connector guide](../../docs/teams.md).

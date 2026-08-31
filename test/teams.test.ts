@@ -155,12 +155,7 @@ describe("Teams channel tools", () => {
 
   it("registers only what Teams can do without tenant Graph consent", () => {
     const { pi } = teamsTools();
-    expect([...pi.tools.keys()].sort()).toEqual([
-      "channel_edit",
-      "channel_info",
-      "channel_reply",
-      "channel_retract",
-    ]);
+    expect([...pi.tools.keys()].sort()).toEqual(["channel_reply"]);
   });
 
   it("replies into the bound conversation thread", async () => {
@@ -182,20 +177,8 @@ describe("Teams channel tools", () => {
     expect(result.details.ref).toMatch(/^msg_/);
   });
 
-  it("bounds edit to the agent's own message", async () => {
-    const { pi } = teamsTools();
-    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
-      details: { ref: string };
-    };
-    await expect(
-      call(pi, "channel_edit", { message: "msg_forged", text: "x" }),
-    ).rejects.toThrow(/Unknown message reference/);
-
-    await call(pi, "channel_edit", { message: posted.details.ref, text: "second" });
-  });
-
   it("declares the capability gaps that make it a real second provider", () => {
-    expect(TEAMS_CHANNEL_CAPABILITIES.history).toBe(false);
+    expect(TEAMS_CHANNEL_CAPABILITIES.read).toBe(false);
     expect(TEAMS_CHANNEL_CAPABILITIES.react).toBe(false);
     expect(TEAMS_CHANNEL_CAPABILITIES.fetchFile).toBe(false);
     expect(TEAMS_CHANNEL_CAPABILITIES.resolveAuthors).toBe(true);

@@ -40,19 +40,20 @@ export {
  * `@introspection-ai/recipes/channels`, so Slack cannot drift from any other
  * channel and cannot grow an addressing argument of its own.
  *
- * Recipes declare the neutral operation ids:
+ * Recipes declare the provider. Each agent then selects complete tool names in
+ * its YAML file.
  *
  * ```json
- * { "pi": { "connectors": [{
- *   "provider": "slack",
- *   "package": "@introspection-ai/recipe-connector-slack",
- *   "tools": { "include": ["info", "reply", "history", "react", "fetch_file"] }
- * }]}}
+ * { "pi": { "connectors": [{ "provider": "slack" }] } }
+ * ```
+ *
+ * ```yaml
+ * tools: [channel_reply, channel_read, channel_react, channel_fetch_file]
  * ```
  *
  * Operations outside the bound channel tool set, including workspace search,
  * directory lookups, and posting to another conversation, are unsupported.
- * Their contract and access model are deferred to a separate proposal.
+ * A separate proposal can define their contract and access model.
  */
 export const slackRecipeConnectorModule = createChannelConnectorModule({
   provider: "slack",

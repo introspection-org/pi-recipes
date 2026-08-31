@@ -1,13 +1,9 @@
 # Teams channel connector
 
 `@introspection-ai/recipe-connector-teams` is the Microsoft Teams adapter for
-the [channel tools](channels.md). It exists as much to prove the abstraction as
-to serve Teams: it registers the same tool names Slack does, with a materially
-smaller capability set, and a Recipe written against the shared subset runs on
-both without a prompt change.
-
-It speaks the **Bot Framework Connector** — the credential every Teams bot has —
-and nothing else.
+the [channel tools](channels.md). It uses the Bot Framework Connector credential
+that every Teams bot has. A Recipe that only selects `channel_reply` can use
+Slack or Teams without changing its prompt.
 
 ## Declare it
 
@@ -19,9 +15,7 @@ and nothing else.
   "pi": {
     "connectors": [
       {
-        "provider": "teams",
-        "package": "@introspection-ai/recipe-connector-teams",
-        "tools": { "include": ["info", "reply", "edit", "retract"] }
+        "provider": "teams"
       }
     ]
   }
@@ -32,16 +26,13 @@ and nothing else.
 
 | Tool | Bot Connector operation |
 | --- | --- |
-| `channel_info` | the bound conversation, from the task origin |
 | `channel_reply` | `POST /v3/conversations/{id}/activities[/{replyToId}]` |
-| `channel_edit` | `PUT /v3/conversations/{id}/activities/{id}` |
-| `channel_retract` | `DELETE /v3/conversations/{id}/activities/{id}` |
 
 Replies are posted with `textFormat: "markdown"`, which Teams renders natively.
 
 ## What Teams does not register, and why
 
-`channel_history`, `channel_react`, `channel_fetch_file` and the document tools
+`channel_read`, `channel_react`, `channel_fetch_file` and the document tools
 are **absent**, not failing:
 
 - **History** requires Microsoft Graph with resource-specific consent granted by
@@ -49,8 +40,8 @@ are **absent**, not failing:
 - **Reactions** likewise go through Graph.
 - **File download**: inbound Teams files are Graph `hostedContents` or SharePoint
   links. Unlike Slack there is no single bot-token download path.
-- **Permalinks** come from the Graph `webUrl`, behind the same consent — so
-  reply results carry no permalink.
+- **Permalinks** come from the Graph `webUrl`, which needs the same consent.
+  Reply results therefore carry no permalink.
 
 The agent therefore works from the turn it was given. Author display names are
 the one thing Teams gives away for free: they ride on the inbound activity, so
@@ -83,8 +74,8 @@ exchanged for the bot credential at the egress boundary, exactly as for Slack.
 
 ## Status
 
-The adapter and its tests ship here. The platform side — connector catalog
-entry, AAD client-credentials auth mode, the
+The adapter and its tests ship here. The platform work includes the connector
+catalog entry, AAD client credentials auth mode, the
 `POST /v1/webhooks/teams/{connector_id}` ingress verified against the Bot
-Framework JWKS, and the Teams member key — is a separate change; until it
-lands, Teams runs locally and through a custom host.
+Framework JWKS, and the Teams member key. That work is a separate change. Until
+it lands, Teams runs locally and through a custom host.

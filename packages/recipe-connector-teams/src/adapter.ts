@@ -2,7 +2,6 @@ import type {
   ChannelAdapter,
   ChannelAdapterContext,
   ChannelCapabilities,
-  ChannelHistoryPage,
   ChannelMessage,
   ChannelPostResult,
   ChannelTarget,
@@ -16,11 +15,11 @@ import { TeamsBotSession, type TeamsActivity, type TeamsEnv } from "./client.js"
  *
  * The differences from Slack are the point of having a second adapter:
  *
- * - **`history` is false.** Reading a Teams conversation needs Microsoft Graph
+ * - **`read` is false.** Reading a Teams conversation needs Microsoft Graph
  *   with resource-specific consent granted by the tenant admin; the Bot
  *   Connector a bot always has cannot read back. Rather than register a tool
  *   that fails against most tenants, the capability is false and
- *   `channel_history` is simply absent — the agent works from the turn it was
+ *   `channel_read` is simply absent. The agent works from the turn it was
  *   given. A tenant-specific build can flip this once RSC is proven.
  * - **`permalinks` is false.** A Teams message link comes from the Graph
  *   `webUrl`, which is behind the same consent.
@@ -32,9 +31,7 @@ import { TeamsBotSession, type TeamsActivity, type TeamsEnv } from "./client.js"
  */
 export const TEAMS_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   react: false,
-  edit: true,
-  retract: true,
-  history: false,
+  read: false,
   attach: false,
   fetchFile: false,
   documents: false,
@@ -58,10 +55,6 @@ export class TeamsChannelAdapter implements ChannelAdapter {
 
   private activitiesUrl(conversation: string): string {
     return `${this.session.serviceUrl()}/v3/conversations/${encodeURIComponent(conversation)}/activities`;
-  }
-
-  async info(ctx: ChannelAdapterContext): Promise<ChannelTarget> {
-    return ctx.target;
   }
 
   async reply(
@@ -94,7 +87,6 @@ export class TeamsChannelAdapter implements ChannelAdapter {
       conversation: ctx.target.conversation,
       id: activity.id,
       thread: thread ?? activity.id,
-      authoredByAgent: true,
     });
 
     let bridgeRecorded = false;
@@ -120,32 +112,6 @@ export class TeamsChannelAdapter implements ChannelAdapter {
     };
   }
 
-  async edit(
-    ctx: ChannelAdapterContext,
-    input: { ref: MessageRef; text: string },
-  ): Promise<ChannelPostResult> {
-    const message = ctx.refs.resolveAuthored(input.ref);
-    await this.session.call(
-      `${this.activitiesUrl(message.conversation)}/${encodeURIComponent(message.id)}`,
-      {
-        method: "PUT",
-        body: { type: "message", textFormat: "markdown", text: input.text },
-        signal: ctx.signal,
-      },
-    );
-    return { ref: input.ref };
-  }
-
-  async retract(
-    ctx: ChannelAdapterContext,
-    input: { ref: MessageRef },
-  ): Promise<void> {
-    const message = ctx.refs.resolveAuthored(input.ref);
-    await this.session.call(
-      `${this.activitiesUrl(message.conversation)}/${encodeURIComponent(message.id)}`,
-      { method: "DELETE", signal: ctx.signal },
-    );
-  }
 }
 
 /** Shape an inbound activity into the neutral message form, for host use. */
@@ -167,9 +133,6 @@ export function teamsActivityMessage(
     // opaque reference backed by a real download path.
   };
 }
-
-/** Never used while `history` is false; kept honest by the capability check. */
-export type TeamsHistoryPage = ChannelHistoryPage;
 
 export function teamsChannelTarget(env: TeamsEnv): ChannelTarget {
   const conversation =

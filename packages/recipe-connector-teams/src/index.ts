@@ -29,14 +29,13 @@ export {
  *
  * The agent-facing surface is the same vocabulary Slack registers, minus what
  * Teams cannot do without tenant-granted Graph consent: there is no
- * `channel_history`, no `channel_react`, and no `channel_fetch_file`, because
+ * `channel_read`, no `channel_react`, and no `channel_fetch_file`, because
  * those tools would fail against most tenants and a tool that reliably fails
  * is worse than one that is absent.
  *
- * That asymmetry is the point of the capability descriptor. A Recipe written
- * against `channel_reply` and `channel_edit` runs on both providers unchanged;
- * a Recipe that also wants history has to say so, and will find the tool
- * missing on Teams rather than discovering it at runtime.
+ * A Recipe written against `channel_reply` runs on both providers unchanged.
+ * A Recipe that also wants to read earlier messages will find the tool missing
+ * on Teams rather than discovering the gap at runtime.
  */
 export const teamsRecipeConnectorModule = createChannelConnectorModule({
   provider: "teams",

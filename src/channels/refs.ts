@@ -22,11 +22,6 @@ function handle(prefix: string): string {
  *
  * The model only ever sees a handle this store minted, so it cannot name a
  * message it was never shown, and provider id formats stay out of tool schemas.
- * The store is also where authorship lives: `resolveAuthored` is the single
- * check behind `channel_edit` and `channel_retract`, which is what keeps those
- * primitives scoped to the agent's own messages rather than to everything the
- * bot credential could reach.
- *
  * Handles die with the session. A ref from an earlier task is unresolvable
  * rather than dangerous.
  */
@@ -41,14 +36,10 @@ export class ChannelRefStore implements ChannelRefResolver {
     const key = `${identity.conversation} ${identity.id}`;
     const existing = this.byIdentity.get(key);
     if (existing) {
-      // Re-minting would let one message answer to two handles, and a later
-      // read (which cannot know authorship) would erase an earlier
-      // agent-authored mint.
       const previous = this.messages.get(existing)!;
       this.messages.set(existing, {
         ...previous,
         ...identity,
-        authoredByAgent: previous.authoredByAgent || identity.authoredByAgent,
         permalink: identity.permalink ?? previous.permalink,
       });
       return existing;
@@ -69,16 +60,6 @@ export class ChannelRefStore implements ChannelRefResolver {
     return identity;
   }
 
-  resolveAuthored(ref: MessageRef): ChannelMessageIdentity {
-    const identity = this.resolveMessage(ref);
-    if (!identity.authoredByAgent) {
-      throw new Error(
-        `Message '${ref}' was not sent by this agent. Only messages the agent posted can be edited or retracted.`,
-      );
-    }
-    return identity;
-  }
-
   cursor(providerCursor: string): ChannelCursor {
     const cursor = handle(CURSOR_PREFIX);
     this.cursors.set(cursor, providerCursor);
@@ -89,7 +70,7 @@ export class ChannelRefStore implements ChannelRefResolver {
     const providerCursor = this.cursors.get(cursor);
     if (!providerCursor) {
       throw new Error(
-        `Unknown cursor '${cursor}'. Use a cursor returned by a previous channel_history call.`,
+        `Unknown cursor '${cursor}'. Use a cursor returned by a previous channel_read call.`,
       );
     }
     return providerCursor;

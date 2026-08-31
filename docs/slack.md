@@ -31,20 +31,17 @@ Commit the package manager lockfile. The host loads the package only for a
 Recipe that declares the connector.
 
 The connector package provides the complete Slack tool catalog. Each agent
-lists the exact `channel_*` tools it may call in its YAML file. `channel_info`,
-`channel_reply` and `channel_history` are active from the start; the rest are
-inactive until the model finds them through `tool_search`.
+lists the exact `channel_*` tools it may call in its YAML file. `channel_reply`,
+`channel_read`, and `channel_react` are active from the start. Other selected
+tools are available through `tool_search`.
 
 ## What Slack registers
 
 | Tool | Slack operation |
 | --- | --- |
-| `channel_info` | `conversations.info` and `chat.getPermalink` for a thread root; returns the permalink as conversation metadata |
 | `channel_reply` | `chat.postMessage` into the origin channel and thread |
-| `channel_history` | `conversations.replies` in a thread, else `conversations.history` |
+| `channel_read` | `conversations.replies` in a thread, else `conversations.history` |
 | `channel_react` | `reactions.add` |
-| `channel_edit` | `chat.update` |
-| `channel_retract` | `chat.delete` |
 | `channel_fetch_file` | `files.info` plus a private file download |
 
 Slack history returns at most 15 messages to the agent per call. For a thread,
@@ -63,10 +60,10 @@ Slack restricts those installations to 15 replies and one request per minute.
 and canvases are not implemented in this package yet, and the capability
 descriptor says so rather than registering tools that fail.
 
-None of these take a channel or thread argument — every one acts on the
+None of these take a channel or thread argument. Every tool acts on the
 conversation the task came from. Author display names (`users.info`) and
 permalinks (`chat.getPermalink`) are resolved inside the adapter and attached to
-history rows and reply results, so there is no user-lookup or permalink tool.
+message rows and reply results, so there is no user lookup or permalink tool.
 
 Workspace search, channel listing and joining, directory lookup, and
 cross-channel posting are unsupported. Their contract and access model are
@@ -119,8 +116,8 @@ inbound task or reply bridge, because no Data Plane task exists.
 ## File downloads
 
 `channel_fetch_file` writes a file under the task files directory and returns its
-path, media type, size, and SHA-256 digest — bytes land in the workspace, never
-in model context. It accepts only a `file_…` handle from a `channel_history`
+path, media type, size, and SHA-256 digest. The bytes land in the workspace and
+not in model context. It accepts only a `file_…` handle from a `channel_read`
 attachment, so the bot's cross-channel file read is not reachable from model
 input. On the wire it accepts only `files.slack.com` download URLs, rejects
 redirects, caps the body at 100 MiB, checks the declared size, and removes

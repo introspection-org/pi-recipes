@@ -447,7 +447,7 @@ describe("Slack channel tools", () => {
     );
 
     await expect(
-      adapter.info({
+      adapter.enrichTarget({
         target: { provider: "slack", conversation: "C1", thread: null },
         refs: new ChannelRefStore(),
       }),
@@ -483,8 +483,8 @@ describe("Slack channel tools", () => {
   it("posts to the context's conversation, not the session's own origin", async () => {
     // A direct-host caller can bind a context that differs from the session
     // environment. Every other tool acts on the context, so reply must too —
-    // otherwise channel_info describes one conversation and channel_reply
-    // writes to another.
+    // otherwise the prompt describes one conversation and channel_reply writes
+    // to another.
     const pi = createMockExtensionAPI();
     const fetchImpl = fakeFetch();
     registerChannelTools(
@@ -501,7 +501,7 @@ describe("Slack channel tools", () => {
     });
   });
 
-  it("returns unthreaded history oldest-first, as the tool promises", async () => {
+  it("returns unthreaded messages oldest-first, as the tool promises", async () => {
     // conversations.history is newest-first while conversations.replies is
     // oldest-first; a backwards transcript still reads as a conversation, so
     // nothing downstream would catch it.
@@ -518,7 +518,7 @@ describe("Slack channel tools", () => {
       new SlackChannelAdapter(new SlackFileSession({ env: cloudEnv, fetchImpl })),
       { target: { provider: "slack", conversation: "C1", thread: null } },
     );
-    const result = (await call(pi, "channel_history", {})) as {
+    const result = (await call(pi, "channel_read", {})) as {
       details: { messages: Array<{ text: string }> };
     };
     expect(result.details.messages.map((m) => m.text)).toEqual([
@@ -528,14 +528,14 @@ describe("Slack channel tools", () => {
     ]);
   });
 
-  it("attaches Slack permalinks to history rows", async () => {
+  it("attaches Slack permalinks to message rows", async () => {
     const permalink = "https://example.slack.com/archives/C1/p100100";
     const { pi } = slackTools({
       messages: [{ ts: "100.1", text: "first", user: "U1" }],
       permalinks: { "100.1": permalink },
     });
 
-    const history = (await call(pi, "channel_history", {})) as {
+    const history = (await call(pi, "channel_read", {})) as {
       details: { messages: Array<{ permalink?: string }> };
     };
 
@@ -560,7 +560,7 @@ describe("Slack channel tools", () => {
       },
     });
 
-    const first = (await call(pi, "channel_history", { limit: 100 })) as {
+    const first = (await call(pi, "channel_read", { limit: 100 })) as {
       details: { messages: Array<{ text: string }>; cursor?: string };
     };
 
@@ -575,7 +575,7 @@ describe("Slack channel tools", () => {
       "1000",
     );
 
-    const second = (await call(pi, "channel_history", {
+    const second = (await call(pi, "channel_read", {
       cursor: first.details.cursor,
     })) as {
       details: { messages: Array<{ text: string }>; cursor?: string };
@@ -605,7 +605,7 @@ describe("Slack channel tools", () => {
       ],
     });
 
-    const history = (await call(pi, "channel_history", {})) as {
+    const history = (await call(pi, "channel_read", {})) as {
       details: {
         messages: Array<{
           author: { id: string; display_name?: string };
@@ -649,7 +649,7 @@ describe("Slack channel tools", () => {
         },
         cwd,
       );
-      const history = (await call(pi, "channel_history", {})) as {
+      const history = (await call(pi, "channel_read", {})) as {
         details: { messages: Array<{ attachments?: Array<{ id: string }> }> };
       };
       const ref = history.details.messages[0]!.attachments![0]!.id;
@@ -670,13 +670,10 @@ describe("Slack channel tools", () => {
   it("registers the neutral surface Slack supports and nothing else", () => {
     const { pi } = slackTools();
     expect([...pi.tools.keys()].sort()).toEqual([
-      "channel_edit",
       "channel_fetch_file",
-      "channel_history",
-      "channel_info",
       "channel_react",
+      "channel_read",
       "channel_reply",
-      "channel_retract",
     ]);
   });
 
@@ -696,38 +693,6 @@ describe("Slack channel tools", () => {
     expect(JSON.stringify(result.details)).not.toContain("200.2");
   });
 
-  it("refuses to edit or retract a message the agent did not author", async () => {
-    const { pi } = slackTools();
-    const history = (await call(pi, "channel_history", {})) as {
-      details: { messages: Array<{ ref: string }> };
-    };
-    const theirs = history.details.messages[0]!.ref;
-
-    await expect(
-      call(pi, "channel_edit", { message: theirs, text: "rewritten" }),
-    ).rejects.toThrow(/not sent by this agent/);
-    await expect(call(pi, "channel_retract", { message: theirs })).rejects.toThrow(
-      /not sent by this agent/,
-    );
-  });
-
-  it("edits a message the agent posted, addressed only by its reference", async () => {
-    const { pi, fetchImpl } = slackTools();
-    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
-      details: { ref: string };
-    };
-
-    await call(pi, "channel_edit", {
-      message: posted.details.ref,
-      text: "second",
-    });
-
-    const update = JSON.parse(
-      String(fetchImpl.calls.find((c) => c.url.includes("chat.update"))!.init.body),
-    );
-    expect(update).toMatchObject({ channel: "C1", ts: "200.2" });
-  });
-
   it("rejects a reference the session never minted", async () => {
     const { pi } = slackTools();
     await expect(
@@ -735,9 +700,9 @@ describe("Slack channel tools", () => {
     ).rejects.toThrow(/Unknown message reference/);
   });
 
-  it("reads history bound to the origin conversation", async () => {
+  it("reads earlier messages from the bound conversation", async () => {
     const { pi, fetchImpl } = slackTools();
-    await call(pi, "channel_history", { limit: 5 });
+    await call(pi, "channel_read", { limit: 5 });
 
     const read = fetchImpl.calls.find((c) =>
       c.url.includes("conversations.replies"),

@@ -4,7 +4,7 @@ import type {
   ChannelAdapter,
   ChannelAdapterContext,
   ChannelCapabilities,
-  ChannelHistoryPage,
+  ChannelReadPage,
   ChannelLocalFile,
   ChannelMessage,
   ChannelPostResult,
@@ -15,7 +15,6 @@ import type {
 
 import type { SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
-import { toPlainText } from "./format.js";
 import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
 
 /**
@@ -29,9 +28,7 @@ import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
  */
 export const SLACK_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   react: true,
-  edit: true,
-  retract: true,
-  history: "channel",
+  read: "channel",
   attach: false,
   fetchFile: true,
   documents: false,
@@ -106,7 +103,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
 
   constructor(readonly session: SlackFileSession) {}
 
-  async info(ctx: ChannelAdapterContext): Promise<ChannelTarget> {
+  async enrichTarget(ctx: ChannelAdapterContext): Promise<ChannelTarget> {
     if (this.conversationName === undefined) {
       this.conversationName =
         ctx.target.name ??
@@ -143,7 +140,6 @@ export class SlackChannelAdapter implements ChannelAdapter {
       conversation: posted.channel,
       id: posted.ts,
       thread: posted.thread_ts,
-      authoredByAgent: true,
     });
     const permalink = await this.permalink(
       posted.channel,
@@ -175,45 +171,10 @@ export class SlackChannelAdapter implements ChannelAdapter {
     );
   }
 
-  async edit(
-    ctx: ChannelAdapterContext,
-    input: { ref: MessageRef; text: string },
-  ): Promise<ChannelPostResult> {
-    const message = ctx.refs.resolveAuthored(input.ref);
-    await this.session.call(
-      "chat.update",
-      {
-        channel: message.conversation,
-        ts: message.id,
-        text: toPlainText(input.text),
-        blocks: [{ type: "markdown", text: input.text }],
-      },
-      "json",
-      ctx.signal,
-    );
-    return {
-      ref: input.ref,
-      ...(message.permalink ? { permalink: message.permalink } : {}),
-    };
-  }
-
-  async retract(
-    ctx: ChannelAdapterContext,
-    input: { ref: MessageRef },
-  ): Promise<void> {
-    const message = ctx.refs.resolveAuthored(input.ref);
-    await this.session.call(
-      "chat.delete",
-      { channel: message.conversation, ts: message.id },
-      "form",
-      ctx.signal,
-    );
-  }
-
-  async history(
+  async read(
     ctx: ChannelAdapterContext,
     input: { limit?: number; cursor?: string },
-  ): Promise<ChannelHistoryPage> {
+  ): Promise<ChannelReadPage> {
     const thread = ctx.target.thread;
     const limit = Math.min(
       input.limit ?? SLACK_HISTORY_PAGE_LIMIT,

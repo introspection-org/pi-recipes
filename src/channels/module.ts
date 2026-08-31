@@ -25,10 +25,9 @@ export interface ChannelConnectorModuleOptions {
   /**
    * What this channel supports, as static data.
    *
-   * Declared separately from `createSession` because the loader narrows
-   * declared ids against supported ids before any session exists, and because
-   * a capability discovered by failing a call is a capability the agent has
-   * already wasted a turn on.
+   * Declared separately from `createSession` because the loader builds the tool
+   * catalog before any session exists. A capability discovered by failing a
+   * call would also waste an agent turn.
    */
   capabilities: ChannelCapabilities;
   /**
@@ -66,9 +65,9 @@ function sameCapabilities(
  * of the same operation, and neither can quietly grow an addressing argument,
  * because neither writes a tool schema at all.
  *
- * The result satisfies the existing connector contract unchanged, so the
- * manifest, the loader's fail-closed narrowing, and `tool_search` keep working
- * exactly as they do for a hand-written connector.
+ * The result satisfies the existing connector contract. The manifest selects
+ * the provider package, the agent list selects tools from its catalog, and
+ * `tool_search` exposes selected tools that are not active by default.
  */
 export function createChannelConnectorModule(
   options: ChannelConnectorModuleOptions,
@@ -97,12 +96,9 @@ export function createChannelConnectorModule(
           );
         }
         if (!sameCapabilities(session.adapter.capabilities, options.capabilities)) {
-          // The declared catalog is what the loader narrowed against; an
-          // adapter answering with a different set would register tools the
-          // Recipe never declared. Compared by value, not identity: the
-          // contract is that the descriptors agree, and an adapter that
-          // rebuilds or clones its static descriptor is not doing anything
-          // wrong.
+          // The loader selected tools from the declared catalog. An adapter
+          // with a different capability set would register a different tool
+          // surface. Compare values so an adapter may rebuild the descriptor.
           throw new Error(
             `Channel adapter '${options.provider}' returned capabilities that differ from its declared catalog`,
           );

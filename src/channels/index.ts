@@ -24,7 +24,7 @@ export type {
   ChannelCapabilities,
   ChannelCursor,
   ChannelFileIdentity,
-  ChannelHistoryPage,
+  ChannelReadPage,
   ChannelLocalFile,
   ChannelMessage,
   ChannelMessageIdentity,
