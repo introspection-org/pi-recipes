@@ -267,30 +267,32 @@ jobs:
           channel_names=()
           channel_versions=()
           channel_tags=()
-          for channel_dir in "${channel_dirs[@]}"; do
-            channel_name="$(node -p "require('./$channel_dir/package.json').name")"
-            channel_version="$(node -p "require('./$channel_dir/package.json').version")"
-            channel_tag="latest"
-            if [[ "$channel_version" == *-* ]]; then
-              channel_tag="beta"
-            fi
-            core_range="$(node -p "require('./$channel_dir/package.json').peerDependencies?.['@introspection-ai/recipes'] ?? require('./package.json').version")"
-            if [[ "$core_range" == workspace:* ]]; then
-              core_range="$(node -p "require('./package.json').version")"
-            fi
-            if ! npm view "@introspection-ai/recipes@$core_range" version >/dev/null 2>&1; then
-              echo "$channel_name@$channel_version requires an unpublished @introspection-ai/recipes version." >&2
-              exit 1
-            fi
-            if npm view "$channel_name@$channel_version" version >/dev/null 2>&1; then
-              echo "$channel_name@$channel_version is already published"
-            else
-              pnpm --filter "$channel_name" publish --access public --tag "$staging_tag" --no-git-checks
-            fi
-            channel_names+=("$channel_name")
-            channel_versions+=("$channel_version")
-            channel_tags+=("$channel_tag")
-          done
+          if [[ "${#channel_dirs[@]}" -gt 0 ]]; then
+            for channel_dir in "${channel_dirs[@]}"; do
+              channel_name="$(node -p "require('./$channel_dir/package.json').name")"
+              channel_version="$(node -p "require('./$channel_dir/package.json').version")"
+              channel_tag="latest"
+              if [[ "$channel_version" == *-* ]]; then
+                channel_tag="beta"
+              fi
+              core_range="$(node -p "require('./$channel_dir/package.json').peerDependencies?.['@introspection-ai/recipes'] ?? require('./package.json').version")"
+              if [[ "$core_range" == workspace:* ]]; then
+                core_range="$(node -p "require('./package.json').version")"
+              fi
+              if ! npm view "@introspection-ai/recipes@$core_range" version >/dev/null 2>&1; then
+                echo "$channel_name@$channel_version requires an unpublished @introspection-ai/recipes version." >&2
+                exit 1
+              fi
+              if npm view "$channel_name@$channel_version" version >/dev/null 2>&1; then
+                echo "$channel_name@$channel_version is already published"
+              else
+                pnpm --filter "$channel_name" publish --access public --tag "$staging_tag" --no-git-checks
+              fi
+              channel_names+=("$channel_name")
+              channel_versions+=("$channel_version")
+              channel_tags+=("$channel_tag")
+            done
+          fi
 
           # Move the normal tags only after every requested package exists.
           # The root tag moves last, so a failed channel package publish does
@@ -314,8 +316,10 @@ jobs:
               remove_staging_tag "$platform_name"
             done
           fi
-          if [[ "$publish_connector" == "true" ]]; then
-            remove_staging_tag "$connector_name"
+          if [[ "${#channel_names[@]}" -gt 0 ]]; then
+            for channel_name in "${channel_names[@]}"; do
+              remove_staging_tag "$channel_name"
+            done
           fi
           if [[ "$publish_root" == "true" ]]; then
             remove_staging_tag "$package_name"
