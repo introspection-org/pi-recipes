@@ -129,7 +129,7 @@ tests.
 - `@introspection-ai/recipes/pi-extension` — Pi extension entrypoint
 - `@introspection-ai/recipes/extensions` — session identity and conditional
   Recipe extension helpers
-- `@introspection-ai/recipe-connector-slack` provides the optional Slack Bot
+- `@introspection-ai/recipe-channel-slack` provides the optional Slack Bot
   API tools. A Recipe adds it as a dependency when it declares Slack in
   `pi.connectors`.
 - `@introspection-ai/recipes/agents` — portable agent-run controller and tool

@@ -16,7 +16,7 @@ import {
   validatePiPackageManifest,
 } from "../src/recipe-package.js";
 import { resolveRecipe } from "../src/recipe/resolve.js";
-import { SLACK_RECIPE_CONNECTOR_PACKAGE } from "./helpers/recipe-connectors.js";
+import { SLACK_RECIPE_CHANNEL_PACKAGE } from "./helpers/recipe-connectors.js";
 
 const cleanups: Array<() => void> = [];
 
@@ -70,7 +70,7 @@ describe("Recipe Format", () => {
       readFileSync(join(recipeDir, "package.json"), "utf8")
     );
     pkg.pi.connectors = [{ provider: "slack" }];
-    pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
+    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
     const manifest = readPiPackageManifest(recipeDir);
@@ -92,7 +92,7 @@ describe("Recipe Format", () => {
         tools: { include: ["slack_origin"] },
       },
     ];
-    pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
+    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
     expect(
@@ -114,7 +114,7 @@ describe("Recipe Format", () => {
     );
     pkg.pi.connectors = [{ provider: "discord" }];
     pkg.dependencies = {
-      "@introspection-ai/recipe-connector-discord": "0.1.0",
+      "@introspection-ai/recipe-channel-discord": "0.1.0",
     };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
@@ -130,7 +130,7 @@ describe("Recipe Format", () => {
       readFileSync(join(recipeDir, "package.json"), "utf8")
     );
     pkg.pi.connectors = [{ provider: "slack" }];
-    pkg.dependencies = { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" };
+    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
     writeFileSync(
       join(recipeDir, "agents", "agent.yaml"),
@@ -179,7 +179,7 @@ describe("Recipe Format", () => {
 
     expect(report.valid).toBe(false);
     expect(report.findings.map((finding) => finding.message)).toContain(
-      `package.json#pi.connectors provider 'slack' requires dependency '${SLACK_RECIPE_CONNECTOR_PACKAGE}'`
+      `package.json#pi.connectors provider 'slack' requires dependency '${SLACK_RECIPE_CHANNEL_PACKAGE}'`
     );
   });
 

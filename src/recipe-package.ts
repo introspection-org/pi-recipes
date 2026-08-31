@@ -75,8 +75,8 @@ export interface RecipePackageConnector {
   provider: string;
 }
 
-export function recipeConnectorPackageName(provider: string): string {
-  return `@introspection-ai/recipe-connector-${provider}`;
+export function recipeChannelPackageName(provider: string): string {
+  return `@introspection-ai/recipe-channel-${provider}`;
 }
 
 export interface RecipePythonRuntimeRequirement {
@@ -267,21 +267,21 @@ function connectorSourceShapeFindings(
     }
 
     if (provider) {
-      const connectorPackage = recipeConnectorPackageName(provider);
+      const channelPackage = recipeChannelPackageName(provider);
       const declaredDependencies =
         dependencies &&
         typeof dependencies === "object" &&
         !Array.isArray(dependencies)
           ? (dependencies as Record<string, unknown>)
           : {};
-      const dependencyVersion = declaredDependencies[connectorPackage];
+      const dependencyVersion = declaredDependencies[channelPackage];
       if (
         typeof dependencyVersion !== "string" ||
         !dependencyVersion.trim()
       ) {
         findings.push(
           invalid(
-            `package.json#pi.connectors provider '${provider ?? "unknown"}' requires dependency '${connectorPackage}'`
+            `package.json#pi.connectors provider '${provider ?? "unknown"}' requires dependency '${channelPackage}'`
           )
         );
       }

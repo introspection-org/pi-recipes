@@ -38,7 +38,7 @@ jobs:
       pull-requests: write
     outputs:
       root_release_created: ${{ steps.root_release.outputs.release_created }}
-      connector_release_created: ${{ steps.root_release.outputs['packages/recipe-connector-slack--release_created'] }}
+      connector_release_created: ${{ steps.root_release.outputs['packages/channels/slack--release_created'] }}
       crate_release_created: ${{ steps.checker_release.outputs['crates/introspection-recipe-check--release_created'] }}
       python_release_created: ${{ steps.checker_release.outputs['bindings/python--release_created'] }}
     steps:
@@ -254,7 +254,7 @@ jobs:
           connector_version=""
           connector_tag=""
           if [[ "$publish_connector" == "true" ]]; then
-            connector_dir="packages/recipe-connector-slack"
+            connector_dir="packages/channels/slack"
             connector_name="$(node -p "require('./$connector_dir/package.json').name")"
             connector_version="$(node -p "require('./$connector_dir/package.json').version")"
             connector_tag="latest"

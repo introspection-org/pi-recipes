@@ -1,4 +1,4 @@
 {
   ".": "0.21.0",
-  "packages/recipe-connector-slack": "0.0.0"
+  "packages/channels/slack": "0.0.0"
 }

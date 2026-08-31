@@ -27,7 +27,7 @@ import {
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
 import {
   installSlackRecipeConnector,
-  SLACK_RECIPE_CONNECTOR_PACKAGE,
+  SLACK_RECIPE_CHANNEL_PACKAGE,
 } from "./helpers/recipe-connectors.js";
 
 const detachTelemetry = vi.hoisted(() => vi.fn());
@@ -243,7 +243,7 @@ describe("createAgentSession", () => {
 
   it("starts connector sessions with the default Slack loadout", async () => {
     const { recipeDir, workspaceDir } = fixture({
-      dependencies: { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" },
+      dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
       tools: [
         "slack_origin",
         "slack_read_thread",
@@ -271,7 +271,7 @@ describe("createAgentSession", () => {
 
   it("rejects connector tools unsupported by the provider", async () => {
     const { recipeDir, workspaceDir } = fixture({
-      dependencies: { [SLACK_RECIPE_CONNECTOR_PACKAGE]: "0.1.0" },
+      dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
       tools: ["slack_origin", "slack_delete_workspace"],
       manifestPi: {
         connectors: [{ provider: "slack" }],

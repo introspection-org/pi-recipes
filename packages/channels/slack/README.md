@@ -10,7 +10,7 @@ directly.
 ```json
 {
   "dependencies": {
-    "@introspection-ai/recipe-connector-slack": "^0.1.0"
+    "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
     "connectors": [

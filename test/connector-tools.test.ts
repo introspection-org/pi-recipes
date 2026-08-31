@@ -41,38 +41,38 @@ describe("Recipe connector packages", () => {
   });
 
   it("loads provider and tool metadata from the declared package", async () => {
-    const recipeDir = mkdtempSync(join(tmpdir(), "recipe-connector-package-"));
+    const recipeDir = mkdtempSync(join(tmpdir(), "recipe-channel-package-"));
     cleanups.push(recipeDir);
-    const connectorPackage = "@introspection-ai/recipe-connector-custom";
-    const connectorDir = join(
+    const channelPackage = "@introspection-ai/recipe-channel-custom";
+    const channelDir = join(
       recipeDir,
       "node_modules",
       "@introspection-ai",
-      "recipe-connector-custom"
+      "recipe-channel-custom"
     );
-    mkdirSync(connectorDir, { recursive: true });
+    mkdirSync(channelDir, { recursive: true });
     writeFileSync(
       join(recipeDir, "package.json"),
       JSON.stringify({
         name: "custom-connector-recipe",
         version: "0.1.0",
-        dependencies: { [connectorPackage]: "0.1.0" },
+        dependencies: { [channelPackage]: "0.1.0" },
         pi: {
           connectors: [{ provider: "custom" }],
         },
       })
     );
     writeFileSync(
-      join(connectorDir, "package.json"),
+      join(channelDir, "package.json"),
       JSON.stringify({
-        name: connectorPackage,
+        name: channelPackage,
         version: "0.1.0",
         type: "module",
         exports: { import: "./index.js" },
       })
     );
     writeFileSync(
-      join(connectorDir, "index.js"),
+      join(channelDir, "index.js"),
       [
         "export default {",
         '  provider: "custom",',

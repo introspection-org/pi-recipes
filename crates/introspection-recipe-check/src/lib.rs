@@ -674,13 +674,13 @@ fn validate_connector_config(
         }
 
         if let Some(provider) = provider.as_deref() {
-            let package = format!("@introspection-ai/recipe-connector-{provider}");
+            let package = format!("@introspection-ai/recipe-channel-{provider}");
             if !dependencies.contains(&package) {
                 ctx.error(
                     "pi.connectors_invalid",
                     PACKAGE_JSON,
                     format!("package.json#pi.connectors provider '{provider}' requires dependency '{package}'"),
-                    Some("add the connector package to package.json#dependencies and commit the lockfile"),
+                    Some("add the channel package to package.json#dependencies and commit the lockfile"),
                 );
             }
         }
@@ -3128,7 +3128,7 @@ mod tests {
             "name": "connector-test",
             "version": "0.1.0",
             "dependencies": {
-                "@introspection-ai/recipe-connector-slack": "0.1.0"
+                "@introspection-ai/recipe-channel-slack": "0.1.0"
             },
             "pi": {
                 "agents": ["agents/*.yaml"],
@@ -3183,7 +3183,7 @@ mod tests {
         assert!(!report.valid);
         assert!(report.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "pi.connectors_invalid"
-                && diagnostic.message.contains("recipe-connector-slack")
+                && diagnostic.message.contains("recipe-channel-slack")
         }));
 
         for invalid_version in [JsonValue::Null, json!("")] {
@@ -3196,7 +3196,7 @@ mod tests {
             let mut package: JsonValue =
                 serde_json::from_str(package_file.content.as_deref().expect("package content"))
                     .expect("parse package");
-            package["dependencies"]["@introspection-ai/recipe-connector-slack"] =
+            package["dependencies"]["@introspection-ai/recipe-channel-slack"] =
                 invalid_version;
             package_file.content =
                 Some(serde_json::to_string_pretty(&package).expect("serialize"));
@@ -3205,7 +3205,7 @@ mod tests {
 
             assert!(report.diagnostics.iter().any(|diagnostic| {
                 diagnostic.code == "pi.connectors_invalid"
-                    && diagnostic.message.contains("recipe-connector-slack")
+                    && diagnostic.message.contains("recipe-channel-slack")
             }));
         }
     }

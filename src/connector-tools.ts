@@ -2,7 +2,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { loadRecipeModule } from "./recipe-extensions.js";
 import {
-  recipeConnectorPackageName,
+  recipeChannelPackageName,
   type RecipePackageConnector,
   type RecipePackageManifest,
 } from "./recipe-package.js";
@@ -52,7 +52,7 @@ function connectorModuleError(
   detail: string
 ): Error {
   return new Error(
-    `Recipe connector package ${recipeConnectorPackageName(connector.provider)} ${detail}`
+    `Recipe channel package ${recipeChannelPackageName(connector.provider)} ${detail}`
   );
 }
 
@@ -108,7 +108,7 @@ async function loadRecipeConnectorModule(
   recipeDir: string,
   connector: RecipePackageConnector
 ): Promise<RecipeConnectorModule> {
-  const packageName = recipeConnectorPackageName(connector.provider);
+  const packageName = recipeChannelPackageName(connector.provider);
   let imported: unknown;
   try {
     imported = await loadRecipeModule(recipeDir, packageName);

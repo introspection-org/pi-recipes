@@ -17,7 +17,7 @@ Add the Slack connector package and declaration to `package.json`:
 ```json
 {
   "dependencies": {
-    "@introspection-ai/recipe-connector-slack": "^0.1.0"
+    "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
     "connectors": [
@@ -116,7 +116,7 @@ task or a reply bridge because no Data Plane task exists.
 
 ## Direct host use
 
-`@introspection-ai/recipe-connector-slack` exports `registerSlackBotTools` for
+`@introspection-ai/recipe-channel-slack` exports `registerSlackBotTools` for
 custom hosts and tests. A normal Recipe should use `pi.connectors` instead.
 
 ## File downloads

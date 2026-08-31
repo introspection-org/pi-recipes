@@ -90,7 +90,7 @@ credential. A host binds those values when it starts a task.
 ```json
 {
   "dependencies": {
-    "@introspection-ai/recipe-connector-slack": "^0.1.0"
+    "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
     "connectors": [
@@ -104,7 +104,7 @@ credential. A host binds those values when it starts a task.
 
 Each provider may appear once. The host derives the package name from the
 provider. For example, `slack` resolves to
-`@introspection-ai/recipe-connector-slack`. The package owns its tool catalog
+`@introspection-ai/recipe-channel-slack`. The package owns its tool catalog
 and marks which tools are active by default.
 
 The provider package must be in the Recipe's production dependencies and
