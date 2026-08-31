@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/introspection-org/recipes/compare/introspection-recipe-check-v0.3.0...introspection-recipe-check-v0.4.0) (2026-08-31)
+
+
+### Features
+
+* add Slack Bot API tools to Recipes ([#233](https://github.com/introspection-org/recipes/issues/233)) ([3944dac](https://github.com/introspection-org/recipes/commit/3944dacfa6d69043b45cf359b6aa6a2276b1e568))
+
 ## [0.3.0](https://github.com/introspection-org/recipes/compare/introspection-recipe-check-v0.2.0...introspection-recipe-check-v0.3.0) (2026-08-10)
 
 
