@@ -13,8 +13,9 @@ conventional:
   for "post this somewhere else". The invariant is asserted by a test that
   walks every registered tool's input schema.
 - **A tool that the provider cannot support is absent, not failing.** Each
-  adapter declares a capability descriptor, and registration filters on it.
-  For example, an adapter with no history API has no `channel_read` tool.
+  adapter declares a capability descriptor, and registration filters on it. A
+  Recipe run on Microsoft Teams simply has no `channel_read`; it does not
+  have one that answers "unsupported" after burning a turn.
 
 Before the first model call, the channel extension adds origin metadata to the
 system prompt. The metadata contains the provider, the conversation name and
@@ -42,16 +43,17 @@ the provider supports them. The other selected tools start inactive, and the
 model can find them through `tool_search`.
 
 Reply content is **Markdown**. Each adapter renders it in the provider's own
-format. There is no raw provider payload because the same tool contract must
-work with every adapter.
+format. Slack posts a `markdown` block, and Teams sets `textFormat: "markdown"`. There is
+no raw block passthrough: a provider-specific payload is not portable, and
+interactive elements inside one have no routing back to the task.
 
 ### Message and file references
 
 `channel_react`, `channel_edit`, and `channel_retract` take a `message`, which is
 an opaque handle minted by the host for the current session. It is not a Slack
-timestamp or another provider message ID. Handles come back from
-`channel_reply` and `channel_read`, so the model can only act on a message that
-a channel tool returned.
+timestamp or a Teams activity ID. Handles come back from `channel_reply` and
+`channel_read`, so the model can only act on a message that a channel tool
+returned.
 
 `channel_react` adds a reaction when `action` is omitted. Set `action` to
 `remove` to remove the agent's reaction with the same emoji.
@@ -113,7 +115,28 @@ The host fails when an agent selects a tool that the provider does not support.
 
 Because the vocabulary is neutral, the same declaration and the same agent
 prompt work against another provider by changing the dependency and `provider`.
-Each provider package declares the capabilities that it can support.
+The capability table below shows which tools each provider supplies.
+
+## Capabilities by provider
+
+| Capability | Slack | Teams |
+| --- | --- | --- |
+| `reply` | yes | yes |
+| `edit` | yes | yes |
+| `retract` | yes | yes |
+| `react` | yes | no |
+| `read` | channel and thread | no |
+| `fetch_file` | yes | no |
+| `attach` | not yet implemented | no |
+| `documents` | not yet implemented | no |
+| author display names | resolved via `users.info` | on the activity |
+| permalinks | yes | no |
+
+Teams' gaps are not oversights. Reading a Teams conversation, reacting to a
+message, and downloading an attachment all require Microsoft Graph with
+resource-specific consent granted by the tenant administrator; the Bot
+Connector credential every bot has cannot do them. A tenant that has granted
+consent can flip the capability in a build of the adapter.
 
 ## Write an adapter
 
@@ -164,3 +187,4 @@ Recipe.
 ## Provider pages
 
 - [Slack](slack.md)
+- [Teams](teams.md)

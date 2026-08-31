@@ -132,8 +132,10 @@ tests.
 - `@introspection-ai/recipes/channels` is the provider neutral `channel_*` tool
   contract: capability descriptors, opaque message references, and the
   registration that binds every tool to the task's own conversation
-- `@introspection-ai/recipe-channel-slack` is the optional Slack adapter. A
-  Recipe adds it as a dependency when it declares Slack in `pi.connectors`.
+- `@introspection-ai/recipe-channel-slack` and
+  `@introspection-ai/recipe-channel-teams` are the optional channel adapters.
+  A Recipe adds one as a dependency when it declares that provider in
+  `pi.connectors`.
 - `@introspection-ai/recipes/agents` — portable agent-run controller and tool
   contract
 - `@introspection-ai/recipes/interactions` — portable user-input and approval contract
