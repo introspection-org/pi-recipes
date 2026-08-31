@@ -140,64 +140,11 @@ jobs:
           path: staged/**
           if-no-files-found: error
 
-  publish-connector:
-    needs: release-please
-    if: ${{ always() && (needs.release-please.outputs.connector_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'connector'))) }}
-    runs-on: ubuntu-latest
-    environment: publish
-    permissions:
-      contents: read
-      id-token: write
-    concurrency:
-      group: npm-publish
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          cache: pnpm
-
-      - run: npm install -g npm@11
-
-      - run: pnpm install --frozen-lockfile
-
-      - run: pnpm --filter @introspection-ai/recipe-connector-slack typecheck
-
-      - run: pnpm --filter @introspection-ai/recipe-connector-slack build
-
-      - run: pnpm --filter @introspection-ai/recipe-connector-slack pack:check
-
-      - name: Publish Slack connector
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_dir="packages/recipe-connector-slack"
-          package_name="$(node -p "require('./$package_dir/package.json').name")"
-          version="$(node -p "require('./$package_dir/package.json').version")"
-          tag="latest"
-          if [[ "$version" == *-* ]]; then
-            tag="beta"
-          fi
-
-          if npm view "$package_name@$version" version >/dev/null 2>&1; then
-            echo "$package_name@$version is already published"
-          else
-            pnpm --filter "$package_name" publish --access public --tag "$tag" --no-git-checks
-          fi
-          npm dist-tag add "$package_name@$version" "$tag"
-
   publish:
     needs:
       - release-please
       - build-native-tools
-    if: ${{ always() && needs.build-native-tools.result == 'success' && (needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root'))) }}
+    if: ${{ always() && (needs.release-please.outputs.root_release_created == 'true' || needs.release-please.outputs.connector_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root' || inputs.train == 'connector'))) }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:
@@ -226,11 +173,13 @@ jobs:
       - run: pnpm typecheck && pnpm test && pnpm build
 
       - uses: actions/download-artifact@v4
+        if: ${{ needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root')) }}
         with:
           pattern: native-tools-*
           path: native-tool-artifacts
 
       - name: Assemble the per-platform mcp-client packages
+        if: ${{ needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root')) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -248,33 +197,99 @@ jobs:
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          ROOT_RELEASE_CREATED: ${{ needs.release-please.outputs.root_release_created }}
+          CONNECTOR_RELEASE_CREATED: ${{ needs.release-please.outputs.connector_release_created }}
+          MANUAL_ROOT_RELEASE: ${{ github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root') }}
+          MANUAL_CONNECTOR_RELEASE: ${{ github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'connector') }}
+          NATIVE_BUILD_RESULT: ${{ needs.build-native-tools.result }}
         shell: bash
         run: |
           set -euo pipefail
+
+          publish_root=false
+          publish_connector=false
+          if [[ "$ROOT_RELEASE_CREATED" == "true" || "$MANUAL_ROOT_RELEASE" == "true" ]]; then
+            publish_root=true
+          fi
+          if [[ "$CONNECTOR_RELEASE_CREATED" == "true" || "$MANUAL_CONNECTOR_RELEASE" == "true" ]]; then
+            publish_connector=true
+          fi
+
+          if [[ "$publish_root" == "true" && "$NATIVE_BUILD_RESULT" != "success" ]]; then
+            echo "The root release requires successful native builds." >&2
+            exit 1
+          fi
+
+          staging_tag="release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
           package_name="$(node -p "require('./package.json').name")"
           version="$(node -p "require('./package.json').version")"
-          tag="latest"
+          root_tag="latest"
           if [[ "$version" == *-* ]]; then
-            tag="beta"
+            root_tag="beta"
           fi
 
           # Platform packages first, so the optionalDependencies the root
           # manifest names already resolve when it is published.
-          for d in npm/dist/mcp-client-*; do
-            platform_name="$(node -p "require('./$d/package.json').name")"
-            if npm view "$platform_name@$version" version >/dev/null 2>&1; then
-              echo "$platform_name@$version is already published"
-            else
-              npm publish "$d" --access public --tag "$tag"
-            fi
-          done
+          platform_names=()
+          if [[ "$publish_root" == "true" ]]; then
+            for d in npm/dist/mcp-client-*; do
+              platform_name="$(node -p "require('./$d/package.json').name")"
+              platform_names+=("$platform_name")
+              if npm view "$platform_name@$version" version >/dev/null 2>&1; then
+                echo "$platform_name@$version is already published"
+              else
+                npm publish "$d" --access public --tag "$staging_tag"
+              fi
+            done
 
-          if npm view "$package_name@$version" version >/dev/null 2>&1; then
-            echo "$package_name@$version is already published"
-          else
-            pnpm publish --access public --tag "$tag" --no-git-checks
+            if npm view "$package_name@$version" version >/dev/null 2>&1; then
+              echo "$package_name@$version is already published"
+            else
+              pnpm publish --access public --tag "$staging_tag" --no-git-checks
+            fi
           fi
-          npm dist-tag add "$package_name@$version" "$tag"
+
+          connector_name=""
+          connector_version=""
+          connector_tag=""
+          if [[ "$publish_connector" == "true" ]]; then
+            connector_dir="packages/recipe-connector-slack"
+            connector_name="$(node -p "require('./$connector_dir/package.json').name")"
+            connector_version="$(node -p "require('./$connector_dir/package.json').version")"
+            connector_tag="latest"
+            if [[ "$connector_version" == *-* ]]; then
+              connector_tag="beta"
+            fi
+            core_range="$(node -p "require('./$connector_dir/package.json').peerDependencies['@introspection-ai/recipes']")"
+            if [[ "$core_range" == workspace:* ]]; then
+              core_range="$(node -p "require('./package.json').version")"
+            fi
+            if ! npm view "@introspection-ai/recipes@$core_range" version >/dev/null 2>&1; then
+              echo "$connector_name@$connector_version requires an unpublished @introspection-ai/recipes version." >&2
+              exit 1
+            fi
+            if npm view "$connector_name@$connector_version" version >/dev/null 2>&1; then
+              echo "$connector_name@$connector_version is already published"
+            else
+              pnpm --filter "$connector_name" publish --access public --tag "$staging_tag" --no-git-checks
+            fi
+          fi
+
+          # Move the normal tags only after every requested package exists.
+          # The root tag moves last, so a failed connector publish does not
+          # advertise a core release whose documented connector is unavailable.
+          if [[ "$publish_root" == "true" ]]; then
+            for platform_name in "${platform_names[@]}"; do
+              npm dist-tag add "$platform_name@$version" "$root_tag"
+            done
+          fi
+          if [[ "$publish_connector" == "true" ]]; then
+            npm dist-tag add "$connector_name@$connector_version" "$connector_tag"
+          fi
+          if [[ "$publish_root" == "true" ]]; then
+            npm dist-tag add "$package_name@$version" "$root_tag"
+          fi
 
   publish-crate:
     needs: release-please
