@@ -520,7 +520,7 @@ describe("Slack channel tools", () => {
     ]);
   });
 
-  it("returns the latest threaded history oldest-first", async () => {
+  it("returns one threaded history page and preserves Slack's cursor", async () => {
     const { pi, fetchImpl } = slackTools({
       threadPages: {
         "": {
@@ -539,20 +539,66 @@ describe("Slack channel tools", () => {
       },
     });
 
-    const result = (await call(pi, "channel_history", { limit: 2 })) as {
+    const first = (await call(pi, "channel_history", { limit: 100 })) as {
       details: { messages: Array<{ text: string }>; cursor?: string };
     };
 
-    expect(result.details.messages.map((message) => message.text)).toEqual([
+    expect(first.details.messages.map((message) => message.text)).toEqual([
+      "root",
+      "old reply",
+    ]);
+    expect(first.details.cursor).toMatch(/^cur_/);
+    const firstRequest = fetchImpl.calls.find((request) =>
+      request.url.includes("conversations.replies"),
+    )!;
+    expect(new URLSearchParams(String(firstRequest.init.body)).get("limit")).toBe(
+      "15",
+    );
+
+    const second = (await call(pi, "channel_history", {
+      cursor: first.details.cursor,
+    })) as {
+      details: { messages: Array<{ text: string }>; cursor?: string };
+    };
+    expect(second.details.messages.map((message) => message.text)).toEqual([
       "recent reply",
       "latest reply",
     ]);
-    expect(result.details.cursor).toBeUndefined();
+    expect(second.details.cursor).toBeUndefined();
     expect(
       fetchImpl.calls.filter((request) =>
         request.url.includes("conversations.replies"),
       ),
     ).toHaveLength(2);
+  });
+
+  it("uses Slack bot profile names for bot-authored messages", async () => {
+    const { pi, fetchImpl } = slackTools({
+      messages: [
+        {
+          ts: "100.1",
+          text: "Automated update",
+          bot_id: "B1",
+          bot_profile: { id: "B1", name: "Release Bot" },
+        },
+      ],
+    });
+
+    const history = (await call(pi, "channel_history", {})) as {
+      details: {
+        messages: Array<{
+          author: { id: string; display_name?: string };
+        }>;
+      };
+    };
+
+    expect(history.details.messages[0]?.author).toEqual({
+      id: "B1",
+      display_name: "Release Bot",
+    });
+    expect(fetchImpl.calls.some((call) => call.url.includes("users.info"))).toBe(
+      false,
+    );
   });
 
   it("refuses a file id the model supplied rather than saw", async () => {

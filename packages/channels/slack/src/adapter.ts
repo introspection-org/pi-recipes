@@ -38,12 +38,17 @@ export const SLACK_CHANNEL_CAPABILITIES: ChannelCapabilities = {
 };
 
 const SLACK_FILE_VARIANTS = new Set(["original", "video_low"]);
+const SLACK_HISTORY_PAGE_LIMIT = 15;
 
 interface SlackHistoryMessage {
   ts?: string;
   text?: string;
   user?: string;
   bot_id?: string;
+  bot_profile?: {
+    id?: string;
+    name?: string;
+  };
   thread_ts?: string;
   files?: Array<{
     id?: string;
@@ -195,25 +200,19 @@ export class SlackChannelAdapter implements ChannelAdapter {
     input: { limit?: number; cursor?: string },
   ): Promise<ChannelHistoryPage> {
     const thread = ctx.target.thread;
-    const limit = input.limit ?? 50;
-    let payload: SlackApiResult | undefined;
-    let raw: SlackHistoryMessage[];
-    if (thread && !input.cursor) {
-      raw = await this.latestThreadMessages(ctx, thread, limit);
-    } else {
-      payload = await this.session.call(
-        thread ? "conversations.replies" : "conversations.history",
-        {
-          channel: ctx.target.conversation,
-          ...(thread ? { ts: thread } : {}),
-          limit,
-          ...(input.cursor ? { cursor: input.cursor } : {}),
-        },
-        "form",
-        ctx.signal,
-      );
-      raw = messagesFrom(payload);
-    }
+    const limit = Math.min(input.limit ?? SLACK_HISTORY_PAGE_LIMIT, SLACK_HISTORY_PAGE_LIMIT);
+    const payload = await this.session.call(
+      thread ? "conversations.replies" : "conversations.history",
+      {
+        channel: ctx.target.conversation,
+        ...(thread ? { ts: thread } : {}),
+        limit,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
+      "form",
+      ctx.signal,
+    );
+    const raw = messagesFrom(payload);
     // `conversations.replies` returns oldest-first, `conversations.history`
     // newest-first. The tool promises one order for both, so the unthreaded
     // arm is reversed here rather than left for the model to notice — a
@@ -230,10 +229,16 @@ export class SlackChannelAdapter implements ChannelAdapter {
           thread: message.thread_ts ?? thread ?? null,
         }),
         author: {
-          id: message.user ?? message.bot_id ?? "unknown",
+          id:
+            message.user ??
+            message.bot_profile?.id ??
+            message.bot_id ??
+            "unknown",
           ...(message.user
             ? { display_name: await this.authorName(message.user, ctx.signal) }
-            : {}),
+            : message.bot_profile?.name?.trim()
+              ? { display_name: message.bot_profile.name.trim() }
+              : {}),
         },
         text: message.text ?? "",
         ...(slackTimestamp(message.ts)
@@ -260,50 +265,11 @@ export class SlackChannelAdapter implements ChannelAdapter {
           : {}),
       });
     }
-    const next = payload ? nextCursor(payload) : undefined;
+    const next = nextCursor(payload);
     return {
       messages,
       ...(next ? { cursor: ctx.refs.cursor(next) } : {}),
     };
-  }
-
-  /** Slack has no reverse cursor for replies, so retain the tail while paging. */
-  private async latestThreadMessages(
-    ctx: ChannelAdapterContext,
-    thread: string,
-    limit: number,
-  ): Promise<SlackHistoryMessage[]> {
-    const messages: SlackHistoryMessage[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-
-    do {
-      const payload = await this.session.call(
-        "conversations.replies",
-        {
-          channel: ctx.target.conversation,
-          ts: thread,
-          // Slack returns thread replies oldest-first. Use its recommended page
-          // size, then keep only the requested tail as pages arrive.
-          limit: 200,
-          ...(cursor ? { cursor } : {}),
-        },
-        "form",
-        ctx.signal,
-      );
-      messages.push(...messagesFrom(payload));
-      if (messages.length > limit) {
-        messages.splice(0, messages.length - limit);
-      }
-
-      cursor = nextCursor(payload);
-      if (cursor && seenCursors.has(cursor)) {
-        throw new Error("Slack returned a repeated thread history cursor");
-      }
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-
-    return messages;
   }
 
   async fetchFile(

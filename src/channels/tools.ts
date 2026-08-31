@@ -119,6 +119,7 @@ export interface RegisterChannelToolsOptions {
 /** Host surface used here. Opaque so Pi's TypeBox copy stays behind this seam. */
 export interface ChannelToolHost {
   registerTool(...args: never[]): unknown;
+  on: ExtensionAPI["on"];
 }
 
 function toolResult(details: unknown) {
@@ -175,7 +176,6 @@ export function registerChannelTools(
   options: RegisterChannelToolsOptions,
 ): void {
   assertImplemented(adapter);
-  const host = pi as unknown as ExtensionAPI;
   const refs = options.refs ?? new ChannelRefStore();
   const supported = new Set(channelToolIdsFor(adapter.capabilities));
   const selected = new Set(options.tools ?? [...supported]);
@@ -404,7 +404,7 @@ export function registerChannelTools(
   }));
 
   const registeredToolIds = [...definitions.keys()];
-  host.on("before_agent_start", async (event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     let target: ChannelTarget;
     try {
       target = resolveTarget();
@@ -436,6 +436,6 @@ export function registerChannelTools(
   // Built as definitions first, then registered, so the name is applied in
   // exactly one place and cannot drift per tool.
   for (const [id, definition] of definitions) {
-    host.registerTool({ ...definition, name: channelToolName(id) } as never);
+    pi.registerTool({ ...definition, name: channelToolName(id) } as never);
   }
 }

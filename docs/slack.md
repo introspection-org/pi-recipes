@@ -47,6 +47,10 @@ inactive until the model finds them through `tool_search`.
 | `channel_retract` | `chat.delete` |
 | `channel_fetch_file` | `files.info` plus a private file download |
 
+Slack history returns at most 15 messages per call. When Slack has another
+page, `channel_history` returns an opaque cursor that the agent can pass to the
+next call.
+
 `channel_attach` and `channel_post_document` are not registered: `files.uploadV2`
 and canvases are not implemented in this package yet, and the capability
 descriptor says so rather than registering tools that fail.
