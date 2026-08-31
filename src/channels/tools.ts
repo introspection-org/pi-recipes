@@ -6,6 +6,7 @@ import type {
   ChannelAdapter,
   ChannelAdapterContext,
   ChannelCapabilities,
+  ChannelReactionAction,
   ChannelTarget,
 } from "./types.js";
 
@@ -257,23 +258,33 @@ export function registerChannelTools(
     name: channelToolName("react"),
     label: "React to a message",
     description:
-      "Add an emoji reaction to a message in this conversation, named by a reference a channel tool returned.",
+      "Add or remove an emoji reaction on a message in this conversation, named by a reference a channel tool returned. The action defaults to add.",
     parameters: Type.Object(
       {
         message: Type.String({ minLength: 1 }),
         emoji: Type.String({ minLength: 1 }),
+        action: Type.Optional(
+          Type.Union([Type.Literal("add"), Type.Literal("remove")], {
+            default: "add",
+          }),
+        ),
       },
       { additionalProperties: false },
     ),
     executionMode: "sequential",
     async execute(
       _toolCallId: string,
-      params: { message: string; emoji: string },
+      params: {
+        message: string;
+        emoji: string;
+        action?: ChannelReactionAction;
+      },
       signal?: AbortSignal,
     ) {
       await adapter.react!(context(signal), {
         ref: params.message,
         emoji: params.emoji,
+        action: params.action ?? "add",
       });
       return toolResult({ reacted: true });
     },

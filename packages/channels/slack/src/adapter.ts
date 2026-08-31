@@ -4,10 +4,11 @@ import type {
   ChannelAdapter,
   ChannelAdapterContext,
   ChannelCapabilities,
-  ChannelReadPage,
   ChannelLocalFile,
   ChannelMessage,
   ChannelPostResult,
+  ChannelReactionAction,
+  ChannelReadPage,
   ChannelTarget,
   FileRef,
   MessageRef,
@@ -69,7 +70,7 @@ interface SlackThreadHistoryCursor {
   limit: number;
 }
 
-/** Slack's own `:emoji:` spelling is not what `reactions.add` accepts. */
+/** Slack's own `:emoji:` spelling is not what its reactions API accepts. */
 function reactionName(emoji: string): string {
   return emoji.trim().replace(/^:+|:+$/g, "");
 }
@@ -162,11 +163,15 @@ export class SlackChannelAdapter implements ChannelAdapter {
 
   async react(
     ctx: ChannelAdapterContext,
-    input: { ref: MessageRef; emoji: string },
+    input: {
+      ref: MessageRef;
+      emoji: string;
+      action: ChannelReactionAction;
+    },
   ): Promise<void> {
     const message = ctx.refs.resolveMessage(input.ref);
     await this.session.call(
-      "reactions.add",
+      input.action === "remove" ? "reactions.remove" : "reactions.add",
       {
         channel: message.conversation,
         timestamp: message.id,

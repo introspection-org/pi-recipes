@@ -64,6 +64,9 @@ export interface ChannelCapabilities {
  */
 export type MessageRef = string;
 
+/** Whether `channel_react` adds or removes the agent's reaction. */
+export type ChannelReactionAction = "add" | "remove";
+
 /** An opaque pagination token. Same reasoning as `MessageRef`. */
 export type ChannelCursor = string;
 
@@ -195,7 +198,11 @@ export interface ChannelAdapter {
 
   react?(
     ctx: ChannelAdapterContext,
-    input: { ref: MessageRef; emoji: string },
+    input: {
+      ref: MessageRef;
+      emoji: string;
+      action: ChannelReactionAction;
+    },
   ): Promise<void>;
   edit?(
     ctx: ChannelAdapterContext,

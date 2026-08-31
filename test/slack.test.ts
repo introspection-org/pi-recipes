@@ -746,6 +746,40 @@ describe("Slack channel tools", () => {
     ).rejects.toThrow(/Unknown message reference/);
   });
 
+  it("adds reactions by default and removes them when requested", async () => {
+    const { pi, fetchImpl } = slackTools();
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string };
+    };
+
+    await call(pi, "channel_react", {
+      message: posted.details.ref,
+      emoji: ":eyes:",
+    });
+    await call(pi, "channel_react", {
+      message: posted.details.ref,
+      emoji: ":eyes:",
+      action: "remove",
+    });
+
+    const reactions = fetchImpl.calls.filter((call) =>
+      call.url.includes("/api/reactions."),
+    );
+    expect(reactions.map((call) => new URL(call.url).pathname)).toEqual([
+      "/api/reactions.add",
+      "/api/reactions.remove",
+    ]);
+    for (const reaction of reactions) {
+      expect(
+        Object.fromEntries(new URLSearchParams(String(reaction.init.body))),
+      ).toMatchObject({
+        channel: "C1",
+        timestamp: "200.2",
+        name: "eyes",
+      });
+    }
+  });
+
   it("refuses to edit or retract a message the agent did not author", async () => {
     const { pi } = slackTools();
     const read = (await call(pi, "channel_read", {})) as {

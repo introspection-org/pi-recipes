@@ -29,6 +29,7 @@ export type {
   ChannelMessage,
   ChannelMessageIdentity,
   ChannelPostResult,
+  ChannelReactionAction,
   ChannelRefResolver,
   ChannelTarget,
   FileRef,

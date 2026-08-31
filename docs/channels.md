@@ -30,7 +30,7 @@ provider supports it.
 | --- | --- | --- |
 | `channel_reply` | `text` (Markdown) | always |
 | `channel_read` | `limit?`, `cursor?` | `read` |
-| `channel_react` | `message`, `emoji` | `react` |
+| `channel_react` | `message`, `emoji`, `action?` (`add` or `remove`) | `react` |
 | `channel_edit` | `message`, `text` | `edit` |
 | `channel_retract` | `message` | `retract` |
 | `channel_attach` | `path`, `title?`, `comment?` | `attach` |
@@ -52,6 +52,9 @@ an opaque handle minted by the host for the current session. It is not a Slack
 timestamp or another provider message ID. Handles come back from
 `channel_reply` and `channel_read`, so the model can only act on a message that
 a channel tool returned.
+
+`channel_react` adds a reaction when `action` is omitted. Set `action` to
+`remove` to remove the agent's reaction with the same emoji.
 
 Edit and retract have an extra check. They accept only a handle for a message
 that this agent posted. Reading the same message again keeps its original

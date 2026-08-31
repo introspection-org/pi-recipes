@@ -41,7 +41,7 @@ tools are available through `tool_search`.
 | --- | --- |
 | `channel_reply` | `chat.postMessage` into the origin channel and thread |
 | `channel_read` | `conversations.replies` in a thread, else `conversations.history` |
-| `channel_react` | `reactions.add` |
+| `channel_react` | `reactions.add` or `reactions.remove` |
 | `channel_edit` | `chat.update` for a message the agent posted |
 | `channel_retract` | `chat.delete` for a message the agent posted |
 | `channel_fetch_file` | `files.info` plus a private file download |

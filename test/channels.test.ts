@@ -127,6 +127,51 @@ describe("channel tool surface", () => {
     );
   });
 
+  it("adds reactions by default and passes an explicit removal action", async () => {
+    const refs = new ChannelRefStore();
+    const message = refs.message({ conversation: "C1", id: "100.1" });
+    const react = vi.fn(async () => {});
+    const pi = createMockExtensionAPI();
+    registerChannelTools(
+      pi,
+      { ...stubAdapter(), react },
+      {
+        target,
+        tools: ["react"],
+        refs,
+      },
+    );
+    const tool = pi.tools.get("channel_react")!;
+
+    const added = await tool.execute(
+      "add-reaction",
+      { message, emoji: "eyes" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const removed = await tool.execute(
+      "remove-reaction",
+      { message, emoji: "eyes", action: "remove" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(react).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      { ref: message, emoji: "eyes", action: "add" },
+    );
+    expect(react).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      { ref: message, emoji: "eyes", action: "remove" },
+    );
+    expect(added.details).toEqual({ reacted: true });
+    expect(removed.details).toEqual({ reacted: true });
+  });
+
   it("adds channel metadata to the system prompt without reading messages", async () => {
     const read = vi.fn(async () => ({ messages: [] }));
     const adapter: ChannelAdapter = {
