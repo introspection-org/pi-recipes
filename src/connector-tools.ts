@@ -131,7 +131,7 @@ export async function loadRecipeConnectors(
   options: RecipeConnectorExtensionOptions
 ): Promise<LoadedRecipeConnectors> {
   const loaded = await Promise.all(
-    manifest.connectors.map(async (connector) => {
+    (manifest.connectors ?? []).map(async (connector) => {
       const module = await loadRecipeConnectorModule(options.recipeDir, connector);
       const toolsById = new Map(
         module.tools.map((tool) => [tool.id, tool] as const)

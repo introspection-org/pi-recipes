@@ -158,10 +158,16 @@ describe("Recipe extension context", () => {
     await factory(pi);
 
     allowed.add("mcp_google_drive_search");
-    extensionApi!.setActiveTools(["read", "mcp_google_drive_search"]);
+    allowed.add("tool_search");
+    extensionApi!.setActiveTools([
+      "read",
+      "tool_search",
+      "mcp_google_drive_search",
+    ]);
 
     expect(pi.setActiveTools).toHaveBeenCalledWith([
       "read",
+      "tool_search",
       "mcp_google_drive_search",
     ]);
   });

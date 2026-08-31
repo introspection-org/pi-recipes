@@ -2,7 +2,10 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 
-import { createRecipeToolSearch } from "../src/tool-search.js";
+import {
+  createRecipeToolSearch,
+  createRecipeToolSearchTools,
+} from "../src/tool-search.js";
 
 function tool(
   name: string,
@@ -97,6 +100,45 @@ describe("Recipe tool search", () => {
       undefined as never
     );
     expect(result.details).toMatchObject({ matches: [], added: [] });
+  });
+
+  it("keeps mcp_search as an active alias when MCP tools are deferred", async () => {
+    const contacts = tool(
+      "mcp_contacts_search_candidates",
+      "Search candidates",
+      "Find recruiting candidates."
+    );
+    let active = ["tool_search", "mcp_search"];
+    const searches = createRecipeToolSearchTools(
+      {
+        tools: [contacts],
+        deferredToolNames: [contacts.name],
+        activation: {
+          getActiveTools: () => active,
+          setActiveTools: (names) => {
+            active = names;
+          },
+        },
+      },
+      true
+    );
+
+    expect(searches.map((search) => search.name)).toEqual([
+      "tool_search",
+      "mcp_search",
+    ]);
+    await searches[1]!.execute(
+      "call-1",
+      { query: "candidates" },
+      undefined,
+      undefined,
+      undefined as never
+    );
+    expect(active).toEqual([
+      "tool_search",
+      "mcp_search",
+      "mcp_contacts_search_candidates",
+    ]);
   });
 
   it("rejects deferred names that were not registered", () => {

@@ -108,7 +108,7 @@ export interface RecipePackageManifest {
   resources: RecipePackageResources;
   /** Whether each resource key was explicitly authored in package.json#pi. */
   resourceDeclarations?: Record<keyof RecipePackageResources, boolean>;
-  connectors: RecipePackageConnector[];
+  connectors?: RecipePackageConnector[];
   mcp: RecipePackageMcpConfig;
   runtime?: RecipeRuntimeRequirements;
 }

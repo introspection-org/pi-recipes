@@ -76,7 +76,8 @@ import {
 } from "./agents.js";
 import { loadRecipeConnectors } from "./connector-tools.js";
 import {
-  createRecipeToolSearch,
+  createRecipeToolSearchTools,
+  LEGACY_MCP_TOOL_SEARCH_NAME,
   RECIPE_TOOL_SEARCH_NAME,
 } from "./tool-search.js";
 
@@ -765,11 +766,12 @@ export function createRecipesExtension(
         "<host>"
       );
     }
-    launchState.extensionRegistrations.claim(
-      "tool",
+    for (const toolName of [
       RECIPE_TOOL_SEARCH_NAME,
-      "<host>"
-    );
+      LEGACY_MCP_TOOL_SEARCH_NAME,
+    ]) {
+      launchState.extensionRegistrations.claim("tool", toolName, "<host>");
+    }
     let loadedCount = 0;
     try {
       const connectors = await loadRecipeConnectors(
@@ -892,18 +894,21 @@ export function createRecipesExtension(
       ...launchState.mcpDeferredToolNames,
     ];
     if (deferredToolNames.length > 0 && !launchState.toolSearchRegistered) {
-      const toolSearch = createRecipeToolSearch({
+      const toolSearchTools = createRecipeToolSearchTools({
         tools: pi.getAllTools(),
         deferredToolNames,
         activation: {
           getActiveTools: () => pi.getActiveTools(),
           setActiveTools: (names) => pi.setActiveTools(names),
         },
-      });
-      if (!toolSearch) {
+      }, launchState.mcpDeferredToolNames.length > 0);
+      if (toolSearchTools.length === 0) {
         throw new Error("Recipe tool search has no deferred tools");
       }
-      pi.registerTool(toolSearch);
+      for (const toolSearch of toolSearchTools) {
+        launchState.extensionAllowedToolNames.add(toolSearch.name);
+        pi.registerTool(toolSearch);
+      }
       launchState.toolSearchRegistered = true;
     }
     const activeTools = new Set([
@@ -914,6 +919,9 @@ export function createRecipesExtension(
       ...(launchState.resolved.subagents.size > 0 ? ["agent"] : []),
       ...launchState.initialMcpToolNames,
       ...(deferredToolNames.length > 0 ? [RECIPE_TOOL_SEARCH_NAME] : []),
+      ...(launchState.mcpDeferredToolNames.length > 0
+        ? [LEGACY_MCP_TOOL_SEARCH_NAME]
+        : []),
     ]);
     const registeredTools = new Set(
       pi.getAllTools().map((tool) => tool.name)

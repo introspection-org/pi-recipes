@@ -48,7 +48,8 @@ import {
 } from "./mcp.js";
 import { createMcpToolSet } from "./mcp-tools.js";
 import {
-  createRecipeToolSearch,
+  createRecipeToolSearchTools,
+  LEGACY_MCP_TOOL_SEARCH_NAME,
   RECIPE_TOOL_SEARCH_NAME,
 } from "./tool-search.js";
 import {
@@ -580,6 +581,7 @@ async function createSessionForAgent(
         ? ["agent"]
         : []),
       RECIPE_TOOL_SEARCH_NAME,
+      LEGACY_MCP_TOOL_SEARCH_NAME,
     ]) {
       recipeRegistrations.claim("tool", toolName, "<host>");
     }
@@ -602,6 +604,13 @@ async function createSessionForAgent(
             [
               ...connectorLoadout.toolNames,
               ...(mcp.tools?.map((tool) => tool.name) ?? []),
+              ...((connectorLoadout.deferredToolNames.length > 0 ||
+                (mcp.deferredToolNames?.length ?? 0) > 0)
+                ? [RECIPE_TOOL_SEARCH_NAME]
+                : []),
+              ...((mcp.deferredToolNames?.length ?? 0) > 0
+                ? [LEGACY_MCP_TOOL_SEARCH_NAME]
+                : []),
             ]
           )
         )
@@ -619,6 +628,13 @@ async function createSessionForAgent(
             recipe.subagents.size > 0 && opts.runController !== null,
             [
               ...(mcp.tools?.map((tool) => tool.name) ?? []),
+              ...((connectorLoadout.deferredToolNames.length > 0 ||
+                (mcp.deferredToolNames?.length ?? 0) > 0)
+                ? [RECIPE_TOOL_SEARCH_NAME]
+                : []),
+              ...((mcp.deferredToolNames?.length ?? 0) > 0
+                ? [LEGACY_MCP_TOOL_SEARCH_NAME]
+                : []),
             ]
           )
         )
@@ -741,7 +757,7 @@ async function createSessionForAgent(
         `Recipe MCP tool name collision: ${collisions.join(", ")}`
       );
     }
-    const toolSearch = createRecipeToolSearch({
+    const toolSearchTools = createRecipeToolSearchTools({
       tools: [...recipeExtensionTools, ...(mcp.tools ?? [])],
       deferredToolNames: [
         ...connectorLoadout.deferredToolNames,
@@ -751,17 +767,20 @@ async function createSessionForAgent(
         getActiveTools: () => session?.getActiveToolNames() ?? [],
         setActiveTools: (names) => session?.setActiveToolsByName(names),
       },
-    });
-    if (toolSearch && occupiedToolNames.has(RECIPE_TOOL_SEARCH_NAME)) {
+    }, (mcp.deferredToolNames?.length ?? 0) > 0);
+    const occupiedSearchTool = toolSearchTools.find((tool) =>
+      occupiedToolNames.has(tool.name)
+    );
+    if (occupiedSearchTool) {
       throw new Error(
-        `Recipe tool name '${RECIPE_TOOL_SEARCH_NAME}' is reserved by the session`
+        `Recipe tool name '${occupiedSearchTool.name}' is reserved by the session`
       );
     }
     const selectedToolNames = [
       ...tools,
       ...connectorLoadout.toolNames,
       ...mcpToolNames,
-      ...(toolSearch ? [toolSearch.name] : []),
+      ...toolSearchTools.map((tool) => tool.name),
     ];
     const environmentBash: ToolDefinition | undefined =
       (recipe.mcp?.mode ?? "cli") === "cli" &&
@@ -791,7 +810,7 @@ async function createSessionForAgent(
           ]
         : []),
       ...(mcp.tools ?? []),
-      ...(toolSearch ? [toolSearch] : []),
+      ...toolSearchTools,
     ];
 
     const created = await createAgentSessionFromServices({
@@ -843,7 +862,7 @@ async function createSessionForAgent(
         ...tools,
         ...connectorLoadout.initialActiveToolNames,
         ...(mcp.initialActiveToolNames ?? []),
-        ...(toolSearch ? [toolSearch.name] : []),
+        ...toolSearchTools.map((tool) => tool.name),
       ];
       session.setActiveToolsByName(activeTools);
       const applied = new Set(session.getActiveToolNames());

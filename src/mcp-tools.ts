@@ -14,7 +14,10 @@ import type {
   McpToolCatalogEntry,
 } from "./mcp.js";
 import type { RecipeAgentMcp } from "./recipe-agent.js";
-import { RECIPE_TOOL_SEARCH_NAME } from "./tool-search.js";
+import {
+  LEGACY_MCP_TOOL_SEARCH_NAME,
+  RECIPE_TOOL_SEARCH_NAME,
+} from "./tool-search.js";
 
 const DEFAULT_OUTPUT_MAX_BYTES = 50 * 1024;
 const DEFAULT_OUTPUT_MAX_LINES = 2_000;
@@ -578,7 +581,8 @@ export function createMcpToolSet(options: {
   for (const tool of usable) {
     if (
       piNames.has(tool.piName) ||
-      tool.piName === RECIPE_TOOL_SEARCH_NAME
+      tool.piName === RECIPE_TOOL_SEARCH_NAME ||
+      tool.piName === LEGACY_MCP_TOOL_SEARCH_NAME
     ) {
       throw new Error(
         `MCP tool name collision for '${tool.canonicalName}' (${tool.piName}).`

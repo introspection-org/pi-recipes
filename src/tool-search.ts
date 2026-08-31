@@ -2,6 +2,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export const RECIPE_TOOL_SEARCH_NAME = "tool_search";
+export const LEGACY_MCP_TOOL_SEARCH_NAME = "mcp_search";
 
 export interface RecipeToolActivation {
   getActiveTools(): string[];
@@ -136,4 +137,26 @@ export function createRecipeToolSearch(
       };
     },
   };
+}
+
+export function createRecipeToolSearchTools(
+  options: RecipeToolSearchOptions,
+  includeLegacyMcpAlias: boolean
+): ToolDefinition[] {
+  const search = createRecipeToolSearch(options);
+  if (!search) return [];
+  if (!includeLegacyMcpAlias) return [search];
+  if (options.tools.some((tool) => tool.name === LEGACY_MCP_TOOL_SEARCH_NAME)) {
+    throw new Error(
+      `Recipe tool name '${LEGACY_MCP_TOOL_SEARCH_NAME}' is reserved by the session`
+    );
+  }
+  return [
+    search,
+    {
+      ...search,
+      name: LEGACY_MCP_TOOL_SEARCH_NAME,
+      label: "MCP search",
+    },
+  ];
 }

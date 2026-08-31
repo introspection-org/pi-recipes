@@ -149,8 +149,9 @@ describe("Pi extension MCP tools mode", () => {
     expect(pi.tools.has(searchContacts)).toBe(true);
     expect(pi.tools.has(getContact)).toBe(true);
     expect(pi.tools.has("tool_search")).toBe(true);
+    expect(pi.tools.has("mcp_search")).toBe(true);
     expect(pi.activeTools).toEqual(
-      expect.arrayContaining(["bash", getContact, "tool_search"])
+      expect.arrayContaining(["bash", getContact, "tool_search", "mcp_search"])
     );
     expect(pi.activeTools).not.toContain(searchContacts);
     expect(env.PATH).toBe(initialPath);
@@ -183,7 +184,7 @@ describe("Pi extension MCP tools mode", () => {
     );
     expect(pi.activeTools).not.toContain(searchContacts);
     expect(pi.activeTools).toEqual(
-      expect.arrayContaining(["bash", getContact, "tool_search"])
+      expect.arrayContaining(["bash", getContact, "tool_search", "mcp_search"])
     );
     expect(notify).not.toHaveBeenCalledWith(
       expect.stringContaining("already in use"),

@@ -95,7 +95,8 @@ Deferred tools remain authorized and discoverable. When at least one connector
 or MCP tool is deferred, Recipes registers `tool_search`. Calling it searches
 the inactive tools already allowed for the agent and adds the best matches to
 Pi's active tool set for the next model request. It never grants access beyond
-the Recipe manifest and agent policy.
+the Recipe manifest and agent policy. Recipes also registers `mcp_search` as a
+compatibility alias when MCP tools are deferred.
 
 `defer` and `eager` are invalid in CLI mode. An omitted agent `mcp` block
 inherits its base policy. Once a child declares `mcp`, the complete block
