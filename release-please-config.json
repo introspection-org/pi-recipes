@@ -11,6 +11,12 @@
       "release-type": "node",
       "package-name": "",
       "bump-minor-pre-major": true
+    },
+    "packages/channels/slack": {
+      "release-type": "node",
+      "package-name": "@introspection-ai/recipe-channel-slack",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true
     }
   },
   "bump-minor-pre-major": true

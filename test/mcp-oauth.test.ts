@@ -37,6 +37,7 @@ describe("MCP OAuth session configuration", () => {
         version: "1.0.0",
         path: recipeDir,
         resources: { agents: [], extensions: [], skills: [], prompts: [] },
+        connectors: [],
         mcp: {
           manifests: [],
           servers: [

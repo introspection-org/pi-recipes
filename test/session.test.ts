@@ -25,6 +25,10 @@ import {
   type RecipeSessionHandle,
 } from "../src/session.js";
 import { cleanEnv, writeFixtureRecipe } from "../src/test-utils.js";
+import {
+  installSlackRecipeConnector,
+  SLACK_RECIPE_CHANNEL_PACKAGE,
+} from "./helpers/recipe-connectors.js";
 
 const detachTelemetry = vi.hoisted(() => vi.fn());
 const instrumentSession = vi.hoisted(() =>
@@ -235,6 +239,49 @@ describe("createAgentSession", () => {
     expect(handle.session.model?.id).toBe("claude-sonnet-4-5");
     expect(handle.session.systemPrompt).toContain("conformance fixture");
     expect(handle.session.systemPrompt).toContain("Conformance agent");
+  });
+
+  it("starts connector sessions with the default Slack loadout", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
+      tools: [
+        "slack_origin",
+        "slack_read_thread",
+        "slack_react",
+        "slack_send_message",
+      ],
+      manifestPi: {
+        connectors: [{ provider: "slack" }],
+      },
+    });
+    installSlackRecipeConnector(recipeDir);
+    const handle = await open({ recipeDir, cwd: workspaceDir });
+
+    expect(handle.session.getActiveToolNames()).toEqual(
+      expect.arrayContaining([
+        "slack_origin",
+        "slack_read_thread",
+        "slack_send_message",
+        "tool_search",
+      ])
+    );
+    expect(handle.session.getActiveToolNames()).not.toContain("slack_react");
+
+  });
+
+  it("rejects connector tools unsupported by the provider", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
+      tools: ["slack_origin", "slack_delete_workspace"],
+      manifestPi: {
+        connectors: [{ provider: "slack" }],
+      },
+    });
+    installSlackRecipeConnector(recipeDir);
+
+    await expect(open({ recipeDir, cwd: workspaceDir })).rejects.toThrow(
+      /declares unavailable tool\(s\): slack_delete_workspace/
+    );
   });
 
   it("applies authored session policy to the session-local Pi agent", async () => {
@@ -590,6 +637,32 @@ describe("createAgentSession", () => {
     ).rejects.toThrow(
       "Recipe extension attempted to activate undeclared tool(s): bash"
     );
+  });
+
+  it("preserves an extension-owned tool_search when generated search is not needed", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      manifestPi: { extensions: ["extensions/tool-search.ts"] },
+      tools: ["tool_search"],
+    });
+    mkdirSync(join(recipeDir, "extensions"), { recursive: true });
+    writeFileSync(
+      join(recipeDir, "extensions", "tool-search.ts"),
+      [
+        "export default (pi) => {",
+        "  pi.registerTool({",
+        "    name: 'tool_search',",
+        "    label: 'Recipe tool search',",
+        "    description: 'Search this Recipe.',",
+        "    parameters: { type: 'object', properties: {} },",
+        "    async execute() { return { content: [], details: {} }; }",
+        "  });",
+        "};",
+      ].join("\n")
+    );
+
+    const handle = await open({ recipeDir, cwd: workspaceDir });
+
+    expect(handle.session.getActiveToolNames()).toContain("tool_search");
   });
 
   it("does not auto-load ambient Recipe-directory extensions", async () => {

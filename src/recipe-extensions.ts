@@ -62,16 +62,36 @@ function resolvePackageModuleRoot(packageName: string): string | undefined {
   return dirname(resolved.startsWith("file:") ? fileURLToPath(resolved) : resolved);
 }
 
-function recipeExtensionAliases(): Record<string, string> {
+function packageResolvesFromDir(packageName: string, packageDir: string): boolean {
+  const loaderPath = join(packageDir, ".recipe-extension-loader.js");
+  try {
+    createRequire(loaderPath).resolve(packageName);
+    return true;
+  } catch {
+    // ESM-only packages can expose import subpaths without a CommonJS root.
+  }
+  try {
+    return findPackageJSON(packageName, loaderPath) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+function recipeExtensionAliases(recipeDir: string): Record<string, string> {
+  const recipeHasRecipesPackage = packageResolvesFromDir(
+    "@introspection-ai/recipes",
+    recipeDir
+  );
   const recipesRoot = resolvePackageModuleRoot("@introspection-ai/recipes");
   return Object.fromEntries(
     [
       // Jiti aliases are package-prefix mappings. They must point at the
       // directory containing a package's resolved modules, not an entry file,
       // so Jiti can append exported subpaths without corrupting the path.
-      // The self-alias also keeps recipe interaction imports on this package
-      // instance, sharing interrupt state with the child-agent runner.
-      ["@introspection-ai/recipes", recipesRoot],
+      // Prefer the Recipe's installed package when it declares one, so a local
+      // run can use helper subpaths added after the host was released. Fall
+      // back to the host package for Recipes that rely on the bundled API.
+      ["@introspection-ai/recipes", recipeHasRecipesPackage ? undefined : recipesRoot],
       ["@earendil-works/pi-coding-agent", resolvePackageModuleRoot("@earendil-works/pi-coding-agent")],
       ["@earendil-works/pi-agent-core", resolvePackageModuleRoot("@earendil-works/pi-agent-core")],
       ["@earendil-works/pi-ai", resolvePackageModuleRoot("@earendil-works/pi-ai")],
@@ -104,13 +124,7 @@ export async function loadRecipeExtensionFactory(
   recipeDir: string,
   extensionPath: string
 ): Promise<ExtensionFactory> {
-  const { createJiti } = loadJiti();
-  const recipeLoaderUrl = pathToFileURL(join(recipeDir, ".recipe-extension-loader.js")).href;
-  const jiti = createJiti(recipeLoaderUrl, {
-    moduleCache: false,
-    alias: recipeExtensionAliases(),
-  });
-  const loaded = await jiti.import(extensionPath, { default: true });
+  const loaded = await loadRecipeModule(recipeDir, extensionPath);
   const factory =
     typeof loaded === "function"
       ? loaded
@@ -121,4 +135,17 @@ export async function loadRecipeExtensionFactory(
     throw new Error(`Recipe extension does not export a factory function: ${extensionPath}`);
   }
   return factory as ExtensionFactory;
+}
+
+export async function loadRecipeModule(
+  recipeDir: string,
+  moduleId: string
+): Promise<unknown> {
+  const { createJiti } = loadJiti();
+  const recipeLoaderUrl = pathToFileURL(join(recipeDir, ".recipe-extension-loader.js")).href;
+  const jiti = createJiti(recipeLoaderUrl, {
+    moduleCache: false,
+    alias: recipeExtensionAliases(recipeDir),
+  });
+  return jiti.import(moduleId, { default: true });
 }

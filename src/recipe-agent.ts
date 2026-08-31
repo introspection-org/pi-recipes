@@ -191,8 +191,11 @@ function invalidAgentField(
       return `${key} must not contain duplicate entries`;
     }
   }
-  if (stringArray(data.tools).includes("agent")) {
-    return "tools must not declare the session-generated agent tool";
+  const reservedTools = stringArray(data.tools).filter(
+    (tool) => tool === "agent"
+  );
+  if (reservedTools.length > 0) {
+    return `tools must not declare session-generated tool(s): ${reservedTools.join(", ")}`;
   }
   if (Object.hasOwn(data, "system_instructions")) {
     const value = data.system_instructions;

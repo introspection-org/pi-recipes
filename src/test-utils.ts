@@ -41,6 +41,7 @@ export interface HostConformanceCase {
 
 interface FixtureOptions {
   agentExtras?: string[];
+  dependencies?: Record<string, string>;
   manifestPi?: Record<string, unknown>;
   subagents?: string[];
   tools?: string[];
@@ -63,6 +64,7 @@ export function writeFixtureRecipe(options: FixtureOptions = {}): {
       name: "conformance-fixture",
       version: "0.1.0",
       type: "module",
+      ...(options.dependencies ? { dependencies: options.dependencies } : {}),
       pi: { agents: ["agents/*.yaml"], ...(options.manifestPi ?? {}) },
     })
   );

@@ -148,9 +148,10 @@ describe("Pi extension MCP tools mode", () => {
     const getContact = piMcpToolName("contacts", "get_contact");
     expect(pi.tools.has(searchContacts)).toBe(true);
     expect(pi.tools.has(getContact)).toBe(true);
+    expect(pi.tools.has("tool_search")).toBe(true);
     expect(pi.tools.has("mcp_search")).toBe(true);
     expect(pi.activeTools).toEqual(
-      expect.arrayContaining(["bash", getContact, "mcp_search"])
+      expect.arrayContaining(["bash", getContact, "tool_search", "mcp_search"])
     );
     expect(pi.activeTools).not.toContain(searchContacts);
     expect(env.PATH).toBe(initialPath);
@@ -160,7 +161,7 @@ describe("Pi extension MCP tools mode", () => {
     expect(existsSync(hostMcporterConfig)).toBe(true);
     expect(readFileSync(hostMcporterConfig, "utf8")).toBe('{"host":true}\n');
 
-    const search = pi.tools.get("mcp_search")!;
+    const search = pi.tools.get("tool_search")!;
     await (search.execute as any)(
       "search-1",
       { query: "find a person", limit: 3 },
@@ -183,7 +184,7 @@ describe("Pi extension MCP tools mode", () => {
     );
     expect(pi.activeTools).not.toContain(searchContacts);
     expect(pi.activeTools).toEqual(
-      expect.arrayContaining(["bash", getContact, "mcp_search"])
+      expect.arrayContaining(["bash", getContact, "tool_search", "mcp_search"])
     );
     expect(notify).not.toHaveBeenCalledWith(
       expect.stringContaining("already in use"),

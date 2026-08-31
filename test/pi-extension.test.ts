@@ -6,6 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createRecipesExtension } from "../src/pi-extension.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
+import {
+  installSlackRecipeConnector,
+  SLACK_RECIPE_CHANNEL_PACKAGE,
+} from "./helpers/recipe-connectors.js";
 
 beforeEach(() => {
 });
@@ -382,6 +386,79 @@ describe("Recipes extension for Pi", () => {
         );
       expect(recipeMessage).not.toContain(join(recipeDir, "skills", "repo-index", "SKILL.md"));
       expect(recipeMessage).not.toContain(join(recipeDir, "prompts"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("registers declared connector tools without a Recipe extension", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-recipe-connectors-"));
+    try {
+      const recipeDir = writeRecipe(root);
+      const pkg = JSON.parse(
+        readFileSync(join(recipeDir, "package.json"), "utf8")
+      );
+      pkg.pi.connectors = [{ provider: "slack" }];
+      pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
+      writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+      installSlackRecipeConnector(recipeDir);
+      writeFileSync(
+        join(recipeDir, "defs", "main.yaml"),
+        [
+          "name: main",
+          "model:",
+          "  name: openai/gpt-4.1",
+          "tools:",
+          "  - slack_origin",
+          "  - slack_read_thread",
+          "  - slack_react",
+          "",
+        ].join("\n")
+      );
+
+      const pi = createMockExtensionAPI();
+      pi.flagValues.set("recipe", recipeDir);
+      pi.flagValues.set("agent", "main");
+      createRecipesExtension({
+        env: { SLACK_CHANNEL_ID: "C_CONFIGURED" },
+      })(pi);
+      await pi.emitExtensionEvent(
+        { type: "session_start", reason: "startup" } as any,
+        extensionContext(root)
+      );
+
+      expect([...pi.tools.keys()].sort()).toEqual([
+        "agent",
+        "slack_origin",
+        "slack_react",
+        "slack_read_thread",
+        "tool_search",
+      ]);
+      expect(pi.activeTools.sort()).toEqual([
+        "slack_origin",
+        "slack_read_thread",
+        "tool_search",
+      ]);
+      const origin = await pi.tools.get("slack_origin")?.execute(
+        "tool-call",
+        {},
+        undefined,
+        undefined,
+        extensionContext(root)
+      );
+      expect(origin?.details).toEqual({
+        provider: "slack",
+        channel: "C_CONFIGURED",
+        thread_ts: null,
+      });
+      await pi.tools.get("tool_search")?.execute(
+        "tool-call",
+        { query: "add a reaction" },
+        undefined,
+        undefined,
+        extensionContext(root)
+      );
+      expect(pi.activeTools).toContain("slack_react");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -16,6 +16,7 @@ import {
   validatePiPackageManifest,
 } from "../src/recipe-package.js";
 import { resolveRecipe } from "../src/recipe/resolve.js";
+import { SLACK_RECIPE_CHANNEL_PACKAGE } from "./helpers/recipe-connectors.js";
 
 const cleanups: Array<() => void> = [];
 
@@ -63,6 +64,143 @@ function fixture(): string {
 }
 
 describe("Recipe Format", () => {
+  it("reads a declarative Slack connector", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [{ provider: "slack" }];
+    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(manifest.connectors).toEqual([{ provider: "slack" }]);
+    expect(validatePiPackageManifest(manifest)).toEqual({
+      valid: true,
+      findings: [],
+    });
+  });
+
+  it("rejects connector-wide tool configuration", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [
+      {
+        provider: "slack",
+        tools: { include: ["slack_origin"] },
+      },
+    ];
+    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+
+    expect(
+      validatePiPackageManifest(readPiPackageManifest(recipeDir)).findings
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message:
+            "package.json#pi.connectors[0] contains unknown field(s): tools",
+        }),
+      ])
+    );
+  });
+
+  it("derives the connector package from the provider", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [{ provider: "discord" }];
+    pkg.dependencies = {
+      "@introspection-ai/recipe-channel-discord": "0.1.0",
+    };
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+
+    const report = validatePiPackageManifest(
+      readPiPackageManifest(recipeDir)
+    );
+    expect(report).toEqual({ valid: true, findings: [] });
+  });
+
+  it("leaves connector tool enforcement to the loaded connector package", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [{ provider: "slack" }];
+    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/claude-sonnet-4-5",
+        "tools: [slack_origin, slack_send_message]",
+        "",
+      ].join("\n")
+    );
+
+    expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
+      "slack_origin",
+      "slack_send_message",
+    ]);
+  });
+
+  it("does not reserve unrecognized tools that share the Slack prefix", () => {
+    const recipeDir = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/claude-sonnet-4-5",
+        "tools: [slack_custom_report]",
+        "",
+      ].join("\n")
+    );
+
+    expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
+      "slack_custom_report",
+    ]);
+  });
+
+  it("requires the Slack connector package when Slack is declared", () => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(
+      readFileSync(join(recipeDir, "package.json"), "utf8")
+    );
+    pkg.pi.connectors = [{ provider: "slack" }];
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+
+    const report = validatePiPackageManifest(readPiPackageManifest(recipeDir));
+
+    expect(report.valid).toBe(false);
+    expect(report.findings.map((finding) => finding.message)).toContain(
+      `package.json#pi.connectors provider 'slack' requires dependency '${SLACK_RECIPE_CHANNEL_PACKAGE}'`
+    );
+  });
+
+  it("allows an extension-owned tool search name", () => {
+    const recipeDir = fixture();
+    writeFileSync(
+      join(recipeDir, "agents", "agent.yaml"),
+      [
+        "name: agent",
+        "model:",
+        "  name: anthropic/claude-sonnet-4-5",
+        "tools: [tool_search]",
+        "",
+      ].join("\n")
+    );
+
+    expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
+      "tool_search",
+    ]);
+  });
+
   it("resolves locked Python and approved system runtime requirements", () => {
     const recipeDir = fixture();
     mkdirSync(join(recipeDir, "python"), { recursive: true });
@@ -542,5 +680,20 @@ describe("release train isolation", () => {
 
     expect(workflow).toContain("pnpm publish --access public");
     expect(workflow).not.toContain("npm access set status=public");
+  });
+
+  it("removes temporary npm tags after promotion", () => {
+    const root = join(import.meta.dirname, "..");
+    const workflow = readFileSync(
+      join(root, ".github", "workflows", "release-please.yml"),
+      "utf8"
+    );
+
+    expect(workflow).toContain(
+      'npm dist-tag rm "$published_package" "$staging_tag"'
+    );
+    expect(workflow).toContain('remove_staging_tag "$platform_name"');
+    expect(workflow).toContain('remove_staging_tag "$connector_name"');
+    expect(workflow).toContain('remove_staging_tag "$package_name"');
   });
 });

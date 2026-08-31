@@ -1,0 +1,49 @@
+{
+  "name": "@introspection-ai/recipe-channel-slack",
+  "version": "0.1.0",
+  "description": "Slack Bot API tools for Introspection Recipes.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/introspection-org/recipes.git",
+    "directory": "packages/channels/slack"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "pack:check": "pnpm pack --dry-run --json | node ../../../scripts/check-npm-pack.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.82.0 <0.85.0",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  }
+}

@@ -74,6 +74,7 @@ function recipeManifest(
     version: "1.0.0",
     path: recipeDir,
     resources: { agents: [], extensions: [], skills: [], prompts: [] },
+    connectors: [],
     mcp: {
       manifests: [],
       servers: servers.map((server) => ({

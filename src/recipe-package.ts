@@ -71,6 +71,14 @@ export interface RecipePackageMcpConfig {
   servers: RecipePackageMcpServer[];
 }
 
+export interface RecipePackageConnector {
+  provider: string;
+}
+
+export function recipeChannelPackageName(provider: string): string {
+  return `@introspection-ai/recipe-channel-${provider}`;
+}
+
 export interface RecipePythonRuntimeRequirement {
   project: string;
   lockfile: string;
@@ -98,6 +106,7 @@ export interface RecipePackageManifest {
   resources: RecipePackageResources;
   /** Whether each resource key was explicitly authored in package.json#pi. */
   resourceDeclarations?: Record<keyof RecipePackageResources, boolean>;
+  connectors?: RecipePackageConnector[];
   mcp: RecipePackageMcpConfig;
   runtime?: RecipeRuntimeRequirements;
 }
@@ -120,6 +129,7 @@ type PackageJson = {
   name?: unknown;
   version?: unknown;
   description?: unknown;
+  dependencies?: unknown;
   pi?: unknown;
 };
 
@@ -130,7 +140,7 @@ const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
   "prompts",
 ];
 
-const PI_KEYS = new Set([...RESOURCE_KEYS, "mcp", "runtime"]);
+const PI_KEYS = new Set([...RESOURCE_KEYS, "connectors", "mcp", "runtime"]);
 const SOURCE_FINDINGS = Symbol("recipeSourceFindings");
 type ParsedRecipePackageManifest = RecipePackageManifest & {
   [SOURCE_FINDINGS]?: RecipeValidationFinding[];
@@ -162,7 +172,8 @@ function resourceDeclarations(
 
 function sourceShapeFindings(
   pi: Record<string, unknown>,
-  packageName: string
+  packageName: string,
+  dependencies: unknown
 ): RecipeValidationFinding[] {
   const findings: RecipeValidationFinding[] = [];
   for (const key of Object.keys(pi)) {
@@ -196,8 +207,86 @@ function sourceShapeFindings(
       );
     }
   }
+  findings.push(
+    ...connectorSourceShapeFindings(pi.connectors, packageName, dependencies)
+  );
   findings.push(...mcpSourceShapeFindings(pi.mcp, packageName));
   findings.push(...runtimeSourceShapeFindings(pi.runtime, packageName));
+  return findings;
+}
+
+function connectorSourceShapeFindings(
+  value: unknown,
+  packageName: string,
+  dependencies: unknown
+): RecipeValidationFinding[] {
+  if (value === undefined) return [];
+  const invalid = (message: string) =>
+    finding("pi.connectors_invalid", message, packageName);
+  if (!Array.isArray(value)) {
+    return [invalid("package.json#pi.connectors must be an array")];
+  }
+
+  const findings: RecipeValidationFinding[] = [];
+  const providers = new Set<string>();
+  for (const [index, raw] of value.entries()) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      findings.push(
+        invalid(`package.json#pi.connectors[${index}] must be an object`)
+      );
+      continue;
+    }
+    const connector = raw as Record<string, unknown>;
+    const unknown = Object.keys(connector).filter((key) => key !== "provider");
+    if (unknown.length > 0) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors[${index}] contains unknown field(s): ${unknown.join(", ")}`
+        )
+      );
+    }
+
+    const provider =
+      typeof connector.provider === "string" && connector.provider.trim()
+        ? connector.provider.trim()
+        : undefined;
+    if (!provider) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors[${index}].provider must be non-empty`
+        )
+      );
+    } else if (providers.has(provider)) {
+      findings.push(
+        invalid(
+          `package.json#pi.connectors contains duplicate provider '${provider}'`
+        )
+      );
+    } else {
+      providers.add(provider);
+    }
+
+    if (provider) {
+      const channelPackage = recipeChannelPackageName(provider);
+      const declaredDependencies =
+        dependencies &&
+        typeof dependencies === "object" &&
+        !Array.isArray(dependencies)
+          ? (dependencies as Record<string, unknown>)
+          : {};
+      const dependencyVersion = declaredDependencies[channelPackage];
+      if (
+        typeof dependencyVersion !== "string" ||
+        !dependencyVersion.trim()
+      ) {
+        findings.push(
+          invalid(
+            `package.json#pi.connectors provider '${provider ?? "unknown"}' requires dependency '${channelPackage}'`
+          )
+        );
+      }
+    }
+  }
   return findings;
 }
 
@@ -612,6 +701,19 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
   return { manifests, servers };
 }
 
+function parseConnectors(value: unknown): RecipePackageConnector[] {
+  const seen = new Set<string>();
+  const connectors: RecipePackageConnector[] = [];
+  for (const raw of Array.isArray(value) ? value : []) {
+    const connector = asRecord(raw);
+    const provider = stringValue(connector.provider);
+    if (!provider || seen.has(provider)) continue;
+    seen.add(provider);
+    connectors.push({ provider });
+  }
+  return connectors;
+}
+
 function parseRuntimeRequirements(value: unknown): RecipeRuntimeRequirements {
   const runtime = asRecord(value);
   const python = asRecord(runtime.python);
@@ -685,11 +787,12 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
     path: packageDir,
     resources,
     resourceDeclarations: resourceDeclarations(pi),
+    connectors: parseConnectors(pi.connectors),
     mcp: parseMcpConfig(pi.mcp),
     runtime: parseRuntimeRequirements(pi.runtime),
   };
   Object.defineProperty(manifest, SOURCE_FINDINGS, {
-    value: sourceShapeFindings(pi, manifest.name),
+    value: sourceShapeFindings(pi, manifest.name, raw.dependencies),
     enumerable: false,
   });
   return manifest;

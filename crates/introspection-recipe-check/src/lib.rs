@@ -85,6 +85,7 @@ struct Package {
     name: Option<String>,
     version: Option<String>,
     pi: Option<JsonValue>,
+    dependencies: BTreeSet<String>,
     runtime_dependencies: bool,
 }
 
@@ -361,6 +362,18 @@ fn read_package(ctx: &mut CheckContext) -> Option<Package> {
         name: string_value(object.get("name")),
         version: string_value(object.get("version")),
         pi,
+        dependencies: object
+            .get("dependencies")
+            .and_then(JsonValue::as_object)
+            .map(|dependencies| {
+                dependencies
+                    .iter()
+                    .filter_map(|(name, version)| {
+                        string_value(Some(version)).map(|_| name.to_owned())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         runtime_dependencies: has_non_empty_object(object.get("dependencies"))
             || has_non_empty_object(object.get("optionalDependencies")),
     })
@@ -556,6 +569,7 @@ fn validate_pi_config(
         "extensions",
         "skills",
         "prompts",
+        "connectors",
         "mcp",
         "runtime",
     ]
@@ -597,10 +611,80 @@ fn validate_pi_config(
         resolved.insert(key, paths);
     }
 
+    validate_connector_config(pi.get("connectors"), &package.dependencies, ctx);
     validate_mcp_config(pi.get("mcp"), ctx);
     validate_runtime_config(pi.get("runtime"), ctx);
 
     resolved
+}
+
+fn validate_connector_config(
+    value: Option<&JsonValue>,
+    dependencies: &BTreeSet<String>,
+    ctx: &mut CheckContext,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    let JsonValue::Array(connectors) = value else {
+        ctx.error(
+            "pi.connectors_invalid",
+            PACKAGE_JSON,
+            "package.json#pi.connectors must be an array",
+            Some("use a list of connector declarations"),
+        );
+        return;
+    };
+
+    let mut providers = BTreeSet::new();
+    for (index, connector) in connectors.iter().enumerate() {
+        let JsonValue::Object(connector) = connector else {
+            ctx.error(
+                "pi.connectors_invalid",
+                PACKAGE_JSON,
+                format!("package.json#pi.connectors[{index}] must be an object"),
+                Some("remove the entry or make it a connector declaration"),
+            );
+            continue;
+        };
+        for key in connector.keys().filter(|key| key.as_str() != "provider") {
+            ctx.error(
+                "pi.connectors_invalid",
+                PACKAGE_JSON,
+                format!("package.json#pi.connectors[{index}] contains unknown field '{key}'"),
+                Some("use only provider"),
+            );
+        }
+
+        let provider = string_value(connector.get("provider"));
+        match provider.as_deref() {
+            Some(provider) if !providers.insert(provider.to_owned()) => ctx.error(
+                "pi.connectors_invalid",
+                PACKAGE_JSON,
+                format!("package.json#pi.connectors contains duplicate provider '{provider}'"),
+                Some("declare each connector provider once"),
+            ),
+            Some(_) => {}
+            None => ctx.error(
+                "pi.connectors_invalid",
+                PACKAGE_JSON,
+                format!("package.json#pi.connectors[{index}].provider must be non-empty"),
+                Some("name the connector provider"),
+            ),
+        }
+
+        if let Some(provider) = provider.as_deref() {
+            let package = format!("@introspection-ai/recipe-channel-{provider}");
+            if !dependencies.contains(&package) {
+                ctx.error(
+                    "pi.connectors_invalid",
+                    PACKAGE_JSON,
+                    format!("package.json#pi.connectors provider '{provider}' requires dependency '{package}'"),
+                    Some("add the channel package to package.json#dependencies and commit the lockfile"),
+                );
+            }
+        }
+    }
 }
 
 fn validate_runtime_config(value: Option<&JsonValue>, ctx: &mut CheckContext) {
@@ -1062,17 +1146,22 @@ fn read_agent(path: &str, ctx: &mut CheckContext) -> Option<RawAgent> {
     validate_agent_ai(map, path, &name, &mut fields, ctx);
     validate_agent_session(map, path, ctx);
     let tools = validate_agent_string_array(map, "tools", path, ctx);
-    if tools
+    let reserved_tools = tools
         .as_deref()
         .unwrap_or_default()
         .iter()
-        .any(|tool| tool == "agent")
-    {
+        .filter(|tool| tool.as_str() == "agent")
+        .cloned()
+        .collect::<Vec<_>>();
+    if !reserved_tools.is_empty() {
         ctx.error(
             "agent.tools_reserved",
             path,
-            "Agent tools must not declare the session-generated agent tool",
-            Some("declare subagents to enable delegation"),
+            &format!(
+                "Agent tools must not declare session-generated tools: {}",
+                reserved_tools.join(", ")
+            ),
+            Some("remove the generated tool from the tools list"),
         );
     }
     let mcp = validate_agent_mcp(map, path, ctx);
@@ -3034,6 +3123,126 @@ mod tests {
         ])
     }
 
+    fn connector_recipe(agent_tools: &[&str]) -> RecipeFiles {
+        let package = json!({
+            "name": "connector-test",
+            "version": "0.1.0",
+            "dependencies": {
+                "@introspection-ai/recipe-channel-slack": "0.1.0"
+            },
+            "pi": {
+                "agents": ["agents/*.yaml"],
+                "connectors": [{
+                    "provider": "slack"
+                }]
+            }
+        });
+        let tools = agent_tools
+            .iter()
+            .map(|tool| format!("  - {tool}\n"))
+            .collect::<String>();
+        let agent = format!(
+            concat!(
+                "name: agent\n",
+                "model:\n",
+                "  name: test/provider-model\n",
+                "tools:\n",
+                "{}",
+            ),
+            tools
+        );
+        recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            ("pnpm-lock.yaml", "lockfileVersion: '9.0'\n"),
+            ("agents/agent.yaml", &agent),
+        ])
+    }
+
+    #[test]
+    fn connector_requires_its_runtime_dependency() {
+        let mut files = connector_recipe(&["slack_origin"]);
+        let package_file = files
+            .files
+            .iter_mut()
+            .find(|file| file.path == PACKAGE_JSON)
+            .expect("package.json");
+        let mut package: JsonValue =
+            serde_json::from_str(package_file.content.as_deref().expect("package content"))
+                .expect("parse package");
+        package
+            .as_object_mut()
+            .expect("package object")
+            .remove("dependencies");
+        package_file.content = Some(serde_json::to_string_pretty(&package).expect("serialize"));
+
+        let report = check_recipe_files(&files);
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "pi.connectors_invalid"
+                && diagnostic.message.contains("recipe-channel-slack")
+        }));
+
+        for invalid_version in [JsonValue::Null, json!("")] {
+            let mut files = connector_recipe(&["slack_origin"]);
+            let package_file = files
+                .files
+                .iter_mut()
+                .find(|file| file.path == PACKAGE_JSON)
+                .expect("package.json");
+            let mut package: JsonValue =
+                serde_json::from_str(package_file.content.as_deref().expect("package content"))
+                    .expect("parse package");
+            package["dependencies"]["@introspection-ai/recipe-channel-slack"] =
+                invalid_version;
+            package_file.content =
+                Some(serde_json::to_string_pretty(&package).expect("serialize"));
+
+            let report = check_recipe_files(&files);
+
+            assert!(report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "pi.connectors_invalid"
+                    && diagnostic.message.contains("recipe-channel-slack")
+            }));
+        }
+    }
+
+    #[test]
+    fn accepts_generic_connector_declarations() {
+        let report = check_recipe_files(&connector_recipe(&[
+            "slack_origin",
+            "slack_custom_report",
+        ]));
+
+        assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn connector_rejects_global_tool_configuration() {
+        let mut files = connector_recipe(&["slack_origin"]);
+        let package_file = files
+            .files
+            .iter_mut()
+            .find(|file| file.path == PACKAGE_JSON)
+            .expect("package.json");
+        let mut package: JsonValue =
+            serde_json::from_str(package_file.content.as_deref().expect("package content"))
+                .expect("parse package");
+        package["pi"]["connectors"][0]["tools"] = json!({ "include": ["origin"] });
+        package_file.content = Some(serde_json::to_string_pretty(&package).expect("serialize"));
+
+        let report = check_recipe_files(&files);
+
+        assert!(!report.valid);
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "pi.connectors_invalid"
+                && diagnostic.message.contains("unknown field 'tools'")
+        }));
+    }
+
     #[test]
     fn accepts_package_and_agent_mcp_include_exclude_selectors() {
         let input = selector_recipe(
@@ -3397,6 +3606,54 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "agent.name_invalid"));
+    }
+
+    #[test]
+    fn rejects_session_generated_tool_names() {
+        let package = json!({
+            "name": "reserved-tools",
+            "version": "0.1.0",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\ntools: [agent]\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "agent.tools_reserved" && diagnostic.message.contains("agent")
+        }));
+    }
+
+    #[test]
+    fn accepts_extension_owned_tool_search() {
+        let package = json!({
+            "name": "extension-search",
+            "version": "0.1.0",
+            "pi": { "agents": ["agents/*.yaml"] }
+        });
+        let input = recipe_files(&[
+            (
+                "package.json",
+                &serde_json::to_string_pretty(&package).expect("serialize package"),
+            ),
+            (
+                "agents/agent.yaml",
+                "name: agent\nmodel:\n  name: test/provider-model\ntools: [tool_search]\n",
+            ),
+        ]);
+
+        let report = check_recipe_files(&input);
+
+        assert!(report.valid, "{:?}", report.diagnostics);
     }
 
     #[test]
