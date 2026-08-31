@@ -234,6 +234,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
             ctx.target.conversation,
             thread,
             input.cursor,
+            limit,
           )
         : await this.latestThreadHistory(ctx, thread, limit);
       raw = page.messages;
@@ -357,6 +358,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
     conversation: string,
     thread: string,
     cursor: string,
+    limit: number,
   ): { messages: SlackHistoryMessage[]; cursor?: string } {
     const state = this.threadHistoryCursors.get(cursor);
     if (
@@ -368,7 +370,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         "Unknown Slack thread history cursor. Use a cursor returned for this conversation.",
       );
     }
-    return this.threadHistoryPage(state);
+    return this.threadHistoryPage({ ...state, limit });
   }
 
   private threadHistoryPage(

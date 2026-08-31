@@ -593,6 +593,33 @@ describe("Slack channel tools", () => {
     ).toHaveLength(2);
   });
 
+  it("uses the current limit when paging backward through a cached thread", async () => {
+    const messages = Array.from({ length: 17 }, (_, index) => ({
+      ts: `${index + 1}.1`,
+      text: `message ${index + 1}`,
+      user: "U1",
+    }));
+    const { pi } = slackTools({ threadPages: { "": { messages } } });
+
+    const first = (await call(pi, "channel_read", { limit: 1 })) as {
+      details: { messages: Array<{ text: string }>; cursor?: string };
+    };
+    expect(first.details.messages.map((message) => message.text)).toEqual([
+      "message 17",
+    ]);
+
+    const second = (await call(pi, "channel_read", {
+      cursor: first.details.cursor,
+      limit: 15,
+    })) as {
+      details: { messages: Array<{ text: string }>; cursor?: string };
+    };
+    expect(second.details.messages.map((message) => message.text)).toEqual(
+      messages.slice(1, 16).map((message) => message.text),
+    );
+    expect(second.details.cursor).toBeDefined();
+  });
+
   it("uses Slack bot profile names for bot-authored messages", async () => {
     const { pi, fetchImpl } = slackTools({
       messages: [
