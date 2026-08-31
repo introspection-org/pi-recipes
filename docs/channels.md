@@ -18,9 +18,10 @@ conventional:
   have one that answers "unsupported" after burning a turn.
 
 Before the first model call, the channel extension adds origin metadata to the
-system prompt. The metadata contains the provider, the conversation name when
-the adapter can resolve one, whether the origin is a thread, and the available
-channel tools. It contains no provider conversation IDs and no messages.
+system prompt. The metadata contains the provider, the conversation name and
+permalink when the adapter can resolve them, whether the origin is a thread,
+and the available channel tools. It contains no provider conversation IDs and
+no messages.
 `channel_history` remains the only way to fetch earlier messages when the
 provider supports it.
 

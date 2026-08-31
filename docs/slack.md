@@ -39,7 +39,7 @@ inactive until the model finds them through `tool_search`.
 
 | Tool | Slack operation |
 | --- | --- |
-| `channel_info` | `conversations.info` and `chat.getPermalink` for a thread root |
+| `channel_info` | `conversations.info` and `chat.getPermalink` for a thread root; returns the permalink as conversation metadata |
 | `channel_reply` | `chat.postMessage` into the origin channel and thread |
 | `channel_history` | `conversations.replies` in a thread, else `conversations.history` |
 | `channel_react` | `reactions.add` |

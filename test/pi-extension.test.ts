@@ -451,6 +451,7 @@ describe("Recipes extension for Pi", () => {
       expect(origin?.details).toEqual({
         provider: "slack",
         name: null,
+        permalink: null,
         threaded: false,
       });
       await pi.tools.get("tool_search")?.execute(

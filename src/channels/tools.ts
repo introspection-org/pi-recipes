@@ -132,6 +132,9 @@ function channelContextPrompt(
   const metadata = {
     provider: target.provider,
     ...(target.name ? { conversation_name: target.name } : {}),
+    ...(target.permalink
+      ? { conversation_permalink: target.permalink }
+      : {}),
     conversation_scope: target.thread ? "thread" : "conversation",
     available_tools: tools.map(channelToolName),
   };
@@ -190,7 +193,7 @@ export function registerChannelTools(
     name: channelToolName("info"),
     label: "Channel info",
     description:
-      "Describe the conversation this task answers: provider, conversation name, and whether it is threaded. Every other channel tool already acts on this conversation, so its identifiers are not needed and cannot be supplied.",
+      "Describe the conversation this task answers: provider, conversation name, permalink when available, and whether it is threaded. Every other channel tool already acts on this conversation, so its identifiers are not needed and cannot be supplied.",
     parameters: Type.Object({}, { additionalProperties: false }),
     executionMode: "sequential",
     async execute(_toolCallId: string, _params: unknown, signal?: AbortSignal) {
@@ -198,6 +201,7 @@ export function registerChannelTools(
       return toolResult({
         provider: target.provider,
         name: target.name ?? null,
+        permalink: target.permalink ?? null,
         threaded: Boolean(target.thread),
       });
     },
