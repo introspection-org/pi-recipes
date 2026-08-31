@@ -19,6 +19,7 @@ task lifecycle, protocols, and deployment.
 | Declare capability policy and bindings | [MCP configuration](mcp-configuration.md) |
 | Answer a chat message from a Recipe | [Channel tools](channels.md) |
 | Add Slack tools to a Recipe | [Slack channel connector](slack.md) |
+| Add Microsoft Teams tools to a Recipe | [Teams channel connector](teams.md) |
 | Define portable evaluation judges | [Recipe judges](recipe-judges.md) |
 
 ## Boundary

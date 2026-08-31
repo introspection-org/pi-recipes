@@ -39,6 +39,7 @@ jobs:
     outputs:
       root_release_created: ${{ steps.root_release.outputs.release_created }}
       slack_channel_release_created: ${{ steps.root_release.outputs['packages/channels/slack--release_created'] }}
+      teams_channel_release_created: ${{ steps.root_release.outputs['packages/channels/teams--release_created'] }}
       crate_release_created: ${{ steps.checker_release.outputs['crates/introspection-recipe-check--release_created'] }}
       python_release_created: ${{ steps.checker_release.outputs['bindings/python--release_created'] }}
     steps:
@@ -144,7 +145,7 @@ jobs:
     needs:
       - release-please
       - build-native-tools
-    if: ${{ always() && (needs.release-please.outputs.root_release_created == 'true' || needs.release-please.outputs.slack_channel_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root' || inputs.train == 'channel'))) }}
+    if: ${{ always() && (needs.release-please.outputs.root_release_created == 'true' || needs.release-please.outputs.slack_channel_release_created == 'true' || needs.release-please.outputs.teams_channel_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root' || inputs.train == 'channel'))) }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:
@@ -199,6 +200,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           ROOT_RELEASE_CREATED: ${{ needs.release-please.outputs.root_release_created }}
           SLACK_CHANNEL_RELEASE_CREATED: ${{ needs.release-please.outputs.slack_channel_release_created }}
+          TEAMS_CHANNEL_RELEASE_CREATED: ${{ needs.release-please.outputs.teams_channel_release_created }}
           MANUAL_ROOT_RELEASE: ${{ github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root') }}
           MANUAL_CHANNEL_RELEASE: ${{ github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'channel') }}
           NATIVE_BUILD_RESULT: ${{ needs.build-native-tools.result }}
@@ -208,11 +210,15 @@ jobs:
 
           publish_root=false
           publish_slack=false
+          publish_teams=false
           if [[ "$ROOT_RELEASE_CREATED" == "true" || "$MANUAL_ROOT_RELEASE" == "true" ]]; then
             publish_root=true
           fi
           if [[ "$SLACK_CHANNEL_RELEASE_CREATED" == "true" || "$MANUAL_CHANNEL_RELEASE" == "true" ]]; then
             publish_slack=true
+          fi
+          if [[ "$TEAMS_CHANNEL_RELEASE_CREATED" == "true" || "$MANUAL_CHANNEL_RELEASE" == "true" ]]; then
+            publish_teams=true
           fi
 
           if [[ "$publish_root" == "true" && "$NATIVE_BUILD_RESULT" != "success" ]]; then
@@ -262,6 +268,9 @@ jobs:
           channel_dirs=()
           if [[ "$publish_slack" == "true" ]]; then
             channel_dirs+=("packages/channels/slack")
+          fi
+          if [[ "$publish_teams" == "true" ]]; then
+            channel_dirs+=("packages/channels/teams")
           fi
 
           channel_names=()
