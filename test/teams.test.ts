@@ -6,7 +6,7 @@ import {
   TeamsChannelAdapter,
   teamsActivityMessage,
   teamsChannelTarget,
-} from "../packages/recipe-connector-teams/src/index.js";
+} from "../packages/channels/teams/src/index.js";
 import { registerChannelTools } from "../src/channels/index.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 

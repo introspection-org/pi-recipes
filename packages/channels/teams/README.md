@@ -7,7 +7,7 @@ A Recipe installs it when its `package.json#pi.connectors` list includes the
 ```json
 {
   "dependencies": {
-    "@introspection-ai/recipe-connector-teams": "^0.1.0"
+    "@introspection-ai/recipe-channel-teams": "^0.1.0"
   },
   "pi": {
     "connectors": [

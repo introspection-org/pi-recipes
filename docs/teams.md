@@ -1,6 +1,6 @@
 # Teams channel connector
 
-`@introspection-ai/recipe-connector-teams` is the Microsoft Teams adapter for
+`@introspection-ai/recipe-channel-teams` is the Microsoft Teams adapter for
 the [channel tools](channels.md). It uses the Bot Framework Connector credential
 that every Teams bot has. A Recipe that only selects `channel_reply` can use
 Slack or Teams without changing its prompt.
@@ -10,7 +10,7 @@ Slack or Teams without changing its prompt.
 ```json
 {
   "dependencies": {
-    "@introspection-ai/recipe-connector-teams": "^0.1.0"
+    "@introspection-ai/recipe-channel-teams": "^0.1.0"
   },
   "pi": {
     "connectors": [

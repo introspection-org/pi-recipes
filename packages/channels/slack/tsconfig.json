@@ -5,7 +5,7 @@
     "rootDir": "src",
     "paths": {
       "@introspection-ai/recipes/channels": [
-        "../../dist/channels/index.d.ts"
+        "../../../dist/channels/index.d.ts"
       ]
     }
   },

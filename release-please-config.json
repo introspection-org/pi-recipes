@@ -18,9 +18,9 @@
       "include-component-in-tag": true,
       "bump-minor-pre-major": true
     },
-    "packages/recipe-connector-teams": {
+    "packages/channels/teams": {
       "release-type": "node",
-      "package-name": "@introspection-ai/recipe-connector-teams",
+      "package-name": "@introspection-ai/recipe-channel-teams",
       "include-component-in-tag": true,
       "bump-minor-pre-major": true
     }

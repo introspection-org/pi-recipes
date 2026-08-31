@@ -12,11 +12,11 @@ import {
 import {
   SLACK_CHANNEL_CAPABILITIES,
   SlackChannelAdapter,
-} from "../packages/recipe-connector-slack/src/adapter.js";
+} from "../packages/channels/slack/src/adapter.js";
 import {
   TEAMS_CHANNEL_CAPABILITIES,
   TeamsChannelAdapter,
-} from "../packages/recipe-connector-teams/src/adapter.js";
+} from "../packages/channels/teams/src/adapter.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 const FULL_CAPABILITIES: ChannelCapabilities = {

@@ -71,7 +71,7 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/recipe-connector-teams:
+  packages/channels/teams:
     dependencies:
       '@earendil-works/pi-coding-agent':
         specifier: '>=0.82.0 <0.85.0'

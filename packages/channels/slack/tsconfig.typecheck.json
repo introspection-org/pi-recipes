@@ -1,11 +1,11 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../../tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "../..",
+    "rootDir": "../../..",
     "paths": {
       "@introspection-ai/recipes/channels": [
-        "../../src/channels/index.ts"
+        "../../../src/channels/index.ts"
       ]
     }
   },

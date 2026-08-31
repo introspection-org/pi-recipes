@@ -12,7 +12,7 @@ on:
         options:
           - all
           - root
-          - connector
+          - channel
           - checker
         default: all
 
@@ -38,8 +38,8 @@ jobs:
       pull-requests: write
     outputs:
       root_release_created: ${{ steps.root_release.outputs.release_created }}
-      slack_connector_release_created: ${{ steps.root_release.outputs['packages/channels/slack--release_created'] }}
-      teams_connector_release_created: ${{ steps.root_release.outputs['packages/recipe-connector-teams--release_created'] }}
+      slack_channel_release_created: ${{ steps.root_release.outputs['packages/channels/slack--release_created'] }}
+      teams_channel_release_created: ${{ steps.root_release.outputs['packages/channels/teams--release_created'] }}
       crate_release_created: ${{ steps.checker_release.outputs['crates/introspection-recipe-check--release_created'] }}
       python_release_created: ${{ steps.checker_release.outputs['bindings/python--release_created'] }}
     steps:
@@ -145,7 +145,7 @@ jobs:
     needs:
       - release-please
       - build-native-tools
-    if: ${{ always() && (needs.release-please.outputs.root_release_created == 'true' || needs.release-please.outputs.slack_connector_release_created == 'true' || needs.release-please.outputs.teams_connector_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root' || inputs.train == 'connector'))) }}
+    if: ${{ always() && (needs.release-please.outputs.root_release_created == 'true' || needs.release-please.outputs.slack_channel_release_created == 'true' || needs.release-please.outputs.teams_channel_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root' || inputs.train == 'channel'))) }}
     runs-on: ubuntu-latest
     environment: publish
     permissions:
@@ -199,10 +199,10 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           ROOT_RELEASE_CREATED: ${{ needs.release-please.outputs.root_release_created }}
-          SLACK_CONNECTOR_RELEASE_CREATED: ${{ needs.release-please.outputs.slack_connector_release_created }}
-          TEAMS_CONNECTOR_RELEASE_CREATED: ${{ needs.release-please.outputs.teams_connector_release_created }}
+          SLACK_CHANNEL_RELEASE_CREATED: ${{ needs.release-please.outputs.slack_channel_release_created }}
+          TEAMS_CHANNEL_RELEASE_CREATED: ${{ needs.release-please.outputs.teams_channel_release_created }}
           MANUAL_ROOT_RELEASE: ${{ github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root') }}
-          MANUAL_CONNECTOR_RELEASE: ${{ github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'connector') }}
+          MANUAL_CHANNEL_RELEASE: ${{ github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'channel') }}
           NATIVE_BUILD_RESULT: ${{ needs.build-native-tools.result }}
         shell: bash
         run: |
@@ -214,10 +214,10 @@ jobs:
           if [[ "$ROOT_RELEASE_CREATED" == "true" || "$MANUAL_ROOT_RELEASE" == "true" ]]; then
             publish_root=true
           fi
-          if [[ "$SLACK_CONNECTOR_RELEASE_CREATED" == "true" || "$MANUAL_CONNECTOR_RELEASE" == "true" ]]; then
+          if [[ "$SLACK_CHANNEL_RELEASE_CREATED" == "true" || "$MANUAL_CHANNEL_RELEASE" == "true" ]]; then
             publish_slack=true
           fi
-          if [[ "$TEAMS_CONNECTOR_RELEASE_CREATED" == "true" || "$MANUAL_CONNECTOR_RELEASE" == "true" ]]; then
+          if [[ "$TEAMS_CHANNEL_RELEASE_CREATED" == "true" || "$MANUAL_CHANNEL_RELEASE" == "true" ]]; then
             publish_teams=true
           fi
 
@@ -265,52 +265,52 @@ jobs:
             fi
           fi
 
-          connector_dirs=()
+          channel_dirs=()
           if [[ "$publish_slack" == "true" ]]; then
-            connector_dirs+=("packages/channels/slack")
+            channel_dirs+=("packages/channels/slack")
           fi
           if [[ "$publish_teams" == "true" ]]; then
-            connector_dirs+=("packages/recipe-connector-teams")
+            channel_dirs+=("packages/channels/teams")
           fi
 
-          connector_names=()
-          connector_versions=()
-          connector_tags=()
-          for connector_dir in "${connector_dirs[@]}"; do
-            connector_name="$(node -p "require('./$connector_dir/package.json').name")"
-            connector_version="$(node -p "require('./$connector_dir/package.json').version")"
-            connector_tag="latest"
-            if [[ "$connector_version" == *-* ]]; then
-              connector_tag="beta"
+          channel_names=()
+          channel_versions=()
+          channel_tags=()
+          for channel_dir in "${channel_dirs[@]}"; do
+            channel_name="$(node -p "require('./$channel_dir/package.json').name")"
+            channel_version="$(node -p "require('./$channel_dir/package.json').version")"
+            channel_tag="latest"
+            if [[ "$channel_version" == *-* ]]; then
+              channel_tag="beta"
             fi
-            core_range="$(node -p "require('./$connector_dir/package.json').peerDependencies?.['@introspection-ai/recipes'] ?? require('./package.json').version")"
+            core_range="$(node -p "require('./$channel_dir/package.json').peerDependencies?.['@introspection-ai/recipes'] ?? require('./package.json').version")"
             if [[ "$core_range" == workspace:* ]]; then
               core_range="$(node -p "require('./package.json').version")"
             fi
             if ! npm view "@introspection-ai/recipes@$core_range" version >/dev/null 2>&1; then
-              echo "$connector_name@$connector_version requires an unpublished @introspection-ai/recipes version." >&2
+              echo "$channel_name@$channel_version requires an unpublished @introspection-ai/recipes version." >&2
               exit 1
             fi
-            if npm view "$connector_name@$connector_version" version >/dev/null 2>&1; then
-              echo "$connector_name@$connector_version is already published"
+            if npm view "$channel_name@$channel_version" version >/dev/null 2>&1; then
+              echo "$channel_name@$channel_version is already published"
             else
-              pnpm --filter "$connector_name" publish --access public --tag "$staging_tag" --no-git-checks
+              pnpm --filter "$channel_name" publish --access public --tag "$staging_tag" --no-git-checks
             fi
-            connector_names+=("$connector_name")
-            connector_versions+=("$connector_version")
-            connector_tags+=("$connector_tag")
+            channel_names+=("$channel_name")
+            channel_versions+=("$channel_version")
+            channel_tags+=("$channel_tag")
           done
 
           # Move the normal tags only after every requested package exists.
-          # The root tag moves last, so a failed connector publish does not
-          # advertise a core release whose documented connector is unavailable.
+          # The root tag moves last, so a failed channel package publish does
+          # not advertise a core release whose documented package is unavailable.
           if [[ "$publish_root" == "true" ]]; then
             for platform_name in "${platform_names[@]}"; do
               npm dist-tag add "$platform_name@$version" "$root_tag"
             done
           fi
-          for index in "${!connector_names[@]}"; do
-            npm dist-tag add "${connector_names[$index]}@${connector_versions[$index]}" "${connector_tags[$index]}"
+          for index in "${!channel_names[@]}"; do
+            npm dist-tag add "${channel_names[$index]}@${channel_versions[$index]}" "${channel_tags[$index]}"
           done
           if [[ "$publish_root" == "true" ]]; then
             npm dist-tag add "$package_name@$version" "$root_tag"
