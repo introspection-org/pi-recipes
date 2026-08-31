@@ -195,20 +195,25 @@ export class SlackChannelAdapter implements ChannelAdapter {
     input: { limit?: number; cursor?: string },
   ): Promise<ChannelHistoryPage> {
     const thread = ctx.target.thread;
-    const payload = await this.session.call(
-      thread ? "conversations.replies" : "conversations.history",
-      {
-        channel: ctx.target.conversation,
-        ...(thread ? { ts: thread } : {}),
-        limit: input.limit ?? 50,
-        ...(input.cursor ? { cursor: input.cursor } : {}),
-      },
-      "form",
-      ctx.signal,
-    );
-    const raw = Array.isArray(payload.messages)
-      ? (payload.messages as SlackHistoryMessage[])
-      : [];
+    const limit = input.limit ?? 50;
+    let payload: SlackApiResult | undefined;
+    let raw: SlackHistoryMessage[];
+    if (thread && !input.cursor) {
+      raw = await this.latestThreadMessages(ctx, thread, limit);
+    } else {
+      payload = await this.session.call(
+        thread ? "conversations.replies" : "conversations.history",
+        {
+          channel: ctx.target.conversation,
+          ...(thread ? { ts: thread } : {}),
+          limit,
+          ...(input.cursor ? { cursor: input.cursor } : {}),
+        },
+        "form",
+        ctx.signal,
+      );
+      raw = messagesFrom(payload);
+    }
     // `conversations.replies` returns oldest-first, `conversations.history`
     // newest-first. The tool promises one order for both, so the unthreaded
     // arm is reversed here rather than left for the model to notice — a
@@ -255,11 +260,50 @@ export class SlackChannelAdapter implements ChannelAdapter {
           : {}),
       });
     }
-    const next = nextCursor(payload);
+    const next = payload ? nextCursor(payload) : undefined;
     return {
       messages,
       ...(next ? { cursor: ctx.refs.cursor(next) } : {}),
     };
+  }
+
+  /** Slack has no reverse cursor for replies, so retain the tail while paging. */
+  private async latestThreadMessages(
+    ctx: ChannelAdapterContext,
+    thread: string,
+    limit: number,
+  ): Promise<SlackHistoryMessage[]> {
+    const messages: SlackHistoryMessage[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+
+    do {
+      const payload = await this.session.call(
+        "conversations.replies",
+        {
+          channel: ctx.target.conversation,
+          ts: thread,
+          // Slack returns thread replies oldest-first. Use its recommended page
+          // size, then keep only the requested tail as pages arrive.
+          limit: 200,
+          ...(cursor ? { cursor } : {}),
+        },
+        "form",
+        ctx.signal,
+      );
+      messages.push(...messagesFrom(payload));
+      if (messages.length > limit) {
+        messages.splice(0, messages.length - limit);
+      }
+
+      cursor = nextCursor(payload);
+      if (cursor && seenCursors.has(cursor)) {
+        throw new Error("Slack returned a repeated thread history cursor");
+      }
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
+
+    return messages;
   }
 
   async fetchFile(
@@ -366,6 +410,12 @@ function nextCursor(payload: SlackApiResult): string | undefined {
     | undefined;
   const cursor = metadata?.next_cursor?.trim();
   return cursor ? cursor : undefined;
+}
+
+function messagesFrom(payload: SlackApiResult): SlackHistoryMessage[] {
+  return Array.isArray(payload.messages)
+    ? (payload.messages as SlackHistoryMessage[])
+    : [];
 }
 
 /** Resolve the bound conversation for a session, or explain why there is none. */

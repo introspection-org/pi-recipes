@@ -161,19 +161,10 @@ export function teamsActivityMessage(
     },
     text: activity.text ?? "",
     ...(activity.timestamp ? { timestamp: activity.timestamp } : {}),
-    ...(activity.attachments?.length
-      ? {
-          attachments: activity.attachments
-            .filter((attachment) => attachment.contentUrl)
-            .map((attachment) => ({
-              id: attachment.contentUrl!,
-              ...(attachment.name ? { name: attachment.name } : {}),
-              ...(attachment.contentType
-                ? { mime_type: attachment.contentType }
-                : {}),
-            })),
-        }
-      : {}),
+    // Teams attachments are Graph hosted content or SharePoint links. Do not
+    // expose those URLs as file references. This adapter declares fetchFile as
+    // unsupported, so attachments stay absent until it can mint and resolve an
+    // opaque reference backed by a real download path.
   };
 }
 

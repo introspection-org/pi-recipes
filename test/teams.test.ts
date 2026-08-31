@@ -4,6 +4,7 @@ import {
   TEAMS_CHANNEL_CAPABILITIES,
   TeamsBotSession,
   TeamsChannelAdapter,
+  teamsActivityMessage,
   teamsChannelTarget,
 } from "../packages/recipe-connector-teams/src/index.js";
 import { registerChannelTools } from "../src/channels/index.js";
@@ -80,11 +81,26 @@ describe("Teams channel target", () => {
 });
 
 describe("Teams transport", () => {
-  it("refuses a service URL that is not a Microsoft Bot Connector host", () => {
+  it("accepts the supported Bot Connector host", () => {
     const session = new TeamsBotSession({
-      env: { TEAMS_BOT_TOKEN: "t", TEAMS_SERVICE_URL: "https://evil.example/" },
+      env: { TEAMS_BOT_TOKEN: "t", TEAMS_SERVICE_URL: SERVICE_URL },
     });
-    expect(() => session.serviceUrl()).toThrow(/not a Microsoft Bot Connector host/);
+    expect(session.serviceUrl()).toBe("https://smba.trafficmanager.net/amer");
+  });
+
+  it("refuses customer-controlled Traffic Manager hosts", () => {
+    for (const serviceUrl of [
+      "https://attacker.trafficmanager.net/amer/",
+      "https://smba.trafficmanager.net.attacker.example/amer/",
+      "https://evil.example/",
+    ]) {
+      const session = new TeamsBotSession({
+        env: { TEAMS_BOT_TOKEN: "t", TEAMS_SERVICE_URL: serviceUrl },
+      });
+      expect(() => session.serviceUrl()).toThrow(
+        /not a Microsoft Bot Connector host/,
+      );
+    }
   });
 
   it("does not send a cloud locator without the provider egress URL", async () => {
@@ -118,6 +134,25 @@ describe("Teams transport", () => {
 });
 
 describe("Teams channel tools", () => {
+  it("does not expose hosted attachment URLs as file references", () => {
+    const message = teamsActivityMessage(
+      {
+        text: "see the report",
+        attachments: [
+          {
+            name: "report.pdf",
+            contentType: "application/pdf",
+            contentUrl: "https://sharepoint.example/signed-report-url",
+          },
+        ],
+      },
+      "msg_activity",
+    );
+
+    expect(message).not.toHaveProperty("attachments");
+    expect(JSON.stringify(message)).not.toContain("signed-report-url");
+  });
+
   it("registers only what Teams can do without tenant Graph consent", () => {
     const { pi } = teamsTools();
     expect([...pi.tools.keys()].sort()).toEqual([

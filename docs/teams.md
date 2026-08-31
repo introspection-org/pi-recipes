@@ -63,10 +63,10 @@ need no new code to appear.
 ## Service URL
 
 Teams supplies a per-tenant `serviceUrl` on each inbound activity, and replies
-go to that host rather than a fixed endpoint. The adapter validates it against
-the Microsoft Bot Connector domains (`botframework.com`,
-`trafficmanager.net`) and refuses anything else, so a forged inbound activity
-cannot redirect the bot's outbound calls to an attacker-controlled host.
+go to that host rather than a fixed endpoint. This adapter supports the Teams
+Bot Connector at `smba.trafficmanager.net`. It requires HTTPS and an exact host
+match. It does not accept other Azure Traffic Manager profiles because Azure
+customers can control those hosts.
 
 ## Local runs
 

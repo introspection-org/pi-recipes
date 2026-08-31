@@ -23,6 +23,8 @@ export interface TeamsBotSessionOptions {
   fetchImpl?: TeamsFetch;
 }
 
+const TEAMS_BOT_CONNECTOR_HOST = "smba.trafficmanager.net";
+
 /** A Bot Framework activity, narrowed to what the channel contract needs. */
 export interface TeamsActivity {
   id?: string;
@@ -74,10 +76,7 @@ export class TeamsBotSession {
       );
     }
     const url = new URL(raw);
-    if (
-      url.protocol !== "https:" ||
-      !/(^|\.)botframework\.com$|(^|\.)trafficmanager\.net$/.test(url.hostname)
-    ) {
+    if (url.protocol !== "https:" || url.hostname !== TEAMS_BOT_CONNECTOR_HOST) {
       throw new Error(
         `Teams service URL host '${url.hostname}' is not a Microsoft Bot Connector host`,
       );

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,6 +27,10 @@ interface FakeFetchOptions {
   fileBody?: string;
   bridgeStatus?: number;
   messages?: Array<Record<string, unknown>>;
+  threadPages?: Record<
+    string,
+    { messages: Array<Record<string, unknown>>; nextCursor?: string }
+  >;
   channelName?: string;
 }
 
@@ -74,6 +78,19 @@ function fakeFetch(options: FakeFetchOptions = {}) {
         payload: {
           ok: true,
           channel: { id: "C1", name: options.channelName ?? "support" },
+        },
+      });
+    }
+    if (parsed.pathname.endsWith("/api/conversations.replies") && options.threadPages) {
+      const form = new URLSearchParams(String(init.body));
+      const page = options.threadPages[form.get("cursor") ?? ""] ?? {
+        messages: [],
+      };
+      return response({
+        payload: {
+          ok: true,
+          messages: page.messages,
+          response_metadata: { next_cursor: page.nextCursor ?? "" },
         },
       });
     }
@@ -357,49 +374,57 @@ describe("Slack file downloads", () => {
 
   it("writes a safe file with a verified digest", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "slack-bot-api-"));
-    const fetchImpl = fakeFetch({
-      file: fakeFile({ name: "../bad name.png" }),
-    });
-    const session = new SlackFileSession({
-      env: { SLACK_BOT_TOKEN: "local-bot-token" },
-      fetchImpl,
-      cwd,
-    });
-    const result = await session.downloadFile({ file_id: "F123" });
-    expect(result.path.startsWith(join(cwd, "files", "slack"))).toBe(true);
-    expect(result.path.includes(".."), result.path).toBe(false);
-    expect(result.sha256).toHaveLength(64);
-    expect(await readFile(result.path, "utf8")).toBe("data");
-    expect(
-      (await readdir(join(cwd, "files", "slack"))).filter((name) =>
-        name.includes("partial"),
-      ),
-    ).toEqual([]);
+    try {
+      const fetchImpl = fakeFetch({
+        file: fakeFile({ name: "../bad name.png" }),
+      });
+      const session = new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "local-bot-token" },
+        fetchImpl,
+        cwd,
+      });
+      const result = await session.downloadFile({ file_id: "F123" });
+      expect(result.path.startsWith(join(cwd, "files", "slack"))).toBe(true);
+      expect(result.path.includes(".."), result.path).toBe(false);
+      expect(result.sha256).toHaveLength(64);
+      expect(await readFile(result.path, "utf8")).toBe("data");
+      expect(
+        (await readdir(join(cwd, "files", "slack"))).filter((name) =>
+          name.includes("partial"),
+        ),
+      ).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it("rejects unsafe hosts and oversized files", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "slack-bot-api-"));
-    const unsafe = new SlackFileSession({
-      env: { SLACK_BOT_TOKEN: "local-bot-token" },
-      fetchImpl: fakeFetch({
-        file: fakeFile({ url_private_download: "https://evil.example/file" }),
-      }),
-      cwd,
-    });
-    await expect(unsafe.downloadFile({ file_id: "F123" })).rejects.toThrow(
-      /files\.slack\.com/,
-    );
+    try {
+      const unsafe = new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "local-bot-token" },
+        fetchImpl: fakeFetch({
+          file: fakeFile({ url_private_download: "https://evil.example/file" }),
+        }),
+        cwd,
+      });
+      await expect(unsafe.downloadFile({ file_id: "F123" })).rejects.toThrow(
+        /files\.slack\.com/,
+      );
 
-    const oversized = new SlackFileSession({
-      env: { SLACK_BOT_TOKEN: "local-bot-token" },
-      fetchImpl: fakeFetch({
-        file: fakeFile({ size: MAX_SLACK_FILE_BYTES + 1 }),
-      }),
-      cwd,
-    });
-    await expect(oversized.downloadFile({ file_id: "F123" })).rejects.toThrow(
-      /download limit/,
-    );
+      const oversized = new SlackFileSession({
+        env: { SLACK_BOT_TOKEN: "local-bot-token" },
+        fetchImpl: fakeFetch({
+          file: fakeFile({ size: MAX_SLACK_FILE_BYTES + 1 }),
+        }),
+        cwd,
+      });
+      await expect(oversized.downloadFile({ file_id: "F123" })).rejects.toThrow(
+        /download limit/,
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });
 
@@ -430,11 +455,11 @@ describe("Slack channel tools", () => {
     SLACK_THREAD_TS: "100.1",
   };
 
-  function slackTools(options: FakeFetchOptions = {}) {
+  function slackTools(options: FakeFetchOptions = {}, cwd?: string) {
     const pi = createMockExtensionAPI();
     const fetchImpl = fakeFetch(options);
     const adapter = new SlackChannelAdapter(
-      new SlackFileSession({ env: cloudEnv, fetchImpl }),
+      new SlackFileSession({ env: cloudEnv, fetchImpl, cwd }),
     );
     registerChannelTools(pi, adapter, {
       target: { provider: "slack", conversation: "C1", thread: "100.1" },
@@ -495,6 +520,41 @@ describe("Slack channel tools", () => {
     ]);
   });
 
+  it("returns the latest threaded history oldest-first", async () => {
+    const { pi, fetchImpl } = slackTools({
+      threadPages: {
+        "": {
+          messages: [
+            { ts: "100.1", text: "root", user: "U1" },
+            { ts: "200.2", text: "old reply", user: "U1" },
+          ],
+          nextCursor: "page-2",
+        },
+        "page-2": {
+          messages: [
+            { ts: "300.3", text: "recent reply", user: "U1" },
+            { ts: "400.4", text: "latest reply", user: "U1" },
+          ],
+        },
+      },
+    });
+
+    const result = (await call(pi, "channel_history", { limit: 2 })) as {
+      details: { messages: Array<{ text: string }>; cursor?: string };
+    };
+
+    expect(result.details.messages.map((message) => message.text)).toEqual([
+      "recent reply",
+      "latest reply",
+    ]);
+    expect(result.details.cursor).toBeUndefined();
+    expect(
+      fetchImpl.calls.filter((request) =>
+        request.url.includes("conversations.replies"),
+      ),
+    ).toHaveLength(2);
+  });
+
   it("refuses a file id the model supplied rather than saw", async () => {
     const { pi } = slackTools();
     // The P1 this closes: a bot can read files in every conversation it is in,
@@ -505,27 +565,39 @@ describe("Slack channel tools", () => {
   });
 
   it("downloads a file it handed out a reference for", async () => {
-    const { pi } = slackTools({
-      messages: [
+    const cwd = await mkdtemp(join(tmpdir(), "slack-channel-tools-"));
+    try {
+      const { pi } = slackTools(
         {
-          ts: "100.1",
-          text: "see this",
-          user: "U1",
-          files: [{ id: "F123", name: "crash.png", mimetype: "image/png" }],
+          messages: [
+            {
+              ts: "100.1",
+              text: "see this",
+              user: "U1",
+              files: [
+                { id: "F123", name: "crash.png", mimetype: "image/png" },
+              ],
+            },
+          ],
         },
-      ],
-    });
-    const history = (await call(pi, "channel_history", {})) as {
-      details: { messages: Array<{ attachments?: Array<{ id: string }> }> };
-    };
-    const ref = history.details.messages[0]!.attachments![0]!.id;
-    expect(ref).toMatch(/^file_/);
+        cwd,
+      );
+      const history = (await call(pi, "channel_history", {})) as {
+        details: { messages: Array<{ attachments?: Array<{ id: string }> }> };
+      };
+      const ref = history.details.messages[0]!.attachments![0]!.id;
+      expect(ref).toMatch(/^file_/);
 
-    const file = (await call(pi, "channel_fetch_file", { file: ref })) as {
-      details: { name: string; path: string };
-    };
-    expect(file.details.name).toContain("crash.png");
-    expect(file.details.path).toContain("crash.png");
+      const file = (await call(pi, "channel_fetch_file", { file: ref })) as {
+        details: { name: string; path: string };
+      };
+      expect(file.details.name).toContain("crash.png");
+      expect(file.details.path.startsWith(join(cwd, "files", "slack"))).toBe(
+        true,
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it("registers the neutral surface Slack supports and nothing else", () => {
