@@ -108,6 +108,8 @@ export interface RegisterChannelToolsOptions {
   target: ChannelTarget | (() => ChannelTarget);
   /** Restrict registration to these ids; defaults to everything supported. */
   tools?: readonly ChannelToolId[];
+  /** Selected tools that require `tool_search` before the model may call them. */
+  deferredTools?: readonly ChannelToolId[];
   refs?: ChannelRefStore;
 }
 
@@ -129,7 +131,10 @@ function toolResult(details: unknown) {
 function channelContextPrompt(
   target: ChannelTarget,
   tools: readonly ChannelToolId[],
+  deferredTools: ReadonlySet<ChannelToolId>,
 ): string {
+  const active = tools.filter((tool) => !deferredTools.has(tool));
+  const deferred = tools.filter((tool) => deferredTools.has(tool));
   const metadata = {
     provider: target.provider,
     ...(target.name ? { conversation_name: target.name } : {}),
@@ -137,7 +142,10 @@ function channelContextPrompt(
       ? { conversation_permalink: target.permalink }
       : {}),
     conversation_scope: target.thread ? "thread" : "conversation",
-    available_tools: tools.map(channelToolName),
+    default_tools: active.map(channelToolName),
+    ...(deferred.length > 0
+      ? { searchable_tools: deferred.map(channelToolName) }
+      : {}),
   };
   return [
     "## Channel context",
@@ -147,6 +155,11 @@ function channelContextPrompt(
     `Channel metadata: ${JSON.stringify(metadata)}`,
     "",
     "Channel tools are bound to the conversation that created this task.",
+    ...(deferred.length > 0
+      ? [
+          "Tools in searchable_tools are loaded on demand. If one is not available, use tool_search to enable it before calling it.",
+        ]
+      : []),
     "No messages are included here. Use channel_read when it is available and you need earlier messages.",
   ].join("\n");
 }
@@ -174,6 +187,7 @@ export function registerChannelTools(
   const refs = options.refs ?? new ChannelRefStore();
   const supported = new Set(channelToolIdsFor(adapter.capabilities));
   const selected = new Set(options.tools ?? [...supported]);
+  const deferred = new Set(options.deferredTools ?? []);
   const loadTarget =
     typeof options.target === "function"
       ? options.target
@@ -258,11 +272,15 @@ export function registerChannelTools(
     name: channelToolName("react"),
     label: "React to a message",
     description:
-      "Add or remove an emoji reaction on a message in this conversation, named by a reference a channel tool returned. The action defaults to add.",
+      "Add or remove a provider-supported emoji reaction on a message in this conversation, named by a reference a channel tool returned. The action defaults to add.",
     parameters: Type.Object(
       {
         message: Type.String({ minLength: 1 }),
-        emoji: Type.String({ minLength: 1 }),
+        emoji: Type.String({
+          minLength: 1,
+          description:
+            "Emoji name or value accepted by the current channel provider.",
+        }),
         action: Type.Optional(
           Type.Union([Type.Literal("add"), Type.Literal("remove")], {
             default: "add",
@@ -432,6 +450,7 @@ export function registerChannelTools(
       systemPrompt: `${event.systemPrompt}\n\n${channelContextPrompt(
         promptTarget,
         registeredToolIds,
+        deferred,
       )}`,
     };
   });

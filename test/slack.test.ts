@@ -807,6 +807,23 @@ describe("Slack channel tools", () => {
     }
   });
 
+  it("rejects a Slack reaction without a normalized emoji name", async () => {
+    const { pi, fetchImpl } = slackTools();
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string };
+    };
+
+    await expect(
+      call(pi, "channel_react", {
+        message: posted.details.ref,
+        emoji: ":::",
+      }),
+    ).rejects.toThrow(/Slack reaction must name an emoji/);
+    expect(
+      fetchImpl.calls.some((request) => request.url.includes("reactions.add")),
+    ).toBe(false);
+  });
+
   it("refuses to edit or retract a message the agent did not author", async () => {
     const { pi } = slackTools();
     const read = (await call(pi, "channel_read", {})) as {
@@ -845,6 +862,25 @@ describe("Slack channel tools", () => {
     expect(Object.fromEntries(deletion)).toMatchObject({
       channel: "C1",
       ts: "200.2",
+    });
+  });
+
+  it("retains a reply permalink when the message is later edited", async () => {
+    const permalink = "https://example.slack.com/archives/C1/p200200";
+    const { pi } = slackTools({ permalinks: { "200.2": permalink } });
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+      details: { ref: string; permalink?: string };
+    };
+
+    const edited = (await call(pi, "channel_edit", {
+      message: posted.details.ref,
+      text: "second",
+    })) as { details: { ref: string; permalink?: string } };
+
+    expect(posted.details.permalink).toBe(permalink);
+    expect(edited.details).toEqual({
+      ref: posted.details.ref,
+      permalink,
     });
   });
 

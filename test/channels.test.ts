@@ -246,6 +246,35 @@ describe("channel tool surface", () => {
     expect(results).toEqual([undefined]);
   });
 
+  it("separates active channel tools from tools that require search", async () => {
+    const pi = createMockExtensionAPI();
+    registerChannelTools(pi, stubAdapter(), {
+      target,
+      tools: ["reply", "edit", "fetch_file"],
+      deferredTools: ["edit", "fetch_file"],
+    });
+
+    const [result] = (await pi.emitExtensionEvent(
+      {
+        type: "before_agent_start",
+        prompt: "hello",
+        systemPrompt: "Base prompt",
+        systemPromptOptions: {},
+      } as never,
+      { signal: undefined },
+    )) as Array<{ systemPrompt: string }>;
+
+    expect(result.systemPrompt).toContain(
+      '"default_tools":["channel_reply"]',
+    );
+    expect(result.systemPrompt).toContain(
+      '"searchable_tools":["channel_edit","channel_fetch_file"]',
+    );
+    expect(result.systemPrompt).toContain(
+      "use tool_search to enable it before calling it.",
+    );
+  });
+
   it("retries target resolution after a missing channel origin", async () => {
     const pi = createMockExtensionAPI();
     let attempts = 0;
@@ -453,6 +482,36 @@ describe("channel tool surface", () => {
     expect(module.tools.filter((tool) => tool.defaultActive).map((t) => t.id)).toEqual([
       "reply",
     ]);
+  });
+
+  it("marks non-default tools as searchable through a connector module", async () => {
+    const module = createChannelConnectorModule({
+      provider: "test",
+      capabilities: LIMITED_CAPABILITIES,
+      createSession: () => ({
+        adapter: stubAdapter(LIMITED_CAPABILITIES),
+        target,
+      }),
+    });
+    const pi = createMockExtensionAPI();
+    module.createExtension({ tools: ["reply", "edit"] })(pi as never);
+
+    const [result] = (await pi.emitExtensionEvent(
+      {
+        type: "before_agent_start",
+        prompt: "hello",
+        systemPrompt: "Base prompt",
+        systemPromptOptions: {},
+      } as never,
+      { signal: undefined },
+    )) as Array<{ systemPrompt: string }>;
+
+    expect(result.systemPrompt).toContain(
+      '"default_tools":["channel_reply"]',
+    );
+    expect(result.systemPrompt).toContain(
+      '"searchable_tools":["channel_edit"]',
+    );
   });
 
   it("keeps the Slack catalog aligned with its declared capabilities", () => {

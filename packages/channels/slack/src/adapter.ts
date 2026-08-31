@@ -72,7 +72,13 @@ interface SlackThreadHistoryCursor {
 
 /** Slack's own `:emoji:` spelling is not what its reactions API accepts. */
 function reactionName(emoji: string): string {
-  return emoji.trim().replace(/^:+|:+$/g, "");
+  const name = emoji.trim().replace(/^:+|:+$/g, "");
+  if (!name) {
+    throw new Error(
+      "Slack reaction must name an emoji, such as 'eyes' or ':eyes:'.",
+    );
+  }
+  return name;
 }
 
 function slackTimestamp(ts: string): string | undefined {
@@ -140,12 +146,6 @@ export class SlackChannelAdapter implements ChannelAdapter {
       },
       ctx.signal,
     );
-    const ref = ctx.refs.message({
-      conversation: posted.channel,
-      id: posted.ts,
-      thread: posted.thread_ts,
-      authoredByAgent: true,
-    });
     let permalink: string | null = null;
     try {
       permalink = await this.permalink(posted.channel, posted.ts, ctx.signal);
@@ -153,6 +153,13 @@ export class SlackChannelAdapter implements ChannelAdapter {
       // Posting is irreversible. Cancellation during this optional lookup must
       // not report the post as failed and invite the caller to send it again.
     }
+    const ref = ctx.refs.message({
+      conversation: posted.channel,
+      id: posted.ts,
+      thread: posted.thread_ts,
+      authoredByAgent: true,
+      ...(permalink ? { permalink } : {}),
+    });
     return {
       ref,
       ...(permalink ? { permalink } : {}),

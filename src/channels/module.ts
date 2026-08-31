@@ -72,9 +72,15 @@ function sameCapabilities(
 export function createChannelConnectorModule(
   options: ChannelConnectorModuleOptions,
 ): RecipeConnectorModule {
+  const connectorTools = channelConnectorTools(options.capabilities);
+  const deferredToolIds = new Set(
+    connectorTools
+      .filter((tool) => !tool.defaultActive)
+      .map((tool) => tool.id as ChannelToolId),
+  );
   return {
     provider: options.provider,
-    tools: channelConnectorTools(options.capabilities),
+    tools: connectorTools,
     createExtension(moduleOptions): ExtensionFactory {
       const unknown = moduleOptions.tools.filter(
         (tool) => !channelToolIds.has(tool),
@@ -106,6 +112,7 @@ export function createChannelConnectorModule(
         registerChannelTools(pi, session.adapter, {
           target: session.target,
           tools,
+          deferredTools: tools.filter((tool) => deferredToolIds.has(tool)),
           refs: new ChannelRefStore(),
         });
       };
