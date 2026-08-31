@@ -211,6 +211,28 @@ describe("channel tool surface", () => {
     expect(results).toEqual([undefined]);
   });
 
+  it("appends channel context after an earlier prompt replacement", async () => {
+    const pi = createMockExtensionAPI();
+    pi.on("before_agent_start", () => ({
+      systemPrompt: "Recipe instructions",
+    }));
+    registerChannelTools(pi, stubAdapter(), { target });
+
+    const results = (await pi.emitExtensionEvent(
+      {
+        type: "before_agent_start",
+        prompt: "hello",
+        systemPrompt: "Default Pi prompt",
+        systemPromptOptions: {},
+      } as never,
+      { signal: undefined },
+    )) as Array<{ systemPrompt: string }>;
+
+    expect(results[1]?.systemPrompt).toContain("Recipe instructions");
+    expect(results[1]?.systemPrompt).toContain("## Channel context");
+    expect(results[1]?.systemPrompt).not.toContain("Default Pi prompt");
+  });
+
   it("omits tools for capabilities a channel does not have", () => {
     const pi = createMockExtensionAPI();
     registerChannelTools(

@@ -115,8 +115,22 @@ export function createMockExtensionAPI(): MockExtensionAPI {
     },
     async emitExtensionEvent(event: ExtensionEvent, ctx: any) {
       const results: unknown[] = [];
+      let currentEvent = event;
       for (const handler of handlers.get(event.type) ?? []) {
-        results.push(await handler(event, ctx));
+        const result = await handler(currentEvent, ctx);
+        results.push(result);
+        if (
+          currentEvent.type === "before_agent_start" &&
+          result &&
+          typeof result === "object" &&
+          "systemPrompt" in result &&
+          typeof result.systemPrompt === "string"
+        ) {
+          currentEvent = {
+            ...currentEvent,
+            systemPrompt: result.systemPrompt,
+          };
+        }
       }
       return results;
     },

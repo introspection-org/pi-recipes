@@ -47,9 +47,17 @@ inactive until the model finds them through `tool_search`.
 | `channel_retract` | `chat.delete` |
 | `channel_fetch_file` | `files.info` plus a private file download |
 
-Slack history returns at most 15 messages per call. When Slack has another
-page, `channel_history` returns an opaque cursor that the agent can pass to the
-next call.
+Slack history returns at most 15 messages to the agent per call. For a thread,
+the first call reads the thread and returns the newest messages. The adapter
+keeps older messages in the current session, and the returned opaque cursor
+pages backward through that cache without another `conversations.replies`
+request.
+
+The connector uses a customer owned internal Slack app. Slack gives internal
+apps the larger `conversations.replies` page and rate limits needed to read a
+thread before selecting its newest messages. The connector does not support a
+commercially distributed Slack app outside the Slack Marketplace, because
+Slack restricts those installations to 15 replies and one request per minute.
 
 `channel_attach` and `channel_post_document` are not registered: `files.uploadV2`
 and canvases are not implemented in this package yet, and the capability

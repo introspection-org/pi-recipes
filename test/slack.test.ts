@@ -542,21 +542,20 @@ describe("Slack channel tools", () => {
     expect(history.details.messages[0]?.permalink).toBe(permalink);
   });
 
-  it("returns one threaded history page and preserves Slack's cursor", async () => {
+  it("returns the latest thread page and pages backward from its cache", async () => {
+    const messages = Array.from({ length: 17 }, (_, index) => ({
+      ts: `${index + 1}.1`,
+      text: `message ${index + 1}`,
+      user: "U1",
+    }));
     const { pi, fetchImpl } = slackTools({
       threadPages: {
         "": {
-          messages: [
-            { ts: "100.1", text: "root", user: "U1" },
-            { ts: "200.2", text: "old reply", user: "U1" },
-          ],
+          messages: messages.slice(0, 8),
           nextCursor: "page-2",
         },
         "page-2": {
-          messages: [
-            { ts: "300.3", text: "recent reply", user: "U1" },
-            { ts: "400.4", text: "latest reply", user: "U1" },
-          ],
+          messages: messages.slice(8),
         },
       },
     });
@@ -565,16 +564,15 @@ describe("Slack channel tools", () => {
       details: { messages: Array<{ text: string }>; cursor?: string };
     };
 
-    expect(first.details.messages.map((message) => message.text)).toEqual([
-      "root",
-      "old reply",
-    ]);
+    expect(first.details.messages.map((message) => message.text)).toEqual(
+      messages.slice(2).map((message) => message.text),
+    );
     expect(first.details.cursor).toMatch(/^cur_/);
     const firstRequest = fetchImpl.calls.find((request) =>
       request.url.includes("conversations.replies"),
     )!;
     expect(new URLSearchParams(String(firstRequest.init.body)).get("limit")).toBe(
-      "15",
+      "1000",
     );
 
     const second = (await call(pi, "channel_history", {
@@ -582,11 +580,12 @@ describe("Slack channel tools", () => {
     })) as {
       details: { messages: Array<{ text: string }>; cursor?: string };
     };
-    expect(second.details.messages.map((message) => message.text)).toEqual([
-      "recent reply",
-      "latest reply",
-    ]);
+    expect(second.details.messages.map((message) => message.text)).toEqual(
+      messages.slice(0, 2).map((message) => message.text),
+    );
     expect(second.details.cursor).toBeUndefined();
+    // The initial read filled the session cache. Paging backward does not make
+    // another conversations.replies request.
     expect(
       fetchImpl.calls.filter((request) =>
         request.url.includes("conversations.replies"),
