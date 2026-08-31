@@ -300,10 +300,14 @@ jobs:
                 channel_tag="beta"
               fi
               core_range="$(node -p "require('./$channel_dir/package.json').peerDependencies?.['@introspection-ai/recipes'] ?? require('./package.json').version")"
+              core_is_current_release=false
               if [[ "$core_range" == workspace:* ]]; then
                 core_range="$(node -p "require('./package.json').version")"
+                if [[ "$publish_root" == "true" ]]; then
+                  core_is_current_release=true
+                fi
               fi
-              if ! npm view "@introspection-ai/recipes@$core_range" version >/dev/null 2>&1; then
+              if [[ "$core_is_current_release" != "true" ]] && ! npm view "@introspection-ai/recipes@$core_range" version >/dev/null 2>&1; then
                 echo "$channel_name@$channel_version requires an unpublished @introspection-ai/recipes version." >&2
                 exit 1
               fi
