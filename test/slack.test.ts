@@ -238,6 +238,27 @@ describe("SlackBotSession transport", () => {
     });
   });
 
+  it("splits generated markdown blocks at Slack's block limit", async () => {
+    const fetchImpl = fakeFetch();
+    const session = new SlackBotSession({
+      env: {
+        INTROSPECTION_TASK_CHANNEL_ID: "C1",
+        SLACK_BOT_TOKEN: "bot-token",
+      },
+      fetchImpl,
+    });
+    const text = "a".repeat(12_001);
+
+    await session.sendMessage({ text });
+
+    expect(JSON.parse(String(fetchImpl.calls[0]!.init.body))).toMatchObject({
+      blocks: [
+        { type: "markdown", text: "a".repeat(12_000) },
+        { type: "markdown", text: "a" },
+      ],
+    });
+  });
+
   it("returns a bridge warning without retrying a successful Slack post", async () => {
     const fetchImpl = fakeFetch({ bridgeStatus: 503 });
     const session = new SlackBotSession({
