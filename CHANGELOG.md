@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.22.0](https://github.com/introspection-org/recipes/compare/v0.21.0...v0.22.0) (2026-08-31)
+
+
+### Features
+
+* add Slack Bot API tools to Recipes ([#233](https://github.com/introspection-org/recipes/issues/233)) ([3944dac](https://github.com/introspection-org/recipes/commit/3944dacfa6d69043b45cf359b6aa6a2276b1e568))
+* **channels:** provider-neutral channel_* tools bound to the task's conversation ([#234](https://github.com/introspection-org/recipes/issues/234)) ([f49a194](https://github.com/introspection-org/recipes/commit/f49a1948d3a9e7df5d9f2e6194e577a5350511cb))
+
+
+### Bug Fixes
+
+* **release:** accept prepared manifest state ([#242](https://github.com/introspection-org/recipes/issues/242)) ([0e5d0d9](https://github.com/introspection-org/recipes/commit/0e5d0d9dd735f24abdde2d20f5f78239b21e9b57))
+* **release:** make grouped releases parseable ([#241](https://github.com/introspection-org/recipes/issues/241)) ([931ed38](https://github.com/introspection-org/recipes/commit/931ed38e6cc9c316950be3a92fcc8dc539854089))
+
 ## [0.21.0](https://github.com/introspection-org/recipes/compare/v0.20.0...v0.21.0) (2026-08-26)
 
 
