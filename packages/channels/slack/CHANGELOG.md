@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/introspection-org/recipes/compare/recipe-channel-slack-v0.1.0...recipe-channel-slack-v0.1.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* **release:** publish workspace channel package ([#243](https://github.com/introspection-org/recipes/issues/243)) ([0d147a3](https://github.com/introspection-org/recipes/commit/0d147a3ce4bdab58c8d25015d608d9f554ba1b7f))
+
 ## 0.1.0 (2026-08-31)
 
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.22.1](https://github.com/introspection-org/recipes/compare/v0.22.0...v0.22.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* **channels:** guide channel response delivery ([#248](https://github.com/introspection-org/recipes/issues/248)) ([cf4335e](https://github.com/introspection-org/recipes/commit/cf4335e53b58129d7f8a8a326af04f889b6fbdf5))
+* **release:** keep temporary npm tags ([#245](https://github.com/introspection-org/recipes/issues/245)) ([f595c3a](https://github.com/introspection-org/recipes/commit/f595c3abb8ee6feef99400fc98c41100d3ebca61))
+* **release:** publish workspace channel package ([#243](https://github.com/introspection-org/recipes/issues/243)) ([0d147a3](https://github.com/introspection-org/recipes/commit/0d147a3ce4bdab58c8d25015d608d9f554ba1b7f))
+
 ## [0.22.0](https://github.com/introspection-org/recipes/compare/v0.21.0...v0.22.0) (2026-08-31)
 
 
