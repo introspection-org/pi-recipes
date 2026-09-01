@@ -160,6 +160,7 @@ function channelContextPrompt(
           "Tools in searchable_tools are loaded on demand. If one is not available, use tool_search to enable it before calling it.",
         ]
       : []),
+    "When channel_reply is available, use it to deliver the user-facing response. A normal final assistant response is not delivered to the channel.",
     "No messages are included here. Use channel_read when it is available and you need earlier messages.",
   ].join("\n");
 }

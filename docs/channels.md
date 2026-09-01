@@ -20,9 +20,10 @@ Before the first model call, the channel extension adds origin metadata to the
 system prompt. The metadata contains the provider, the conversation name and
 permalink when the adapter can resolve them, whether the origin is a thread,
 and the available channel tools. It contains no provider conversation IDs and
-no messages.
-`channel_read` remains the only way to fetch earlier messages when the
-provider supports it.
+no messages. The injected guidance tells the agent to deliver its user-facing
+response with `channel_reply`, because a normal final assistant response is not
+delivered to the originating channel. `channel_read` remains the only way to
+fetch earlier messages when the provider supports it.
 
 ## The tools
 

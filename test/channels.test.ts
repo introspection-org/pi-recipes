@@ -219,6 +219,9 @@ describe("channel tool surface", () => {
     );
     expect(result.systemPrompt).toContain('"conversation_scope":"thread"');
     expect(result.systemPrompt).toContain('"channel_read"');
+    expect(result.systemPrompt).toContain(
+      "When channel_reply is available, use it to deliver the user-facing response. A normal final assistant response is not delivered to the channel.",
+    );
     expect(result.systemPrompt).toContain("No messages are included here");
     expect(result.systemPrompt).not.toContain("C123");
     expect(result.systemPrompt).not.toContain("1712345678.100");
