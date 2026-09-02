@@ -7,11 +7,12 @@ for every provider, and bound to the one conversation the task came from.
 Two properties follow from that, and both are structural rather than
 conventional:
 
-- **The agent cannot address anything else.** No `channel_*` tool takes a
-  channel, thread, workspace, or user argument. The conversation is closed over
-  by the host from the task origin, so a compromised prompt has no vocabulary
-  for "post this somewhere else". The invariant is asserted by a test that
-  walks every registered tool's input schema.
+- **The channel tools cannot address anything else.** No `channel_*` tool takes
+  a channel, thread, workspace, or user argument. The conversation is closed
+  over by the host from the task origin, so a model calling these tools has no
+  vocabulary for "post this somewhere else". The invariant is asserted by a
+  test that walks every registered tool's input schema. Provider egress remains
+  the authorization boundary for raw requests issued by arbitrary sandbox code.
 - **A tool that the provider cannot support is absent, not failing.** Each
   adapter declares a capability descriptor, and registration filters on it.
   For example, an adapter with no history API has no `channel_read` tool.

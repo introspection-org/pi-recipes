@@ -487,6 +487,24 @@ describe("channel tool surface", () => {
     ]);
   });
 
+  it("omits tools unavailable to this session", () => {
+    const module = createChannelConnectorModule({
+      provider: "test",
+      capabilities: FULL_CAPABILITIES,
+      createSession: () => ({
+        adapter: stubAdapter(),
+        target: null,
+        sendTarget: { ...target, thread: null },
+        availableTools: ["reply"],
+      }),
+    });
+    const pi = createMockExtensionAPI();
+
+    module.createExtension({ tools: ["reply", "read", "react"] })(pi as never);
+
+    expect([...pi.tools.keys()]).toEqual(["channel_reply"]);
+  });
+
   it("marks non-default tools as searchable through a connector module", async () => {
     const module = createChannelConnectorModule({
       provider: "test",

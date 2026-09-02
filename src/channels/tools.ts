@@ -136,8 +136,11 @@ function channelContextPrompt(
   deferredTools: ReadonlySet<ChannelToolId>,
   proactive: boolean,
 ): string {
-  const active = tools.filter((tool) => !deferredTools.has(tool));
-  const deferred = tools.filter((tool) => deferredTools.has(tool));
+  const usableTools = proactive
+    ? tools.filter((tool) => tool === "reply")
+    : tools;
+  const active = usableTools.filter((tool) => !deferredTools.has(tool));
+  const deferred = usableTools.filter((tool) => deferredTools.has(tool));
   const metadata = {
     provider: target.provider,
     ...(target.name ? { conversation_name: target.name } : {}),
@@ -168,7 +171,11 @@ function channelContextPrompt(
         ]
       : []),
     "When channel_reply is available, use it to deliver the user-facing response. A normal final assistant response is not delivered to the channel.",
-    "No messages are included here. Use channel_read when it is available and you need earlier messages.",
+    ...(!proactive
+      ? [
+          "No messages are included here. Use channel_read when it is available and you need earlier messages.",
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -179,9 +186,9 @@ function channelContextPrompt(
  *
  * 1. **No schema below carries a conversation, thread, workspace, or user
  *    argument.** Destinations come from `options.target` or
- *    `options.sendTarget`, closed over here. A model that cannot name a
- *    destination cannot reach one, even if the underlying credential could
- *    reach the whole workspace.
+ *    `options.sendTarget`, closed over here. This confines calls made through
+ *    these tools; provider egress remains responsible for authorization against
+ *    raw requests from sandbox code.
  * 2. **Unsupported operations are absent**, not stubs that answer "this
  *    channel cannot do that" — such a stub costs a turn every time and teaches
  *    the model nothing durable.

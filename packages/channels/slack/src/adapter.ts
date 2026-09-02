@@ -10,6 +10,7 @@ import type {
   ChannelReactionAction,
   ChannelReadPage,
   ChannelTarget,
+  ChannelToolId,
   FileRef,
   MessageRef,
 } from "@introspection-ai/recipes/channels";
@@ -527,9 +528,7 @@ export function slackSendTarget(env: SlackEnv): ChannelTarget | null {
 export function slackChannelTarget(env: SlackEnv): ChannelTarget {
   const origin = resolveSlackOrigin(env);
   if (!origin) {
-    throw new Error(
-      "No Slack origin is configured. Cloud tasks supply one automatically. For introspection local, set SLACK_CHANNEL_ID and optionally SLACK_THREAD_TS.",
-    );
+    throw new Error("No verified Slack task origin is configured.");
   }
   return {
     provider: "slack",
@@ -544,8 +543,9 @@ export function createSlackChannelSession(options: {
   session?: SlackFileSession;
 }): {
   adapter: SlackChannelAdapter;
-  target: ChannelTarget | null;
+  target: () => ChannelTarget | null;
   sendTarget?: ChannelTarget;
+  availableTools: readonly ChannelToolId[] | undefined;
 } {
   const env = options.env ?? process.env;
   const session =
@@ -555,13 +555,15 @@ export function createSlackChannelSession(options: {
   const sendTarget = slackSendTarget(env);
   return {
     adapter: new SlackChannelAdapter(session),
-    target: origin
-      ? {
-          provider: "slack",
-          conversation: origin.channel,
-          thread: origin.thread_ts,
-        }
-      : null,
+    target: () =>
+      origin
+        ? {
+            provider: "slack",
+            conversation: origin.channel,
+            thread: origin.thread_ts,
+          }
+        : null,
     ...(sendTarget ? { sendTarget } : {}),
+    availableTools: origin ? undefined : sendTarget ? ["reply"] : [],
   };
 }
