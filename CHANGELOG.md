@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/introspection-org/recipes/compare/v0.22.1...v0.23.0) (2026-09-02)
+
+
+### Features
+
+* load persistent memory context into Recipe sessions ([#250](https://github.com/introspection-org/recipes/issues/250)) ([24c7108](https://github.com/introspection-org/recipes/commit/24c7108faddb3ea8875b74e6014aa481a6e3bb5f))
+
 ## [0.22.1](https://github.com/introspection-org/recipes/compare/v0.22.0...v0.22.1) (2026-09-01)
 
 
