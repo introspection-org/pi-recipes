@@ -5,6 +5,7 @@ import {
   SlackChannelAdapter,
   createSlackChannelSession,
   slackChannelTarget,
+  slackSendTarget,
 } from "./adapter.js";
 
 export {
@@ -23,13 +24,18 @@ export type {
 } from "./files.js";
 export { slackMessageBody, toPlainText } from "./format.js";
 export type { SlackMessageBody } from "./format.js";
-export { resolveSlackOrigin, slackDownloadRoot } from "./origin.js";
+export {
+  resolveSlackOrigin,
+  resolveSlackSendTarget,
+  slackDownloadRoot,
+} from "./origin.js";
 export type { SlackEnv, SlackOrigin } from "./origin.js";
 export {
   SLACK_CHANNEL_CAPABILITIES,
   SlackChannelAdapter,
   createSlackChannelSession,
   slackChannelTarget,
+  slackSendTarget,
 };
 
 /**
@@ -51,8 +57,9 @@ export {
  * tools: [channel_reply, channel_read, channel_react, channel_fetch_file]
  * ```
  *
- * Operations outside the bound channel tool set, including workspace search,
- * directory lookups, and posting to another conversation, are unsupported.
+ * Operations outside the bound inbound and proactive targets, including
+ * workspace search, directory lookups, and arbitrary cross-channel posting,
+ * are unsupported.
  * A separate proposal can define their contract and access model.
  */
 export const slackRecipeConnectorModule = createChannelConnectorModule({

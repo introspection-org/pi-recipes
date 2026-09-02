@@ -6,6 +6,39 @@ export interface SlackOrigin {
   provider: "slack";
   channel: string;
   thread_ts: string | null;
+  name?: string | null;
+}
+
+interface BootstrapChannel {
+  provider?: unknown;
+  conversation?: unknown;
+  name?: unknown;
+}
+
+export function resolveSlackSendTarget(
+  env: SlackEnv = process.env,
+): SlackOrigin | null {
+  const raw = env.INTROSPECTION_BOOTSTRAP_JSON?.trim();
+  if (!raw) return null;
+  try {
+    const bootstrap = JSON.parse(raw) as { operator_channel?: BootstrapChannel };
+    const target = bootstrap.operator_channel;
+    if (
+      target?.provider !== "slack" ||
+      typeof target.conversation !== "string" ||
+      !target.conversation.trim()
+    ) {
+      return null;
+    }
+    return {
+      provider: "slack",
+      channel: target.conversation.trim(),
+      thread_ts: null,
+      name: typeof target.name === "string" ? target.name : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function resolveSlackOrigin(

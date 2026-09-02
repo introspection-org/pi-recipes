@@ -10,6 +10,7 @@ import {
   SlackChannelAdapter,
   SlackFileSession,
   resolveSlackOrigin,
+  resolveSlackSendTarget,
   slackDownloadRoot,
   slackMessageBody,
   toPlainText,
@@ -160,6 +161,26 @@ describe("Slack origin", () => {
         INTROSPECTION_TASK_CHANNEL_ID: "I1",
       }),
     ).toBeNull();
+  });
+
+  it("resolves only the trusted Operator channel from bootstrap", () => {
+    expect(
+      resolveSlackSendTarget({
+        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
+          operator_channel: {
+            provider: "slack",
+            conversation: "C-OPS",
+            name: "#ops",
+          },
+        }),
+      }),
+    ).toEqual({
+      provider: "slack",
+      channel: "C-OPS",
+      thread_ts: null,
+      name: "#ops",
+    });
+    expect(resolveSlackSendTarget({ INTROSPECTION_BOOTSTRAP_JSON: "not-json" })).toBeNull();
   });
 
   it("resolves the cloud and local file roots", () => {
@@ -720,6 +741,62 @@ describe("Slack channel tools", () => {
     expect(post).toMatchObject({ channel: "C1", thread_ts: "100.1" });
     expect(result.details.ref).toMatch(/^msg_/);
     expect(JSON.stringify(result.details)).not.toContain("200.2");
+  });
+
+  it("sends a top-level notification only to the configured target", async () => {
+    const calls: Array<{ url: string; init: Record<string, unknown> }> = [];
+    const fetchImpl = (async (url: string, init: Record<string, unknown>) => {
+      calls.push({ url, init });
+      if (url.includes("chat.postMessage")) {
+        return response({ payload: { ok: true, channel: "C-OPS", ts: "300.3" } });
+      }
+      return response({ payload: { ok: true } });
+    }) as SlackFetch;
+    const env = {
+      SLACK_BOT_TOKEN: "token",
+      INTROSPECTION_BASE_API_URL: "https://dp.example",
+      INTROSPECTION_TASK_ID: "task-1",
+      INTROSPECTION_TASK_RUN_ID: "run-1",
+      INTROSPECTION_TOKEN: "locator",
+    };
+    const pi = createMockExtensionAPI();
+    registerChannelTools(
+      pi,
+      new SlackChannelAdapter(new SlackFileSession({ env, fetchImpl })),
+      {
+        target: null,
+        sendTarget: {
+          provider: "slack",
+          conversation: "C-OPS",
+          thread: null,
+          name: "#ops",
+        },
+        tools: ["reply"],
+      },
+    );
+
+    const [context] = await pi.emitExtensionEvent(
+      { type: "before_agent_start", systemPrompt: "base" } as never,
+      { signal: undefined },
+    );
+    expect(context).toMatchObject({
+      systemPrompt: expect.stringContaining(
+        "channel_reply starts a top-level conversation in this fixed channel",
+      ),
+    });
+    expect((context as { systemPrompt: string }).systemPrompt).toContain(
+      '"conversation_name":"#ops"',
+    );
+
+    await call(pi, "channel_reply", { text: "Daily status" });
+
+    const post = calls.find((entry) => entry.url.includes("chat.postMessage"))!;
+    expect(JSON.parse(String(post.init.body))).toMatchObject({
+      channel: "C-OPS",
+      text: "Daily status",
+    });
+    expect(JSON.parse(String(post.init.body))).not.toHaveProperty("thread_ts");
+    expect(calls.some((entry) => entry.url.startsWith("https://dp.example"))).toBe(false);
   });
 
   it("returns a posted reply when permalink lookup is cancelled", async () => {

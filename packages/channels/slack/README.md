@@ -24,8 +24,9 @@ Recipe written against `channel_reply` is not written against Slack.
 }
 ```
 
-Every registered tool acts on the conversation the task came from; none takes a
-channel, thread, or user argument. Recipe authors select tools in the agent YAML
+Bound tools act on the conversation the task came from. When a task has no
+inbound conversation, `channel_reply` falls back to a trusted Operator target
+supplied by the host. No tool takes a channel, thread, or user argument. Recipe authors select tools in the agent YAML
 file and do not write an extension or call the Slack client directly.
 
 Install the recipe dependencies before running `introspection local`. The cloud

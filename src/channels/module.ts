@@ -17,7 +17,9 @@ import type {
 export interface ChannelConnectorSession {
   readonly adapter: ChannelAdapter;
   /** Resolved lazily so a task with no channel origin still starts. */
-  readonly target: ChannelTarget | (() => ChannelTarget);
+  readonly target: ChannelTarget | null | (() => ChannelTarget | null);
+  /** Top-level fallback used by channel_reply when no inbound origin exists. */
+  readonly sendTarget?: ChannelTarget | (() => ChannelTarget);
 }
 
 export interface ChannelConnectorModuleOptions {
@@ -111,6 +113,7 @@ export function createChannelConnectorModule(
         }
         registerChannelTools(pi, session.adapter, {
           target: session.target,
+          sendTarget: session.sendTarget,
           tools,
           deferredTools: tools.filter((tool) => deferredToolIds.has(tool)),
           refs: new ChannelRefStore(),
