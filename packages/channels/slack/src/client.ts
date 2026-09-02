@@ -180,7 +180,6 @@ export class SlackBotSession {
       to?: { channel: string; thread_ts?: string | null };
     },
     signal?: AbortSignal,
-    eventType: "connector_posted" | null = "connector_posted",
   ): Promise<SlackPostResult> {
     const destination = input.to ?? {
       channel: this.origin().channel,
@@ -207,7 +206,7 @@ export class SlackBotSession {
       throw new Error("Slack chat.postMessage returned no message timestamp");
     const postedThread = payload.message?.thread_ts || threadTs || ts;
 
-    if (eventType === null) {
+    if (!resolveSlackOrigin(this.env)) {
       return {
         ok: true,
         channel,
@@ -248,10 +247,10 @@ export class SlackBotSession {
 
   private async recordPostedMessage(
     data: {
-    provider: "slack";
-    channel: string;
-    ts: string;
-    thread_ts: string;
+      provider: "slack";
+      channel: string;
+      ts: string;
+      thread_ts: string;
     },
     signal?: AbortSignal,
   ): Promise<boolean> {
