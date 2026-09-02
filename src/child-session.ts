@@ -4,6 +4,10 @@ import { join } from "node:path";
 import type { CredentialStore, Model } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { ResolvedRecipe } from "./recipe/resolve.js";
+import type {
+  MemoryContextOverride,
+  MemoryContextSource,
+} from "./memory.js";
 import {
   createAgentSessionInternal,
   type CreateAgentSessionInternalOptions,
@@ -17,6 +21,8 @@ export interface CreateIsolatedChildSessionOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
   credentials?: CredentialStore;
+  memory?: MemoryContextSource;
+  memoryOverride?: MemoryContextOverride;
   credentialsResolved?: boolean;
   modelOverride?: Model<any>;
   otel?: RecipeSessionOtelOptions;
@@ -42,6 +48,10 @@ export async function createIsolatedChildSession(
       cwd: opts.cwd,
       env: { ...opts.env },
       ...(opts.credentials ? { credentials: opts.credentials } : {}),
+      ...(opts.memory ? { memory: opts.memory } : {}),
+      ...(opts.memoryOverride
+        ? { memoryOverride: opts.memoryOverride }
+        : {}),
       ...(opts.credentialsResolved ? { credentialsResolved: true } : {}),
       ...(opts.modelOverride ? { modelOverride: opts.modelOverride } : {}),
       ...(opts.otel ? { otel: opts.otel } : {}),

@@ -15,6 +15,10 @@ import type {
   RecipeSessionOtelOptions,
   RecipeSessionHandle,
 } from "./session.js";
+import type {
+  MemoryContextOverride,
+  MemoryContextSource,
+} from "./memory.js";
 import type { ResolvedRecipe } from "./recipe/resolve.js";
 
 /** Default in-process child concurrency. */
@@ -25,6 +29,8 @@ export interface InProcessRunControllerOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   credentials?: CredentialStore;
+  memory?: MemoryContextSource;
+  memoryOverride?: MemoryContextOverride;
   /** Concurrent child runs; excess starts queue. Default 4. */
   concurrency?: number;
   /** Root session instrumentation inherited by in-process child sessions. */
@@ -122,6 +128,10 @@ export function createInProcessRunController(
           // runtime to the child.
           env,
           ...(opts.credentials ? { credentials: opts.credentials } : {}),
+          ...(opts.memory ? { memory: opts.memory } : {}),
+          ...(opts.memoryOverride
+            ? { memoryOverride: opts.memoryOverride }
+            : {}),
           ...(opts.otel
             ? {
                 otel: {

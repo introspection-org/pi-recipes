@@ -59,6 +59,10 @@
 			"types": "./dist/api/session.d.ts",
 			"import": "./dist/api/session.js"
 		},
+		"./memory": {
+			"types": "./dist/api/memory.d.ts",
+			"import": "./dist/api/memory.js"
+		},
 		"./channels": {
 			"types": "./dist/channels/index.d.ts",
 			"import": "./dist/channels/index.js"

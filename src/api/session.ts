@@ -10,3 +10,7 @@ export type {
   RecipeSessionHandle,
   RecipeSessionOtelOptions,
 } from "../session.js";
+export type {
+  MemoryContextOverride,
+  MemoryContextSource,
+} from "../memory.js";
