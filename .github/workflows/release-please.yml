@@ -248,6 +248,8 @@ jobs:
             exit 1
           fi
 
+          staging_tag="release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
           package_name="$(node -p "require('./package.json').name")"
           version="$(node -p "require('./package.json').version")"
           root_tag="latest"
@@ -255,30 +257,24 @@ jobs:
             root_tag="beta"
           fi
 
-          # Each package is published under its final tag, because OIDC
-          # authenticates `npm publish` alone and cannot move a tag afterwards.
-          # A failed publish therefore leaves the packages that already landed
-          # advertised; re-running the workflow publishes the remainder, since
-          # every step below skips a version that is already on the registry.
-          #
-          # Publishing follows dependency order so that every advertised package
-          # resolves: platform packages before the root, which pins each one at
-          # an exact version, and the root before the channel packages, which
-          # name it as a peer dependency.
+          # Platform packages first, so the optionalDependencies the root
+          # manifest names already resolve when it is published.
+          platform_names=()
           if [[ "$publish_root" == "true" ]]; then
             for d in npm/dist/mcp-client-*; do
               platform_name="$(node -p "require('./$d/package.json').name")"
+              platform_names+=("$platform_name")
               if npm view "$platform_name@$version" version >/dev/null 2>&1; then
                 echo "$platform_name@$version is already published"
               else
-                npm publish "$d" --access public --tag "$root_tag"
+                npm publish "$d" --access public --tag "$staging_tag"
               fi
             done
 
             if npm view "$package_name@$version" version >/dev/null 2>&1; then
               echo "$package_name@$version is already published"
             else
-              pnpm publish --access public --tag "$root_tag" --no-git-checks
+              pnpm publish --access public --tag "$staging_tag" --no-git-checks
             fi
           fi
 
@@ -287,6 +283,9 @@ jobs:
             channel_dirs+=("packages/channels/slack")
           fi
 
+          channel_names=()
+          channel_versions=()
+          channel_tags=()
           if [[ "${#channel_dirs[@]}" -gt 0 ]]; then
             for channel_dir in "${channel_dirs[@]}"; do
               channel_name="$(node -p "require('./$channel_dir/package.json').name")"
@@ -310,9 +309,27 @@ jobs:
               if npm view "$channel_name@$channel_version" version >/dev/null 2>&1; then
                 echo "$channel_name@$channel_version is already published"
               else
-                pnpm --filter "$channel_name" publish --access public --tag "$channel_tag" --no-git-checks
+                pnpm --filter "$channel_name" publish --access public --tag "$staging_tag" --no-git-checks
               fi
+              channel_names+=("$channel_name")
+              channel_versions+=("$channel_version")
+              channel_tags+=("$channel_tag")
             done
+          fi
+
+          # Move the normal tags only after every requested package exists.
+          # The root tag moves last, so a failed channel package publish does
+          # not advertise a core release whose documented package is unavailable.
+          if [[ "$publish_root" == "true" ]]; then
+            for platform_name in "${platform_names[@]}"; do
+              npm dist-tag add "$platform_name@$version" "$root_tag"
+            done
+          fi
+          for index in "${!channel_names[@]}"; do
+            npm dist-tag add "${channel_names[$index]}@${channel_versions[$index]}" "${channel_tags[$index]}"
+          done
+          if [[ "$publish_root" == "true" ]]; then
+            npm dist-tag add "$package_name@$version" "$root_tag"
           fi
 
   publish-crate:
