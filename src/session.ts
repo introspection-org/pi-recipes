@@ -75,6 +75,12 @@ import {
   type ResolvedRecipeAgent,
   type ResolvedRecipe,
 } from "./recipe/resolve.js";
+import {
+  formatMemoryForPrompt,
+  loadMemoryIndex,
+  type MemoryContextOverride,
+  type MemoryContextSource,
+} from "./memory.js";
 
 export { expectedProviderEnvVars } from "./provider-env.js";
 
@@ -174,6 +180,10 @@ export interface CreateAgentSessionOptions {
   additionalSkillPaths?: string[];
   /** Host-materialized replacement for the Recipe's resolved skill roots. */
   materializedSkillPaths?: string[];
+  /** Host-bound durable memory index rendered into the system prompt. */
+  memory?: MemoryContextSource;
+  /** Filter, replace, or disable the loaded memory index before rendering. */
+  memoryOverride?: MemoryContextOverride;
   /** Append or transform host context after portable prompt resolution. */
   transformSystemPrompt?: (resolved: string) => string;
   /** Observe Pi resource diagnostics during construction. */
@@ -481,6 +491,13 @@ async function createSessionForAgent(
 ): Promise<RecipeSessionHandle> {
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
+  const loadedMemory = opts.memory
+    ? loadMemoryIndex({ ...opts.memory, cwd })
+    : { memory: null, diagnostics: [] };
+  const memoryResult = opts.memoryOverride
+    ? opts.memoryOverride(loadedMemory)
+    : loadedMemory;
+  const memoryPrompt = formatMemoryForPrompt(memoryResult.memory);
   const recipeExtensionContext: RecipeExtensionSessionContext = Object.freeze({
     recipe: Object.freeze({ name: recipe.manifest.name }),
     agent: Object.freeze({ name: recipe.name }),
@@ -676,16 +693,26 @@ async function createSessionForAgent(
         extensionFactories: inlineExtensions,
         systemPromptOverride: (base) => {
           const resolved = recipe.systemPromptOverride(base);
+          const withMemory = [resolved, memoryPrompt]
+            .filter(Boolean)
+            .join("\n\n");
           return opts.transformSystemPrompt
-            ? opts.transformSystemPrompt(resolved ?? "")
-            : resolved;
+            ? opts.transformSystemPrompt(withMemory)
+            : withMemory || undefined;
         },
       },
     });
-    opts.onDiagnostics?.(services.diagnostics);
+    const memoryDiagnostics = memoryResult.diagnostics.map((diagnostic) => ({
+      type: diagnostic.type,
+      message: diagnostic.path
+        ? `${diagnostic.message} (${diagnostic.path})`
+        : diagnostic.message,
+    }));
+    const diagnostics = [...memoryDiagnostics, ...services.diagnostics];
+    opts.onDiagnostics?.(diagnostics);
     const extensionLoadErrors =
       services.resourceLoader.getExtensions().errors;
-    const fatalDiagnostics = services.diagnostics.filter(
+    const fatalDiagnostics = diagnostics.filter(
       (diagnostic) => diagnostic.type === "error"
     );
     if (fatalDiagnostics.length > 0 || extensionLoadErrors.length > 0) {
@@ -733,6 +760,10 @@ async function createSessionForAgent(
             concurrency: opts.inProcessRunController?.concurrency,
             ...(opts.onAgentRunEvent
               ? { onAgentRunEvent: opts.onAgentRunEvent }
+              : {}),
+            ...(opts.memory ? { memory: opts.memory } : {}),
+            ...(opts.memoryOverride
+              ? { memoryOverride: opts.memoryOverride }
               : {}),
             ...(otel ? { otel } : {}),
           })

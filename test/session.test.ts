@@ -11,6 +11,7 @@ import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpBindingError } from "../src/mcp.js";
+import type { LoadMemoryIndexOptions } from "../src/memory.js";
 import {
   resolveRecipe,
 } from "../src/recipe/resolve.js";
@@ -239,6 +240,70 @@ describe("createAgentSession", () => {
     expect(handle.session.model?.id).toBe("claude-sonnet-4-5");
     expect(handle.session.systemPrompt).toContain("conformance fixture");
     expect(handle.session.systemPrompt).toContain("Conformance agent");
+  });
+
+  it("loads memory before the host transforms the resolved prompt", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const memoriesDir = join(workspaceDir, "memories");
+    mkdirSync(memoriesDir);
+    writeFileSync(
+      join(memoriesDir, "MEMORY.md"),
+      "- [Testing preferences](testing.md)"
+    );
+    let transformed = "";
+
+    const handle = await open({
+      recipeDir,
+      cwd: workspaceDir,
+      memory: {
+        indexPath: "memories/MEMORY.md",
+      },
+      transformSystemPrompt: (resolved) => {
+        transformed = resolved;
+        return `${resolved}\n\nHost context.`;
+      },
+    });
+
+    expect(transformed).toContain("<memories>");
+    expect(transformed).toContain("Testing preferences");
+    expect(handle.session.systemPrompt).toContain("Host context.");
+  });
+
+  it("keeps the session cwd authoritative for memory paths", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    const otherWorkspace = join(workspaceDir, "other");
+    mkdirSync(otherWorkspace);
+    writeFileSync(join(workspaceDir, "MEMORY.md"), "session memory");
+    writeFileSync(join(otherWorkspace, "MEMORY.md"), "other memory");
+    const memory: LoadMemoryIndexOptions = {
+      cwd: otherWorkspace,
+      indexPath: "MEMORY.md",
+    };
+
+    const handle = await open({ recipeDir, cwd: workspaceDir, memory });
+
+    expect(handle.session.systemPrompt).toContain("session memory");
+    expect(handle.session.systemPrompt).not.toContain("other memory");
+  });
+
+  it("allows the host to replace or disable loaded memory", async () => {
+    const { recipeDir, workspaceDir } = fixture();
+    writeFileSync(join(workspaceDir, "MEMORY.md"), "original memory");
+
+    const handle = await open({
+      recipeDir,
+      cwd: workspaceDir,
+      memory: { indexPath: "MEMORY.md" },
+      memoryOverride: (current) => ({
+        ...current,
+        memory: current.memory
+          ? { ...current.memory, content: "replacement memory" }
+          : null,
+      }),
+    });
+
+    expect(handle.session.systemPrompt).toContain("replacement memory");
+    expect(handle.session.systemPrompt).not.toContain("original memory");
   });
 
   it("starts connector sessions with the default Slack loadout", async () => {
@@ -1177,6 +1242,10 @@ describe("in-process run controller", () => {
   it("runs a child through an injected session factory", async () => {
     const { recipeDir, workspaceDir } = fixture();
     const parentEnv = cleanEnv();
+    const memory = {
+      indexPath: "memories/MEMORY.md",
+    };
+    const memoryOverride = vi.fn((current) => current);
     let scripted: RecipeSessionHandle | null = null;
     let childOptions:
       | Parameters<typeof createAgentSessionInternal>[0]
@@ -1189,6 +1258,8 @@ describe("in-process run controller", () => {
       recipe: resolveRecipe({ recipeDir }),
       cwd: workspaceDir,
       env: parentEnv,
+      memory,
+      memoryOverride,
       otel: {
         tracer,
         meta: {
@@ -1221,6 +1292,8 @@ describe("in-process run controller", () => {
     expect(childOptions?.otel?.meta?.agentName).toBeUndefined();
     expect(childOptions?.runController).toBeNull();
     expect(childOptions?.sessionRole).toBe("subagent");
+    expect(childOptions?.memory).toBe(memory);
+    expect(childOptions?.memoryOverride).toBe(memoryOverride);
     expect(onAgentRunEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "agent_run_event",
