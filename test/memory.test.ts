@@ -86,6 +86,21 @@ describe("memory context", () => {
     expect(bytes.memory?.truncated).toBe(true);
   });
 
+  it("does not truncate exactly maxLines followed by a newline", () => {
+    const cwd = workspace();
+    const content = Array.from(
+      { length: DEFAULT_MEMORY_INDEX_MAX_LINES },
+      (_, index) => `line ${index + 1}`
+    ).join("\n");
+    writeFileSync(join(cwd, "MEMORY.md"), `${content}\n`);
+
+    const result = loadMemoryIndex({ cwd, indexPath: "MEMORY.md" });
+
+    expect(result.memory?.content).toBe(content);
+    expect(result.memory?.truncated).toBe(false);
+    expect(formatMemoryForPrompt(result.memory)).not.toContain("line 200...");
+  });
+
   it("formats safe XML", () => {
     const prompt = formatMemoryForPrompt({
       filePath: '/tmp/<memory & "notes">/MEMORY.md',

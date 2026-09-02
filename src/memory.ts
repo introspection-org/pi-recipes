@@ -74,7 +74,18 @@ function readBoundedFile(path: string, maxBytes: number): {
   const descriptor = openSync(path, "r");
   try {
     const buffer = Buffer.alloc(maxBytes + 1);
-    const bytesRead = readSync(descriptor, buffer, 0, buffer.length, 0);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const read = readSync(
+        descriptor,
+        buffer,
+        bytesRead,
+        buffer.length - bytesRead,
+        bytesRead
+      );
+      if (read === 0) break;
+      bytesRead += read;
+    }
     const truncated = bytesRead > maxBytes;
     let content = buffer
       .subarray(0, Math.min(bytesRead, maxBytes))
@@ -93,6 +104,8 @@ function boundLines(
   maxLines: number
 ): { content: string; truncated: boolean } {
   const lines = content.split(/\r\n|\r|\n/);
+  // A final line terminator does not introduce another logical line.
+  if (lines.at(-1) === "") lines.pop();
   return {
     content: (lines.length > maxLines ? lines.slice(0, maxLines) : lines).join(
       "\n"
