@@ -70,6 +70,10 @@ const handle = await createAgentSession({
   sessionManager,
   additionalSkillPaths,
   materializedSkillPaths,
+  memory: {
+    indexPath: "/workspace/memories/MEMORY.md",
+  },
+  memoryOverride,
   transformSystemPrompt,
   onDiagnostics,
   onEvent,
@@ -108,6 +112,23 @@ extensions, its own settings, an event bus, host tools, and a
 gateway-decorated model without reimplementing Recipe semantics. The Recipe
 continues to own model configuration and tool selection; host seams replace
 transport and materialized resources, not the portable definition.
+
+### Persistent memory context
+
+Hosts can provide one durable memory index through `memory`. Recipes loads the
+index once during session construction and bounds the injected index content to
+200 lines and 25,000 UTF-8 bytes after XML escaping by default. Missing and
+empty indexes render nothing. The host owns the directory, persistence, and
+identity scope; Recipes assumes no filesystem layout.
+
+The index should stay concise and can link to focused files in its directory.
+Recipes injects it without adding usage or precedence instructions.
+
+`memoryOverride` follows Pi's resource override pattern. It can replace, filter,
+or disable the loaded index before rendering. The exported `loadMemoryIndex`
+and `formatMemoryForPrompt` helpers let custom hosts use the same primitives.
+Recipe-specific memory behavior belongs in `SYSTEM.md` or agent
+`system_instructions`, while the host binds the actual memory resource.
 
 The default in-process subagent controller uses that same Recipe snapshot for
 every child, so no session reparses the package or observes a different source
