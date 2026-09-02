@@ -4,6 +4,7 @@ import {
   readSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 export const DEFAULT_MEMORY_INDEX_MAX_LINES = 200;
 export const DEFAULT_MEMORY_INDEX_MAX_BYTES = 25_000;
@@ -87,12 +88,9 @@ function readBoundedFile(path: string, maxBytes: number): {
       bytesRead += read;
     }
     const truncated = bytesRead > maxBytes;
-    let content = buffer
-      .subarray(0, Math.min(bytesRead, maxBytes))
-      .toString("utf8");
-    if (truncated && content.endsWith("\uFFFD")) {
-      content = content.slice(0, -1);
-    }
+    const content = new StringDecoder("utf8").write(
+      buffer.subarray(0, Math.min(bytesRead, maxBytes))
+    );
     return { content, truncated };
   } finally {
     closeSync(descriptor);

@@ -101,6 +101,20 @@ describe("memory context", () => {
     expect(formatMemoryForPrompt(result.memory)).not.toContain("line 200...");
   });
 
+  it("preserves a valid replacement character at the byte boundary", () => {
+    const cwd = workspace();
+    writeFileSync(join(cwd, "MEMORY.md"), "\uFFFDx");
+
+    const result = loadMemoryIndex({
+      cwd,
+      indexPath: "MEMORY.md",
+      maxBytes: 3,
+    });
+
+    expect(result.memory?.content).toBe("\uFFFD");
+    expect(result.memory?.truncated).toBe(true);
+  });
+
   it("formats safe XML", () => {
     const prompt = formatMemoryForPrompt({
       filePath: '/tmp/<memory & "notes">/MEMORY.md',
