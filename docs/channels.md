@@ -29,7 +29,7 @@ fetch earlier messages when the provider supports it.
 
 | Tool | Model arguments | Requires |
 | --- | --- | --- |
-| `channel_reply` | `text` (Markdown) | always |
+| `channel_reply` | `text` (Markdown) | an inbound conversation or trusted configured fallback |
 | `channel_read` | `limit?`, `cursor?` | `read` |
 | `channel_react` | `message`, `emoji`, `action?` (`add` or `remove`) | `react` |
 | `channel_edit` | `message`, `text` | `edit` |
@@ -77,10 +77,16 @@ addressing argument.
 
 ### Unsupported operations
 
+`channel_reply` normally uses the inbound conversation. When a task has no
+channel origin—for example, an automation—it instead starts a top-level message
+in a fallback target supplied by trusted host configuration. It has no
+destination or mode argument: an inbound task always replies in place, and only
+a task without an inbound conversation can use the fallback. If neither target
+exists, the call fails before reaching the provider.
+
 Workspace search, channel listing and joining, directory lookup, and posting to
-another conversation are unsupported. The proposal does not choose an API or
-access model for those operations. A separate proposal can define them when a
-concrete use case requires them.
+an arbitrary conversation are unsupported. A separate proposal can define them
+when a concrete use case requires them.
 
 Typing indicators and presence are runtime effects rather than model decisions.
 Streaming controls how a reply is delivered. The runtime derives idempotency

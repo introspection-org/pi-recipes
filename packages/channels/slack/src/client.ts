@@ -173,11 +173,15 @@ export class SlackBotSession {
    * exactly the kind of second, quieter source of truth the bound tier exists
    * to remove.
    */
-  async sendMessage(input: {
-    text: string;
-    plain_text?: string;
-    to?: { channel: string; thread_ts?: string | null };
-  }, signal?: AbortSignal): Promise<SlackPostResult> {
+  async sendMessage(
+    input: {
+      text: string;
+      plain_text?: string;
+      to?: { channel: string; thread_ts?: string | null };
+    },
+    signal?: AbortSignal,
+    eventType: "connector_posted" | null = "connector_posted",
+  ): Promise<SlackPostResult> {
     const destination = input.to ?? {
       channel: this.origin().channel,
       thread_ts: this.origin().thread_ts,
@@ -202,6 +206,16 @@ export class SlackBotSession {
     if (!ts)
       throw new Error("Slack chat.postMessage returned no message timestamp");
     const postedThread = payload.message?.thread_ts || threadTs || ts;
+
+    if (eventType === null) {
+      return {
+        ok: true,
+        channel,
+        ts,
+        thread_ts: postedThread,
+        bridge_recorded: false,
+      };
+    }
 
     try {
       const bridgeRecorded = await this.recordPostedMessage(
@@ -232,12 +246,15 @@ export class SlackBotSession {
     }
   }
 
-  private async recordPostedMessage(data: {
+  private async recordPostedMessage(
+    data: {
     provider: "slack";
     channel: string;
     ts: string;
     thread_ts: string;
-  }, signal?: AbortSignal): Promise<boolean> {
+    },
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     const baseUrl = this.env.INTROSPECTION_BASE_API_URL?.trim();
     const taskId = this.env.INTROSPECTION_TASK_ID?.trim();
     const token = this.env.INTROSPECTION_TOKEN?.trim();

@@ -17,7 +17,11 @@ import type {
 import type { SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
 import { markdownBlocks, toPlainText } from "./format.js";
-import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
+import {
+  resolveSlackOrigin,
+  resolveSlackSendTarget,
+  type SlackEnv,
+} from "./origin.js";
 
 /**
  * What Slack's Bot API supports through the bound-conversation contract.
@@ -136,6 +140,14 @@ export class SlackChannelAdapter implements ChannelAdapter {
     ctx: ChannelAdapterContext,
     input: { text: string },
   ): Promise<ChannelPostResult> {
+    return this.post(ctx, input, ctx.proactive ? null : "connector_posted");
+  }
+
+  private async post(
+    ctx: ChannelAdapterContext,
+    input: { text: string },
+    eventType: "connector_posted" | null,
+  ): Promise<ChannelPostResult> {
     const posted = await this.session.sendMessage(
       {
         text: input.text,
@@ -145,6 +157,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         to: { channel: ctx.target.conversation, thread_ts: ctx.target.thread },
       },
       ctx.signal,
+      eventType,
     );
     let permalink: string | null = null;
     try {
@@ -508,6 +521,21 @@ function messagesFrom(payload: SlackApiResult): SlackHistoryMessage[] {
 }
 
 /** Resolve the bound conversation for a session, or explain why there is none. */
+export function slackSendTarget(env: SlackEnv): ChannelTarget {
+  const target = resolveSlackSendTarget(env);
+  if (!target) {
+    throw new Error(
+      "No single Operator channel is configured for this project.",
+    );
+  }
+  return {
+    provider: "slack",
+    conversation: target.channel,
+    thread: null,
+    name: target.name,
+  };
+}
+
 export function slackChannelTarget(env: SlackEnv): ChannelTarget {
   const origin = resolveSlackOrigin(env);
   if (!origin) {
@@ -526,7 +554,11 @@ export function createSlackChannelSession(options: {
   env?: SlackEnv;
   cwd?: string;
   session?: SlackFileSession;
-}): { adapter: SlackChannelAdapter; target: () => ChannelTarget } {
+}): {
+  adapter: SlackChannelAdapter;
+  target: () => ChannelTarget | null;
+  sendTarget: () => ChannelTarget;
+} {
   const env = options.env ?? process.env;
   const session =
     options.session ??
@@ -535,6 +567,16 @@ export function createSlackChannelSession(options: {
     adapter: new SlackChannelAdapter(session),
     // Resolved per call: a Recipe that declares Slack can still run from an
     // automation trigger, where the tools error rather than the session.
-    target: () => slackChannelTarget(env),
+    target: () => {
+      const origin = resolveSlackOrigin(env);
+      return origin
+        ? {
+            provider: "slack" as const,
+            conversation: origin.channel,
+            thread: origin.thread_ts,
+          }
+        : null;
+    },
+    sendTarget: () => slackSendTarget(env),
   };
 }

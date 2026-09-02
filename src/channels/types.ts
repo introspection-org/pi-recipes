@@ -1,22 +1,23 @@
 /**
  * Provider-neutral channel primitives.
  *
- * A channel-origin task answers exactly one conversation. These types describe
- * what an agent may do *inside* that conversation, in vocabulary that is the
+ * A channel-origin task answers exactly one conversation. For a task without
+ * an inbound origin, a host may bind one fallback target for a proactive
+ * top-level reply. These types describe those operations in vocabulary that is the
  * same for Slack, Teams, or anything else, so one prompt serves every channel.
  *
  * Two properties are structural rather than documented:
  *
- * - **The destination is bound.** An adapter method takes the conversation from
- *   the trusted `ChannelTarget` the host resolved; no tool schema built from
+ * - **Every destination is bound.** An adapter method takes the conversation from
+ *   a trusted `ChannelTarget` the host resolved; no tool schema built from
  *   these types carries a channel, thread, workspace, or user argument.
  * - **Unsupported is absent.** Tools are registered from `ChannelCapabilities`,
  *   so a channel that cannot read earlier messages simply has no read tool. A
  *   tool that always answers "unsupported" costs a model turn and teaches
  *   nothing.
  *
- * Operations outside this bound channel set, including workspace search,
- * directory lookups, and sends to another conversation, are unsupported. Their
+ * Operations outside the bound inbound and proactive targets, including workspace search,
+ * directory lookups, and arbitrary sends to another conversation, are unsupported. Their
  * contract and access model are deferred to a separate proposal.
  */
 
@@ -173,6 +174,8 @@ export interface ChannelRefResolver {
 
 export interface ChannelAdapterContext {
   readonly target: ChannelTarget;
+  /** True when reply fell back to the configured proactive target. */
+  readonly proactive?: boolean;
   readonly refs: ChannelRefResolver;
   readonly signal?: AbortSignal;
 }

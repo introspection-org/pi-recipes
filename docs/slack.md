@@ -39,7 +39,7 @@ tools are available through `tool_search`.
 
 | Tool | Slack operation |
 | --- | --- |
-| `channel_reply` | `chat.postMessage` into the origin channel and thread |
+| `channel_reply` | `chat.postMessage` into the origin thread, or as a top-level message in the configured Operator channel when there is no origin |
 | `channel_read` | `conversations.replies` in a thread, else `conversations.history` |
 | `channel_react` | `reactions.add` or `reactions.remove` |
 | `channel_edit` | `chat.update` for a message the agent posted |
@@ -62,14 +62,15 @@ Slack restricts those installations to 15 replies and one request per minute.
 and canvases are not implemented in this package yet, and the capability
 descriptor says so rather than registering tools that fail.
 
-None of these take a channel or thread argument. Every tool acts on the
-conversation the task came from. Author display names (`users.info`) and
+None of these take a channel or thread argument. `channel_reply` uses the
+conversation the task came from, or the configured Operator target only when
+there is no inbound conversation. Author display names (`users.info`) and
 permalinks (`chat.getPermalink`) are resolved inside the adapter and attached to
 message rows and reply results, so there is no user lookup or permalink tool.
 Edit and retract also require an opaque reference for a message posted by this
 agent. They cannot act on another author's message.
 
-Workspace search, channel listing and joining, directory lookup, and
+Workspace search, channel listing and joining, directory lookup, and arbitrary
 cross-channel posting are unsupported. Their contract and access model are
 deferred to a separate proposal.
 
@@ -84,15 +85,21 @@ allowed path, and adds the bot token before the request leaves for Slack.
 The adapter refuses to send a task locator when the provider proxy URL is
 missing. It never falls back to sending the locator to Slack.
 
-After `channel_reply` succeeds in cloud, the adapter posts the `connector_posted`
-task event to the Data Plane, which checks the agent session, current run,
-provider, and origin channel before recording the new thread root. A later Slack
-reply then resumes the same task.
+After an inbound `channel_reply` succeeds in cloud, the adapter posts the
+`connector_posted` task event to the Data Plane, which checks the agent session,
+current run, provider, and origin channel before recording the new thread root.
+A later Slack reply then resumes the same task.
+
+When `channel_reply` falls back to the configured Operator channel, it sends a
+top-level notification without recording a thread bridge. The configured
+channel comes from trusted session bootstrap and is never a tool argument. A
+bare reply to that notification is therefore ignored unless it separately
+engages the bot through the normal inbound rules.
 
 Slack writes are attempted once. The adapter does not retry `chat.postMessage`,
-because Slack accepts no idempotency key for it. If Slack accepts the post but
-event recording fails, the tool returns the message reference and a
-`bridge_error`. It does not post again.
+because Slack accepts no idempotency key for it. For an inbound conversation,
+if Slack accepts the post but event recording fails, the tool returns the
+message reference and a `bridge_error`. It does not post again.
 
 ## Test with introspection dev
 
