@@ -107,7 +107,7 @@ export interface RegisterChannelToolsOptions {
    */
   target: ChannelTarget | null | (() => ChannelTarget | null);
   /** Trusted fallback for reply when the task has no inbound conversation. */
-  sendTarget?: ChannelTarget | (() => ChannelTarget);
+  sendTarget?: ChannelTarget;
   /** Restrict registration to these ids; defaults to everything supported. */
   tools?: readonly ChannelToolId[];
   /** Selected tools that require `tool_search` before the model may call them. */
@@ -220,26 +220,17 @@ export function registerChannelTools(
     }
     return { target, refs, signal };
   };
-  const configuredSendTarget = options.sendTarget;
-  const loadSendTarget: () => ChannelTarget =
-    typeof configuredSendTarget === "function"
-      ? configuredSendTarget
-      : () => {
-          if (!configuredSendTarget) {
-            throw new Error("No configured channel is available for proactive messages.");
-          }
-          return configuredSendTarget;
-        };
-  let cachedSendTarget: ChannelTarget | undefined;
   const fallbackReplyContext = (signal?: AbortSignal): ChannelAdapterContext => {
-    const target = cachedSendTarget ?? loadSendTarget();
-    cachedSendTarget = target;
+    const target = options.sendTarget;
+    if (!target) {
+      throw new Error("No configured channel is available for proactive messages.");
+    }
     if (target.provider !== adapter.provider) {
       throw new Error(
         `Channel send target for '${adapter.provider}' returned provider '${target.provider}'`,
       );
     }
-    return { target, proactive: true, refs, signal };
+    return { target, refs, signal };
   };
   const definitions = new Map<ChannelToolId, Record<string, unknown>>();
   const register = (

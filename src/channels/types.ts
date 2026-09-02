@@ -174,8 +174,6 @@ export interface ChannelRefResolver {
 
 export interface ChannelAdapterContext {
   readonly target: ChannelTarget;
-  /** True when reply fell back to the configured proactive target. */
-  readonly proactive?: boolean;
   readonly refs: ChannelRefResolver;
   readonly signal?: AbortSignal;
 }

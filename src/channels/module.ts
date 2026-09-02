@@ -19,7 +19,7 @@ export interface ChannelConnectorSession {
   /** Resolved lazily so a task with no channel origin still starts. */
   readonly target: ChannelTarget | null | (() => ChannelTarget | null);
   /** Top-level fallback used by channel_reply when no inbound origin exists. */
-  readonly sendTarget?: ChannelTarget | (() => ChannelTarget);
+  readonly sendTarget?: ChannelTarget;
 }
 
 export interface ChannelConnectorModuleOptions {
