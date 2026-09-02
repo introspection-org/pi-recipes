@@ -218,9 +218,13 @@ jobs:
 
       - run: pnpm pack:check
 
+      # No NODE_AUTH_TOKEN: publishing authenticates with npm trusted publishing
+      # (OIDC) against the publisher configured on each package, which pins this
+      # repository, this workflow filename, and the `publish` environment. An
+      # _authToken in .npmrc takes precedence over OIDC, so setting one here
+      # would bypass the trusted publisher.
       - name: Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           ROOT_RELEASE_CREATED: ${{ needs.release-please.outputs.root_release_created }}
           SLACK_CHANNEL_RELEASE_CREATED: ${{ needs.release-please.outputs.slack_channel_release_created }}
           MANUAL_ROOT_RELEASE: ${{ github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root') }}
