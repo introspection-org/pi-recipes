@@ -20,6 +20,8 @@ export interface ChannelConnectorSession {
   readonly target: ChannelTarget | null | (() => ChannelTarget | null);
   /** Top-level fallback used by channel_reply when no inbound origin exists. */
   readonly sendTarget?: ChannelTarget;
+  /** Session-specific subset; unsupported tools are omitted rather than failing. */
+  readonly availableTools?: readonly ChannelToolId[];
 }
 
 export interface ChannelConnectorModuleOptions {
@@ -111,11 +113,13 @@ export function createChannelConnectorModule(
             `Channel adapter '${options.provider}' returned capabilities that differ from its declared catalog`,
           );
         }
+        const available = new Set(session.availableTools ?? tools);
+        const sessionTools = tools.filter((tool) => available.has(tool));
         registerChannelTools(pi, session.adapter, {
           target: session.target,
           sendTarget: session.sendTarget,
-          tools,
-          deferredTools: tools.filter((tool) => deferredToolIds.has(tool)),
+          tools: sessionTools,
+          deferredTools: sessionTools.filter((tool) => deferredToolIds.has(tool)),
           refs: new ChannelRefStore(),
         });
       };

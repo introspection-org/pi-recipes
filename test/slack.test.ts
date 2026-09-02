@@ -9,6 +9,7 @@ import {
   SlackBotSession,
   SlackChannelAdapter,
   SlackFileSession,
+  createSlackChannelSession,
   resolveSlackOrigin,
   resolveSlackSendTarget,
   slackDownloadRoot,
@@ -141,7 +142,7 @@ function response(options: {
 }
 
 describe("Slack origin", () => {
-  it("uses the cloud origin before local settings", () => {
+  it("resolves only trusted cloud task context", () => {
     expect(
       resolveSlackOrigin({
         INTROSPECTION_TASK_CHANNEL_PROVIDER: "slack",
@@ -150,17 +151,22 @@ describe("Slack origin", () => {
         SLACK_CHANNEL_ID: "C9",
       }),
     ).toEqual({ provider: "slack", channel: "C1", thread_ts: "100.1" });
-    expect(resolveSlackOrigin({ SLACK_CHANNEL_ID: "C9" })).toEqual({
-      provider: "slack",
-      channel: "C9",
-      thread_ts: null,
-    });
+    expect(resolveSlackOrigin({ SLACK_CHANNEL_ID: "C9" })).toBeNull();
     expect(
       resolveSlackOrigin({
         INTROSPECTION_TASK_CHANNEL_PROVIDER: "linear",
         INTROSPECTION_TASK_CHANNEL_ID: "I1",
       }),
     ).toBeNull();
+  });
+
+  it("does not treat local Slack settings as a task origin", () => {
+    const session = createSlackChannelSession({
+      env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C9" },
+    });
+
+    expect(session.target()).toBeNull();
+    expect(session.availableTools).toEqual([]);
   });
 
   it("resolves only the trusted Operator channel from bootstrap", () => {
@@ -195,25 +201,26 @@ describe("Slack origin", () => {
 });
 
 describe("SlackBotSession transport", () => {
-  it("calls Slack directly with the bot token during a local run", async () => {
+  it("rejects direct provider credentials outside cloud egress", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
-      env: { SLACK_BOT_TOKEN: "local-bot-token", SLACK_CHANNEL_ID: "C1" },
+      env: { SLACK_BOT_TOKEN: "local-bot-token" },
       fetchImpl,
     });
-    await session.call("conversations.history", { channel: "C1" });
-    expect(fetchImpl.calls[0]!.url).toBe(
-      "https://slack.com/api/conversations.history",
-    );
-    expect(fetchImpl.calls[0]!.init.headers).toMatchObject({
-      Authorization: "Bearer local-bot-token",
-    });
+
+    await expect(
+      session.call("chat.postMessage", { channel: "C1", text: "hello" }),
+    ).rejects.toThrow(/cloud egress environment/);
+    expect(fetchImpl.calls).toHaveLength(0);
   });
 
   it("passes the tool cancellation signal to Slack requests", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
-      env: { SLACK_BOT_TOKEN: "local-bot-token" },
+      env: {
+        INTROSPECTION_TOKEN: "locator",
+        INTROSPECTION_EGRESS_URL: "http://egress.internal",
+      },
       fetchImpl,
     });
     const controller = new AbortController();
@@ -305,7 +312,8 @@ describe("SlackBotSession transport", () => {
     const session = new SlackBotSession({
       env: {
         INTROSPECTION_TASK_CHANNEL_ID: "C1",
-        SLACK_BOT_TOKEN: "bot-token",
+        INTROSPECTION_TOKEN: "session-locator",
+        INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
       },
       fetchImpl,
     });
@@ -360,11 +368,11 @@ describe("SlackBotSession transport", () => {
     };
     const session = new SlackBotSession({
       env: {
-        SLACK_BOT_TOKEN: "bot-token",
         INTROSPECTION_TASK_CHANNEL_ID: "C1",
         INTROSPECTION_BASE_API_URL: "https://dp.example",
         INTROSPECTION_TASK_ID: "task-1",
         INTROSPECTION_TOKEN: "task-token",
+        INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
       },
       fetchImpl,
     });
@@ -408,7 +416,10 @@ describe("Slack file downloads", () => {
         file: fakeFile({ name: "../bad name.png" }),
       });
       const session = new SlackFileSession({
-        env: { SLACK_BOT_TOKEN: "local-bot-token" },
+        env: {
+          INTROSPECTION_TOKEN: "locator",
+          INTROSPECTION_EGRESS_URL: "http://egress.internal",
+        },
         fetchImpl,
         cwd,
       });
@@ -431,7 +442,10 @@ describe("Slack file downloads", () => {
     const cwd = await mkdtemp(join(tmpdir(), "slack-bot-api-"));
     try {
       const unsafe = new SlackFileSession({
-        env: { SLACK_BOT_TOKEN: "local-bot-token" },
+        env: {
+          INTROSPECTION_TOKEN: "locator",
+          INTROSPECTION_EGRESS_URL: "http://egress.internal",
+        },
         fetchImpl: fakeFetch({
           file: fakeFile({ url_private_download: "https://evil.example/file" }),
         }),
@@ -442,7 +456,10 @@ describe("Slack file downloads", () => {
       );
 
       const oversized = new SlackFileSession({
-        env: { SLACK_BOT_TOKEN: "local-bot-token" },
+        env: {
+          INTROSPECTION_TOKEN: "locator",
+          INTROSPECTION_EGRESS_URL: "http://egress.internal",
+        },
         fetchImpl: fakeFetch({
           file: fakeFile({ size: MAX_SLACK_FILE_BYTES + 1 }),
         }),
@@ -462,7 +479,10 @@ describe("Slack channel tools", () => {
     const fetchImpl = fakeFetch({ channelName: "incident-triage" });
     const adapter = new SlackChannelAdapter(
       new SlackFileSession({
-        env: { SLACK_BOT_TOKEN: "x", SLACK_CHANNEL_ID: "C1" },
+        env: {
+          INTROSPECTION_TOKEN: "locator",
+          INTROSPECTION_EGRESS_URL: "http://egress.internal",
+        },
         fetchImpl,
       }),
     );
@@ -479,9 +499,11 @@ describe("Slack channel tools", () => {
   });
 
   const cloudEnv = {
-    SLACK_BOT_TOKEN: "token",
-    SLACK_CHANNEL_ID: "C1",
-    SLACK_THREAD_TS: "100.1",
+    INTROSPECTION_TASK_CHANNEL_PROVIDER: "slack",
+    INTROSPECTION_TASK_CHANNEL_ID: "C1",
+    INTROSPECTION_TASK_THREAD_ID: "100.1",
+    INTROSPECTION_TOKEN: "locator",
+    INTROSPECTION_EGRESS_URL: "http://egress.internal",
   };
 
   function slackTools(options: FakeFetchOptions = {}, cwd?: string) {
@@ -753,11 +775,11 @@ describe("Slack channel tools", () => {
       return response({ payload: { ok: true } });
     }) as SlackFetch;
     const env = {
-      SLACK_BOT_TOKEN: "token",
       INTROSPECTION_BASE_API_URL: "https://dp.example",
       INTROSPECTION_TASK_ID: "task-1",
       INTROSPECTION_TASK_RUN_ID: "run-1",
       INTROSPECTION_TOKEN: "locator",
+      INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
     };
     const pi = createMockExtensionAPI();
     registerChannelTools(
@@ -771,7 +793,6 @@ describe("Slack channel tools", () => {
           thread: null,
           name: "#ops",
         },
-        tools: ["reply"],
       },
     );
 
@@ -784,9 +805,11 @@ describe("Slack channel tools", () => {
         "channel_reply starts a top-level conversation in this fixed channel",
       ),
     });
-    expect((context as { systemPrompt: string }).systemPrompt).toContain(
-      '"conversation_name":"#ops"',
-    );
+    const systemPrompt = (context as { systemPrompt: string }).systemPrompt;
+    expect(systemPrompt).toContain('"conversation_name":"#ops"');
+    expect(systemPrompt).toContain('"default_tools":["channel_reply"]');
+    expect(systemPrompt).not.toContain("channel_read");
+    expect(systemPrompt).not.toContain("channel_react");
 
     await call(pi, "channel_reply", { text: "Daily status" });
 
