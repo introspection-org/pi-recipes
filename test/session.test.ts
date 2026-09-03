@@ -386,6 +386,38 @@ describe("createAgentSession", () => {
     );
   });
 
+  it("starts without Slack tools when the proactive agent selects none", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
+      tools: [],
+      manifestPi: {
+        connectors: [{ provider: "slack" }],
+      },
+    });
+    installSlackRecipeConnector(recipeDir);
+    const handle = await open({
+      recipeDir,
+      cwd: workspaceDir,
+      env: {
+        ...cleanEnv(),
+        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
+          operator_channel: {
+            provider: "slack",
+            conversation: "C-OPS",
+          },
+        }),
+      },
+    });
+
+    expect(handle.session.getAllTools().map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining([
+        "channel_read",
+        "channel_react",
+        "channel_reply",
+      ]),
+    );
+  });
+
   it("rejects connector tools unsupported by the provider", async () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },

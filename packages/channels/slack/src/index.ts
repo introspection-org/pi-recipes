@@ -67,7 +67,7 @@ export {
 export const slackRecipeConnectorModule = createChannelConnectorModule({
   provider: "slack",
   capabilities: SLACK_CHANNEL_CAPABILITIES,
-  availableTools: ({ env }) => slackAvailableTools(env),
+  availableTools: ({ env, tools }) => slackAvailableTools(env, tools),
   createSession: ({ env, cwd }) => createSlackChannelSession({ env, cwd }),
 });
 

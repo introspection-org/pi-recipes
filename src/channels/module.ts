@@ -36,6 +36,7 @@ export interface ChannelConnectorModuleOptions {
   capabilities: ChannelCapabilities;
   /** Resolve the session-specific subset before the host builds its loadout. */
   availableTools?(options: {
+    tools: readonly ChannelToolId[];
     env: NodeJS.ProcessEnv;
     cwd: string;
   }): readonly ChannelToolId[] | undefined;
@@ -93,6 +94,7 @@ export function createChannelConnectorModule(
     availableTools: options.availableTools
       ? (moduleOptions) =>
           options.availableTools!({
+            tools: moduleOptions.tools as readonly ChannelToolId[],
             env: moduleOptions.env ?? process.env,
             cwd: moduleOptions.cwd ?? process.cwd(),
           })

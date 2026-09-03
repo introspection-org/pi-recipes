@@ -528,9 +528,15 @@ export function slackSendTarget(env: SlackEnv): ChannelTarget | null {
 /** Return the channel tools that have a trusted destination in this session. */
 export function slackAvailableTools(
   env: SlackEnv,
+  selectedTools?: readonly ChannelToolId[],
 ): readonly ChannelToolId[] | undefined {
   if (resolveSlackOrigin(env)) return undefined;
-  return slackSendTarget(env) ? ["reply"] : [];
+  const available: readonly ChannelToolId[] = slackSendTarget(env)
+    ? ["reply"]
+    : [];
+  return selectedTools
+    ? available.filter((tool) => selectedTools.includes(tool))
+    : available;
 }
 
 export function slackChannelTarget(env: SlackEnv): ChannelTarget {
