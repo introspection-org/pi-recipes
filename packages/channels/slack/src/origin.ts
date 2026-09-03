@@ -45,13 +45,22 @@ export function resolveSlackOrigin(
   env: SlackEnv = process.env,
 ): SlackOrigin | null {
   const cloudChannel = env.INTROSPECTION_TASK_CHANNEL_ID?.trim();
-  if (!cloudChannel) return null;
-  const provider = env.INTROSPECTION_TASK_CHANNEL_PROVIDER?.trim() || "slack";
-  if (provider !== "slack") return null;
+  if (cloudChannel) {
+    const provider = env.INTROSPECTION_TASK_CHANNEL_PROVIDER?.trim() || "slack";
+    if (provider !== "slack") return null;
+    return {
+      provider: "slack",
+      channel: cloudChannel,
+      thread_ts: env.INTROSPECTION_TASK_THREAD_ID?.trim() || null,
+    };
+  }
+
+  const localChannel = env.SLACK_CHANNEL_ID?.trim();
+  if (!localChannel) return null;
   return {
     provider: "slack",
-    channel: cloudChannel,
-    thread_ts: env.INTROSPECTION_TASK_THREAD_ID?.trim() || null,
+    channel: localChannel,
+    thread_ts: env.SLACK_THREAD_TS?.trim() || null,
   };
 }
 

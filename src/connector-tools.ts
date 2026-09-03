@@ -25,6 +25,7 @@ export interface RecipeConnectorExtensionOptions {
 }
 
 export interface RecipeConnectorToolLoadout {
+  declaredToolNames: string[];
   toolNames: string[];
   initialActiveToolNames: string[];
   deferredToolNames: string[];
@@ -39,6 +40,9 @@ export interface RecipeConnectorModuleOptions {
 export interface RecipeConnectorModule {
   readonly provider: string;
   readonly tools: readonly RecipeConnectorToolDefinition[];
+  availableTools?(
+    options: RecipeConnectorModuleOptions
+  ): readonly string[] | undefined;
   createExtension(options: RecipeConnectorModuleOptions): ExtensionFactory;
 }
 
@@ -138,20 +142,38 @@ export async function loadRecipeConnectors(
       const selected = module.tools.filter((tool) =>
         agentTools.includes(tool.name)
       );
+      const selectedIds = selected.map((tool) => tool.id);
+      const availableIds =
+        module.availableTools?.({
+          tools: selectedIds,
+          env: options.env,
+          cwd: options.cwd,
+        }) ?? selectedIds;
+      const unknown = availableIds.filter((id) => !selectedIds.includes(id));
+      if (unknown.length > 0) {
+        throw connectorModuleError(
+          connector,
+          `reported unavailable or unselected tool ids as available: ${unknown.join(", ")}`
+        );
+      }
+      const available = new Set(availableIds);
+      const sessionSelected = selected.filter((tool) => available.has(tool.id));
       return {
         extension: {
           owner: `<connector:${connector.provider}>`,
           factory: module.createExtension({
-            tools: selected.map((tool) => tool.id),
+            tools: sessionSelected.map((tool) => tool.id),
             env: options.env,
             cwd: options.cwd,
           }),
         },
-        selected,
+        declared: selected,
+        selected: sessionSelected,
       };
     })
   );
   const selected = loaded.flatMap((connector) => connector.selected);
+  const declared = loaded.flatMap((connector) => connector.declared);
   const registeredNames = selected.map((tool) => tool.name);
   if (new Set(registeredNames).size !== registeredNames.length) {
     throw new Error("Recipe connector packages register duplicate tool names");
@@ -159,6 +181,7 @@ export async function loadRecipeConnectors(
   return {
     extensions: loaded.map((connector) => connector.extension),
     loadout: {
+      declaredToolNames: declared.map((tool) => tool.name),
       toolNames: selected.map((tool) => tool.name),
       initialActiveToolNames: selected
         .filter((tool) => tool.defaultActive)

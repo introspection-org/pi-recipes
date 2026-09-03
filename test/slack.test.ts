@@ -142,7 +142,7 @@ function response(options: {
 }
 
 describe("Slack origin", () => {
-  it("resolves only trusted cloud task context", () => {
+  it("uses the cloud origin before local settings", () => {
     expect(
       resolveSlackOrigin({
         INTROSPECTION_TASK_CHANNEL_PROVIDER: "slack",
@@ -151,7 +151,11 @@ describe("Slack origin", () => {
         SLACK_CHANNEL_ID: "C9",
       }),
     ).toEqual({ provider: "slack", channel: "C1", thread_ts: "100.1" });
-    expect(resolveSlackOrigin({ SLACK_CHANNEL_ID: "C9" })).toBeNull();
+    expect(resolveSlackOrigin({ SLACK_CHANNEL_ID: "C9" })).toEqual({
+      provider: "slack",
+      channel: "C9",
+      thread_ts: null,
+    });
     expect(
       resolveSlackOrigin({
         INTROSPECTION_TASK_CHANNEL_PROVIDER: "linear",
@@ -160,13 +164,17 @@ describe("Slack origin", () => {
     ).toBeNull();
   });
 
-  it("does not treat local Slack settings as a task origin", () => {
+  it("uses local Slack settings as a task origin", () => {
     const session = createSlackChannelSession({
       env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C9" },
     });
 
-    expect(session.target()).toBeNull();
-    expect(session.availableTools).toEqual([]);
+    expect(session.target()).toEqual({
+      provider: "slack",
+      conversation: "C9",
+      thread: null,
+    });
+    expect(session.availableTools).toBeUndefined();
   });
 
   it("resolves only the trusted Operator channel from bootstrap", () => {
@@ -201,17 +209,19 @@ describe("Slack origin", () => {
 });
 
 describe("SlackBotSession transport", () => {
-  it("rejects direct provider credentials outside cloud egress", async () => {
+  it("calls Slack directly with the bot token during a local run", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
-      env: { SLACK_BOT_TOKEN: "local-bot-token" },
+      env: { SLACK_BOT_TOKEN: "local-bot-token", SLACK_CHANNEL_ID: "C1" },
       fetchImpl,
     });
-
-    await expect(
-      session.call("chat.postMessage", { channel: "C1", text: "hello" }),
-    ).rejects.toThrow(/cloud egress environment/);
-    expect(fetchImpl.calls).toHaveLength(0);
+    await session.call("conversations.history", { channel: "C1" });
+    expect(fetchImpl.calls[0]!.url).toBe(
+      "https://slack.com/api/conversations.history",
+    );
+    expect(fetchImpl.calls[0]!.init.headers).toMatchObject({
+      Authorization: "Bearer local-bot-token",
+    });
   });
 
   it("passes the tool cancellation signal to Slack requests", async () => {

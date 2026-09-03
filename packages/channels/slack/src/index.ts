@@ -4,6 +4,7 @@ import {
   SLACK_CHANNEL_CAPABILITIES,
   SlackChannelAdapter,
   createSlackChannelSession,
+  slackAvailableTools,
   slackChannelTarget,
   slackSendTarget,
 } from "./adapter.js";
@@ -34,6 +35,7 @@ export {
   SLACK_CHANNEL_CAPABILITIES,
   SlackChannelAdapter,
   createSlackChannelSession,
+  slackAvailableTools,
   slackChannelTarget,
   slackSendTarget,
 };
@@ -65,6 +67,7 @@ export {
 export const slackRecipeConnectorModule = createChannelConnectorModule({
   provider: "slack",
   capabilities: SLACK_CHANNEL_CAPABILITIES,
+  availableTools: ({ env }) => slackAvailableTools(env),
   createSession: ({ env, cwd }) => createSlackChannelSession({ env, cwd }),
 });
 

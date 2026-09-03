@@ -35,6 +35,7 @@ describe("Recipe connector packages", () => {
         toolNames: [],
         initialActiveToolNames: [],
         deferredToolNames: [],
+        declaredToolNames: [],
       },
       extensions: [],
     });
@@ -95,6 +96,7 @@ describe("Recipe connector packages", () => {
       toolNames: ["package_owned_ping"],
       initialActiveToolNames: [],
       deferredToolNames: ["package_owned_ping"],
+      declaredToolNames: ["package_owned_ping"],
     });
     expect(loaded.extensions).toHaveLength(1);
   });

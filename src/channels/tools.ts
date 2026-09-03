@@ -207,17 +207,22 @@ export function registerChannelTools(
     typeof options.target === "function"
       ? options.target
       : () => options.target as ChannelTarget | null;
-  let cachedTarget: ChannelTarget | undefined;
+  let targetResolved = false;
+  let cachedTarget: ChannelTarget | null = null;
   const resolveTarget = (): ChannelTarget | null => {
-    if (cachedTarget) return cachedTarget;
+    if (targetResolved) return cachedTarget;
     const target = loadTarget();
-    if (target === null) return null;
+    if (target === null) {
+      targetResolved = true;
+      return cachedTarget;
+    }
     if (target.provider !== adapter.provider) {
       throw new Error(
         `Channel target for '${adapter.provider}' returned provider '${target.provider}'`,
       );
     }
     cachedTarget = target;
+    targetResolved = true;
     return target;
   };
   const context = (signal?: AbortSignal): ChannelAdapterContext => {

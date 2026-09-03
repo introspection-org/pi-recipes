@@ -34,6 +34,11 @@ export interface ChannelConnectorModuleOptions {
    * call would also waste an agent turn.
    */
   capabilities: ChannelCapabilities;
+  /** Resolve the session-specific subset before the host builds its loadout. */
+  availableTools?(options: {
+    env: NodeJS.ProcessEnv;
+    cwd: string;
+  }): readonly ChannelToolId[] | undefined;
   /**
    * Resolve the bound conversation and a client for it.
    *
@@ -85,6 +90,13 @@ export function createChannelConnectorModule(
   return {
     provider: options.provider,
     tools: connectorTools,
+    availableTools: options.availableTools
+      ? (moduleOptions) =>
+          options.availableTools!({
+            env: moduleOptions.env ?? process.env,
+            cwd: moduleOptions.cwd ?? process.cwd(),
+          })
+      : undefined,
     createExtension(moduleOptions): ExtensionFactory {
       const unknown = moduleOptions.tools.filter(
         (tool) => !channelToolIds.has(tool),

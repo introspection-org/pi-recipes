@@ -525,10 +525,20 @@ export function slackSendTarget(env: SlackEnv): ChannelTarget | null {
     : null;
 }
 
+/** Return the channel tools that have a trusted destination in this session. */
+export function slackAvailableTools(
+  env: SlackEnv,
+): readonly ChannelToolId[] | undefined {
+  if (resolveSlackOrigin(env)) return undefined;
+  return slackSendTarget(env) ? ["reply"] : [];
+}
+
 export function slackChannelTarget(env: SlackEnv): ChannelTarget {
   const origin = resolveSlackOrigin(env);
   if (!origin) {
-    throw new Error("No verified Slack task origin is configured.");
+    throw new Error(
+      "No Slack origin is configured. Cloud tasks supply one automatically. For introspection local, set SLACK_CHANNEL_ID and optionally SLACK_THREAD_TS.",
+    );
   }
   return {
     provider: "slack",
@@ -564,6 +574,6 @@ export function createSlackChannelSession(options: {
           }
         : null,
     ...(sendTarget ? { sendTarget } : {}),
-    availableTools: origin ? undefined : sendTarget ? ["reply"] : [],
+    availableTools: slackAvailableTools(env),
   };
 }

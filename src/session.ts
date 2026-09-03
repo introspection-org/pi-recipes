@@ -771,7 +771,7 @@ async function createSessionForAgent(
     }
     const tools = [
       ...recipe.tools.filter(
-        (tool) => !connectorLoadout.toolNames.includes(tool)
+        (tool) => !connectorLoadout.declaredToolNames.includes(tool)
       ),
       ...(wantsSubagents ? ["agent"] : []),
     ];

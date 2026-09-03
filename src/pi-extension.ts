@@ -779,7 +779,7 @@ export function createRecipesExtension(
       );
       launchState.initialConnectorToolNames =
         connectors.loadout.initialActiveToolNames;
-      launchState.connectorToolNames = connectors.loadout.toolNames;
+      launchState.connectorToolNames = connectors.loadout.declaredToolNames;
       launchState.connectorDeferredToolNames =
         connectors.loadout.deferredToolNames;
       if (launchState.connectorDeferredToolNames.length > 0) {
