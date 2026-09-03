@@ -512,6 +512,33 @@ describe("channel tool surface", () => {
     expect(resolved).toBe(session);
   });
 
+  it("passes the host-resolved channel configuration to the provider", () => {
+    let received: unknown;
+    const module = createChannelConnectorModule({
+      provider: "test",
+      capabilities: LIMITED_CAPABILITIES,
+      createSession: ({ config }) => {
+        received = config;
+        return { adapter: stubAdapter(LIMITED_CAPABILITIES), target };
+      },
+    });
+    const pi = createMockExtensionAPI();
+    module.createExtension({
+      ...moduleOptions([]),
+      env: {
+        INTROSPECTION_TASK_CHANNEL_PROVIDER: "test",
+        INTROSPECTION_TASK_CHANNEL_ID: "C1",
+        INTROSPECTION_TASK_THREAD_ID: "100.1",
+      },
+    })(pi as never);
+
+    expect(received).toEqual({
+      provider: "test",
+      channel_ref: "C1",
+      thread_ref: "100.1",
+    });
+  });
+
   it("returns undefined or fails when no channel session is registered", async () => {
     const pi = createMockExtensionAPI();
     const context = extensionContext();

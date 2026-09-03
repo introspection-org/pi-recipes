@@ -5,6 +5,8 @@ import type {
 
 import type { RecipeConnectorModule } from "../connector-tools.js";
 import { getRecipeSessionContext } from "../extensions.js";
+import { resolveChannelConfig } from "./config.js";
+import type { ChannelConfig } from "./config.js";
 import { ChannelRefStore } from "./refs.js";
 import type { ChannelConnectorSession } from "./session.js";
 import {
@@ -29,12 +31,13 @@ export interface ChannelConnectorModuleOptions {
    */
   capabilities: ChannelCapabilities;
   /**
-   * Resolve the bound conversation and a client for it.
+   * Create the provider client for the host-resolved channel configuration.
    *
-   * Called once per session. Throwing is the right failure for a task with no
-   * channel origin: the tools would have nowhere to act.
+   * `config` is null for runs without an inbound channel, such as automations.
+   * The provider may defer that error until a channel tool is called.
    */
   createSession(options: {
+    config: ChannelConfig | null;
     env: NodeJS.ProcessEnv;
     cwd: string;
   }): ChannelConnectorSession;
@@ -105,6 +108,7 @@ export function createChannelConnectorModule(
       const tools = moduleOptions.tools as readonly ChannelToolId[];
       return (pi) => {
         const session = options.createSession({
+          config: resolveChannelConfig(moduleOptions.env ?? process.env),
           env: moduleOptions.env ?? process.env,
           cwd: moduleOptions.cwd ?? process.cwd(),
         });
