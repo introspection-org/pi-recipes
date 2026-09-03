@@ -419,10 +419,7 @@ describe("Recipes extension for Pi", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
       createRecipesExtension({
-        env: {
-          INTROSPECTION_TASK_CHANNEL_PROVIDER: "slack",
-          INTROSPECTION_TASK_CHANNEL_ID: "C_CONFIGURED",
-        },
+        env: { SLACK_CHANNEL_ID: "C_CONFIGURED" },
       })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,

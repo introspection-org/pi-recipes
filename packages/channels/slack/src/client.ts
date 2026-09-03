@@ -1,5 +1,8 @@
-import type { ChannelEnvironment } from "@introspection-ai/recipes/channels";
-
+import {
+  resolveSlackOrigin,
+  type SlackEnv,
+  type SlackOrigin,
+} from "./origin.js";
 import { slackMessageBody } from "./format.js";
 
 const SLACK_API_BASE = "https://slack.com/api";
@@ -24,7 +27,7 @@ export type SlackFetch = (
 ) => Promise<SlackHttpResponse>;
 
 export interface SlackBotSessionOptions {
-  env?: ChannelEnvironment;
+  env?: SlackEnv;
   fetchImpl?: SlackFetch;
 }
 
@@ -74,12 +77,22 @@ function bodyFor(
 }
 
 export class SlackBotSession {
-  readonly env: ChannelEnvironment;
+  readonly env: SlackEnv;
   readonly fetchImpl: SlackFetch;
 
   constructor(options: SlackBotSessionOptions = {}) {
     this.env = options.env ?? process.env;
     this.fetchImpl = options.fetchImpl ?? (fetch as unknown as SlackFetch);
+  }
+
+  origin(): SlackOrigin {
+    const origin = resolveSlackOrigin(this.env);
+    if (!origin) {
+      throw new Error(
+        "No Slack origin is configured. Cloud tasks supply one automatically. For introspection local, set SLACK_CHANNEL_ID and optionally SLACK_THREAD_TS.",
+      );
+    }
+    return origin;
   }
 
   request(
@@ -163,9 +176,12 @@ export class SlackBotSession {
   async sendMessage(input: {
     text: string;
     plain_text?: string;
-    to: { channel: string; thread_ts?: string | null };
+    to?: { channel: string; thread_ts?: string | null };
   }, signal?: AbortSignal): Promise<SlackPostResult> {
-    const destination = input.to;
+    const destination = input.to ?? {
+      channel: this.origin().channel,
+      thread_ts: this.origin().thread_ts,
+    };
     const messageBody = slackMessageBody(input.text, {
       plainText: input.plain_text,
     });

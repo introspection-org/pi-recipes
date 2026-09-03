@@ -109,9 +109,8 @@ credential proxy. Install dependencies, then set a bot token and a conversation:
 ```bash
 pnpm install --frozen-lockfile
 export SLACK_BOT_TOKEN='xoxb-...'
-export INTROSPECTION_TASK_CHANNEL_PROVIDER='slack'
-export INTROSPECTION_TASK_CHANNEL_ID='C0123456789'
-export INTROSPECTION_TASK_THREAD_ID='1234567890.123456' # optional
+export SLACK_CHANNEL_ID='C0123456789'
+export SLACK_THREAD_TS='1234567890.123456' # optional
 introspection local -p 'Summarise this thread and reply.'
 ```
 
