@@ -28,9 +28,9 @@ Every registered tool acts on the conversation the task came from; none takes a
 channel, thread, or user argument. Recipe authors select tools in the agent YAML
 file and do not write an extension or call the Slack client directly.
 
-Install the recipe dependencies before running `introspection local`. The cloud
-runtime installs the locked production dependencies when it builds a recipe
-image or starts an `introspection dev` overlay.
+Use `introspection dev` to test channel recipes. The cloud runtime installs the
+locked production dependencies and receives Slack events for your local Recipe
+files. Standalone channel access through `introspection local` is not supported.
 
 The package calls the Slack Web API. It does not use Socket Mode, WebSockets,
 or streaming. Operations outside the declared `channel_*` tool set are

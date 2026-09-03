@@ -21,7 +21,6 @@ import {
 import type { SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
 import { markdownBlocks, toPlainText } from "./format.js";
-import { localSlackChannelConfig } from "./runtime.js";
 
 /**
  * What Slack's Bot API supports through the bound-conversation contract.
@@ -515,7 +514,7 @@ function messagesFrom(payload: SlackApiResult): SlackHistoryMessage[] {
 export function slackChannelTarget(config: ChannelConfig | null): ChannelTarget {
   if (!config || config.provider !== "slack") {
     throw new Error(
-      "No Slack channel is configured. Set INTROSPECTION_TASK_CHANNEL_PROVIDER=slack and INTROSPECTION_TASK_CHANNEL_ID; INTROSPECTION_TASK_THREAD_ID is optional.",
+      "No Slack channel is configured. Use introspection dev and send a Slack event to the development runtime.",
     );
   }
   return {
@@ -533,9 +532,9 @@ export function createSlackChannelSession(options: {
 } = {}): ChannelConnectorSession {
   const env = options.env ?? process.env;
   const config =
-    (options.config === undefined
+    options.config === undefined
       ? resolveChannelConfig(env)
-      : options.config) ?? localSlackChannelConfig(env);
+      : options.config;
   const session =
     options.session ??
     new SlackFileSession({ env, cwd: options.cwd ?? process.cwd() });

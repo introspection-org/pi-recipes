@@ -23,6 +23,11 @@ import {
 } from "../src/channels/index.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
+const cloudEnv = {
+  INTROSPECTION_TOKEN: "session-locator",
+  INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
+};
+
 interface FakeFetchOptions {
   file?: Record<string, unknown>;
   fileBody?: string;
@@ -141,44 +146,16 @@ function response(options: {
 }
 
 describe("channel configuration", () => {
-  it.each([undefined, null])("accepts local aliases when host config is %s", (config) => {
-    const session = createSlackChannelSession({
-      config,
-      env: { SLACK_CHANNEL_ID: " C_LOCAL ", SLACK_THREAD_TS: " 100.1 " },
-    });
-    const target =
-      typeof session.target === "function" ? session.target() : session.target;
-    expect(target).toEqual({
-      provider: "slack", conversation: "C_LOCAL", thread: "100.1",
-    });
-  });
-
-  it("uses the new destination as a whole when local aliases are also present", () => {
+  it("resolves the task destination for a Slack session", () => {
     const session = createSlackChannelSession({
       env: {
         INTROSPECTION_TASK_CHANNEL_PROVIDER: "slack",
         INTROSPECTION_TASK_CHANNEL_ID: "C_NEW",
-        SLACK_CHANNEL_ID: "C_OLD",
-        SLACK_THREAD_TS: "100.1",
       },
     });
     const target =
       typeof session.target === "function" ? session.target() : session.target;
     expect(target).toEqual({ provider: "slack", conversation: "C_NEW", thread: null });
-  });
-
-  it.each([
-    { INTROSPECTION_TASK_ID: "task-1" },
-    { INTROSPECTION_EGRESS_URL: "http://egress.internal:8081" },
-    { INTROSPECTION_TASK_CHANNEL_ID: "C_CLOUD" },
-    { INTROSPECTION_TASK_CHANNEL_PROVIDER: "teams" },
-  ])("keeps task routing separate from local aliases: %j", (taskEnv) => {
-    const session = createSlackChannelSession({
-      env: { ...taskEnv, SLACK_CHANNEL_ID: "C_LOCAL", SLACK_THREAD_TS: "100.1" },
-    });
-    expect(() =>
-      typeof session.target === "function" ? session.target() : session.target,
-    ).toThrow(/No Slack channel is configured/);
   });
 
   it("resolves the provider-neutral task channel", () => {
@@ -205,7 +182,7 @@ describe("channel configuration", () => {
     });
   });
 
-  it("resolves the cloud and local file roots", () => {
+  it("resolves configured and default workspace file roots", () => {
     expect(
       slackDownloadRoot(
         { INTROSPECTION_RUNTIME_FILES_DIR: "/workspace/files" },
@@ -217,40 +194,10 @@ describe("channel configuration", () => {
 });
 
 describe("SlackBotSession transport", () => {
-  it.each([
-    [{ SLACK_BOT_TOKEN: "legacy-token" }, "legacy-token"],
-    [
-      { SLACK_BOT_TOKEN: "legacy-token", INTROSPECTION_CHANNEL_TOKEN: "new-token" },
-      "new-token",
-    ],
-  ])("accepts local token aliases with new-name precedence", async (env, token) => {
-    const fetchImpl = fakeFetch();
-    const session = new SlackBotSession({ env, fetchImpl });
-    await session.call("conversations.history", { channel: "C1" });
-    expect(fetchImpl.calls[0]!.init.headers).toMatchObject({
-      Authorization: `Bearer ${token}`,
-    });
-  });
-
-  it("calls Slack directly with the bot token during a local run", async () => {
-    const fetchImpl = fakeFetch();
-    const session = new SlackBotSession({
-      env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
-      fetchImpl,
-    });
-    await session.call("conversations.history", { channel: "C1" });
-    expect(fetchImpl.calls[0]!.url).toBe(
-      "https://slack.com/api/conversations.history",
-    );
-    expect(fetchImpl.calls[0]!.init.headers).toMatchObject({
-      Authorization: "Bearer local-bot-token",
-    });
-  });
-
   it("passes the tool cancellation signal to Slack requests", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
-      env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
+      env: cloudEnv,
       fetchImpl,
     });
     const controller = new AbortController();
@@ -271,7 +218,6 @@ describe("SlackBotSession transport", () => {
       env: {
         INTROSPECTION_TOKEN: "session-locator",
         INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
-        SLACK_BOT_TOKEN: "legacy-local-token",
       },
       fetchImpl,
     });
@@ -344,9 +290,7 @@ describe("SlackBotSession transport", () => {
   it("splits generated markdown blocks at Slack's block limit", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
-      env: {
-        INTROSPECTION_CHANNEL_TOKEN: "bot-token",
-      },
+      env: cloudEnv,
       fetchImpl,
     });
     const text = "a".repeat(12_001);
@@ -403,7 +347,7 @@ describe("SlackBotSession transport", () => {
     };
     const session = new SlackBotSession({
       env: {
-        INTROSPECTION_CHANNEL_TOKEN: "bot-token",
+        INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
         INTROSPECTION_BASE_API_URL: "https://dp.example",
         INTROSPECTION_TASK_ID: "task-1",
         INTROSPECTION_TOKEN: "task-token",
@@ -450,7 +394,7 @@ describe("Slack file downloads", () => {
         file: fakeFile({ name: "../bad name.png" }),
       });
       const session = new SlackFileSession({
-        env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
+        env: cloudEnv,
         fetchImpl,
         cwd,
       });
@@ -473,7 +417,7 @@ describe("Slack file downloads", () => {
     const cwd = await mkdtemp(join(tmpdir(), "slack-bot-api-"));
     try {
       const unsafe = new SlackFileSession({
-        env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
+        env: cloudEnv,
         fetchImpl: fakeFetch({
           file: fakeFile({ url_private_download: "https://evil.example/file" }),
         }),
@@ -484,7 +428,7 @@ describe("Slack file downloads", () => {
       );
 
       const oversized = new SlackFileSession({
-        env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
+        env: cloudEnv,
         fetchImpl: fakeFetch({
           file: fakeFile({ size: MAX_SLACK_FILE_BYTES + 1 }),
         }),
@@ -504,7 +448,7 @@ describe("Slack channel tools", () => {
     const fetchImpl = fakeFetch({ channelName: "incident-triage" });
     const adapter = new SlackChannelAdapter(
       new SlackFileSession({
-        env: { INTROSPECTION_CHANNEL_TOKEN: "x" },
+        env: cloudEnv,
         fetchImpl,
       }),
     );
@@ -519,10 +463,6 @@ describe("Slack channel tools", () => {
       "https://slack.com/api/conversations.info",
     );
   });
-
-  const cloudEnv = {
-    INTROSPECTION_CHANNEL_TOKEN: "token",
-  };
 
   function slackTools(options: FakeFetchOptions = {}, cwd?: string) {
     const pi = createMockExtensionAPI();

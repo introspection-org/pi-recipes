@@ -88,28 +88,11 @@ export class SlackBotSession {
       headers?: Record<string, string>;
     },
   ): Promise<SlackHttpResponse> {
-    const legacyLocalToken =
-      !this.env.INTROSPECTION_TASK_ID?.trim() &&
-      !this.env.INTROSPECTION_EGRESS_URL?.trim()
-        ? this.env.SLACK_BOT_TOKEN?.trim()
-        : undefined;
-    const localToken =
-      this.env.INTROSPECTION_CHANNEL_TOKEN?.trim() || legacyLocalToken;
-    if (localToken) {
-      return this.fetchImpl(url.toString(), {
-        ...init,
-        headers: {
-          ...init.headers,
-          Authorization: `Bearer ${localToken}`,
-        },
-      });
-    }
-
     const locator = this.env.INTROSPECTION_TOKEN?.trim();
     const egressUrl = this.env.INTROSPECTION_EGRESS_URL?.trim();
     if (!locator || !egressUrl) {
       throw new Error(
-        "Slack tools require INTROSPECTION_CHANNEL_TOKEN locally or the Introspection cloud egress environment",
+        "Slack tools require the Introspection cloud egress environment. Use introspection dev to test channel recipes.",
       );
     }
     // Keep the provider URL intact. The runtime's proxy fetch dispatcher uses

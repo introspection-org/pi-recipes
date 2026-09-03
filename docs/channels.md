@@ -25,6 +25,13 @@ response with `channel_reply`, because a normal final assistant response is not
 delivered to the originating channel. `channel_read` remains the only way to
 fetch earlier messages when the provider supports it.
 
+## Test channel recipes
+
+Use `introspection dev` to test channel recipes with your local Recipe files.
+The development runtime receives provider webhooks and supplies the task's
+channel configuration and credentials through the provider proxy.
+`introspection local` does not support standalone channel access.
+
 ## The tools
 
 | Tool | Model arguments | Requires |

@@ -101,30 +101,9 @@ development runtime starts a cloud sandbox with the local Recipe overlay, so the
 adapter uses the cloud task origin and provider proxy and needs no local Slack
 credential. Use `introspection dev --logs` for sandbox logs.
 
-## Test with introspection local
-
-An `introspection local` run has no inbound Slack event, cloud task origin, or
-credential proxy. Install dependencies, then set a bot token and a conversation:
-
-```bash
-pnpm install --frozen-lockfile
-export INTROSPECTION_CHANNEL_TOKEN='xoxb-...'
-export INTROSPECTION_TASK_CHANNEL_PROVIDER='slack'
-export INTROSPECTION_TASK_CHANNEL_ID='C0123456789'
-export INTROSPECTION_TASK_THREAD_ID='1234567890.123456' # optional
-introspection local -p 'Summarise this thread and reply.'
-```
-
-Local tools call Slack directly with `INTROSPECTION_CHANNEL_TOKEN`. Local posts
-create no inbound task or reply bridge, because no Data Plane task exists.
-
-Existing local installations can keep `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, and
-`SLACK_THREAD_TS` as compatibility aliases. The new token name takes precedence.
-The old destination names apply only when no `INTROSPECTION_TASK_CHANNEL_*`
-destination fields are set. They are not mixed with the new destination fields.
-Managed tasks and cloud egress do not use the local aliases. Cloud channel tasks
-must provide both `INTROSPECTION_TASK_CHANNEL_PROVIDER` and
-`INTROSPECTION_TASK_CHANNEL_ID`; a missing provider does not default to Slack.
+Standalone channel access through `introspection local` is not supported. It
+has no webhook receiver, cloud task origin, or provider proxy. Use the same
+`introspection dev` workflow for inbound events and outbound channel tools.
 
 ## File downloads
 
