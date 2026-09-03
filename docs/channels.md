@@ -7,46 +7,44 @@ for every provider, and bound to the one conversation the task came from.
 Two properties follow from that, and both are structural rather than
 conventional:
 
-- **The channel tools cannot address anything else.** No `channel_*` tool takes
-  a channel, thread, workspace, or user argument. The conversation is closed
-  over by the host from the task origin, so a model calling these tools has no
-  vocabulary for "post this somewhere else". The invariant is asserted by a
-  test that walks every registered tool's input schema. Provider egress remains
-  the authorization boundary for raw requests issued by arbitrary sandbox code.
+- **Message destinations are allow-listed.** `channel_message` requires the
+  provider channel id and, for a threaded destination, its thread id. The host
+  supplies those ids in trusted channel context and rejects any values that do
+  not exactly match the task's inbound origin or automation notification
+  target. No other channel tool takes an addressing argument. Provider egress
+  remains the authorization boundary for raw sandbox requests.
 - **A tool that the provider cannot support is absent, not failing.** Each
   adapter declares a capability descriptor, and registration filters on it.
   For example, an adapter with no history API has no `channel_read` tool.
 
 Before the first model call, the channel extension adds destination metadata to
-the system prompt. The metadata contains the provider, the conversation name and
-permalink when the adapter can resolve them, whether the origin is a thread,
-and the available channel tools. It contains no provider conversation IDs and
-no messages. An inbound task delivers through `channel_reply`, because a normal
-final assistant response is not delivered to the originating channel. A
-automation run may use `channel_notify` for interim updates; its final assistant
-response is posted automatically after the run settles, whether the run was
-started by its schedule or the manual Run control. `channel_read` remains
-the only way to fetch earlier messages when the provider supports it.
+the system prompt. The metadata contains the provider channel id, its thread id
+when threaded, the conversation name and permalink when available, and the
+active channel tools. It contains no messages. An inbound task delivers through
+`channel_message`, because a normal final assistant response is not delivered
+to the originating channel. An automation run may use the same tool for interim
+updates; its final assistant response is posted automatically after the run
+settles, whether the run was started by its schedule or the manual Run control.
+`channel_read` remains the only way to fetch earlier messages when supported.
 
 ## The tools
 
-| Tool | Model arguments | Requires |
-| --- | --- | --- |
-| `channel_reply` | `text` (Markdown) | an inbound conversation |
-| `channel_notify` | `text` (Markdown) | a trusted automation-run notification target |
-| `channel_read` | `limit?`, `cursor?` | `read` |
-| `channel_react` | `message`, `emoji`, `action?` (`add` or `remove`) | `react` |
-| `channel_edit` | `message`, `text` | `edit` |
-| `channel_retract` | `message` | `retract` |
-| `channel_attach` | `path`, `title?`, `comment?` | `attach` |
-| `channel_fetch_file` | `file` (a `file_…` handle), `variant?` | `fetch_file` |
-| `channel_post_document` | `title`, `markdown` | `documents` |
+| Tool                    | Model arguments                                   | Requires                                                          |
+| ----------------------- | ------------------------------------------------- | ----------------------------------------------------------------- |
+| `channel_message`       | `channel`, `thread?`, `text` (Markdown)           | an inbound conversation or trusted automation notification target |
+| `channel_read`          | `limit?`, `cursor?`                               | `read`                                                            |
+| `channel_react`         | `message`, `emoji`, `action?` (`add` or `remove`) | `react`                                                           |
+| `channel_edit`          | `message`, `text`                                 | `edit`                                                            |
+| `channel_retract`       | `message`                                         | `retract`                                                         |
+| `channel_attach`        | `path`, `title?`, `comment?`                      | `attach`                                                          |
+| `channel_fetch_file`    | `file` (a `file_…` handle), `variant?`            | `fetch_file`                                                      |
+| `channel_post_document` | `title`, `markdown`                               | `documents`                                                       |
 
-`channel_reply`, `channel_notify`, `channel_read`, and `channel_react` are active
-by default when the provider supports them. Session filtering exposes
-`channel_reply` only to inbound tasks and `channel_notify` only to automation
-tasks with a trusted notification target. The other selected tools start
-inactive, and the model can find them through `tool_search`.
+`channel_message`, `channel_read`, and `channel_react` are active by default
+when the provider supports them. Session filtering exposes `channel_message`
+only when the task has an inbound origin or a trusted automation notification
+target. The other selected tools start inactive, and the model can find them
+through `tool_search`.
 
 Reply content is **Markdown**. Each adapter renders it in the provider's own
 format. There is no raw provider payload because the same tool contract must
@@ -57,7 +55,7 @@ work with every adapter.
 `channel_react`, `channel_edit`, and `channel_retract` take a `message`, which is
 an opaque handle minted by the host for the current session. It is not a Slack
 timestamp or another provider message ID. Handles come back from
-`channel_reply` and `channel_read`, so the model can only act on a message that
+`channel_message` and `channel_read`, so the model can only act on a message that
 a channel tool returned.
 
 `channel_react` adds a reaction when `action` is omitted. Set `action` to
@@ -76,21 +74,21 @@ provider file ID would let the model reach files outside the bound conversation.
 
 Author names and permalinks are resolved by the adapter in trusted code and
 attached to what the agent is already reading: `channel_read` rows carry
-`author.display_name`, and `channel_reply` returns a `permalink` where the
+`author.display_name`, and `channel_message` returns a `permalink` where the
 provider has one. There is no `resolve_user` or `get_permalink` tool, because
 each would require another model turn. Each lookup would also take an
 addressing argument.
 
 ### Automation notifications
 
-`channel_reply` always uses the inbound conversation. `channel_notify` is a
-separate interim-update capability available only when trusted host state says
-the task is an automation run and supplies a notification target. This covers
-both schedule ticks and the automation's manual Run control. Neither tool has a
-destination or mode argument. After the run settles, the extension makes one
-automatic post attempt for its final assistant response; an exact `NO_REPLY`
-response is intentionally not posted. A task with neither an inbound origin nor
-an automation notification target receives no channel tools.
+`channel_message` serves both inbound replies and interim automation updates.
+Trusted host state supplies exactly one destination for the task. The model must
+pass its channel id and, when present, its thread id; the tool rejects any other
+destination. Automation notification targets cover both schedule ticks and the
+manual Run control. After the run settles, the extension makes one automatic
+post attempt for its final assistant response; an exact `NO_REPLY` response is
+not posted. A task with neither an inbound origin nor an automation notification
+target receives no channel tools.
 
 Workspace search, channel listing and joining, directory lookup, and posting to
 an arbitrary conversation are unsupported. A separate proposal can define them
@@ -121,7 +119,15 @@ The connector declaration enables the provider package and its supported tool
 catalog. The agent YAML file is the only place that narrows the catalog:
 
 ```yaml
-tools: [channel_reply, channel_notify, channel_read, channel_react, channel_edit, channel_retract, channel_fetch_file]
+tools:
+  [
+    channel_message,
+    channel_read,
+    channel_react,
+    channel_edit,
+    channel_retract,
+    channel_fetch_file,
+  ]
 ```
 
 The host fails when an agent selects a tool that the provider does not support.
@@ -134,8 +140,8 @@ Each provider package declares the capabilities that it can support.
 
 An adapter supplies transport and a capability descriptor. It writes no tool
 schemas. The shared schema keeps providers from defining different forms of
-the same operation, and it prevents a provider from adding an addressing
-argument.
+the same operation and confines addressing to the validated `channel_message`
+destination.
 
 ```ts
 import {
@@ -144,17 +150,29 @@ import {
 } from "@introspection-ai/recipes/channels";
 
 const capabilities = {
-  react: false, edit: true, retract: true, read: false,
-  attach: false, fetchFile: false,
-  documents: false, resolveAuthors: true, permalinks: false,
+  react: false,
+  edit: true,
+  retract: true,
+  read: false,
+  attach: false,
+  fetchFile: false,
+  documents: false,
+  resolveAuthors: true,
+  permalinks: false,
 };
 
 class MyAdapter implements ChannelAdapter {
   readonly provider = "my-channel";
   readonly capabilities = capabilities;
-  async reply(ctx, { text }) { /* post into ctx.target */ }
-  async edit(ctx, { ref, text }) { /* edit an agent-authored message */ }
-  async retract(ctx, { ref }) { /* retract an agent-authored message */ }
+  async reply(ctx, { text }) {
+    /* post into ctx.target */
+  }
+  async edit(ctx, { ref, text }) {
+    /* edit an agent-authored message */
+  }
+  async retract(ctx, { ref }) {
+    /* retract an agent-authored message */
+  }
 }
 
 export default createChannelConnectorModule({

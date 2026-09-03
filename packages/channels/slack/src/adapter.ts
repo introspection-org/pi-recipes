@@ -532,12 +532,12 @@ export function slackAvailableTools(
   selectedTools?: readonly ChannelToolId[],
 ): readonly ChannelToolId[] | undefined {
   if (resolveSlackOrigin(env)) {
-    return selectedTools?.filter((tool) => tool !== "notify");
+    return selectedTools;
   }
   const selected =
     selectedTools ?? channelToolIdsFor(SLACK_CHANNEL_CAPABILITIES);
   const available: readonly ChannelToolId[] = slackNotificationTarget(env)
-    ? ["notify"]
+    ? ["message"]
     : [];
   return available.filter((tool) => selected.includes(tool));
 }

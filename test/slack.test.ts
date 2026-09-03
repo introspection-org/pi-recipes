@@ -552,12 +552,20 @@ describe("Slack channel tools", () => {
   const call = (pi: ReturnType<typeof createMockExtensionAPI>, name: string, params: unknown) =>
     pi.tools
       .get(name)
-      ?.execute("tool-call", params as never, undefined, undefined, undefined as never);
+      ?.execute(
+        "tool-call",
+        (name === "channel_message"
+          ? { channel: "C1", thread: "100.1", ...(params as object) }
+          : params) as never,
+        undefined,
+        undefined,
+        undefined as never,
+      );
 
   it("posts to the context's conversation, not the session's own origin", async () => {
     // A direct-host caller can bind a context that differs from the session
     // environment. Every other tool acts on the context, so reply must too —
-    // otherwise the prompt describes one conversation and channel_reply writes
+    // otherwise the prompt describes one conversation and channel_message writes
     // to another.
     const pi = createMockExtensionAPI();
     const fetchImpl = fakeFetch();
@@ -566,7 +574,11 @@ describe("Slack channel tools", () => {
       new SlackChannelAdapter(new SlackFileSession({ env: cloudEnv, fetchImpl })),
       { target: { provider: "slack", conversation: "C-OTHER", thread: "900.9" } },
     );
-    await call(pi, "channel_reply", { text: "hi" });
+    await call(pi, "channel_message", {
+      channel: "C-OTHER",
+      thread: "900.9",
+      text: "hi",
+    });
 
     const post = fetchImpl.calls.find((c) => c.url.includes("chat.postMessage"))!;
     expect(JSON.parse(String(post.init.body))).toMatchObject({
@@ -773,17 +785,16 @@ describe("Slack channel tools", () => {
     expect([...pi.tools.keys()].sort()).toEqual([
       "channel_edit",
       "channel_fetch_file",
-      "channel_notify",
+      "channel_message",
       "channel_react",
       "channel_read",
-      "channel_reply",
       "channel_retract",
     ]);
   });
 
   it("replies to the bound conversation and returns an opaque reference", async () => {
     const { pi, fetchImpl } = slackTools();
-    const result = (await call(pi, "channel_reply", { text: "**hi**" })) as {
+    const result = (await call(pi, "channel_message", { text: "**hi**" })) as {
       details: { ref: string };
     };
 
@@ -834,16 +845,21 @@ describe("Slack channel tools", () => {
     );
     expect(context).toMatchObject({
       systemPrompt: expect.stringContaining(
-        "channel_notify may send interim status updates to this fixed channel",
+        "channel_message may send interim status updates to this fixed channel",
       ),
     });
     const systemPrompt = (context as { systemPrompt: string }).systemPrompt;
+    expect(systemPrompt).toContain('"channel_id":"C-OPS"');
     expect(systemPrompt).toContain('"conversation_name":"#ops"');
-    expect(systemPrompt).toContain('"default_tools":["channel_notify"]');
+    expect(systemPrompt).toContain('"default_tools":["channel_message"]');
     expect(systemPrompt).not.toContain("channel_read");
     expect(systemPrompt).not.toContain("channel_react");
 
-    await call(pi, "channel_notify", { text: "Still working" });
+    await call(pi, "channel_message", {
+      channel: "C-OPS",
+      thread: undefined,
+      text: "Still working",
+    });
     await pi.emitExtensionEvent(
       {
         type: "agent_end",
@@ -905,9 +921,9 @@ describe("Slack channel tools", () => {
       { target: { provider: "slack", conversation: "C1", thread: "100.1" } },
     );
 
-    const result = (await pi.tools.get("channel_reply")!.execute(
+    const result = (await pi.tools.get("channel_message")!.execute(
       "tool-call",
-      { text: "hello" },
+      { channel: "C1", thread: "100.1", text: "hello" },
       controller.signal,
       undefined,
       undefined as never,
@@ -931,7 +947,7 @@ describe("Slack channel tools", () => {
 
   it("adds reactions by default and removes them when requested", async () => {
     const { pi, fetchImpl } = slackTools();
-    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+    const posted = (await call(pi, "channel_message", { text: "first" })) as {
       details: { ref: string };
     };
 
@@ -965,7 +981,7 @@ describe("Slack channel tools", () => {
 
   it("rejects a Slack reaction without a normalized emoji name", async () => {
     const { pi, fetchImpl } = slackTools();
-    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+    const posted = (await call(pi, "channel_message", { text: "first" })) as {
       details: { ref: string };
     };
 
@@ -997,7 +1013,7 @@ describe("Slack channel tools", () => {
 
   it("edits and retracts a message the agent posted", async () => {
     const { pi, fetchImpl } = slackTools();
-    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+    const posted = (await call(pi, "channel_message", { text: "first" })) as {
       details: { ref: string };
     };
 
@@ -1024,7 +1040,7 @@ describe("Slack channel tools", () => {
   it("retains a reply permalink when the message is later edited", async () => {
     const permalink = "https://example.slack.com/archives/C1/p200200";
     const { pi } = slackTools({ permalinks: { "200.2": permalink } });
-    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+    const posted = (await call(pi, "channel_message", { text: "first" })) as {
       details: { ref: string; permalink?: string };
     };
 
@@ -1042,7 +1058,7 @@ describe("Slack channel tools", () => {
 
   it("splits long edited Markdown into Slack blocks", async () => {
     const { pi, fetchImpl } = slackTools();
-    const posted = (await call(pi, "channel_reply", { text: "first" })) as {
+    const posted = (await call(pi, "channel_message", { text: "first" })) as {
       details: { ref: string };
     };
     const text = "a".repeat(12_001);

@@ -8,9 +8,10 @@
  *
  * Two properties are structural rather than documented:
  *
- * - **Every destination is bound.** An adapter method takes the conversation from
- *   a trusted `ChannelTarget` the host resolved; no tool schema built from
- *   these types carries a channel, thread, workspace, or user argument.
+ * - **Every destination is bound.** `channel_message` requires the channel and,
+ *   when applicable, thread id from a trusted `ChannelTarget`; registration
+ *   rejects values that do not exactly match it. No other tool schema carries
+ *   a channel, thread, workspace, or user argument.
  * - **Unsupported is absent.** Tools are registered from `ChannelCapabilities`,
  *   so a channel that cannot read earlier messages simply has no read tool. A
  *   tool that always answers "unsupported" costs a model turn and teaches
@@ -21,7 +22,7 @@
  * contract and access model are deferred to a separate proposal.
  */
 
-/** The conversation a task answers. Resolved by the host, never by the model. */
+/** The conversation a task answers. Resolved by the host and exposed as an allow-listed message destination. */
 export interface ChannelTarget {
   readonly provider: string;
   /** Provider conversation id (Slack channel, Teams conversation). */

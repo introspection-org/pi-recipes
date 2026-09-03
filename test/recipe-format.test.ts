@@ -138,14 +138,14 @@ describe("Recipe Format", () => {
         "name: agent",
         "model:",
         "  name: anthropic/claude-sonnet-4-5",
-        "tools: [channel_read, channel_reply]",
+        "tools: [channel_read, channel_message]",
         "",
       ].join("\n")
     );
 
     expect(resolveRecipe({ recipeDir }).agents.get("agent")?.tools).toEqual([
       "channel_read",
-      "channel_reply",
+      "channel_message",
     ]);
   });
 

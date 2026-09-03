@@ -56,7 +56,7 @@ export {
  * ```
  *
  * ```yaml
- * tools: [channel_reply, channel_notify, channel_read, channel_react, channel_fetch_file]
+ * tools: [channel_message, channel_read, channel_react, channel_fetch_file]
  * ```
  *
  * Operations outside the bound inbound and proactive targets, including

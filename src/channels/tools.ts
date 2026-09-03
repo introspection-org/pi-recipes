@@ -17,8 +17,7 @@ import type {
  * complete `channel_<id>` name in its YAML tool list.
  */
 export const CHANNEL_TOOL_IDS = [
-  "reply",
-  "notify",
+  "message",
   "read",
   "react",
   "edit",
@@ -31,12 +30,7 @@ export const CHANNEL_TOOL_IDS = [
 export type ChannelToolId = (typeof CHANNEL_TOOL_IDS)[number];
 
 /** Active without a search. The rest are reachable through `tool_search`. */
-const DEFAULT_ACTIVE: readonly ChannelToolId[] = [
-  "reply",
-  "notify",
-  "read",
-  "react",
-];
+const DEFAULT_ACTIVE: readonly ChannelToolId[] = ["message", "read", "react"];
 
 export function channelToolName(id: ChannelToolId): string {
   return `channel_${id}`;
@@ -46,7 +40,7 @@ export function channelToolName(id: ChannelToolId): string {
 export function channelToolIdsFor(
   capabilities: ChannelCapabilities,
 ): ChannelToolId[] {
-  const supported: ChannelToolId[] = ["reply", "notify"];
+  const supported: ChannelToolId[] = ["message"];
   if (capabilities.read !== false) supported.push("read");
   if (capabilities.react) supported.push("react");
   if (capabilities.edit) supported.push("edit");
@@ -73,8 +67,7 @@ export function channelConnectorTools(capabilities: ChannelCapabilities) {
 function assertImplemented(adapter: ChannelAdapter): void {
   const missing = channelToolIdsFor(adapter.capabilities).filter((id) => {
     switch (id) {
-      case "reply":
-      case "notify":
+      case "message":
         return typeof adapter.reply !== "function";
       case "read":
         return typeof adapter.read !== "function";
@@ -107,7 +100,8 @@ export interface RegisterChannelToolsOptions {
   /**
    * The bound conversation, or a thunk resolving it.
    *
-   * Resolved by the host, never from model input. A non-channel trigger is
+   * Resolved by the host. Its ids are exposed for `channel_message`, but the
+   * model cannot select values outside this target. A non-channel trigger is
    * represented as `null`; resolver exceptions are reserved for genuine
    * target-discovery failures and remain deferred until a channel tool call.
    */
@@ -176,12 +170,14 @@ function channelContextPrompt(
   const target = destination.target;
   const usableTools =
     destination.kind === "notification"
-      ? tools.filter((tool) => tool === "notify")
-      : tools.filter((tool) => tool !== "notify");
+      ? tools.filter((tool) => tool === "message")
+      : tools;
   const active = usableTools.filter((tool) => !deferredTools.has(tool));
   const deferred = usableTools.filter((tool) => deferredTools.has(tool));
   const metadata = {
     provider: target.provider,
+    channel_id: target.conversation,
+    ...(target.thread ? { thread_id: target.thread } : {}),
     ...(target.name ? { conversation_name: target.name } : {}),
     ...(target.permalink
       ? { conversation_permalink: target.permalink }
@@ -202,8 +198,8 @@ function channelContextPrompt(
     `Channel metadata: ${JSON.stringify(metadata)}`,
     "",
     destination.kind === "notification"
-      ? "channel_notify may send interim status updates to this fixed channel. Do not use it for the final report, which is delivered automatically, and do not ask the user to provide or confirm a channel."
-      : "Channel tools are bound to the conversation that created this task.",
+      ? "channel_message may send interim status updates to this fixed channel. Pass channel_id as channel and thread_id as thread when one is present. Do not use it for the final report, which is delivered automatically, and do not ask the user to provide or confirm a channel."
+      : "Channel tools are bound to the conversation that created this task. Pass channel_id as channel and thread_id as thread when one is present.",
     ...(deferred.length > 0
       ? [
           "Tools in searchable_tools are loaded on demand. If one is not available, use tool_search to enable it before calling it.",
@@ -211,7 +207,7 @@ function channelContextPrompt(
       : []),
     destination.kind === "notification"
       ? "The final assistant response is delivered to this channel automatically after the run settles."
-      : "When channel_reply is available, use it to deliver the user-facing response. A normal final assistant response is not delivered to the channel.",
+      : "When channel_message is available, use it to deliver the user-facing response. A normal final assistant response is not delivered to the channel.",
     ...(destination.kind === "origin"
       ? [
           "No messages are included here. Use channel_read when it is available and you need earlier messages.",
@@ -225,11 +221,10 @@ function channelContextPrompt(
  *
  * Two invariants are enforced by construction rather than by review:
  *
- * 1. **No schema below carries a conversation, thread, workspace, or user
- *    argument.** Destinations come from `options.target` or
- *    `options.notificationTarget`, closed over here. This confines calls made through
- *    these tools; provider egress remains responsible for authorization against
- *    raw requests from sandbox code.
+ * 1. **Message destinations are allow-listed.** `channel_message` requires the
+ *    channel and, for a threaded destination, the thread shown in trusted host
+ *    context. The supplied ids must exactly match `options.target` or
+ *    `options.notificationTarget`; the model cannot widen the destination.
  * 2. **Unsupported operations are absent**, not stubs that answer "this
  *    channel cannot do that" — such a stub costs a turn every time and teaches
  *    the model nothing durable.
@@ -284,10 +279,26 @@ export function registerChannelTools(
     }
     return { target: destination.target, refs, signal };
   };
-  const replyContext = (signal?: AbortSignal): ChannelAdapterContext => {
+  const messageContext = (
+    input: { channel: string; thread?: string },
+    signal?: AbortSignal,
+  ): ChannelAdapterContext => {
     const destination = resolveDestination();
-    if (destination?.kind !== "origin") {
-      throw new Error("This task has no inbound channel conversation.");
+    if (!destination) {
+      throw new Error("This task has no configured channel destination.");
+    }
+    const expectedThread = destination.target.thread?.trim() || undefined;
+    if (input.channel !== destination.target.conversation) {
+      throw new Error(
+        "The requested channel is not this task's configured destination.",
+      );
+    }
+    if (input.thread !== expectedThread) {
+      throw new Error(
+        expectedThread
+          ? "The configured channel destination requires its thread id."
+          : "The configured channel destination is not threaded.",
+      );
     }
     return { target: destination.target, refs, signal };
   };
@@ -306,42 +317,29 @@ export function registerChannelTools(
     if (supported.has(id) && selected.has(id)) definitions.set(id, define());
   };
 
-  register("reply", () => ({
-    name: channelToolName("reply"),
-    label: "Reply in channel",
+  register("message", () => ({
+    name: channelToolName("message"),
+    label: "Send channel message",
     description:
-      "Reply to the inbound conversation that created this task. The destination is fixed by host context and cannot be supplied or changed by the model.",
+      "Send a message to this task's configured channel destination. Pass the channel id from channel context and, when thread_id is present, pass that thread id. Other destinations are rejected. For automation tasks, use this only for interim updates; the final report is delivered automatically.",
     parameters: Type.Object(
-      { text: Type.String({ minLength: 1 }) },
+      {
+        channel: Type.String({ minLength: 1 }),
+        thread: Type.Optional(Type.String({ minLength: 1 })),
+        text: Type.String({ minLength: 1 }),
+      },
       { additionalProperties: false },
     ),
     executionMode: "sequential",
     async execute(
       _toolCallId: string,
-      params: { text: string },
-      signal?: AbortSignal,
-    ) {
-      return toolResult(await adapter.reply(replyContext(signal), params));
-    },
-  }));
-
-  register("notify", () => ({
-    name: channelToolName("notify"),
-    label: "Notify channel",
-    description:
-      "Send an interim status update to this task's trusted notification channel. Do not use this for the final report, which is delivered automatically. The destination is fixed by host context and cannot be supplied or changed by the model.",
-    parameters: Type.Object(
-      { text: Type.String({ minLength: 1 }) },
-      { additionalProperties: false },
-    ),
-    executionMode: "sequential",
-    async execute(
-      _toolCallId: string,
-      params: { text: string },
+      params: { channel: string; thread?: string; text: string },
       signal?: AbortSignal,
     ) {
       return toolResult(
-        await adapter.reply(notificationContext(signal), params),
+        await adapter.reply(messageContext(params, signal), {
+          text: params.text,
+        }),
       );
     },
   }));
