@@ -81,46 +81,6 @@ describe("Recipe Format", () => {
     });
   });
 
-  it("accepts legacy pi.connectors and normalizes it to channels", () => {
-    const recipeDir = fixture();
-    const pkg = JSON.parse(
-      readFileSync(join(recipeDir, "package.json"), "utf8")
-    );
-    pkg.pi.connectors = [{ provider: "slack" }];
-    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
-    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
-
-    const manifest = readPiPackageManifest(recipeDir);
-    expect(manifest.connectors).toEqual([{ provider: "slack" }]);
-    expect(validatePiPackageManifest(manifest)).toEqual({
-      valid: true,
-      findings: [],
-    });
-  });
-
-  it("rejects declaring both pi.channels and legacy pi.connectors", () => {
-    const recipeDir = fixture();
-    const pkg = JSON.parse(
-      readFileSync(join(recipeDir, "package.json"), "utf8")
-    );
-    pkg.pi.channels = [{ provider: "slack" }];
-    pkg.pi.connectors = [{ provider: "slack" }];
-    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
-    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
-
-    expect(
-      validatePiPackageManifest(readPiPackageManifest(recipeDir)).findings
-    ).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "pi.channels_invalid",
-          message:
-            "package.json#pi cannot declare both channels and connectors; use channels",
-        }),
-      ])
-    );
-  });
-
   it("rejects connector-wide tool configuration", () => {
     const recipeDir = fixture();
     const pkg = JSON.parse(

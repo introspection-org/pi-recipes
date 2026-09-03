@@ -143,7 +143,6 @@ const RESOURCE_KEYS: Array<keyof RecipePackageResources> = [
 const PI_KEYS = new Set([
   ...RESOURCE_KEYS,
   "channels",
-  "connectors",
   "mcp",
   "runtime",
 ]);
@@ -213,25 +212,8 @@ function sourceShapeFindings(
       );
     }
   }
-  const hasChannels = Object.hasOwn(pi, "channels");
-  const hasConnectors = Object.hasOwn(pi, "connectors");
-  if (hasChannels && hasConnectors) {
-    findings.push(
-      finding(
-        "pi.channels_invalid",
-        "package.json#pi cannot declare both channels and connectors; use channels",
-        packageName
-      )
-    );
-  }
-  const channelKey = hasChannels ? "channels" : "connectors";
   findings.push(
-    ...channelSourceShapeFindings(
-      pi[channelKey],
-      channelKey,
-      packageName,
-      dependencies
-    )
+    ...channelSourceShapeFindings(pi.channels, packageName, dependencies)
   );
   findings.push(...mcpSourceShapeFindings(pi.mcp, packageName));
   findings.push(...runtimeSourceShapeFindings(pi.runtime, packageName));
@@ -240,15 +222,14 @@ function sourceShapeFindings(
 
 function channelSourceShapeFindings(
   value: unknown,
-  key: "channels" | "connectors",
   packageName: string,
   dependencies: unknown
 ): RecipeValidationFinding[] {
   if (value === undefined) return [];
   const invalid = (message: string) =>
-    finding(`pi.${key}_invalid`, message, packageName);
+    finding("pi.channels_invalid", message, packageName);
   if (!Array.isArray(value)) {
-    return [invalid(`package.json#pi.${key} must be an array`)];
+    return [invalid("package.json#pi.channels must be an array")];
   }
 
   const findings: RecipeValidationFinding[] = [];
@@ -256,7 +237,7 @@ function channelSourceShapeFindings(
   for (const [index, raw] of value.entries()) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       findings.push(
-        invalid(`package.json#pi.${key}[${index}] must be an object`)
+        invalid(`package.json#pi.channels[${index}] must be an object`)
       );
       continue;
     }
@@ -265,7 +246,7 @@ function channelSourceShapeFindings(
     if (unknown.length > 0) {
       findings.push(
         invalid(
-          `package.json#pi.${key}[${index}] contains unknown field(s): ${unknown.join(", ")}`
+          `package.json#pi.channels[${index}] contains unknown field(s): ${unknown.join(", ")}`
         )
       );
     }
@@ -277,13 +258,13 @@ function channelSourceShapeFindings(
     if (!provider) {
       findings.push(
         invalid(
-          `package.json#pi.${key}[${index}].provider must be non-empty`
+          `package.json#pi.channels[${index}].provider must be non-empty`
         )
       );
     } else if (providers.has(provider)) {
       findings.push(
         invalid(
-          `package.json#pi.${key} contains duplicate provider '${provider}'`
+          `package.json#pi.channels contains duplicate provider '${provider}'`
         )
       );
     } else {
@@ -305,7 +286,7 @@ function channelSourceShapeFindings(
       ) {
         findings.push(
           invalid(
-            `package.json#pi.${key} provider '${provider ?? "unknown"}' requires dependency '${channelPackage}'`
+            `package.json#pi.channels provider '${provider ?? "unknown"}' requires dependency '${channelPackage}'`
           )
         );
       }
@@ -811,9 +792,7 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
     path: packageDir,
     resources,
     resourceDeclarations: resourceDeclarations(pi),
-    connectors: parseConnectors(
-      Object.hasOwn(pi, "channels") ? pi.channels : pi.connectors
-    ),
+    connectors: parseConnectors(pi.channels),
     mcp: parseMcpConfig(pi.mcp),
     runtime: parseRuntimeRequirements(pi.runtime),
   };

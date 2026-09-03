@@ -87,9 +87,6 @@ carry the same package name and version as `package.json`.
 the Recipe. The declaration does not contain a connector ID, workspace ID, or
 credential. A host binds those values when it starts a task.
 
-Legacy Recipes may continue to use `pi.connectors`. New and updated Recipes
-should use `pi.channels`, and a manifest must not declare both keys.
-
 ```json
 {
   "dependencies": {
