@@ -1,4 +1,5 @@
 import {
+  resolveSlackChannelMode,
   resolveSlackOrigin,
   type SlackEnv,
   type SlackOrigin,
@@ -193,7 +194,10 @@ export class SlackBotSession {
       throw new Error("Slack chat.postMessage returned no message timestamp");
     const postedThread = payload.message?.thread_ts || threadTs || ts;
 
-    if (!resolveSlackOrigin(this.env)) {
+    // A notification has no conversation to bridge back to: recording a thread
+    // root would invite a bare reply to resume a task that never asked. The
+    // single gate decides, rather than this method re-inferring it.
+    if (resolveSlackChannelMode(this.env)?.kind !== "origin") {
       return {
         ok: true,
         channel,

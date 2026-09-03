@@ -17,6 +17,10 @@ export {
   type SlackPostResult,
 } from "./client.js";
 export { MAX_SLACK_FILE_BYTES, SlackFileSession } from "./files.js";
+export {
+  resolveSlackChannelMode,
+  type SlackChannelMode,
+} from "./origin.js";
 export type {
   SlackDownloadResult,
   SlackFileSessionOptions,

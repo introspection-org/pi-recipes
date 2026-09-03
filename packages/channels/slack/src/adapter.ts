@@ -19,6 +19,7 @@ import type { SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
 import { markdownBlocks, toPlainText } from "./format.js";
 import {
+  resolveSlackChannelMode,
   resolveSlackOrigin,
   resolveSlackSendTarget,
   type SlackEnv,
@@ -537,33 +538,44 @@ export function slackChannelTarget(env: SlackEnv): ChannelTarget {
   };
 }
 
+/**
+ * Build the Slack channel session, or `null` when this task cannot use Slack.
+ *
+ * The mode comes from `resolveSlackChannelMode` — the single gate — so there is
+ * one destination per session and it is never null. A notification session
+ * carries the configured channel with no thread, which `chat.postMessage`
+ * renders as a top-level message; no separate fallback target is needed, and
+ * `channel_reply` therefore has exactly one meaning for the life of a task.
+ *
+ * Returning `null` is what makes "no destination" mean "no channel tools"
+ * rather than "tools that throw on the first call".
+ */
 export function createSlackChannelSession(options: {
   env?: SlackEnv;
   cwd?: string;
   session?: SlackFileSession;
 }): {
   adapter: SlackChannelAdapter;
-  target: () => ChannelTarget | null;
-  sendTarget?: ChannelTarget;
+  target: ChannelTarget;
+  proactive: boolean;
   availableTools: readonly ChannelToolId[] | undefined;
-} {
+} | null {
   const env = options.env ?? process.env;
+  const mode = resolveSlackChannelMode(env);
+  if (!mode) return null;
   const session =
     options.session ??
     new SlackFileSession({ env, cwd: options.cwd ?? process.cwd() });
-  const origin = resolveSlackOrigin(env);
-  const sendTarget = slackSendTarget(env);
   return {
     adapter: new SlackChannelAdapter(session),
-    target: () =>
-      origin
-        ? {
-            provider: "slack",
-            conversation: origin.channel,
-            thread: origin.thread_ts,
-          }
-        : null,
-    ...(sendTarget ? { sendTarget } : {}),
-    availableTools: origin ? undefined : sendTarget ? ["reply"] : [],
+    target: {
+      provider: "slack",
+      conversation: mode.origin.channel,
+      thread: mode.origin.thread_ts,
+      ...(mode.origin.name ? { name: mode.origin.name } : {}),
+    },
+    proactive: mode.kind === "notification",
+    // A notification has no conversation to read, react to, or edit within.
+    availableTools: mode.kind === "origin" ? undefined : ["reply"],
   };
 }

@@ -422,6 +422,10 @@ describe("Recipes extension for Pi", () => {
         env: {
           INTROSPECTION_TASK_CHANNEL_PROVIDER: "slack",
           INTROSPECTION_TASK_CHANNEL_ID: "C_CONFIGURED",
+          // Slack tools reach the API only through the cloud egress proxy, so
+          // the capability gate requires it before registering any of them.
+          INTROSPECTION_TOKEN: "locator",
+          INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
         },
       })(pi);
       await pi.emitExtensionEvent(

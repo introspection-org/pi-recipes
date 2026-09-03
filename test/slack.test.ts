@@ -10,6 +10,7 @@ import {
   SlackChannelAdapter,
   SlackFileSession,
   createSlackChannelSession,
+  resolveSlackChannelMode,
   resolveSlackOrigin,
   resolveSlackSendTarget,
   slackDownloadRoot,
@@ -161,12 +162,70 @@ describe("Slack origin", () => {
   });
 
   it("does not treat local Slack settings as a task origin", () => {
-    const session = createSlackChannelSession({
-      env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C9" },
+    expect(
+      createSlackChannelSession({
+        env: { SLACK_BOT_TOKEN: "token", SLACK_CHANNEL_ID: "C9" },
+      }),
+    ).toBeNull();
+  });
+
+  it("offers no channel session without the cloud egress environment", () => {
+    // A destination the tools cannot reach is not a capability. Registering
+    // them here would produce tools that throw on the first call, which costs
+    // a model turn and teaches it nothing.
+    expect(
+      createSlackChannelSession({
+        env: { INTROSPECTION_TASK_CHANNEL_ID: "C1", INTROSPECTION_TOKEN: "t" },
+      }),
+    ).toBeNull();
+    expect(
+      createSlackChannelSession({
+        env: {
+          INTROSPECTION_TASK_CHANNEL_ID: "C1",
+          INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("gates the whole feature on one decision", () => {
+    const transport = {
+      INTROSPECTION_TOKEN: "locator",
+      INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
+    };
+    expect(resolveSlackChannelMode(transport)).toBeNull();
+    expect(
+      resolveSlackChannelMode({
+        ...transport,
+        INTROSPECTION_TASK_CHANNEL_ID: "C1",
+      }),
+    ).toMatchObject({ kind: "origin" });
+    expect(
+      resolveSlackChannelMode({
+        ...transport,
+        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
+          operator_channel: { provider: "slack", conversation: "C-OPS" },
+        }),
+      }),
+    ).toMatchObject({ kind: "notification" });
+  });
+
+  it("prefers the inbound conversation over the configured channel", () => {
+    // Both configured is the ordinary case for a Slack-triggered task in a
+    // project that also has a notification channel. The conversation the task
+    // actually came from wins; the notification target is for tasks that have
+    // none.
+    const mode = resolveSlackChannelMode({
+      INTROSPECTION_TOKEN: "locator",
+      INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
+      INTROSPECTION_TASK_CHANNEL_ID: "C-INBOUND",
+      INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
+        operator_channel: { provider: "slack", conversation: "C-OPS" },
+      }),
     });
 
-    expect(session.target()).toBeNull();
-    expect(session.availableTools).toEqual([]);
+    expect(mode).toMatchObject({ kind: "origin" });
+    expect(mode?.origin.channel).toBe("C-INBOUND");
   });
 
   it("resolves only the trusted Operator channel from bootstrap", () => {
@@ -786,13 +845,14 @@ describe("Slack channel tools", () => {
       pi,
       new SlackChannelAdapter(new SlackFileSession({ env, fetchImpl })),
       {
-        target: null,
-        sendTarget: {
+        target: {
           provider: "slack",
           conversation: "C-OPS",
           thread: null,
           name: "#ops",
         },
+        proactive: true,
+        tools: ["reply"],
       },
     );
 
@@ -802,7 +862,7 @@ describe("Slack channel tools", () => {
     );
     expect(context).toMatchObject({
       systemPrompt: expect.stringContaining(
-        "channel_reply starts a top-level conversation in this fixed channel",
+        "channel_reply posts one top-level message in this fixed channel",
       ),
     });
     const systemPrompt = (context as { systemPrompt: string }).systemPrompt;

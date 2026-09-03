@@ -105,9 +105,13 @@ export interface RegisterChannelToolsOptions {
    * that declares a channel connector still starts when the same Recipe is
    * run from a non-channel trigger such as an automation.
    */
-  target: ChannelTarget | null | (() => ChannelTarget | null);
-  /** Trusted fallback for reply when the task has no inbound conversation. */
-  sendTarget?: ChannelTarget;
+  target: ChannelTarget | (() => ChannelTarget);
+  /**
+   * True when this session has no inbound conversation and `target` is the
+   * project's configured notification channel. Decided by the host's single
+   * capability gate, never re-inferred here.
+   */
+  proactive?: boolean;
   /** Restrict registration to these ids; defaults to everything supported. */
   tools?: readonly ChannelToolId[];
   /** Selected tools that require `tool_search` before the model may call them. */
@@ -136,11 +140,11 @@ function channelContextPrompt(
   deferredTools: ReadonlySet<ChannelToolId>,
   proactive: boolean,
 ): string {
-  const usableTools = proactive
-    ? tools.filter((tool) => tool === "reply")
-    : tools;
-  const active = usableTools.filter((tool) => !deferredTools.has(tool));
-  const deferred = usableTools.filter((tool) => deferredTools.has(tool));
+  // No filtering by mode here: the host's capability gate already registered
+  // only what this session can do, so `tools` IS the usable set. Re-filtering
+  // would read as load-bearing while being incapable of changing anything.
+  const active = tools.filter((tool) => !deferredTools.has(tool));
+  const deferred = tools.filter((tool) => deferredTools.has(tool));
   const metadata = {
     provider: target.provider,
     ...(target.name ? { conversation_name: target.name } : {}),
@@ -163,7 +167,7 @@ function channelContextPrompt(
     `Channel metadata: ${JSON.stringify(metadata)}`,
     "",
     proactive
-      ? "channel_reply starts a top-level conversation in this fixed channel. Do not ask the user to provide or confirm a channel."
+      ? "channel_reply posts one top-level message in this fixed channel. Do not ask the user to provide or confirm a channel."
       : "Channel tools are bound to the conversation that created this task.",
     ...(deferred.length > 0
       ? [
@@ -185,10 +189,11 @@ function channelContextPrompt(
  * Two invariants are enforced by construction rather than by review:
  *
  * 1. **No schema below carries a conversation, thread, workspace, or user
- *    argument.** Destinations come from `options.target` or
- *    `options.sendTarget`, closed over here. This confines calls made through
- *    these tools; provider egress remains responsible for authorization against
- *    raw requests from sandbox code.
+ *    argument.** The destination comes from `options.target`, closed over
+ *    here and singular for the life of the session — an inbound conversation,
+ *    or the configured notification channel, never both. A model that cannot
+ *    name a destination cannot reach one; provider egress remains responsible
+ *    for authorization against raw requests from sandbox code.
  * 2. **Unsupported operations are absent**, not stubs that answer "this
  *    channel cannot do that" — such a stub costs a turn every time and teaches
  *    the model nothing durable.
@@ -203,15 +208,15 @@ export function registerChannelTools(
   const supported = new Set(channelToolIdsFor(adapter.capabilities));
   const selected = new Set(options.tools ?? [...supported]);
   const deferred = new Set(options.deferredTools ?? []);
+  const proactive = options.proactive ?? false;
   const loadTarget =
     typeof options.target === "function"
       ? options.target
-      : () => options.target as ChannelTarget | null;
+      : () => options.target as ChannelTarget;
   let cachedTarget: ChannelTarget | undefined;
-  const resolveTarget = (): ChannelTarget | null => {
+  const resolveTarget = (): ChannelTarget => {
     if (cachedTarget) return cachedTarget;
     const target = loadTarget();
-    if (target === null) return null;
     if (target.provider !== adapter.provider) {
       throw new Error(
         `Channel target for '${adapter.provider}' returned provider '${target.provider}'`,
@@ -220,25 +225,11 @@ export function registerChannelTools(
     cachedTarget = target;
     return target;
   };
-  const context = (signal?: AbortSignal): ChannelAdapterContext => {
-    const target = resolveTarget();
-    if (target === null) {
-      throw new Error("This task has no inbound channel conversation.");
-    }
-    return { target, refs, signal };
-  };
-  const fallbackReplyContext = (signal?: AbortSignal): ChannelAdapterContext => {
-    const target = options.sendTarget;
-    if (!target) {
-      throw new Error("No configured channel is available for proactive messages.");
-    }
-    if (target.provider !== adapter.provider) {
-      throw new Error(
-        `Channel send target for '${adapter.provider}' returned provider '${target.provider}'`,
-      );
-    }
-    return { target, refs, signal };
-  };
+  const context = (signal?: AbortSignal): ChannelAdapterContext => ({
+    target: resolveTarget(),
+    refs,
+    signal,
+  });
   const definitions = new Map<ChannelToolId, Record<string, unknown>>();
   const register = (
     id: ChannelToolId,
@@ -250,8 +241,12 @@ export function registerChannelTools(
   register("reply", () => ({
     name: channelToolName("reply"),
     label: "Reply in channel",
-    description:
-      "Post a message to the conversation this task answers. When this task has no inbound channel conversation, start a new top-level conversation in the configured Operator channel instead. The destination is fixed by trusted context and cannot be supplied by the model.",
+    // One mode per session, so the model is told about the one it is in
+    // rather than both. Describing a mode that cannot apply is prompt noise
+    // the model may still reason about.
+    description: proactive
+      ? "Post a notification as a new top-level message in this project's configured channel. There is no conversation to reply to; the destination is fixed by trusted context and cannot be supplied by the model."
+      : "Post a message to the conversation this task answers. Replies land in the origin thread when there is one. The destination is fixed by trusted context and cannot be supplied by the model.",
     parameters: Type.Object(
       { text: Type.String({ minLength: 1 }) },
       { additionalProperties: false },
@@ -262,13 +257,7 @@ export function registerChannelTools(
       params: { text: string },
       signal?: AbortSignal,
     ) {
-      const target = resolveTarget();
-      return toolResult(
-        await adapter.reply(
-          target === null ? fallbackReplyContext(signal) : context(signal),
-          params,
-        ),
-      );
+      return toolResult(await adapter.reply(context(signal), params));
     },
   }));
 
@@ -460,25 +449,14 @@ export function registerChannelTools(
 
   const registeredToolIds = [...definitions.keys()];
   pi.on("before_agent_start", async (event, ctx) => {
-    let resolvedTarget: ChannelTarget | null;
-    try {
-      resolvedTarget = resolveTarget();
-    } catch {
-      // A Recipe may declare channel tools and still start without either an
-      // inbound origin or a configured proactive destination.
-      return;
-    }
-
-    const proactive = resolvedTarget === null;
     let target: ChannelTarget;
-    if (resolvedTarget === null) {
-      try {
-        target = fallbackReplyContext(ctx.signal).target;
-      } catch {
-        return;
-      }
-    } else {
-      target = resolvedTarget;
+    try {
+      target = resolveTarget();
+    } catch {
+      // A Recipe may declare channel tools and still start from a trigger the
+      // host gated off. Registration already yields no tools in that case, so
+      // there is simply no channel context to describe.
+      return;
     }
 
     let promptTarget = target;

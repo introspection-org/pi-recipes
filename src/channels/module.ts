@@ -17,9 +17,12 @@ import type {
 export interface ChannelConnectorSession {
   readonly adapter: ChannelAdapter;
   /** Resolved lazily so a task with no channel origin still starts. */
-  readonly target: ChannelTarget | null | (() => ChannelTarget | null);
-  /** Top-level fallback used by channel_reply when no inbound origin exists. */
-  readonly sendTarget?: ChannelTarget;
+  readonly target: ChannelTarget | (() => ChannelTarget);
+  /**
+   * True when `target` is the project's configured notification channel rather
+   * than an inbound conversation. Set by the provider's capability gate.
+   */
+  readonly proactive?: boolean;
   /** Session-specific subset; unsupported tools are omitted rather than failing. */
   readonly availableTools?: readonly ChannelToolId[];
 }
@@ -117,7 +120,7 @@ export function createChannelConnectorModule(
         const sessionTools = tools.filter((tool) => available.has(tool));
         registerChannelTools(pi, session.adapter, {
           target: session.target,
-          sendTarget: session.sendTarget,
+          proactive: session.proactive ?? false,
           tools: sessionTools,
           deferredTools: sessionTools.filter((tool) => deferredToolIds.has(tool)),
           refs: new ChannelRefStore(),
