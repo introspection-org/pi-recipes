@@ -94,7 +94,7 @@ keys, and the webhook already removes duplicate inbound events.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "connectors": [
+    "channels": [
       {
         "provider": "slack"
       }

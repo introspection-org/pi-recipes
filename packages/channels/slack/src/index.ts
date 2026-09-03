@@ -44,7 +44,7 @@ export {
  * its YAML file.
  *
  * ```json
- * { "pi": { "connectors": [{ "provider": "slack" }] } }
+ * { "pi": { "channels": [{ "provider": "slack" }] } }
  * ```
  *
  * ```yaml

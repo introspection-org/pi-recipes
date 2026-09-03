@@ -11,7 +11,11 @@ export type {
   ChannelToolId,
   RegisterChannelToolsOptions,
 } from "./tools.js";
-export { createChannelConnectorModule } from "./module.js";
+export {
+  createChannelConnectorModule,
+  getChannelConnectorSession,
+  requireChannelConnectorSession,
+} from "./module.js";
 export type {
   ChannelConnectorModuleOptions,
   ChannelConnectorSession,

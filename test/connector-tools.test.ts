@@ -58,7 +58,7 @@ describe("Recipe connector packages", () => {
         version: "0.1.0",
         dependencies: { [channelPackage]: "0.1.0" },
         pi: {
-          connectors: [{ provider: "custom" }],
+          channels: [{ provider: "custom" }],
         },
       })
     );

@@ -20,6 +20,9 @@ export interface RecipeExtensionSessionContext {
 const recipeExtensionContextsKey = Symbol.for(
   "@introspection-ai/recipes.extension-contexts.v1"
 );
+const recipeExtensionHostsKey = Symbol.for(
+  "@introspection-ai/recipes.extension-hosts.v1"
+);
 
 function sharedRecipeExtensionContexts(): WeakMap<
   ExtensionAPI,
@@ -48,6 +51,33 @@ function sharedRecipeExtensionContexts(): WeakMap<
 }
 
 const contexts = sharedRecipeExtensionContexts();
+
+function sharedRecipeExtensionHosts(): WeakMap<ExtensionAPI, ExtensionAPI> {
+  const shared = globalThis as typeof globalThis & Record<symbol, unknown>;
+  const existing = shared[recipeExtensionHostsKey];
+  if (existing !== undefined) {
+    if (!(existing instanceof WeakMap)) {
+      throw new Error("The shared Recipe extension host registry is invalid");
+    }
+    return existing as WeakMap<ExtensionAPI, ExtensionAPI>;
+  }
+
+  const hosts = new WeakMap<ExtensionAPI, ExtensionAPI>();
+  Object.defineProperty(shared, recipeExtensionHostsKey, {
+    configurable: false,
+    enumerable: false,
+    value: hosts,
+    writable: false,
+  });
+  return hosts;
+}
+
+const hosts = sharedRecipeExtensionHosts();
+
+/** @internal Return the Pi host behind a guarded Recipe extension API. */
+export function recipeExtensionHost(pi: ExtensionAPI): ExtensionAPI {
+  return hosts.get(pi) ?? pi;
+}
 
 export interface RecipeExtensionRegistrationRegistry {
   claim(kind: string, name: string, owner: string): void;
@@ -214,6 +244,7 @@ export function bindRecipeExtensionFactory(
           },
         })
       : pi;
+    hosts.set(guarded, recipeExtensionHost(pi));
     contexts.set(guarded, context);
     await factory(guarded);
   };

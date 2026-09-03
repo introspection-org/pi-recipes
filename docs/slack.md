@@ -18,7 +18,7 @@ protocol.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "connectors": [
+    "channels": [
       {
         "provider": "slack"
       }
@@ -132,4 +132,4 @@ rendition when one exists.
 
 The package exports `SlackChannelAdapter`, `createSlackChannelSession` and
 `slackChannelTarget` for custom hosts and tests, alongside the default
-`slackRecipeConnectorModule`. A normal Recipe uses `pi.connectors` instead.
+`slackRecipeConnectorModule`. A normal Recipe uses `pi.channels` instead.

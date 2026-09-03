@@ -5,10 +5,18 @@ import {
   ChannelRefStore,
   channelToolName,
   createChannelConnectorModule,
+  getChannelConnectorSession,
   registerChannelTools,
+  requireChannelConnectorSession,
   type ChannelAdapter,
   type ChannelCapabilities,
+  type ChannelConnectorSession,
 } from "../src/channels/index.js";
+import {
+  bindRecipeExtensionFactory,
+  createRecipeExtensionRegistrationRegistry,
+  type RecipeExtensionSessionContext,
+} from "../src/extensions.js";
 import {
   SLACK_CHANNEL_CAPABILITIES,
   SlackChannelAdapter,
@@ -40,6 +48,12 @@ const LIMITED_CAPABILITIES: ChannelCapabilities = {
 };
 
 const target = { provider: "test", conversation: "C1", thread: "100.1" };
+
+const extensionContext: RecipeExtensionSessionContext = Object.freeze({
+  recipe: Object.freeze({ name: "channel-test" }),
+  agent: Object.freeze({ name: "root" }),
+  session: Object.freeze({ role: "root" }),
+});
 
 function stubAdapter(
   capabilities: ChannelCapabilities = FULL_CAPABILITIES,
@@ -441,9 +455,79 @@ describe("channel tool surface", () => {
         target,
       }),
     });
+    const disagreesPi = createMockExtensionAPI();
     expect(() =>
-      disagrees.createExtension({ tools: ["reply"] })(createMockExtensionAPI() as never),
+      disagrees.createExtension({ tools: ["reply"] })(disagreesPi as never),
     ).toThrow(/differ from its declared catalog/);
+    expect(getChannelConnectorSession(disagreesPi as never)).toBeUndefined();
+  });
+
+  it("shares the provider-neutral session across separately guarded extensions", async () => {
+    const session: ChannelConnectorSession = {
+      adapter: stubAdapter(LIMITED_CAPABILITIES),
+      target,
+    };
+    const module = createChannelConnectorModule({
+      provider: "test",
+      capabilities: LIMITED_CAPABILITIES,
+      createSession: () => session,
+    });
+    const registrations = createRecipeExtensionRegistrationRegistry();
+    const pi = createMockExtensionAPI();
+    let resolved: ChannelConnectorSession | undefined;
+    const connector = bindRecipeExtensionFactory(
+      module.createExtension({ tools: [] }),
+      extensionContext,
+      registrations,
+      "<connector:test>",
+    );
+    const consumer = bindRecipeExtensionFactory(
+      (extensionApi) => {
+        resolved = requireChannelConnectorSession(extensionApi);
+      },
+      extensionContext,
+      registrations,
+      "extensions/consumer.ts",
+    );
+
+    await connector(pi as never);
+    await consumer(pi as never);
+
+    expect(resolved).toBe(session);
+  });
+
+  it("returns undefined or fails when no channel session is registered", () => {
+    const pi = createMockExtensionAPI();
+
+    expect(getChannelConnectorSession(pi as never)).toBeUndefined();
+    expect(() => requireChannelConnectorSession(pi as never)).toThrow(
+      /no channel connector session/,
+    );
+  });
+
+  it("fails closed when more than one channel session is registered", () => {
+    const pi = createMockExtensionAPI();
+    for (const provider of ["slack", "teams"]) {
+      const module = createChannelConnectorModule({
+        provider,
+        capabilities: LIMITED_CAPABILITIES,
+        createSession: () => ({
+          adapter: {
+            ...stubAdapter(LIMITED_CAPABILITIES),
+            provider,
+          },
+          target: { ...target, provider },
+        }),
+      });
+      module.createExtension({ tools: [] })(pi as never);
+    }
+
+    expect(() => getChannelConnectorSession(pi as never)).toThrow(
+      /multiple channel connector sessions: slack, teams/,
+    );
+    expect(() => requireChannelConnectorSession(pi as never)).toThrow(
+      /multiple channel connector sessions: slack, teams/,
+    );
   });
 
   it("refuses an adapter for a different provider", () => {
@@ -456,11 +540,11 @@ describe("channel tool surface", () => {
       }),
     });
 
+    const pi = createMockExtensionAPI();
     expect(() =>
-      module.createExtension({ tools: ["reply"] })(
-        createMockExtensionAPI() as never,
-      ),
+      module.createExtension({ tools: ["reply"] })(pi as never),
     ).toThrow(/adapter for 'slack' returned provider 'teams'/);
+    expect(getChannelConnectorSession(pi as never)).toBeUndefined();
   });
 
   it("refuses an adapter that declares more than it implements", () => {
