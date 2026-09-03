@@ -6,7 +6,7 @@ import {
   createSlackChannelSession,
   slackAvailableTools,
   slackChannelTarget,
-  slackSendTarget,
+  slackNotificationTarget,
 } from "./adapter.js";
 
 export {
@@ -26,8 +26,8 @@ export type {
 export { slackMessageBody, toPlainText } from "./format.js";
 export type { SlackMessageBody } from "./format.js";
 export {
+  resolveSlackNotificationTarget,
   resolveSlackOrigin,
-  resolveSlackSendTarget,
   slackDownloadRoot,
 } from "./origin.js";
 export type { SlackEnv, SlackOrigin } from "./origin.js";
@@ -37,7 +37,7 @@ export {
   createSlackChannelSession,
   slackAvailableTools,
   slackChannelTarget,
-  slackSendTarget,
+  slackNotificationTarget,
 };
 
 /**
@@ -56,7 +56,7 @@ export {
  * ```
  *
  * ```yaml
- * tools: [channel_reply, channel_read, channel_react, channel_fetch_file]
+ * tools: [channel_reply, channel_notify, channel_read, channel_react, channel_fetch_file]
  * ```
  *
  * Operations outside the bound inbound and proactive targets, including

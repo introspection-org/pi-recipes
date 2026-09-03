@@ -335,10 +335,58 @@ describe("createAgentSession", () => {
     expect(handle.session.getActiveToolNames()).not.toContain("tool_search");
   });
 
-  it("starts a proactive Slack session with only the fixed reply tool", async () => {
+  it("starts a scheduled Slack session with only the fixed notification tool", async () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
-      tools: ["channel_read", "channel_react", "channel_reply"],
+      tools: [
+        "channel_read",
+        "channel_react",
+        "channel_reply",
+        "channel_notify",
+      ],
+      manifestPi: {
+        connectors: [{ provider: "slack" }],
+      },
+    });
+    installSlackRecipeConnector(recipeDir);
+    const handle = await open({
+      recipeDir,
+      cwd: workspaceDir,
+      env: {
+        ...cleanEnv(),
+        INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({
+          trigger_source: "scheduled",
+        }),
+        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
+          operator_channel: {
+            provider: "slack",
+            conversation: "C-OPS",
+            name: "#ops",
+          },
+        }),
+      },
+    });
+
+    expect(handle.session.getActiveToolNames()).toContain("channel_notify");
+    expect(handle.session.getAllTools().map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining([
+        "channel_read",
+        "channel_react",
+        "channel_reply",
+      ]),
+    );
+    expect(handle.session.getActiveToolNames()).not.toContain("tool_search");
+  });
+
+  it("does not expose the notification destination to a non-scheduled task", async () => {
+    const { recipeDir, workspaceDir } = fixture({
+      dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
+      tools: [
+        "channel_read",
+        "channel_react",
+        "channel_reply",
+        "channel_notify",
+      ],
       manifestPi: {
         connectors: [{ provider: "slack" }],
       },
@@ -353,35 +401,17 @@ describe("createAgentSession", () => {
           operator_channel: {
             provider: "slack",
             conversation: "C-OPS",
-            name: "#ops",
           },
         }),
       },
     });
-
-    expect(handle.session.getActiveToolNames()).toContain("channel_reply");
-    expect(handle.session.getAllTools().map((tool) => tool.name)).not.toEqual(
-      expect.arrayContaining(["channel_read", "channel_react"]),
-    );
-    expect(handle.session.getActiveToolNames()).not.toContain("tool_search");
-  });
-
-  it("starts without Slack tools when no destination is configured", async () => {
-    const { recipeDir, workspaceDir } = fixture({
-      dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
-      tools: ["channel_read", "channel_react", "channel_reply"],
-      manifestPi: {
-        connectors: [{ provider: "slack" }],
-      },
-    });
-    installSlackRecipeConnector(recipeDir);
-    const handle = await open({ recipeDir, cwd: workspaceDir });
 
     expect(handle.session.getAllTools().map((tool) => tool.name)).not.toEqual(
       expect.arrayContaining([
         "channel_read",
         "channel_react",
         "channel_reply",
+        "channel_notify",
       ]),
     );
   });
@@ -400,6 +430,9 @@ describe("createAgentSession", () => {
       cwd: workspaceDir,
       env: {
         ...cleanEnv(),
+        INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({
+          trigger_source: "scheduled",
+        }),
         INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
           operator_channel: {
             provider: "slack",

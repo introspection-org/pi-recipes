@@ -18,8 +18,8 @@ export interface ChannelConnectorSession {
   readonly adapter: ChannelAdapter;
   /** Resolved lazily so a task with no channel origin still starts. */
   readonly target: ChannelTarget | null | (() => ChannelTarget | null);
-  /** Top-level fallback used by channel_reply when no inbound origin exists. */
-  readonly sendTarget?: ChannelTarget;
+  /** Trusted notification channel used when no inbound origin exists. */
+  readonly notificationTarget?: ChannelTarget;
   /** Session-specific subset; unsupported tools are omitted rather than failing. */
   readonly availableTools?: readonly ChannelToolId[];
 }
@@ -131,7 +131,7 @@ export function createChannelConnectorModule(
         const sessionTools = tools.filter((tool) => available.has(tool));
         registerChannelTools(pi, session.adapter, {
           target: session.target,
-          sendTarget: session.sendTarget,
+          notificationTarget: session.notificationTarget,
           tools: sessionTools,
           deferredTools: sessionTools.filter((tool) => deferredToolIds.has(tool)),
           refs: new ChannelRefStore(),

@@ -2,8 +2,8 @@
  * Provider-neutral channel primitives.
  *
  * A channel-origin task answers exactly one conversation. For a task without
- * an inbound origin, a host may bind one fallback target for a proactive
- * top-level reply. These types describe those operations in vocabulary that is the
+ * an inbound origin, a host may bind one notification target for a proactive
+ * top-level message. These types describe those operations in vocabulary that is the
  * same for Slack, Teams, or anything else, so one prompt serves every channel.
  *
  * Two properties are structural rather than documented:

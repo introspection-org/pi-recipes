@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import type {
-  ChannelAdapter,
+import {
+  channelToolIdsFor,
+  type ChannelAdapter,
   ChannelAdapterContext,
   ChannelCapabilities,
   ChannelLocalFile,
@@ -20,7 +21,7 @@ import { SlackFileSession } from "./files.js";
 import { markdownBlocks, toPlainText } from "./format.js";
 import {
   resolveSlackOrigin,
-  resolveSlackSendTarget,
+  resolveSlackNotificationTarget,
   type SlackEnv,
 } from "./origin.js";
 
@@ -513,8 +514,8 @@ function messagesFrom(payload: SlackApiResult): SlackHistoryMessage[] {
 }
 
 /** Resolve the configured Operator notification channel, if present. */
-export function slackSendTarget(env: SlackEnv): ChannelTarget | null {
-  const target = resolveSlackSendTarget(env);
+export function slackNotificationTarget(env: SlackEnv): ChannelTarget | null {
+  const target = resolveSlackNotificationTarget(env);
   return target
     ? {
         provider: "slack",
@@ -530,13 +531,15 @@ export function slackAvailableTools(
   env: SlackEnv,
   selectedTools?: readonly ChannelToolId[],
 ): readonly ChannelToolId[] | undefined {
-  if (resolveSlackOrigin(env)) return undefined;
-  const available: readonly ChannelToolId[] = slackSendTarget(env)
-    ? ["reply"]
+  if (resolveSlackOrigin(env)) {
+    return selectedTools?.filter((tool) => tool !== "notify");
+  }
+  const selected =
+    selectedTools ?? channelToolIdsFor(SLACK_CHANNEL_CAPABILITIES);
+  const available: readonly ChannelToolId[] = slackNotificationTarget(env)
+    ? ["notify"]
     : [];
-  return selectedTools
-    ? available.filter((tool) => selectedTools.includes(tool))
-    : available;
+  return available.filter((tool) => selected.includes(tool));
 }
 
 export function slackChannelTarget(env: SlackEnv): ChannelTarget {
@@ -560,7 +563,7 @@ export function createSlackChannelSession(options: {
 }): {
   adapter: SlackChannelAdapter;
   target: () => ChannelTarget | null;
-  sendTarget?: ChannelTarget;
+  notificationTarget?: ChannelTarget;
   availableTools: readonly ChannelToolId[] | undefined;
 } {
   const env = options.env ?? process.env;
@@ -568,7 +571,7 @@ export function createSlackChannelSession(options: {
     options.session ??
     new SlackFileSession({ env, cwd: options.cwd ?? process.cwd() });
   const origin = resolveSlackOrigin(env);
-  const sendTarget = slackSendTarget(env);
+  const notificationTarget = slackNotificationTarget(env);
   return {
     adapter: new SlackChannelAdapter(session),
     target: () =>
@@ -579,7 +582,7 @@ export function createSlackChannelSession(options: {
             thread: origin.thread_ts,
           }
         : null,
-    ...(sendTarget ? { sendTarget } : {}),
+    ...(notificationTarget ? { notificationTarget } : {}),
     availableTools: slackAvailableTools(env),
   };
 }

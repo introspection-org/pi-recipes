@@ -15,9 +15,21 @@ interface BootstrapChannel {
   name?: unknown;
 }
 
-export function resolveSlackSendTarget(
+function isScheduledTask(env: SlackEnv): boolean {
+  const raw = env.INTROSPECTION_TASK_METADATA_JSON?.trim();
+  if (!raw) return false;
+  try {
+    const metadata = JSON.parse(raw) as { trigger_source?: unknown };
+    return metadata.trigger_source === "scheduled";
+  } catch {
+    return false;
+  }
+}
+
+export function resolveSlackNotificationTarget(
   env: SlackEnv = process.env,
 ): SlackOrigin | null {
+  if (!isScheduledTask(env)) return null;
   const raw = env.INTROSPECTION_BOOTSTRAP_JSON?.trim();
   if (!raw) return null;
   try {

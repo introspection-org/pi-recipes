@@ -7,7 +7,8 @@ A Recipe installs it when its `package.json#pi.connectors` list includes the
 
 The package supplies Slack Web API transport and a capability descriptor. The
 tool names and schemas come from `@introspection-ai/recipes/channels`, so a
-Recipe written against `channel_reply` is not written against Slack.
+Recipe written against `channel_reply` or `channel_notify` is not written
+against Slack.
 
 ```json
 {
@@ -24,11 +25,12 @@ Recipe written against `channel_reply` is not written against Slack.
 }
 ```
 
-Bound tools act on the conversation the task came from. When a task has no
-inbound conversation, `channel_reply` falls back to a trusted Operator target
-supplied by the host. No tool takes a channel, thread, or user argument. Recipe
-authors select tools in the agent YAML file and do not write an extension or
-call the Slack client directly.
+`channel_reply` acts only on the conversation the task came from. A scheduled
+task may use `channel_notify` for interim updates to a trusted Operator target;
+the extension sends its final response there automatically after the run
+settles. No tool takes a channel, thread, or user argument. Recipe authors
+select tools in the agent YAML file and do not write an extension or call the
+Slack client directly.
 
 Install the recipe dependencies before running `introspection local`. The cloud
 runtime installs the locked production dependencies when it builds a recipe

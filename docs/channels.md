@@ -17,20 +17,22 @@ conventional:
   adapter declares a capability descriptor, and registration filters on it.
   For example, an adapter with no history API has no `channel_read` tool.
 
-Before the first model call, the channel extension adds origin metadata to the
-system prompt. The metadata contains the provider, the conversation name and
+Before the first model call, the channel extension adds destination metadata to
+the system prompt. The metadata contains the provider, the conversation name and
 permalink when the adapter can resolve them, whether the origin is a thread,
 and the available channel tools. It contains no provider conversation IDs and
-no messages. The injected guidance tells the agent to deliver its user-facing
-response with `channel_reply`, because a normal final assistant response is not
-delivered to the originating channel. `channel_read` remains the only way to
-fetch earlier messages when the provider supports it.
+no messages. An inbound task delivers through `channel_reply`, because a normal
+final assistant response is not delivered to the originating channel. A
+scheduled task may use `channel_notify` for interim updates; its final assistant
+response is posted automatically after the run settles. `channel_read` remains
+the only way to fetch earlier messages when the provider supports it.
 
 ## The tools
 
 | Tool | Model arguments | Requires |
 | --- | --- | --- |
-| `channel_reply` | `text` (Markdown) | an inbound conversation or trusted configured fallback |
+| `channel_reply` | `text` (Markdown) | an inbound conversation |
+| `channel_notify` | `text` (Markdown) | a trusted scheduled-task notification target |
 | `channel_read` | `limit?`, `cursor?` | `read` |
 | `channel_react` | `message`, `emoji`, `action?` (`add` or `remove`) | `react` |
 | `channel_edit` | `message`, `text` | `edit` |
@@ -39,9 +41,11 @@ fetch earlier messages when the provider supports it.
 | `channel_fetch_file` | `file` (a `file_…` handle), `variant?` | `fetch_file` |
 | `channel_post_document` | `title`, `markdown` | `documents` |
 
-`channel_reply`, `channel_read`, and `channel_react` are active by default when
-the provider supports them. The other selected tools start inactive, and the
-model can find them through `tool_search`.
+`channel_reply`, `channel_notify`, `channel_read`, and `channel_react` are active
+by default when the provider supports them. Session filtering exposes
+`channel_reply` only to inbound tasks and `channel_notify` only to scheduled
+tasks with a trusted notification target. The other selected tools start
+inactive, and the model can find them through `tool_search`.
 
 Reply content is **Markdown**. Each adapter renders it in the provider's own
 format. There is no raw provider payload because the same tool contract must
@@ -76,14 +80,15 @@ provider has one. There is no `resolve_user` or `get_permalink` tool, because
 each would require another model turn. Each lookup would also take an
 addressing argument.
 
-### Unsupported operations
+### Scheduled notifications
 
-`channel_reply` normally uses the inbound conversation. When a task has no
-channel origin—for example, an automation—it instead starts a top-level message
-in a fallback target supplied by trusted host configuration. It has no
-destination or mode argument: an inbound task always replies in place, and only
-a task without an inbound conversation can use the fallback. If neither target
-exists, the call fails before reaching the provider.
+`channel_reply` always uses the inbound conversation. `channel_notify` is a
+separate interim-update capability available only when trusted host state says
+the task is scheduled and supplies a notification target. Neither tool has a
+destination or mode argument. After a scheduled run settles, the extension
+makes one automatic post attempt for its final assistant response; an exact
+`NO_REPLY` response is intentionally not posted. A task with neither an inbound
+origin nor a scheduled notification target receives no channel tools.
 
 Workspace search, channel listing and joining, directory lookup, and posting to
 an arbitrary conversation are unsupported. A separate proposal can define them
@@ -114,7 +119,7 @@ The connector declaration enables the provider package and its supported tool
 catalog. The agent YAML file is the only place that narrows the catalog:
 
 ```yaml
-tools: [channel_reply, channel_read, channel_react, channel_edit, channel_retract, channel_fetch_file]
+tools: [channel_reply, channel_notify, channel_read, channel_react, channel_edit, channel_retract, channel_fetch_file]
 ```
 
 The host fails when an agent selects a tool that the provider does not support.

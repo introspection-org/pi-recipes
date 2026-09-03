@@ -10,8 +10,8 @@ import {
   SlackChannelAdapter,
   SlackFileSession,
   createSlackChannelSession,
+  resolveSlackNotificationTarget,
   resolveSlackOrigin,
-  resolveSlackSendTarget,
   slackDownloadRoot,
   slackMessageBody,
   toPlainText,
@@ -179,7 +179,10 @@ describe("Slack origin", () => {
 
   it("resolves only the trusted Operator channel from bootstrap", () => {
     expect(
-      resolveSlackSendTarget({
+      resolveSlackNotificationTarget({
+        INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({
+          trigger_source: "scheduled",
+        }),
         INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
           operator_channel: {
             provider: "slack",
@@ -194,7 +197,24 @@ describe("Slack origin", () => {
       thread_ts: null,
       name: "#ops",
     });
-    expect(resolveSlackSendTarget({ INTROSPECTION_BOOTSTRAP_JSON: "not-json" })).toBeNull();
+    expect(
+      resolveSlackNotificationTarget({
+        INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({
+          trigger_source: "scheduled",
+        }),
+        INTROSPECTION_BOOTSTRAP_JSON: "not-json",
+      }),
+    ).toBeNull();
+    expect(
+      resolveSlackNotificationTarget({
+        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
+          operator_channel: {
+            provider: "slack",
+            conversation: "C-OPS",
+          },
+        }),
+      }),
+    ).toBeNull();
   });
 
   it("resolves the cloud and local file roots", () => {
@@ -752,6 +772,7 @@ describe("Slack channel tools", () => {
     expect([...pi.tools.keys()].sort()).toEqual([
       "channel_edit",
       "channel_fetch_file",
+      "channel_notify",
       "channel_react",
       "channel_read",
       "channel_reply",
@@ -775,7 +796,7 @@ describe("Slack channel tools", () => {
     expect(JSON.stringify(result.details)).not.toContain("200.2");
   });
 
-  it("sends a top-level notification only to the configured target", async () => {
+  it("sends interim and final notifications only to the configured target", async () => {
     const calls: Array<{ url: string; init: Record<string, unknown> }> = [];
     const fetchImpl = (async (url: string, init: Record<string, unknown>) => {
       calls.push({ url, init });
@@ -797,7 +818,7 @@ describe("Slack channel tools", () => {
       new SlackChannelAdapter(new SlackFileSession({ env, fetchImpl })),
       {
         target: null,
-        sendTarget: {
+        notificationTarget: {
           provider: "slack",
           conversation: "C-OPS",
           thread: null,
@@ -812,23 +833,47 @@ describe("Slack channel tools", () => {
     );
     expect(context).toMatchObject({
       systemPrompt: expect.stringContaining(
-        "channel_reply starts a top-level conversation in this fixed channel",
+        "channel_notify may send interim status updates to this fixed channel",
       ),
     });
     const systemPrompt = (context as { systemPrompt: string }).systemPrompt;
     expect(systemPrompt).toContain('"conversation_name":"#ops"');
-    expect(systemPrompt).toContain('"default_tools":["channel_reply"]');
+    expect(systemPrompt).toContain('"default_tools":["channel_notify"]');
     expect(systemPrompt).not.toContain("channel_read");
     expect(systemPrompt).not.toContain("channel_react");
 
-    await call(pi, "channel_reply", { text: "Daily status" });
+    await call(pi, "channel_notify", { text: "Still working" });
+    await pi.emitExtensionEvent(
+      {
+        type: "agent_end",
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "Daily status" }],
+            stopReason: "stop",
+          },
+        ],
+      } as never,
+      { signal: undefined },
+    );
+    await pi.emitExtensionEvent(
+      { type: "agent_settled" } as never,
+      { signal: undefined },
+    );
+    // A duplicate settle event cannot duplicate the irreversible final post.
+    await pi.emitExtensionEvent(
+      { type: "agent_settled" } as never,
+      { signal: undefined },
+    );
 
-    const post = calls.find((entry) => entry.url.includes("chat.postMessage"))!;
-    expect(JSON.parse(String(post.init.body))).toMatchObject({
-      channel: "C-OPS",
-      text: "Daily status",
-    });
-    expect(JSON.parse(String(post.init.body))).not.toHaveProperty("thread_ts");
+    const posts = calls.filter((entry) => entry.url.includes("chat.postMessage"));
+    expect(posts.map((post) => JSON.parse(String(post.init.body)))).toEqual([
+      expect.objectContaining({ channel: "C-OPS", text: "Still working" }),
+      expect.objectContaining({ channel: "C-OPS", text: "Daily status" }),
+    ]);
+    for (const post of posts) {
+      expect(JSON.parse(String(post.init.body))).not.toHaveProperty("thread_ts");
+    }
     expect(calls.some((entry) => entry.url.startsWith("https://dp.example"))).toBe(false);
   });
 

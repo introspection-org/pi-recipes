@@ -127,6 +127,59 @@ describe("channel tool surface", () => {
     );
   });
 
+  it("keeps replies and proactive notifications as distinct operations", () => {
+    const pi = createMockExtensionAPI();
+    registerChannelTools(pi, stubAdapter(), {
+      target,
+      notificationTarget: { ...target, thread: null },
+      tools: ["reply", "notify"],
+    });
+
+    expect(pi.tools.get("channel_reply")?.description).toContain(
+      "inbound conversation",
+    );
+    expect(pi.tools.get("channel_notify")?.description).toContain(
+      "interim status update",
+    );
+    expect(pi.tools.get("channel_notify")?.description).toContain(
+      "final report, which is delivered automatically",
+    );
+  });
+
+  it("does not deliver a scheduled NO_REPLY final response", async () => {
+    const reply = vi.fn(stubAdapter().reply);
+    const pi = createMockExtensionAPI();
+    registerChannelTools(
+      pi,
+      { ...stubAdapter(), reply },
+      {
+        target: null,
+        notificationTarget: { ...target, thread: null },
+        tools: ["notify"],
+      },
+    );
+
+    await pi.emitExtensionEvent(
+      {
+        type: "agent_end",
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "NO_REPLY" }],
+            stopReason: "stop",
+          },
+        ],
+      } as never,
+      { signal: undefined },
+    );
+    await pi.emitExtensionEvent(
+      { type: "agent_settled" } as never,
+      { signal: undefined },
+    );
+
+    expect(reply).not.toHaveBeenCalled();
+  });
+
   it("adds reactions by default and passes an explicit removal action", async () => {
     const refs = new ChannelRefStore();
     const message = refs.message({ conversation: "C1", id: "100.1" });
@@ -230,11 +283,7 @@ describe("channel tool surface", () => {
 
   it("does not add channel context for a non-channel trigger", async () => {
     const pi = createMockExtensionAPI();
-    registerChannelTools(pi, stubAdapter(), {
-      target: () => {
-        throw new Error("No channel origin");
-      },
-    });
+    registerChannelTools(pi, stubAdapter(), { target: null });
 
     const results = await pi.emitExtensionEvent(
       {
@@ -479,11 +528,13 @@ describe("channel tool surface", () => {
     });
     expect(module.tools.map((tool) => tool.id)).toEqual([
       "reply",
+      "notify",
       "edit",
       "retract",
     ]);
     expect(module.tools.filter((tool) => tool.defaultActive).map((t) => t.id)).toEqual([
       "reply",
+      "notify",
     ]);
   });
 
@@ -494,15 +545,15 @@ describe("channel tool surface", () => {
       createSession: () => ({
         adapter: stubAdapter(),
         target: null,
-        sendTarget: { ...target, thread: null },
-        availableTools: ["reply"],
+        notificationTarget: { ...target, thread: null },
+        availableTools: ["notify"],
       }),
     });
     const pi = createMockExtensionAPI();
 
-    module.createExtension({ tools: ["reply", "read", "react"] })(pi as never);
+    module.createExtension({ tools: ["reply", "notify", "read", "react"] })(pi as never);
 
-    expect([...pi.tools.keys()]).toEqual(["channel_reply"]);
+    expect([...pi.tools.keys()]).toEqual(["channel_notify"]);
   });
 
   it("marks non-default tools as searchable through a connector module", async () => {
@@ -546,6 +597,7 @@ describe("channel tool surface", () => {
     });
     expect(slack.tools.map((tool) => tool.id)).toEqual([
       "reply",
+      "notify",
       "read",
       "react",
       "edit",
