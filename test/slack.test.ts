@@ -9,6 +9,7 @@ import {
   SlackBotSession,
   SlackChannelAdapter,
   SlackFileSession,
+  createSlackChannelSession,
   slackDownloadRoot,
   slackMessageBody,
   toPlainText,
@@ -140,6 +141,46 @@ function response(options: {
 }
 
 describe("channel configuration", () => {
+  it.each([undefined, null])("accepts local aliases when host config is %s", (config) => {
+    const session = createSlackChannelSession({
+      config,
+      env: { SLACK_CHANNEL_ID: " C_LOCAL ", SLACK_THREAD_TS: " 100.1 " },
+    });
+    const target =
+      typeof session.target === "function" ? session.target() : session.target;
+    expect(target).toEqual({
+      provider: "slack", conversation: "C_LOCAL", thread: "100.1",
+    });
+  });
+
+  it("uses the new destination as a whole when local aliases are also present", () => {
+    const session = createSlackChannelSession({
+      env: {
+        INTROSPECTION_TASK_CHANNEL_PROVIDER: "slack",
+        INTROSPECTION_TASK_CHANNEL_ID: "C_NEW",
+        SLACK_CHANNEL_ID: "C_OLD",
+        SLACK_THREAD_TS: "100.1",
+      },
+    });
+    const target =
+      typeof session.target === "function" ? session.target() : session.target;
+    expect(target).toEqual({ provider: "slack", conversation: "C_NEW", thread: null });
+  });
+
+  it.each([
+    { INTROSPECTION_TASK_ID: "task-1" },
+    { INTROSPECTION_EGRESS_URL: "http://egress.internal:8081" },
+    { INTROSPECTION_TASK_CHANNEL_ID: "C_CLOUD" },
+    { INTROSPECTION_TASK_CHANNEL_PROVIDER: "teams" },
+  ])("keeps task routing separate from local aliases: %j", (taskEnv) => {
+    const session = createSlackChannelSession({
+      env: { ...taskEnv, SLACK_CHANNEL_ID: "C_LOCAL", SLACK_THREAD_TS: "100.1" },
+    });
+    expect(() =>
+      typeof session.target === "function" ? session.target() : session.target,
+    ).toThrow(/No Slack channel is configured/);
+  });
+
   it("resolves the provider-neutral task channel", () => {
     expect(
       resolveChannelConfig({
@@ -176,6 +217,21 @@ describe("channel configuration", () => {
 });
 
 describe("SlackBotSession transport", () => {
+  it.each([
+    [{ SLACK_BOT_TOKEN: "legacy-token" }, "legacy-token"],
+    [
+      { SLACK_BOT_TOKEN: "legacy-token", INTROSPECTION_CHANNEL_TOKEN: "new-token" },
+      "new-token",
+    ],
+  ])("accepts local token aliases with new-name precedence", async (env, token) => {
+    const fetchImpl = fakeFetch();
+    const session = new SlackBotSession({ env, fetchImpl });
+    await session.call("conversations.history", { channel: "C1" });
+    expect(fetchImpl.calls[0]!.init.headers).toMatchObject({
+      Authorization: `Bearer ${token}`,
+    });
+  });
+
   it("calls Slack directly with the bot token during a local run", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
@@ -215,6 +271,7 @@ describe("SlackBotSession transport", () => {
       env: {
         INTROSPECTION_TOKEN: "session-locator",
         INTROSPECTION_EGRESS_URL: "http://egress.internal:8081",
+        SLACK_BOT_TOKEN: "legacy-local-token",
       },
       fetchImpl,
     });

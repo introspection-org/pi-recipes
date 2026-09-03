@@ -118,6 +118,14 @@ introspection local -p 'Summarise this thread and reply.'
 Local tools call Slack directly with `INTROSPECTION_CHANNEL_TOKEN`. Local posts
 create no inbound task or reply bridge, because no Data Plane task exists.
 
+Existing local installations can keep `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, and
+`SLACK_THREAD_TS` as compatibility aliases. The new token name takes precedence.
+The old destination names apply only when no `INTROSPECTION_TASK_CHANNEL_*`
+destination fields are set. They are not mixed with the new destination fields.
+Managed tasks and cloud egress do not use the local aliases. Cloud channel tasks
+must provide both `INTROSPECTION_TASK_CHANNEL_PROVIDER` and
+`INTROSPECTION_TASK_CHANNEL_ID`; a missing provider does not default to Slack.
+
 ## File downloads
 
 `channel_fetch_file` writes a file under the task files directory and returns its

@@ -21,6 +21,7 @@ import {
 import type { SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
 import { markdownBlocks, toPlainText } from "./format.js";
+import { localSlackChannelConfig } from "./runtime.js";
 
 /**
  * What Slack's Bot API supports through the bound-conversation contract.
@@ -532,9 +533,9 @@ export function createSlackChannelSession(options: {
 } = {}): ChannelConnectorSession {
   const env = options.env ?? process.env;
   const config =
-    options.config === undefined
+    (options.config === undefined
       ? resolveChannelConfig(env)
-      : options.config;
+      : options.config) ?? localSlackChannelConfig(env);
   const session =
     options.session ??
     new SlackFileSession({ env, cwd: options.cwd ?? process.cwd() });

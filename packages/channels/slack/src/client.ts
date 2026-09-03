@@ -88,7 +88,13 @@ export class SlackBotSession {
       headers?: Record<string, string>;
     },
   ): Promise<SlackHttpResponse> {
-    const localToken = this.env.INTROSPECTION_CHANNEL_TOKEN?.trim();
+    const legacyLocalToken =
+      !this.env.INTROSPECTION_TASK_ID?.trim() &&
+      !this.env.INTROSPECTION_EGRESS_URL?.trim()
+        ? this.env.SLACK_BOT_TOKEN?.trim()
+        : undefined;
+    const localToken =
+      this.env.INTROSPECTION_CHANNEL_TOKEN?.trim() || legacyLocalToken;
     if (localToken) {
       return this.fetchImpl(url.toString(), {
         ...init,
