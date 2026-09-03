@@ -23,8 +23,9 @@ permalink when the adapter can resolve them, whether the origin is a thread,
 and the available channel tools. It contains no provider conversation IDs and
 no messages. An inbound task delivers through `channel_reply`, because a normal
 final assistant response is not delivered to the originating channel. A
-scheduled task may use `channel_notify` for interim updates; its final assistant
-response is posted automatically after the run settles. `channel_read` remains
+automation run may use `channel_notify` for interim updates; its final assistant
+response is posted automatically after the run settles, whether the run was
+started by its schedule or the manual Run control. `channel_read` remains
 the only way to fetch earlier messages when the provider supports it.
 
 ## The tools
@@ -32,7 +33,7 @@ the only way to fetch earlier messages when the provider supports it.
 | Tool | Model arguments | Requires |
 | --- | --- | --- |
 | `channel_reply` | `text` (Markdown) | an inbound conversation |
-| `channel_notify` | `text` (Markdown) | a trusted scheduled-task notification target |
+| `channel_notify` | `text` (Markdown) | a trusted automation-run notification target |
 | `channel_read` | `limit?`, `cursor?` | `read` |
 | `channel_react` | `message`, `emoji`, `action?` (`add` or `remove`) | `react` |
 | `channel_edit` | `message`, `text` | `edit` |
@@ -43,7 +44,7 @@ the only way to fetch earlier messages when the provider supports it.
 
 `channel_reply`, `channel_notify`, `channel_read`, and `channel_react` are active
 by default when the provider supports them. Session filtering exposes
-`channel_reply` only to inbound tasks and `channel_notify` only to scheduled
+`channel_reply` only to inbound tasks and `channel_notify` only to automation
 tasks with a trusted notification target. The other selected tools start
 inactive, and the model can find them through `tool_search`.
 
@@ -80,15 +81,16 @@ provider has one. There is no `resolve_user` or `get_permalink` tool, because
 each would require another model turn. Each lookup would also take an
 addressing argument.
 
-### Scheduled notifications
+### Automation notifications
 
 `channel_reply` always uses the inbound conversation. `channel_notify` is a
 separate interim-update capability available only when trusted host state says
-the task is scheduled and supplies a notification target. Neither tool has a
-destination or mode argument. After a scheduled run settles, the extension
-makes one automatic post attempt for its final assistant response; an exact
-`NO_REPLY` response is intentionally not posted. A task with neither an inbound
-origin nor a scheduled notification target receives no channel tools.
+the task is an automation run and supplies a notification target. This covers
+both schedule ticks and the automation's manual Run control. Neither tool has a
+destination or mode argument. After the run settles, the extension makes one
+automatic post attempt for its final assistant response; an exact `NO_REPLY`
+response is intentionally not posted. A task with neither an inbound origin nor
+an automation notification target receives no channel tools.
 
 Workspace search, channel listing and joining, directory lookup, and posting to
 an arbitrary conversation are unsupported. A separate proposal can define them

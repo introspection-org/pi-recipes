@@ -25,10 +25,10 @@ against Slack.
 }
 ```
 
-`channel_reply` acts only on the conversation the task came from. A scheduled
+`channel_reply` acts only on the conversation the task came from. An automation
 task may use `channel_notify` for interim updates to a trusted Operator target;
-the extension sends its final response there automatically after the run
-settles. No tool takes a channel, thread, or user argument. Recipe authors
+the extension sends its final response there automatically after a scheduled or
+manually triggered run settles. No tool takes a channel, thread, or user argument. Recipe authors
 select tools in the agent YAML file and do not write an extension or call the
 Slack client directly.
 

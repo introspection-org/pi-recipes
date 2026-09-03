@@ -335,7 +335,7 @@ describe("createAgentSession", () => {
     expect(handle.session.getActiveToolNames()).not.toContain("tool_search");
   });
 
-  it("starts a scheduled Slack session with only the fixed notification tool", async () => {
+  it("starts a manual automation Slack session with only the fixed notification tool", async () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
       tools: [
@@ -355,7 +355,7 @@ describe("createAgentSession", () => {
       env: {
         ...cleanEnv(),
         INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({
-          trigger_source: "scheduled",
+          trigger_source: "manual",
         }),
         INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
           operator_channel: {

@@ -42,7 +42,7 @@ available through `tool_search`.
 | --- | --- |
 | `channel_reply` | `chat.postMessage` into the origin conversation |
 | `channel_notify` | Interim `chat.postMessage` into the configured Operator notification channel |
-| automatic final delivery | One `chat.postMessage` attempt after a scheduled run settles |
+| automatic final delivery | One `chat.postMessage` attempt after an automation run settles |
 | `channel_read` | `conversations.replies` in a thread, else `conversations.history` |
 | `channel_react` | `reactions.add` or `reactions.remove` |
 | `channel_edit` | `chat.update` for a message the agent posted |
@@ -66,9 +66,9 @@ and canvases are not implemented in this package yet, and the capability
 descriptor says so rather than registering tools that fail.
 
 None of these take a channel or thread argument. `channel_reply` uses only the
-conversation the task came from. A scheduled task may use `channel_notify` for
-interim updates to the configured Operator target, and its final response is
-posted there automatically after the run settles. Author display names
+conversation the task came from. An automation task may use `channel_notify`
+for interim updates to the configured Operator target, and its final response
+is posted there automatically after either a scheduled or manual run settles. Author display names
 (`users.info`) and permalinks (`chat.getPermalink`) are resolved inside the adapter and attached to
 message rows and reply results, so there is no user lookup or permalink tool.
 Edit and retract also require an opaque reference for a message posted by this
@@ -94,9 +94,9 @@ After an inbound `channel_reply` succeeds in cloud, the adapter posts the
 current run, provider, and origin channel before recording the new thread root.
 A later Slack reply then resumes the same task.
 
-For a scheduled task, `channel_notify` sends an interim top-level update and
-the extension automatically sends the final assistant response after the run
-settles. An exact `NO_REPLY` final response is not sent. Neither post records a
+For an automation task, `channel_notify` sends an interim top-level update and
+the extension automatically sends the final assistant response after a
+scheduled or manually triggered run settles. An exact `NO_REPLY` final response is not sent. Neither post records a
 thread bridge. The configured channel comes from trusted session bootstrap and
 is never a tool argument. A bare reply to a notification is therefore ignored
 unless it separately engages the bot through the normal inbound rules.

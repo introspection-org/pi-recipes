@@ -177,26 +177,27 @@ describe("Slack origin", () => {
     expect(session.availableTools).toBeUndefined();
   });
 
-  it("resolves only the trusted Operator channel from bootstrap", () => {
-    expect(
-      resolveSlackNotificationTarget({
-        INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({
-          trigger_source: "scheduled",
-        }),
-        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
-          operator_channel: {
-            provider: "slack",
-            conversation: "C-OPS",
-            name: "#ops",
-          },
-        }),
-      }),
-    ).toEqual({
-      provider: "slack",
-      channel: "C-OPS",
-      thread_ts: null,
-      name: "#ops",
+  it("resolves only the trusted Operator channel for automation runs", () => {
+    const bootstrap = JSON.stringify({
+      operator_channel: {
+        provider: "slack",
+        conversation: "C-OPS",
+        name: "#ops",
+      },
     });
+    for (const trigger_source of ["manual", "scheduled"]) {
+      expect(
+        resolveSlackNotificationTarget({
+          INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({ trigger_source }),
+          INTROSPECTION_BOOTSTRAP_JSON: bootstrap,
+        }),
+      ).toEqual({
+        provider: "slack",
+        channel: "C-OPS",
+        thread_ts: null,
+        name: "#ops",
+      });
+    }
     expect(
       resolveSlackNotificationTarget({
         INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({

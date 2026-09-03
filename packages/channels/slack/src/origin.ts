@@ -15,12 +15,15 @@ interface BootstrapChannel {
   name?: unknown;
 }
 
-function isScheduledTask(env: SlackEnv): boolean {
+function isAutomationRun(env: SlackEnv): boolean {
   const raw = env.INTROSPECTION_TASK_METADATA_JSON?.trim();
   if (!raw) return false;
   try {
     const metadata = JSON.parse(raw) as { trigger_source?: unknown };
-    return metadata.trigger_source === "scheduled";
+    return (
+      metadata.trigger_source === "manual" ||
+      metadata.trigger_source === "scheduled"
+    );
   } catch {
     return false;
   }
@@ -29,7 +32,7 @@ function isScheduledTask(env: SlackEnv): boolean {
 export function resolveSlackNotificationTarget(
   env: SlackEnv = process.env,
 ): SlackOrigin | null {
-  if (!isScheduledTask(env)) return null;
+  if (!isAutomationRun(env)) return null;
   const raw = env.INTROSPECTION_BOOTSTRAP_JSON?.trim();
   if (!raw) return null;
   try {
