@@ -1,14 +1,9 @@
-import type {
-  ExtensionAPI,
-  ExtensionFactory,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import type { RecipeConnectorModule } from "../connector-tools.js";
-import { getRecipeSessionContext } from "../extensions.js";
 import { resolveChannelConfig } from "./config.js";
 import type { ChannelConfig } from "./config.js";
 import { ChannelRefStore } from "./refs.js";
-import type { ChannelConnectorSession } from "./session.js";
 import {
   CHANNEL_TOOL_IDS,
   channelConnectorTools,
@@ -18,7 +13,14 @@ import {
 import type {
   ChannelAdapter,
   ChannelCapabilities,
+  ChannelTarget,
 } from "./types.js";
+
+export interface ChannelConnectorSession {
+  readonly adapter: ChannelAdapter;
+  /** Resolved lazily so a task with no channel origin still starts. */
+  readonly target: ChannelTarget | (() => ChannelTarget);
+}
 
 export interface ChannelConnectorModuleOptions {
   provider: string;
@@ -31,30 +33,16 @@ export interface ChannelConnectorModuleOptions {
    */
   capabilities: ChannelCapabilities;
   /**
-   * Create the provider client for the host-resolved channel configuration.
+   * Resolve the bound conversation and a client for it.
    *
-   * `config` is null for runs without an inbound channel, such as automations.
-   * The provider may defer that error until a channel tool is called.
+   * Called once per session. Throwing is the right failure for a task with no
+   * channel origin: the tools would have nowhere to act.
    */
   createSession(options: {
     config: ChannelConfig | null;
     env: NodeJS.ProcessEnv;
     cwd: string;
   }): ChannelConnectorSession;
-}
-
-/** Return the one channel session registered for this Recipe host, if any. */
-export function getChannelConnectorSession(
-  pi: ExtensionAPI,
-): ChannelConnectorSession | undefined {
-  return getRecipeSessionContext(pi).services.channels.get();
-}
-
-/** Return the one channel session registered for this Recipe host, or fail. */
-export function requireChannelConnectorSession(
-  pi: ExtensionAPI,
-): ChannelConnectorSession {
-  return getRecipeSessionContext(pi).services.channels.require();
 }
 
 const channelToolIds = new Set<string>(CHANNEL_TOOL_IDS);
@@ -131,7 +119,6 @@ export function createChannelConnectorModule(
           deferredTools: tools.filter((tool) => deferredToolIds.has(tool)),
           refs: new ChannelRefStore(),
         });
-        moduleOptions.channelSessions.register(options.provider, session);
       };
     },
   };

@@ -20,10 +20,8 @@ import {
 import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
 import {
   bindRecipeExtensionFactory,
-  createRecipeExtensionSessionContext,
   createRecipeExtensionRegistrationRegistry,
   recipeExtensionToolAllowlist,
-  type RecipeExtensionSessionContext,
   type RecipeExtensionRegistrationRegistry,
 } from "./extensions.js";
 import {
@@ -111,7 +109,6 @@ interface RecipeLaunchState {
   cwd: string;
   resolvedRecipe: ResolvedRecipe;
   resolved: ResolvedRecipeAgent;
-  extensionContext: RecipeExtensionSessionContext;
   extensionRegistrations: RecipeExtensionRegistrationRegistry;
   extensionsLoaded: boolean;
   extensionFailure?: string;
@@ -696,11 +693,6 @@ export function createRecipesExtension(
       cwd,
       resolvedRecipe,
       resolved,
-      extensionContext: createRecipeExtensionSessionContext(
-        resolved.manifest.name,
-        resolved.name,
-        "root"
-      ),
       extensionRegistrations: createRecipeExtensionRegistrationRegistry(),
       extensionsLoaded: false,
       configured: false,
@@ -781,7 +773,6 @@ export function createRecipesExtension(
         launchState.resolved.tools,
         {
           recipeDir: launchState.resolved.recipeDir,
-          channelSessions: launchState.extensionContext.services.channels,
           env,
           cwd: launchState.cwd,
         }
@@ -804,7 +795,11 @@ export function createRecipesExtension(
       for (const connector of connectors.extensions) {
         const factory = bindRecipeExtensionFactory(
           connector.factory,
-          launchState.extensionContext,
+          Object.freeze({
+            recipe: Object.freeze({ name: launchState.resolved.manifest.name }),
+            agent: Object.freeze({ name: launchState.resolved.name }),
+            session: Object.freeze({ role: "root" as const }),
+          }),
           launchState.extensionRegistrations,
           connector.owner,
           launchState.extensionAllowedToolNames
@@ -817,7 +812,13 @@ export function createRecipesExtension(
             launchState.resolved.recipeDir,
             extensionPath
           ),
-          launchState.extensionContext,
+          Object.freeze({
+            recipe: Object.freeze({ name: launchState.resolved.manifest.name }),
+            agent: Object.freeze({ name: launchState.resolved.name }),
+            session: Object.freeze({
+              role: "root" as const,
+            }),
+          }),
           launchState.extensionRegistrations,
           extensionPath,
           launchState.extensionAllowedToolNames

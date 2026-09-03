@@ -133,7 +133,7 @@ tests.
   contract: capability descriptors, opaque message references, and the
   registration that binds every tool to the task's own conversation
 - `@introspection-ai/recipe-channel-slack` is the optional Slack adapter. A
-  Recipe adds it as a dependency when it declares Slack in `pi.channels`.
+  Recipe adds it as a dependency when it declares Slack in `pi.connectors`.
 - `@introspection-ai/recipes/agents` — portable agent-run controller and tool
   contract
 - `@introspection-ai/recipes/interactions` — portable user-input and approval contract

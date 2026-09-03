@@ -18,7 +18,7 @@ protocol.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "channels": [
+    "connectors": [
       {
         "provider": "slack"
       }
@@ -108,15 +108,15 @@ credential proxy. Install dependencies, then set a bot token and a conversation:
 
 ```bash
 pnpm install --frozen-lockfile
-export INTROSPECTION_CHANNEL_TOKEN='xoxb-...'
+export SLACK_BOT_TOKEN='xoxb-...'
 export INTROSPECTION_TASK_CHANNEL_PROVIDER='slack'
 export INTROSPECTION_TASK_CHANNEL_ID='C0123456789'
 export INTROSPECTION_TASK_THREAD_ID='1234567890.123456' # optional
 introspection local -p 'Summarise this thread and reply.'
 ```
 
-Local tools call Slack directly with `INTROSPECTION_CHANNEL_TOKEN`. Local posts
-create no inbound task or reply bridge, because no Data Plane task exists.
+Local tools call Slack directly with `SLACK_BOT_TOKEN`. Local posts create no
+inbound task or reply bridge, because no Data Plane task exists.
 
 ## File downloads
 
@@ -133,4 +133,4 @@ rendition when one exists.
 
 The package exports `SlackChannelAdapter`, `createSlackChannelSession` and
 `slackChannelTarget` for custom hosts and tests, alongside the default
-`slackRecipeConnectorModule`. A normal Recipe uses `pi.channels` instead.
+`slackRecipeConnectorModule`. A normal Recipe uses `pi.connectors` instead.

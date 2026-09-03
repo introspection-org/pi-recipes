@@ -1,19 +1,21 @@
 import { randomUUID } from "node:crypto";
 
-import type {
-  ChannelAdapter,
-  ChannelAdapterContext,
-  ChannelCapabilities,
-  ChannelConfig,
-  ChannelEnvironment,
-  ChannelLocalFile,
-  ChannelMessage,
-  ChannelPostResult,
-  ChannelReactionAction,
-  ChannelReadPage,
-  ChannelTarget,
-  FileRef,
-  MessageRef,
+import {
+  resolveChannelConfig,
+  type ChannelAdapter,
+  type ChannelAdapterContext,
+  type ChannelCapabilities,
+  type ChannelConfig,
+  type ChannelConnectorSession,
+  type ChannelEnvironment,
+  type ChannelLocalFile,
+  type ChannelMessage,
+  type ChannelPostResult,
+  type ChannelReactionAction,
+  type ChannelReadPage,
+  type ChannelTarget,
+  type FileRef,
+  type MessageRef,
 } from "@introspection-ai/recipes/channels";
 
 import type { SlackApiResult } from "./client.js";
@@ -523,12 +525,16 @@ export function slackChannelTarget(config: ChannelConfig | null): ChannelTarget 
 }
 
 export function createSlackChannelSession(options: {
-  config: ChannelConfig | null;
+  config?: ChannelConfig | null;
   env?: ChannelEnvironment;
   cwd?: string;
   session?: SlackFileSession;
-}): { adapter: SlackChannelAdapter; target: () => ChannelTarget } {
+} = {}): ChannelConnectorSession {
   const env = options.env ?? process.env;
+  const config =
+    options.config === undefined
+      ? resolveChannelConfig(env)
+      : options.config;
   const session =
     options.session ??
     new SlackFileSession({ env, cwd: options.cwd ?? process.cwd() });
@@ -536,6 +542,6 @@ export function createSlackChannelSession(options: {
     adapter: new SlackChannelAdapter(session),
     // Resolved per call: a Recipe that declares Slack can still run from an
     // automation trigger, where the tools error rather than the session.
-    target: () => slackChannelTarget(options.config),
+    target: () => slackChannelTarget(config),
   };
 }

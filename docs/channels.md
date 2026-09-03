@@ -94,7 +94,7 @@ keys, and the webhook already removes duplicate inbound events.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "channels": [
+    "connectors": [
       {
         "provider": "slack"
       }
@@ -115,25 +115,6 @@ The host fails when an agent selects a tool that the provider does not support.
 Because the vocabulary is neutral, the same declaration and the same agent
 prompt work against another provider by changing the dependency and `provider`.
 Each provider package declares the capabilities that it can support.
-
-Recipe extensions that need to act before a model call can request the active
-provider-neutral session from the host:
-
-```ts
-import {
-  requireChannelConnectorSession,
-} from "@introspection-ai/recipes/channels";
-
-export default function register(pi) {
-  const session = requireChannelConnectorSession(pi);
-  // Use session.adapter through the shared ChannelAdapter interface.
-}
-```
-
-The Recipe host creates one channel session service for each agent session. It
-passes that service to the selected provider and every Recipe extension through
-the Recipe extension context. Provider packages do not use process-global state
-to publish their sessions.
 
 ## Write an adapter
 

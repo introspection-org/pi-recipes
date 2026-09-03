@@ -311,7 +311,7 @@ describe("createAgentSession", () => {
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
       tools: ["channel_read", "channel_react", "channel_reply"],
       manifestPi: {
-        channels: [{ provider: "slack" }],
+        connectors: [{ provider: "slack" }],
       },
     });
     installSlackRecipeConnector(recipeDir);
@@ -332,7 +332,7 @@ describe("createAgentSession", () => {
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
       tools: ["channel_reply", "channel_delete_workspace"],
       manifestPi: {
-        channels: [{ provider: "slack" }],
+        connectors: [{ provider: "slack" }],
       },
     });
     installSlackRecipeConnector(recipeDir);

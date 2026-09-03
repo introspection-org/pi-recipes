@@ -2,7 +2,7 @@
 
 The Slack adapter for the provider-neutral
 [channel tools](https://github.com/introspection-org/recipes/blob/main/docs/channels.md).
-A Recipe installs it when its `package.json#pi.channels` list includes the
+A Recipe installs it when its `package.json#pi.connectors` list includes the
 `slack` provider.
 
 The package supplies Slack Web API transport and a capability descriptor. The
@@ -15,7 +15,7 @@ Recipe written against `channel_reply` is not written against Slack.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "channels": [
+    "connectors": [
       {
         "provider": "slack"
       }

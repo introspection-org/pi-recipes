@@ -62,7 +62,6 @@ import {
 import { loadRecipeExtensionFactory } from "./recipe-extensions.js";
 import {
   bindRecipeExtensionFactory,
-  createRecipeExtensionSessionContext,
   createRecipeExtensionRegistrationRegistry,
   recipeExtensionToolAllowlist,
   type RecipeExtensionSessionContext,
@@ -499,11 +498,13 @@ async function createSessionForAgent(
     ? opts.memoryOverride(loadedMemory)
     : loadedMemory;
   const memoryPrompt = formatMemoryForPrompt(memoryResult.memory);
-  const recipeExtensionContext = createRecipeExtensionSessionContext(
-    recipe.manifest.name,
-    recipe.name,
-    opts.sessionRole
-  );
+  const recipeExtensionContext: RecipeExtensionSessionContext = Object.freeze({
+    recipe: Object.freeze({ name: recipe.manifest.name }),
+    agent: Object.freeze({ name: recipe.name }),
+    session: Object.freeze({
+      role: opts.sessionRole,
+    }),
+  });
   const otel = opts.otel
     ? {
         ...opts.otel,
@@ -602,12 +603,7 @@ async function createSessionForAgent(
     const connectors = await loadRecipeConnectors(
       recipe.manifest,
       recipe.tools,
-      {
-        recipeDir: recipe.recipeDir,
-        channelSessions: recipeExtensionContext.services.channels,
-        env,
-        cwd,
-      }
+      { recipeDir: recipe.recipeDir, env, cwd }
     );
     const connectorLoadout = connectors.loadout;
     for (const toolName of [

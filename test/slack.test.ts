@@ -179,7 +179,7 @@ describe("SlackBotSession transport", () => {
   it("calls Slack directly with the bot token during a local run", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
-      env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
+      env: { SLACK_BOT_TOKEN: "local-bot-token" },
       fetchImpl,
     });
     await session.call("conversations.history", { channel: "C1" });
@@ -194,7 +194,7 @@ describe("SlackBotSession transport", () => {
   it("passes the tool cancellation signal to Slack requests", async () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
-      env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
+      env: { SLACK_BOT_TOKEN: "local-bot-token" },
       fetchImpl,
     });
     const controller = new AbortController();
@@ -288,7 +288,7 @@ describe("SlackBotSession transport", () => {
     const fetchImpl = fakeFetch();
     const session = new SlackBotSession({
       env: {
-        INTROSPECTION_CHANNEL_TOKEN: "bot-token",
+        SLACK_BOT_TOKEN: "bot-token",
       },
       fetchImpl,
     });
@@ -346,7 +346,7 @@ describe("SlackBotSession transport", () => {
     };
     const session = new SlackBotSession({
       env: {
-        INTROSPECTION_CHANNEL_TOKEN: "bot-token",
+        SLACK_BOT_TOKEN: "bot-token",
         INTROSPECTION_BASE_API_URL: "https://dp.example",
         INTROSPECTION_TASK_ID: "task-1",
         INTROSPECTION_TOKEN: "task-token",
@@ -393,7 +393,7 @@ describe("Slack file downloads", () => {
         file: fakeFile({ name: "../bad name.png" }),
       });
       const session = new SlackFileSession({
-        env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
+        env: { SLACK_BOT_TOKEN: "local-bot-token" },
         fetchImpl,
         cwd,
       });
@@ -416,7 +416,7 @@ describe("Slack file downloads", () => {
     const cwd = await mkdtemp(join(tmpdir(), "slack-bot-api-"));
     try {
       const unsafe = new SlackFileSession({
-        env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
+        env: { SLACK_BOT_TOKEN: "local-bot-token" },
         fetchImpl: fakeFetch({
           file: fakeFile({ url_private_download: "https://evil.example/file" }),
         }),
@@ -427,7 +427,7 @@ describe("Slack file downloads", () => {
       );
 
       const oversized = new SlackFileSession({
-        env: { INTROSPECTION_CHANNEL_TOKEN: "local-bot-token" },
+        env: { SLACK_BOT_TOKEN: "local-bot-token" },
         fetchImpl: fakeFetch({
           file: fakeFile({ size: MAX_SLACK_FILE_BYTES + 1 }),
         }),
@@ -447,7 +447,7 @@ describe("Slack channel tools", () => {
     const fetchImpl = fakeFetch({ channelName: "incident-triage" });
     const adapter = new SlackChannelAdapter(
       new SlackFileSession({
-        env: { INTROSPECTION_CHANNEL_TOKEN: "x" },
+        env: { SLACK_BOT_TOKEN: "x" },
         fetchImpl,
       }),
     );
@@ -464,7 +464,7 @@ describe("Slack channel tools", () => {
   });
 
   const cloudEnv = {
-    INTROSPECTION_CHANNEL_TOKEN: "token",
+    SLACK_BOT_TOKEN: "token",
   };
 
   function slackTools(options: FakeFetchOptions = {}, cwd?: string) {

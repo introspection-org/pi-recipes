@@ -88,7 +88,7 @@ export class SlackBotSession {
       headers?: Record<string, string>;
     },
   ): Promise<SlackHttpResponse> {
-    const localToken = this.env.INTROSPECTION_CHANNEL_TOKEN?.trim();
+    const localToken = this.env.SLACK_BOT_TOKEN?.trim();
     if (localToken) {
       return this.fetchImpl(url.toString(), {
         ...init,
@@ -103,7 +103,7 @@ export class SlackBotSession {
     const egressUrl = this.env.INTROSPECTION_EGRESS_URL?.trim();
     if (!locator || !egressUrl) {
       throw new Error(
-        "Slack tools require INTROSPECTION_CHANNEL_TOKEN locally or the Introspection cloud egress environment",
+        "Slack tools require SLACK_BOT_TOKEN locally or the Introspection cloud egress environment",
       );
     }
     // Keep the provider URL intact. The runtime's proxy fetch dispatcher uses
