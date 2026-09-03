@@ -196,7 +196,7 @@ jobs:
 
       - run: pnpm typecheck && pnpm test && pnpm build
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: ${{ needs.release-please.outputs.root_release_created == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.train == 'all' || inputs.train == 'root')) }}
         with:
           pattern: native-tools-*
@@ -444,7 +444,7 @@ jobs:
 
       - run: uvx --from maturin==1.11.5 maturin sdist --out dist --manifest-path bindings/python/Cargo.toml
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: python-wheel-*
           path: dist
