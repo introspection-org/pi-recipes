@@ -398,7 +398,7 @@ describe("Recipes extension for Pi", () => {
       const pkg = JSON.parse(
         readFileSync(join(recipeDir, "package.json"), "utf8")
       );
-      pkg.pi.connectors = [{ provider: "slack" }];
+      pkg.pi.channels = [{ provider: "slack" }];
       pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
       writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
       installSlackRecipeConnector(recipeDir);
@@ -419,7 +419,10 @@ describe("Recipes extension for Pi", () => {
       pi.flagValues.set("recipe", recipeDir);
       pi.flagValues.set("agent", "main");
       createRecipesExtension({
-        env: { SLACK_CHANNEL_ID: "C_CONFIGURED" },
+        env: {
+          INTROSPECTION_TASK_CHANNEL_PROVIDER: "slack",
+          INTROSPECTION_TASK_CHANNEL_ID: "C_CONFIGURED",
+        },
       })(pi);
       await pi.emitExtensionEvent(
         { type: "session_start", reason: "startup" } as any,

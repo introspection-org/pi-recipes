@@ -1,6 +1,8 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import type { RecipeConnectorModule } from "../connector-tools.js";
+import { resolveChannelConfig } from "./config.js";
+import type { ChannelConfig } from "./config.js";
 import { ChannelRefStore } from "./refs.js";
 import {
   CHANNEL_TOOL_IDS,
@@ -37,6 +39,7 @@ export interface ChannelConnectorModuleOptions {
    * channel origin: the tools would have nowhere to act.
    */
   createSession(options: {
+    config: ChannelConfig | null;
     env: NodeJS.ProcessEnv;
     cwd: string;
   }): ChannelConnectorSession;
@@ -93,6 +96,7 @@ export function createChannelConnectorModule(
       const tools = moduleOptions.tools as readonly ChannelToolId[];
       return (pi) => {
         const session = options.createSession({
+          config: resolveChannelConfig(moduleOptions.env ?? process.env),
           env: moduleOptions.env ?? process.env,
           cwd: moduleOptions.cwd ?? process.cwd(),
         });

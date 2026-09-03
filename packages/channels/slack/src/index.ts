@@ -23,8 +23,7 @@ export type {
 } from "./files.js";
 export { slackMessageBody, toPlainText } from "./format.js";
 export type { SlackMessageBody } from "./format.js";
-export { resolveSlackOrigin, slackDownloadRoot } from "./origin.js";
-export type { SlackEnv, SlackOrigin } from "./origin.js";
+export { slackDownloadRoot } from "./runtime.js";
 export {
   SLACK_CHANNEL_CAPABILITIES,
   SlackChannelAdapter,
@@ -44,7 +43,7 @@ export {
  * its YAML file.
  *
  * ```json
- * { "pi": { "connectors": [{ "provider": "slack" }] } }
+ * { "pi": { "channels": [{ "provider": "slack" }] } }
  * ```
  *
  * ```yaml
@@ -58,7 +57,8 @@ export {
 export const slackRecipeConnectorModule = createChannelConnectorModule({
   provider: "slack",
   capabilities: SLACK_CHANNEL_CAPABILITIES,
-  createSession: ({ env, cwd }) => createSlackChannelSession({ env, cwd }),
+  createSession: ({ config, env, cwd }) =>
+    createSlackChannelSession({ config, env, cwd }),
 });
 
 export default slackRecipeConnectorModule;

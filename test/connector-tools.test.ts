@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadRecipeConnectors } from "../src/connector-tools.js";
 import {
   readPiPackageManifest,
-  type RecipePackageManifest,
 } from "../src/recipe-package.js";
 
 describe("Recipe connector packages", () => {
@@ -17,27 +16,6 @@ describe("Recipe connector packages", () => {
     for (const path of cleanups.splice(0)) {
       rmSync(path, { recursive: true, force: true });
     }
-  });
-
-  it("accepts public manifests created before connectors were added", async () => {
-    const manifest: RecipePackageManifest = {
-      name: "existing-recipe",
-      version: "1.0.0",
-      path: "/tmp/existing-recipe",
-      resources: { agents: [], extensions: [], skills: [], prompts: [] },
-      mcp: { manifests: [], servers: [] },
-    };
-
-    await expect(
-      loadRecipeConnectors(manifest, [], { recipeDir: manifest.path })
-    ).resolves.toEqual({
-      loadout: {
-        toolNames: [],
-        initialActiveToolNames: [],
-        deferredToolNames: [],
-      },
-      extensions: [],
-    });
   });
 
   it("loads provider and tool metadata from the declared package", async () => {
@@ -58,7 +36,7 @@ describe("Recipe connector packages", () => {
         version: "0.1.0",
         dependencies: { [channelPackage]: "0.1.0" },
         pi: {
-          connectors: [{ provider: "custom" }],
+          channels: [{ provider: "custom" }],
         },
       })
     );

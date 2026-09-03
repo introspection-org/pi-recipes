@@ -94,7 +94,7 @@ keys, and the webhook already removes duplicate inbound events.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "connectors": [
+    "channels": [
       {
         "provider": "slack"
       }
@@ -103,7 +103,7 @@ keys, and the webhook already removes duplicate inbound events.
 }
 ```
 
-The connector declaration enables the provider package and its supported tool
+The channel declaration enables the provider package and its supported tool
 catalog. The agent YAML file is the only place that narrows the catalog:
 
 ```yaml
@@ -127,6 +127,7 @@ argument.
 import {
   createChannelConnectorModule,
   type ChannelAdapter,
+  type ChannelConfig,
 } from "@introspection-ai/recipes/channels";
 
 const capabilities = {
@@ -143,17 +144,32 @@ class MyAdapter implements ChannelAdapter {
   async retract(ctx, { ref }) { /* retract an agent-authored message */ }
 }
 
+function targetFrom(config: ChannelConfig | null) {
+  if (!config || config.provider !== "my-channel") {
+    throw new Error("No my-channel destination is configured");
+  }
+  return {
+    provider: "my-channel",
+    conversation: config.channel_ref,
+    thread: config.thread_ref,
+  };
+}
+
 export default createChannelConnectorModule({
   provider: "my-channel",
   capabilities,
-  createSession: ({ env }) => ({
+  createSession: ({ config, env }) => ({
     adapter: new MyAdapter(/* client from env */),
     // A function, so a task with no channel origin still starts: the tools
     // fail when called, the session does not fail to open.
-    target: () => resolveTargetFrom(env),
+    target: () => targetFrom(config),
   }),
 });
 ```
+
+The host resolves `ChannelConfig` once from the `INTROSPECTION_TASK_CHANNEL_*`
+environment contract. Provider packages map `channel_ref` and `thread_ref` to
+their own API fields and do not define provider-specific origin types.
 
 Registration checks that the adapter implements every method its capabilities
 claim, so a descriptor cannot promise a tool the adapter does not have.
