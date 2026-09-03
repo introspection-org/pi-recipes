@@ -5,6 +5,7 @@ import {
   ChannelRefStore,
   channelToolName,
   createChannelConnectorModule,
+  createChannelConnectorSessionService,
   getChannelConnectorSession,
   registerChannelTools,
   requireChannelConnectorSession,
@@ -14,6 +15,7 @@ import {
 } from "../src/channels/index.js";
 import {
   bindRecipeExtensionFactory,
+  createRecipeExtensionSessionContext,
   createRecipeExtensionRegistrationRegistry,
   type RecipeExtensionSessionContext,
 } from "../src/extensions.js";
@@ -49,11 +51,19 @@ const LIMITED_CAPABILITIES: ChannelCapabilities = {
 
 const target = { provider: "test", conversation: "C1", thread: "100.1" };
 
-const extensionContext: RecipeExtensionSessionContext = Object.freeze({
-  recipe: Object.freeze({ name: "channel-test" }),
-  agent: Object.freeze({ name: "root" }),
-  session: Object.freeze({ role: "root" }),
-});
+function extensionContext(): RecipeExtensionSessionContext {
+  return createRecipeExtensionSessionContext("channel-test", "root", "root");
+}
+
+function moduleOptions(
+  tools: readonly string[],
+  context = extensionContext(),
+) {
+  return {
+    tools,
+    channelSessions: context.services.channels,
+  };
+}
 
 function stubAdapter(
   capabilities: ChannelCapabilities = FULL_CAPABILITIES,
@@ -441,7 +451,7 @@ describe("channel tool surface", () => {
     });
     const pi = createMockExtensionAPI();
     expect(() =>
-      module.createExtension({ tools: ["reply"] })(pi as never),
+      module.createExtension(moduleOptions(["reply"]))(pi as never),
     ).not.toThrow();
 
     const disagrees = createChannelConnectorModule({
@@ -456,10 +466,13 @@ describe("channel tool surface", () => {
       }),
     });
     const disagreesPi = createMockExtensionAPI();
+    const disagreesContext = extensionContext();
     expect(() =>
-      disagrees.createExtension({ tools: ["reply"] })(disagreesPi as never),
+      disagrees.createExtension(moduleOptions(["reply"], disagreesContext))(
+        disagreesPi as never,
+      ),
     ).toThrow(/differ from its declared catalog/);
-    expect(getChannelConnectorSession(disagreesPi as never)).toBeUndefined();
+    expect(disagreesContext.services.channels.get()).toBeUndefined();
   });
 
   it("shares the provider-neutral session across separately guarded extensions", async () => {
@@ -474,18 +487,21 @@ describe("channel tool surface", () => {
     });
     const registrations = createRecipeExtensionRegistrationRegistry();
     const pi = createMockExtensionAPI();
+    const context = extensionContext();
+    vi.resetModules();
+    const consumingChannels = await import("../src/channels/index.js");
     let resolved: ChannelConnectorSession | undefined;
     const connector = bindRecipeExtensionFactory(
-      module.createExtension({ tools: [] }),
-      extensionContext,
+      module.createExtension(moduleOptions([], context)),
+      context,
       registrations,
       "<connector:test>",
     );
     const consumer = bindRecipeExtensionFactory(
       (extensionApi) => {
-        resolved = requireChannelConnectorSession(extensionApi);
+        resolved = consumingChannels.requireChannelConnectorSession(extensionApi);
       },
-      extensionContext,
+      context,
       registrations,
       "extensions/consumer.ts",
     );
@@ -496,17 +512,25 @@ describe("channel tool surface", () => {
     expect(resolved).toBe(session);
   });
 
-  it("returns undefined or fails when no channel session is registered", () => {
+  it("returns undefined or fails when no channel session is registered", async () => {
     const pi = createMockExtensionAPI();
-
-    expect(getChannelConnectorSession(pi as never)).toBeUndefined();
-    expect(() => requireChannelConnectorSession(pi as never)).toThrow(
-      /no channel connector session/,
+    const context = extensionContext();
+    const consumer = bindRecipeExtensionFactory(
+      (extensionApi) => {
+        expect(getChannelConnectorSession(extensionApi)).toBeUndefined();
+        expect(() => requireChannelConnectorSession(extensionApi)).toThrow(
+          /no channel connector session/,
+        );
+      },
+      context,
     );
+
+    await consumer(pi as never);
   });
 
-  it("fails closed when more than one channel session is registered", () => {
+  it("fails closed when more than one channel session is registered", async () => {
     const pi = createMockExtensionAPI();
+    const context = extensionContext();
     for (const provider of ["slack", "teams"]) {
       const module = createChannelConnectorModule({
         provider,
@@ -519,15 +543,22 @@ describe("channel tool surface", () => {
           target: { ...target, provider },
         }),
       });
-      module.createExtension({ tools: [] })(pi as never);
+      module.createExtension(moduleOptions([], context))(pi as never);
     }
 
-    expect(() => getChannelConnectorSession(pi as never)).toThrow(
-      /multiple channel connector sessions: slack, teams/,
+    const consumer = bindRecipeExtensionFactory(
+      (extensionApi) => {
+        expect(() => getChannelConnectorSession(extensionApi)).toThrow(
+          /multiple channel connector sessions: slack, teams/,
+        );
+        expect(() => requireChannelConnectorSession(extensionApi)).toThrow(
+          /multiple channel connector sessions: slack, teams/,
+        );
+      },
+      context,
     );
-    expect(() => requireChannelConnectorSession(pi as never)).toThrow(
-      /multiple channel connector sessions: slack, teams/,
-    );
+
+    await consumer(pi as never);
   });
 
   it("refuses an adapter for a different provider", () => {
@@ -541,10 +572,11 @@ describe("channel tool surface", () => {
     });
 
     const pi = createMockExtensionAPI();
+    const context = extensionContext();
     expect(() =>
-      module.createExtension({ tools: ["reply"] })(pi as never),
+      module.createExtension(moduleOptions(["reply"], context))(pi as never),
     ).toThrow(/adapter for 'slack' returned provider 'teams'/);
-    expect(getChannelConnectorSession(pi as never)).toBeUndefined();
+    expect(context.services.channels.get()).toBeUndefined();
   });
 
   it("refuses an adapter that declares more than it implements", () => {
@@ -581,7 +613,7 @@ describe("channel tool surface", () => {
       }),
     });
     const pi = createMockExtensionAPI();
-    module.createExtension({ tools: ["reply", "edit"] })(pi as never);
+    module.createExtension(moduleOptions(["reply", "edit"]))(pi as never);
 
     const [result] = (await pi.emitExtensionEvent(
       {

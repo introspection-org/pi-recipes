@@ -4,8 +4,9 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { RecipeConnectorModule } from "../connector-tools.js";
-import { recipeExtensionHost } from "../extensions.js";
+import { getRecipeSessionContext } from "../extensions.js";
 import { ChannelRefStore } from "./refs.js";
+import type { ChannelConnectorSession } from "./session.js";
 import {
   CHANNEL_TOOL_IDS,
   channelConnectorTools,
@@ -15,14 +16,7 @@ import {
 import type {
   ChannelAdapter,
   ChannelCapabilities,
-  ChannelTarget,
 } from "./types.js";
-
-export interface ChannelConnectorSession {
-  readonly adapter: ChannelAdapter;
-  /** Resolved lazily so a task with no channel origin still starts. */
-  readonly target: ChannelTarget | (() => ChannelTarget);
-}
 
 export interface ChannelConnectorModuleOptions {
   provider: string;
@@ -46,76 +40,18 @@ export interface ChannelConnectorModuleOptions {
   }): ChannelConnectorSession;
 }
 
-const channelConnectorSessionsKey = Symbol.for(
-  "@introspection-ai/recipes.channel-connector-sessions.v1",
-);
-
-function sharedChannelConnectorSessions(): WeakMap<
-  ExtensionAPI,
-  Map<string, ChannelConnectorSession>
-> {
-  const shared = globalThis as typeof globalThis & Record<symbol, unknown>;
-  const existing = shared[channelConnectorSessionsKey];
-  if (existing !== undefined) {
-    if (!(existing instanceof WeakMap)) {
-      throw new Error("The shared channel connector session registry is invalid");
-    }
-    return existing as WeakMap<
-      ExtensionAPI,
-      Map<string, ChannelConnectorSession>
-    >;
-  }
-
-  const sessions = new WeakMap<
-    ExtensionAPI,
-    Map<string, ChannelConnectorSession>
-  >();
-  Object.defineProperty(shared, channelConnectorSessionsKey, {
-    configurable: false,
-    enumerable: false,
-    value: sessions,
-    writable: false,
-  });
-  return sessions;
-}
-
-const channelConnectorSessions = sharedChannelConnectorSessions();
-
-function sessionsFor(
-  pi: ExtensionAPI,
-  create = false,
-): Map<string, ChannelConnectorSession> | undefined {
-  const host = recipeExtensionHost(pi);
-  const existing = channelConnectorSessions.get(host);
-  if (existing || !create) return existing;
-  const sessions = new Map<string, ChannelConnectorSession>();
-  channelConnectorSessions.set(host, sessions);
-  return sessions;
-}
-
 /** Return the one channel session registered for this Recipe host, if any. */
 export function getChannelConnectorSession(
   pi: ExtensionAPI,
 ): ChannelConnectorSession | undefined {
-  const sessions = sessionsFor(pi);
-  if (!sessions || sessions.size === 0) return undefined;
-  if (sessions.size > 1) {
-    throw new Error(
-      `Recipe session has multiple channel connector sessions: ${[...sessions.keys()].join(", ")}`,
-    );
-  }
-  return sessions.values().next().value;
+  return getRecipeSessionContext(pi).services.channels.get();
 }
 
 /** Return the one channel session registered for this Recipe host, or fail. */
 export function requireChannelConnectorSession(
   pi: ExtensionAPI,
 ): ChannelConnectorSession {
-  const session = getChannelConnectorSession(pi);
-  if (!session) {
-    throw new Error("Recipe session has no channel connector session");
-  }
-  return session;
+  return getRecipeSessionContext(pi).services.channels.require();
 }
 
 const channelToolIds = new Set<string>(CHANNEL_TOOL_IDS);
@@ -191,7 +127,7 @@ export function createChannelConnectorModule(
           deferredTools: tools.filter((tool) => deferredToolIds.has(tool)),
           refs: new ChannelRefStore(),
         });
-        sessionsFor(pi, true)!.set(options.provider, session);
+        moduleOptions.channelSessions.register(options.provider, session);
       };
     },
   };

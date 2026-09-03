@@ -74,7 +74,7 @@ describe("Recipe Format", () => {
     writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
 
     const manifest = readPiPackageManifest(recipeDir);
-    expect(manifest.connectors).toEqual([{ provider: "slack" }]);
+    expect(manifest.channels).toEqual([{ provider: "slack" }]);
     expect(validatePiPackageManifest(manifest)).toEqual({
       valid: true,
       findings: [],

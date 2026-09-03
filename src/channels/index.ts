@@ -18,8 +18,12 @@ export {
 } from "./module.js";
 export type {
   ChannelConnectorModuleOptions,
-  ChannelConnectorSession,
 } from "./module.js";
+export { createChannelConnectorSessionService } from "./session.js";
+export type {
+  ChannelConnectorSession,
+  ChannelConnectorSessionService,
+} from "./session.js";
 export type {
   ChannelAdapter,
   ChannelAdapterContext,

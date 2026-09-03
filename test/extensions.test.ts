@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import {
   bindRecipeExtensionFactory,
+  createRecipeExtensionSessionContext,
   createRecipeExtensionRegistrationRegistry,
   forAgent,
   forRecipeSession,
@@ -14,11 +15,7 @@ function context(
   agent = "reviewer",
   role: "root" | "subagent" = "root"
 ): RecipeExtensionSessionContext {
-  return Object.freeze({
-    recipe: Object.freeze({ name: "demo" }),
-    agent: Object.freeze({ name: agent }),
-    session: Object.freeze({ role }),
-  });
+  return createRecipeExtensionSessionContext("demo", agent, role);
 }
 
 function api(): ExtensionAPI {
@@ -61,14 +58,16 @@ describe("Recipe extension context", () => {
     await factory(pi);
 
     expect(seen).toEqual([
-      {
+      expect.objectContaining({
         recipe: { name: "demo" },
         agent: { name: "researcher" },
         session: { role: "subagent" },
-      },
+      }),
     ]);
     expect(Object.isFrozen(seen[0])).toBe(true);
     expect(Object.isFrozen(seen[0]?.agent)).toBe(true);
+    expect(Object.isFrozen(seen[0]?.services)).toBe(true);
+    expect(Object.isFrozen(seen[0]?.services.channels)).toBe(true);
   });
 
   it("registers conditional behavior only for matching sessions", async () => {

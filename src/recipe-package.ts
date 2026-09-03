@@ -71,7 +71,7 @@ export interface RecipePackageMcpConfig {
   servers: RecipePackageMcpServer[];
 }
 
-export interface RecipePackageConnector {
+export interface RecipePackageChannel {
   provider: string;
 }
 
@@ -106,7 +106,7 @@ export interface RecipePackageManifest {
   resources: RecipePackageResources;
   /** Whether each resource key was explicitly authored in package.json#pi. */
   resourceDeclarations?: Record<keyof RecipePackageResources, boolean>;
-  connectors?: RecipePackageConnector[];
+  channels?: RecipePackageChannel[];
   mcp: RecipePackageMcpConfig;
   runtime?: RecipeRuntimeRequirements;
 }
@@ -706,17 +706,17 @@ function parseMcpConfig(value: unknown): RecipePackageMcpConfig {
   return { manifests, servers };
 }
 
-function parseConnectors(value: unknown): RecipePackageConnector[] {
+function parseChannels(value: unknown): RecipePackageChannel[] {
   const seen = new Set<string>();
-  const connectors: RecipePackageConnector[] = [];
+  const channels: RecipePackageChannel[] = [];
   for (const raw of Array.isArray(value) ? value : []) {
-    const connector = asRecord(raw);
-    const provider = stringValue(connector.provider);
+    const channel = asRecord(raw);
+    const provider = stringValue(channel.provider);
     if (!provider || seen.has(provider)) continue;
     seen.add(provider);
-    connectors.push({ provider });
+    channels.push({ provider });
   }
-  return connectors;
+  return channels;
 }
 
 function parseRuntimeRequirements(value: unknown): RecipeRuntimeRequirements {
@@ -792,7 +792,7 @@ export function readPiPackageManifest(packageDir: string): RecipePackageManifest
     path: packageDir,
     resources,
     resourceDeclarations: resourceDeclarations(pi),
-    connectors: parseConnectors(pi.channels),
+    channels: parseChannels(pi.channels),
     mcp: parseMcpConfig(pi.mcp),
     runtime: parseRuntimeRequirements(pi.runtime),
   };
