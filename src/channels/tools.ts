@@ -100,7 +100,7 @@ export interface RegisterChannelToolsOptions {
   target: ChannelTarget | (() => ChannelTarget);
   /** Restrict commands; defaults to everything supported. An empty list exposes no tool. */
   commands?: readonly ChannelToolId[];
-  /** Require a successful final reply on turns with a channel origin. */
+  /** Require a successful final reply on inbound turns. Defaults to true for enabled tools. */
   requireReply?: boolean;
   refs?: ChannelRefStore;
   /** Optional host tool-layer policy. This does not constrain shell/API egress. */
@@ -165,7 +165,8 @@ export function registerChannelTools(
   const refs = options.refs ?? new ChannelRefStore();
   const supported = new Set(channelToolIdsFor(adapter.capabilities));
   const selected = new Set(options.commands ?? [...supported]);
-  if (options.requireReply && (!selected.has("reply") || !pi.sendMessage)) {
+  const requireReply = options.requireReply ?? selected.size > 0;
+  if (requireReply && (!selected.has("reply") || !pi.sendMessage)) {
     throw new Error("requireReply needs the reply command and a host with sendMessage");
   }
   let replyRequired = false;
@@ -528,7 +529,7 @@ export function registerChannelTools(
       // Originless web/automation runs may still use explicitly targeted tools.
       return;
     }
-    replyRequired = options.requireReply === true;
+    replyRequired = requireReply;
     let promptTarget = target;
     if (adapter.enrichTarget) {
       try {
@@ -553,7 +554,7 @@ export function registerChannelTools(
     return messages.length === event.messages.length ? undefined : { messages };
   });
 
-  if (options.requireReply) {
+  if (requireReply) {
     pi.on("message_start", (event) => {
       // User follow-ups can arrive within the same Pi run, without another
       // before_agent_start. A corrective custom message must not reset this.

@@ -166,8 +166,8 @@ describe("channel tool surface", () => {
     module.createExtension({ tools: ["channels"], commands: ["reply"] })(pi as never);
     expect(channelCommand(pi, "reply").parameters).toBeDefined();
     expect(channelCommand(pi, "edit").parameters).toBeUndefined();
-    expect(() => module.createExtension({ tools: ["channels"], commands: ["send"] })(createMockExtensionAPI() as never)).toThrow("Unsupported");
-    expect(() => module.createExtension({ tools: ["channels"], commands: ["bogus"] })).toThrow("Unknown");
+    expect(() => module.createExtension({ tools: ["channels"], commands: ["send"], requireReply: false })(createMockExtensionAPI() as never)).toThrow("Unsupported");
+    expect(() => module.createExtension({ tools: ["channels"], commands: ["bogus"], requireReply: false })).toThrow("Unknown");
     for (const options of [{ tools: [] }, { tools: ["channels"], commands: [] }]) {
       const empty = createMockExtensionAPI();
       module.createExtension(options)(empty as never);
@@ -242,6 +242,7 @@ describe("channel tool surface", () => {
       {
         target,
         commands: ["react"],
+        requireReply: false,
         refs,
       },
     );
