@@ -335,13 +335,14 @@ describe("createAgentSession", () => {
     expect(handle.session.getActiveToolNames()).not.toContain("tool_search");
   });
 
-  it("starts a manual automation Slack session with only the fixed notification tool", async () => {
+  it("starts an Operator Slack session with explicit message and lookup tools", async () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
       tools: [
         "channel_read",
         "channel_react",
         "channel_message",
+        "channel_lookup",
       ],
       manifestPi: {
         connectors: [{ provider: "slack" }],
@@ -353,31 +354,22 @@ describe("createAgentSession", () => {
       cwd: workspaceDir,
       env: {
         ...cleanEnv(),
-        INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({
-          trigger_source: "manual",
-        }),
         INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
-          operator_channel: {
-            provider: "slack",
-            conversation: "C-OPS",
-            name: "#ops",
-          },
+          channel_providers: ["slack"],
         }),
       },
     });
 
-    expect(handle.session.getActiveToolNames()).toContain("channel_message");
+    expect(handle.session.getActiveToolNames()).toEqual(
+      expect.arrayContaining(["channel_message", "channel_lookup"]),
+    );
     expect(handle.session.getAllTools().map((tool) => tool.name)).not.toEqual(
-      expect.arrayContaining([
-        "channel_read",
-        "channel_react",
-        "channel_message",
-      ]),
+      expect.arrayContaining(["channel_read", "channel_react"]),
     );
     expect(handle.session.getActiveToolNames()).not.toContain("tool_search");
   });
 
-  it("does not expose the notification destination to a non-automation task", async () => {
+  it("does not expose Slack tools without trusted provider access", async () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
       tools: [
@@ -395,12 +387,7 @@ describe("createAgentSession", () => {
       cwd: workspaceDir,
       env: {
         ...cleanEnv(),
-        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
-          operator_channel: {
-            provider: "slack",
-            conversation: "C-OPS",
-          },
-        }),
+        INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({}),
       },
     });
 
@@ -427,14 +414,8 @@ describe("createAgentSession", () => {
       cwd: workspaceDir,
       env: {
         ...cleanEnv(),
-        INTROSPECTION_TASK_METADATA_JSON: JSON.stringify({
-          trigger_source: "scheduled",
-        }),
         INTROSPECTION_BOOTSTRAP_JSON: JSON.stringify({
-          operator_channel: {
-            provider: "slack",
-            conversation: "C-OPS",
-          },
+          channel_providers: ["slack"],
         }),
       },
     });

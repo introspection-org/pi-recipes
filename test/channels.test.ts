@@ -8,6 +8,7 @@ import {
   registerChannelTools,
   type ChannelAdapter,
   type ChannelCapabilities,
+  type ChannelTarget,
 } from "../src/channels/index.js";
 import {
   SLACK_CHANNEL_CAPABILITIES,
@@ -25,6 +26,7 @@ const FULL_CAPABILITIES: ChannelCapabilities = {
   documents: "native",
   resolveAuthors: true,
   permalinks: true,
+  lookup: true,
 };
 
 const LIMITED_CAPABILITIES: ChannelCapabilities = {
@@ -37,6 +39,7 @@ const LIMITED_CAPABILITIES: ChannelCapabilities = {
   documents: false,
   resolveAuthors: true,
   permalinks: false,
+  lookup: false,
 };
 
 const target = { provider: "test", conversation: "C1", thread: "100.1" };
@@ -47,6 +50,9 @@ function stubAdapter(
   return {
     provider: "test",
     capabilities,
+    async lookup(input) {
+      return { id: "C1", name: input.name, kind: "public_channel" };
+    },
     async reply(ctx, input) {
       return {
         ref: ctx.refs.message({
@@ -127,35 +133,26 @@ describe("channel tool surface", () => {
     );
   });
 
-  it("uses one bounded operation for replies and notifications", () => {
+  it("uses one explicit operation for inbound and proactive messages", () => {
     const pi = createMockExtensionAPI();
     registerChannelTools(pi, stubAdapter(), {
       target,
-      notificationTarget: { ...target, thread: null },
       tools: ["message"],
     });
 
     expect(pi.tools.get("channel_message")?.description).toContain(
-      "configured channel destination",
-    );
-    expect(pi.tools.get("channel_message")?.description).toContain(
-      "Other destinations are rejected",
+      "provider bot can access",
     );
     expect([...pi.tools.keys()].filter((name) => name === "channel_message")).toHaveLength(1);
   });
 
-  it("does not deliver a scheduled NO_REPLY final response", async () => {
+  it("does not publish a final assistant response implicitly", async () => {
     const reply = vi.fn(stubAdapter().reply);
     const pi = createMockExtensionAPI();
-    registerChannelTools(
-      pi,
-      { ...stubAdapter(), reply },
-      {
-        target: null,
-        notificationTarget: { ...target, thread: null },
-        tools: ["message"],
-      },
-    );
+    registerChannelTools(pi, { ...stubAdapter(), reply }, {
+      target: null,
+      tools: ["message"],
+    });
 
     await pi.emitExtensionEvent(
       {
@@ -163,7 +160,7 @@ describe("channel tool surface", () => {
         messages: [
           {
             role: "assistant",
-            content: [{ type: "text", text: "NO_REPLY" }],
+            content: [{ type: "text", text: "Final report" }],
             stopReason: "stop",
           },
         ],
@@ -273,7 +270,7 @@ describe("channel tool surface", () => {
     expect(result.systemPrompt).toContain('"conversation_scope":"thread"');
     expect(result.systemPrompt).toContain('"channel_read"');
     expect(result.systemPrompt).toContain(
-      "When channel_message is available, use it to deliver the user-facing response. A normal final assistant response is not delivered to the channel.",
+      "When channel_message is available, use it to deliver a user-facing reply to this conversation. A normal assistant response is not delivered to the channel.",
     );
     expect(result.systemPrompt).toContain("No messages are included here");
     expect(result.systemPrompt).toContain("C123");
@@ -336,7 +333,7 @@ describe("channel tool surface", () => {
         if (attempts === 1) throw new Error("No channel origin");
         return target;
       },
-      tools: ["message"],
+      tools: ["read"],
     });
 
     const promptResults = await pi.emitExtensionEvent(
@@ -348,10 +345,10 @@ describe("channel tool surface", () => {
       } as never,
       { signal: undefined },
     );
-    const reply = pi.tools.get("channel_message");
-    await reply?.execute(
+    const read = pi.tools.get("channel_read");
+    await read?.execute(
       "tool-call",
-      { channel: "C1", thread: "100.1", text: "hello" },
+      {},
       undefined,
       undefined,
       undefined as never,
@@ -401,45 +398,46 @@ describe("channel tool surface", () => {
     expect(conversations).toEqual(["C1"]);
   });
 
-  it("rejects message destinations outside the bound channel and thread", async () => {
+  it("passes an explicit message destination to the adapter", async () => {
+    const destinations: ChannelTarget[] = [];
+    const adapter = stubAdapter();
     const pi = createMockExtensionAPI();
-    registerChannelTools(pi, stubAdapter(), {
-      target,
-      tools: ["message"],
-    });
-    const message = pi.tools.get("channel_message")!;
+    registerChannelTools(
+      pi,
+      {
+        ...adapter,
+        async reply(ctx, input) {
+          destinations.push(ctx.target);
+          return adapter.reply(ctx, input);
+        },
+      },
+      { target, tools: ["message"] },
+    );
 
-    await expect(
-      message.execute(
-        "wrong-channel",
-        { channel: "C2", thread: "100.1", text: "hello" },
-        undefined,
-        undefined,
-        undefined as never,
-      ),
-    ).rejects.toThrow(/not this task's configured destination/);
-    await expect(
-      message.execute(
-        "missing-thread",
-        { channel: "C1", text: "hello" },
-        undefined,
-        undefined,
-        undefined as never,
-      ),
-    ).rejects.toThrow(/requires its thread id/);
+    await pi.tools.get("channel_message")!.execute(
+      "another-channel",
+      { channel: "C2", thread: "200.2", text: "hello" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(destinations).toEqual([
+      { provider: "test", conversation: "C2", thread: "200.2" },
+    ]);
   });
 
   it("refuses a target for a different provider", async () => {
     const pi = createMockExtensionAPI();
     registerChannelTools(pi, stubAdapter(), {
       target: { provider: "slack", conversation: "C1" },
-      tools: ["message"],
+      tools: ["read"],
     });
 
     await expect(
-      pi.tools.get("channel_message")?.execute(
+      pi.tools.get("channel_read")?.execute(
         "tool-call",
-        { channel: "C1", text: "hello" },
+        {},
         undefined,
         undefined,
         undefined as never,
@@ -571,15 +569,17 @@ describe("channel tool surface", () => {
       createSession: () => ({
         adapter: stubAdapter(),
         target: null,
-        notificationTarget: { ...target, thread: null },
-        availableTools: ["message"],
+        availableTools: ["message", "lookup"],
       }),
     });
     const pi = createMockExtensionAPI();
 
-    module.createExtension({ tools: ["message", "read", "react"] })(pi as never);
+    module.createExtension({ tools: ["message", "lookup", "read", "react"] })(pi as never);
 
-    expect([...pi.tools.keys()]).toEqual(["channel_message"]);
+    expect([...pi.tools.keys()]).toEqual([
+      "channel_message",
+      "channel_lookup",
+    ]);
   });
 
   it("marks non-default tools as searchable through a connector module", async () => {
@@ -623,6 +623,7 @@ describe("channel tool surface", () => {
     });
     expect(slack.tools.map((tool) => tool.id)).toEqual([
       "message",
+      "lookup",
       "read",
       "react",
       "edit",

@@ -1,28 +1,27 @@
 /**
  * Provider-neutral channel primitives.
  *
- * A channel-origin task answers exactly one conversation. For a task without
- * an inbound origin, a host may bind one notification target for a proactive
- * top-level message. These types describe those operations in vocabulary that is the
- * same for Slack, Teams, or anything else, so one prompt serves every channel.
+ * A channel-origin task can use its conversation context, while an eligible
+ * task without an origin can look up and message a channel explicitly. These
+ * types describe those operations in vocabulary shared by Slack, Teams, and
+ * other providers.
  *
  * Two properties are structural rather than documented:
  *
- * - **Every destination is bound.** `channel_message` requires the channel and,
- *   when applicable, thread id from a trusted `ChannelTarget`; registration
- *   rejects values that do not exactly match it. No other tool schema carries
- *   a channel, thread, workspace, or user argument.
+ * - **Message destinations are explicit.** `channel_message` requires a channel
+ *   id and accepts a thread id when applicable. An inbound origin is prompt
+ *   context, not an authorization boundary; provider credentials determine
+ *   which channels the bot can access.
  * - **Unsupported is absent.** Tools are registered from `ChannelCapabilities`,
  *   so a channel that cannot read earlier messages simply has no read tool. A
  *   tool that always answers "unsupported" costs a model turn and teaches
  *   nothing.
  *
- * Operations outside the bound inbound and proactive targets, including workspace search,
- * directory lookups, and arbitrary sends to another conversation, are unsupported. Their
- * contract and access model are deferred to a separate proposal.
+ * Workspace search, directory lookups, channel joining, and user resolution
+ * remain unsupported.
  */
 
-/** The conversation a task answers. Resolved by the host and exposed as an allow-listed message destination. */
+/** Inbound conversation context resolved by the host. */
 export interface ChannelTarget {
   readonly provider: string;
   /** Provider conversation id (Slack channel, Teams conversation). */
@@ -54,6 +53,8 @@ export interface ChannelCapabilities {
   /** Enrichment performed in trusted code, not exposed as lookup tools. */
   readonly resolveAuthors: boolean;
   readonly permalinks: boolean;
+  /** Resolve a complete provider channel name to a channel id. */
+  readonly lookup?: boolean;
 }
 
 /**
@@ -130,6 +131,12 @@ export interface ChannelReadPage {
   readonly cursor?: ChannelCursor;
 }
 
+export interface ChannelLookupResult {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: "public_channel" | "private_channel";
+}
+
 export interface ChannelLocalFile {
   readonly id: string;
   readonly name: string;
@@ -182,10 +189,9 @@ export interface ChannelAdapterContext {
 /**
  * What a provider package implements.
  *
- * Every method takes the bound conversation from `ChannelAdapterContext`. An
- * optional method must be present exactly when the matching capability is
- * true — `channelConnectorTools` asserts that, so a capability cannot claim
- * something the adapter cannot do.
+ * Conversation-scoped methods take `ChannelAdapterContext`; lookup operates
+ * without an inbound origin. An optional method must be present exactly when
+ * its capability is true — `channelConnectorTools` asserts that promise.
  */
 export interface ChannelAdapter {
   readonly provider: string;
@@ -197,6 +203,10 @@ export interface ChannelAdapter {
     ctx: ChannelAdapterContext,
     input: { text: string },
   ): Promise<ChannelPostResult>;
+  lookup?(
+    input: { name: string },
+    signal?: AbortSignal,
+  ): Promise<ChannelLookupResult>;
 
   react?(
     ctx: ChannelAdapterContext,

@@ -6,7 +6,6 @@ import {
   createSlackChannelSession,
   slackAvailableTools,
   slackChannelTarget,
-  slackNotificationTarget,
 } from "./adapter.js";
 
 export {
@@ -26,7 +25,7 @@ export type {
 export { slackMessageBody, toPlainText } from "./format.js";
 export type { SlackMessageBody } from "./format.js";
 export {
-  resolveSlackNotificationTarget,
+  hasSlackChannelAccess,
   resolveSlackOrigin,
   slackDownloadRoot,
 } from "./origin.js";
@@ -37,7 +36,6 @@ export {
   createSlackChannelSession,
   slackAvailableTools,
   slackChannelTarget,
-  slackNotificationTarget,
 };
 
 /**
@@ -56,13 +54,12 @@ export {
  * ```
  *
  * ```yaml
- * tools: [channel_message, channel_read, channel_react, channel_fetch_file]
+ * tools: [channel_message, channel_lookup, channel_read, channel_react, channel_fetch_file]
  * ```
  *
- * Operations outside the bound inbound and proactive targets, including
- * workspace search, directory lookups, and arbitrary cross-channel posting,
- * are unsupported.
- * A separate proposal can define their contract and access model.
+ * `channel_lookup` resolves a complete channel name; `channel_message` may post
+ * to any channel the injected bot credential can access. Workspace search,
+ * directory lookups, and channel joining remain unsupported.
  */
 export const slackRecipeConnectorModule = createChannelConnectorModule({
   provider: "slack",

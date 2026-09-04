@@ -1,38 +1,33 @@
 # Channel tools
 
-A Recipe that answers a chat message declares a **channel connector**. The host
-then registers a fixed set of `channel_*` tools, named and shaped identically
-for every provider, and bound to the one conversation the task came from.
+A Recipe that uses a chat provider declares a **channel connector**. The host
+registers a provider-neutral set of `channel_*` tools with the same names and
+schemas for every provider.
 
-Two properties follow from that, and both are structural rather than
-conventional:
+Two properties are structural:
 
-- **Message destinations are allow-listed.** `channel_message` requires the
-  provider channel id and, for a threaded destination, its thread id. The host
-  supplies those ids in trusted channel context and rejects any values that do
-  not exactly match the task's inbound origin or automation notification
-  target. No other channel tool takes an addressing argument. Provider egress
-  remains the authorization boundary for raw sandbox requests.
+- **Message destinations are explicit.** `channel_message` requires the
+  provider's channel id and accepts a thread id when needed. The provider bot's
+  injected credential is the authorization boundary: a call can reach any
+  channel that bot can access, but no other workspace or provider credential.
 - **A tool that the provider cannot support is absent, not failing.** Each
   adapter declares a capability descriptor, and registration filters on it.
   For example, an adapter with no history API has no `channel_read` tool.
 
-Before the first model call, the channel extension adds destination metadata to
-the system prompt. The metadata contains the provider channel id, its thread id
-when threaded, the conversation name and permalink when available, and the
-active channel tools. It contains no messages. An inbound task delivers through
-`channel_message`, because a normal final assistant response is not delivered
-to the originating channel. An automation run may use the same tool for interim
-updates; its final assistant response is posted automatically after the run
-settles, whether the run was started by its schedule or the manual Run control.
-`channel_read` remains the only way to fetch earlier messages when supported.
+For an inbound task, the extension adds the origin's channel id and optional
+thread id to the system prompt so the agent can reply explicitly. It includes
+no messages; `channel_read` remains the only way to fetch earlier context. A
+task without an origin receives no invented destination. It can use
+`channel_lookup` to resolve a complete channel name, then pass that id to
+`channel_message`. A normal assistant response is never published to a channel.
 
 ## The tools
 
-| Tool                    | Model arguments                                   | Requires                                                          |
-| ----------------------- | ------------------------------------------------- | ----------------------------------------------------------------- |
-| `channel_message`       | `channel`, `thread?`, `text` (Markdown)           | an inbound conversation or trusted automation notification target |
-| `channel_read`          | `limit?`, `cursor?`                               | `read`                                                            |
+| Tool                    | Model arguments                                   | Requires                               |
+| ----------------------- | ------------------------------------------------- | -------------------------------------- |
+| `channel_message`       | `channel`, `thread?`, `text` (Markdown)           | provider messaging access              |
+| `channel_lookup`        | `name`                                            | exact provider channel-name lookup     |
+| `channel_read`          | `limit?`, `cursor?`                               | an inbound origin and `read` capability |
 | `channel_react`         | `message`, `emoji`, `action?` (`add` or `remove`) | `react`                                                           |
 | `channel_edit`          | `message`, `text`                                 | `edit`                                                            |
 | `channel_retract`       | `message`                                         | `retract`                                                         |
@@ -40,11 +35,10 @@ settles, whether the run was started by its schedule or the manual Run control.
 | `channel_fetch_file`    | `file` (a `file_…` handle), `variant?`            | `fetch_file`                                                      |
 | `channel_post_document` | `title`, `markdown`                               | `documents`                                                       |
 
-`channel_message`, `channel_read`, and `channel_react` are active by default
-when the provider supports them. Session filtering exposes `channel_message`
-only when the task has an inbound origin or a trusted automation notification
-target. The other selected tools start inactive, and the model can find them
-through `tool_search`.
+`channel_message`, `channel_lookup`, `channel_read`, and `channel_react` are
+active by default when supported. Session filtering can expose messaging and
+lookup without an inbound origin while keeping origin-bound reads and reactions
+absent. Other selected tools start inactive and are found through `tool_search`.
 
 Reply content is **Markdown**. Each adapter renders it in the provider's own
 format. There is no raw provider payload because the same tool contract must
@@ -70,29 +64,21 @@ carry a `file_…` handle, and that is the only value the tool accepts. A bot ca
 usually read files from every conversation it belongs to, so accepting a raw
 provider file ID would let the model reach files outside the bound conversation.
 
-### Enrichment, not lookup tools
+### Lookup and enrichment
 
-Author names and permalinks are resolved by the adapter in trusted code and
-attached to what the agent is already reading: `channel_read` rows carry
-`author.display_name`, and `channel_message` returns a `permalink` where the
-provider has one. There is no `resolve_user` or `get_permalink` tool, because
-each would require another model turn. Each lookup would also take an
-addressing argument.
+`channel_lookup` resolves one complete channel name to an id. It is not fuzzy
+search: the adapter may enumerate every provider page internally, but returns
+only an exact match that the bot can message. Author names and permalinks remain
+trusted enrichment attached to messages the agent already handles. There is no
+user-directory or permalink lookup tool.
 
-### Automation notifications
+`channel_message` is the only publication path. It serves inbound replies,
+automations, and ordinary Operator conversations alike, and every call names
+its channel and optional thread explicitly. Finishing an agent run without that
+tool call sends nothing.
 
-`channel_message` serves both inbound replies and interim automation updates.
-Trusted host state supplies exactly one destination for the task. The model must
-pass its channel id and, when present, its thread id; the tool rejects any other
-destination. Automation notification targets cover both schedule ticks and the
-manual Run control. After the run settles, the extension makes one automatic
-post attempt for its final assistant response; an exact `NO_REPLY` response is
-not posted. A task with neither an inbound origin nor an automation notification
-target receives no channel tools.
-
-Workspace search, channel listing and joining, directory lookup, and posting to
-an arbitrary conversation are unsupported. A separate proposal can define them
-when a concrete use case requires them.
+Workspace search, channel joining, directory lookup, and user resolution remain
+unsupported.
 
 Typing indicators and presence are runtime effects rather than model decisions.
 Streaming controls how a reply is delivered. The runtime derives idempotency
@@ -122,6 +108,7 @@ catalog. The agent YAML file is the only place that narrows the catalog:
 tools:
   [
     channel_message,
+    channel_lookup,
     channel_read,
     channel_react,
     channel_edit,
@@ -139,9 +126,8 @@ Each provider package declares the capabilities that it can support.
 ## Write an adapter
 
 An adapter supplies transport and a capability descriptor. It writes no tool
-schemas. The shared schema keeps providers from defining different forms of
-the same operation and confines addressing to the validated `channel_message`
-destination.
+schemas. The shared schema keeps providers from defining different forms of the same
+operation.
 
 ```ts
 import {
@@ -159,6 +145,7 @@ const capabilities = {
   documents: false,
   resolveAuthors: true,
   permalinks: false,
+  lookup: false,
 };
 
 class MyAdapter implements ChannelAdapter {
@@ -193,6 +180,10 @@ claim, so a descriptor cannot promise a tool the adapter does not have.
 The result is an ordinary `RecipeConnectorModule`. Manifest validation, agent
 tool selection, and `tool_search` work without provider-specific code in the
 Recipe.
+
+Low-level hosts that call `registerChannelTools()` directly still own
+session-specific availability narrowing when they omit `tools`; changing that
+host contract is deferred to a separately versioned API design.
 
 ## Provider pages
 

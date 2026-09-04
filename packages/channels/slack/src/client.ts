@@ -165,13 +165,9 @@ export class SlackBotSession {
   /**
    * Post into a conversation the caller has already resolved.
    *
-   * `to` is required rather than defaulted from the environment: the caller —
-   * the adapter — holds the trusted `ChannelAdapterContext.target`, and if this
-   * method resolved its own destination the two could disagree, so
-   * the prompt metadata and `channel_read` would describe one conversation while
-   * `channel_message` posted into another. Falling back to the origin here is
-   * exactly the kind of second, quieter source of truth the bound tier exists
-   * to remove.
+   * The adapter supplies `to` from the explicit `channel_message` arguments.
+   * The local fallback remains for direct `SlackBotSession` consumers; shared
+   * channel tools never rely on it.
    */
   async sendMessage(
     input: {
@@ -206,7 +202,8 @@ export class SlackBotSession {
       throw new Error("Slack chat.postMessage returned no message timestamp");
     const postedThread = payload.message?.thread_ts || threadTs || ts;
 
-    if (!resolveSlackOrigin(this.env)) {
+    const origin = resolveSlackOrigin(this.env);
+    if (!origin || origin.channel !== destination.channel) {
       return {
         ok: true,
         channel,

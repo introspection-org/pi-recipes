@@ -6,6 +6,7 @@ import {
   ChannelAdapterContext,
   ChannelCapabilities,
   ChannelLocalFile,
+  ChannelLookupResult,
   ChannelMessage,
   ChannelPostResult,
   ChannelReactionAction,
@@ -20,8 +21,8 @@ import type { SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
 import { markdownBlocks, toPlainText } from "./format.js";
 import {
+  hasSlackChannelAccess,
   resolveSlackOrigin,
-  resolveSlackNotificationTarget,
   type SlackEnv,
 } from "./origin.js";
 
@@ -44,11 +45,21 @@ export const SLACK_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   documents: false,
   resolveAuthors: true,
   permalinks: true,
+  lookup: true,
 };
 
 const SLACK_FILE_VARIANTS = new Set(["original", "video_low"]);
 const SLACK_HISTORY_PAGE_LIMIT = 15;
 const SLACK_THREAD_FETCH_LIMIT = 1000;
+const SLACK_LOOKUP_PAGE_LIMIT = 200;
+
+interface SlackConversation {
+  id?: string;
+  name?: string;
+  is_archived?: boolean;
+  is_member?: boolean;
+  is_private?: boolean;
+}
 
 interface SlackHistoryMessage {
   ts?: string;
@@ -96,10 +107,9 @@ function slackTimestamp(ts: string): string | undefined {
 /**
  * Slack against the neutral channel contract.
  *
- * Every method acts on the conversation in `ctx.target`, which the host
- * resolved from the task origin. Nothing here reads a destination from model
- * input, so the agent's reach is the thread it was addressed in, whatever the
- * bot credential could otherwise touch.
+ * Conversation-scoped methods act on `ctx.target`. `channel_message` may carry
+ * any explicit destination the injected bot credential can access, while
+ * `channel_lookup` resolves an exact channel name through Slack.
  *
  * User ids and permalinks are resolved here rather than exposed as lookup
  * tools: an agent that needs "who said this" wants a name in the message it is
@@ -138,6 +148,68 @@ export class SlackChannelAdapter implements ChannelAdapter {
     };
   }
 
+  async lookup(
+    input: { name: string },
+    signal?: AbortSignal,
+  ): Promise<ChannelLookupResult> {
+    const name = input.name.trim().replace(/^#/, "");
+    if (!name) {
+      throw new Error("Slack channel lookup requires a complete channel name.");
+    }
+
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    let inaccessible = false;
+    do {
+      const payload = await this.session.call(
+        "conversations.list",
+        {
+          types: "public_channel,private_channel",
+          exclude_archived: true,
+          limit: SLACK_LOOKUP_PAGE_LIMIT,
+          ...(cursor ? { cursor } : {}),
+        },
+        "form",
+        signal,
+      );
+      const channels = Array.isArray(payload.channels)
+        ? (payload.channels as SlackConversation[])
+        : [];
+      for (const channel of channels) {
+        if (
+          channel.name !== name ||
+          channel.is_archived === true ||
+          typeof channel.id !== "string"
+        ) {
+          continue;
+        }
+        if (channel.is_member !== true) {
+          inaccessible = true;
+          continue;
+        }
+        return {
+          id: channel.id,
+          name,
+          kind: channel.is_private ? "private_channel" : "public_channel",
+        };
+      }
+
+      const next = nextCursor(payload);
+      if (!next || seenCursors.has(next)) break;
+      seenCursors.add(next);
+      cursor = next;
+    } while (cursor);
+
+    if (inaccessible) {
+      throw new Error(
+        `Slack channel '#${name}' exists, but the installed bot is not a member.`,
+      );
+    }
+    throw new Error(
+      `No accessible Slack channel has the exact name '#${name}'.`,
+    );
+  }
+
   async reply(
     ctx: ChannelAdapterContext,
     input: { text: string },
@@ -145,9 +217,8 @@ export class SlackChannelAdapter implements ChannelAdapter {
     const posted = await this.session.sendMessage(
       {
         text: input.text,
-        // The trusted context, not the session's own view of the origin: the
-        // two agree under the connector module, and where they would not, the
-        // context is the one every other tool acted on.
+        // `channel_message` constructs this context from its explicit channel
+        // and optional thread arguments; origin-bound tools use host context.
         to: { channel: ctx.target.conversation, thread_ts: ctx.target.thread },
       },
       ctx.signal,
@@ -513,20 +584,7 @@ function messagesFrom(payload: SlackApiResult): SlackHistoryMessage[] {
     : [];
 }
 
-/** Resolve the configured Operator notification channel, if present. */
-export function slackNotificationTarget(env: SlackEnv): ChannelTarget | null {
-  const target = resolveSlackNotificationTarget(env);
-  return target
-    ? {
-        provider: "slack",
-        conversation: target.channel,
-        thread: null,
-        name: target.name,
-      }
-    : null;
-}
-
-/** Return the channel tools that have a trusted destination in this session. */
+/** Return the channel tools that have usable provider context in this session. */
 export function slackAvailableTools(
   env: SlackEnv,
   selectedTools?: readonly ChannelToolId[],
@@ -536,8 +594,8 @@ export function slackAvailableTools(
   }
   const selected =
     selectedTools ?? channelToolIdsFor(SLACK_CHANNEL_CAPABILITIES);
-  const available: readonly ChannelToolId[] = slackNotificationTarget(env)
-    ? ["message"]
+  const available: readonly ChannelToolId[] = hasSlackChannelAccess(env)
+    ? ["message", "lookup"]
     : [];
   return available.filter((tool) => selected.includes(tool));
 }
@@ -563,7 +621,6 @@ export function createSlackChannelSession(options: {
 }): {
   adapter: SlackChannelAdapter;
   target: () => ChannelTarget | null;
-  notificationTarget?: ChannelTarget;
   availableTools: readonly ChannelToolId[] | undefined;
 } {
   const env = options.env ?? process.env;
@@ -571,7 +628,6 @@ export function createSlackChannelSession(options: {
     options.session ??
     new SlackFileSession({ env, cwd: options.cwd ?? process.cwd() });
   const origin = resolveSlackOrigin(env);
-  const notificationTarget = slackNotificationTarget(env);
   return {
     adapter: new SlackChannelAdapter(session),
     target: () =>
@@ -582,7 +638,6 @@ export function createSlackChannelSession(options: {
             thread: origin.thread_ts,
           }
         : null,
-    ...(notificationTarget ? { notificationTarget } : {}),
     availableTools: slackAvailableTools(env),
   };
 }

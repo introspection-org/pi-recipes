@@ -9,50 +9,19 @@ export interface SlackOrigin {
   name?: string | null;
 }
 
-interface BootstrapChannel {
-  provider?: unknown;
-  conversation?: unknown;
-  name?: unknown;
-}
-
-function isAutomationRun(env: SlackEnv): boolean {
-  const raw = env.INTROSPECTION_TASK_METADATA_JSON?.trim();
+export function hasSlackChannelAccess(
+  env: SlackEnv = process.env,
+): boolean {
+  const raw = env.INTROSPECTION_BOOTSTRAP_JSON?.trim();
   if (!raw) return false;
   try {
-    const metadata = JSON.parse(raw) as { trigger_source?: unknown };
+    const bootstrap = JSON.parse(raw) as { channel_providers?: unknown };
     return (
-      metadata.trigger_source === "manual" ||
-      metadata.trigger_source === "scheduled"
+      Array.isArray(bootstrap.channel_providers) &&
+      bootstrap.channel_providers.includes("slack")
     );
   } catch {
     return false;
-  }
-}
-
-export function resolveSlackNotificationTarget(
-  env: SlackEnv = process.env,
-): SlackOrigin | null {
-  if (!isAutomationRun(env)) return null;
-  const raw = env.INTROSPECTION_BOOTSTRAP_JSON?.trim();
-  if (!raw) return null;
-  try {
-    const bootstrap = JSON.parse(raw) as { operator_channel?: BootstrapChannel };
-    const target = bootstrap.operator_channel;
-    if (
-      target?.provider !== "slack" ||
-      typeof target.conversation !== "string" ||
-      !target.conversation.trim()
-    ) {
-      return null;
-    }
-    return {
-      provider: "slack",
-      channel: target.conversation.trim(),
-      thread_ts: null,
-      name: typeof target.name === "string" ? target.name : null,
-    };
-  } catch {
-    return null;
   }
 }
 

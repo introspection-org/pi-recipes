@@ -32,17 +32,17 @@ Recipe that declares the connector.
 
 The connector package provides the complete Slack tool catalog. Each agent
 lists the exact `channel_*` tools it may call in its YAML file. `channel_message`,
-`channel_read`, and `channel_react` are active from the start, then filtered to
-the task's trusted destination. Other selected tools are available through
-`tool_search`.
+`channel_lookup`, `channel_read`, and `channel_react` are active from the start,
+then filtered to what the session can use. Other selected tools are available
+through `tool_search`.
 
 ## What Slack registers
 
-| Tool                     | Slack operation                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------ |
-| `channel_message`        | `chat.postMessage` into the bound origin or configured Operator notification channel |
-| automatic final delivery | One `chat.postMessage` attempt after an automation run settles                       |
-| `channel_read`           | `conversations.replies` in a thread, else `conversations.history`                    |
+| Tool                 | Slack operation                                                   |
+| -------------------- | ----------------------------------------------------------------- |
+| `channel_message`    | `chat.postMessage` to an explicit channel and optional thread     |
+| `channel_lookup`     | paged `conversations.list` exact-name lookup                     |
+| `channel_read`       | `conversations.replies` in a thread, else `conversations.history` |
 | `channel_react`          | `reactions.add` or `reactions.remove`                                                |
 | `channel_edit`           | `chat.update` for a message the agent posted                                         |
 | `channel_retract`        | `chat.delete` for a message the agent posted                                         |
@@ -64,20 +64,18 @@ Slack restricts those installations to 15 replies and one request per minute.
 and canvases are not implemented in this package yet, and the capability
 descriptor says so rather than registering tools that fail.
 
-`channel_message` requires the Slack channel id and, for a threaded origin, the
-thread id supplied in trusted channel context. The tool rejects values that do
-not exactly match the task's bound origin or configured Operator notification
-target. An automation may use it for interim updates, and its final response is
-posted automatically after either a scheduled or manual run settles. Author
-display names (`users.info`) and permalinks (`chat.getPermalink`) are resolved
-inside the adapter and attached to message rows and results, so there is no user
-lookup or permalink tool.
-Edit and retract also require an opaque reference for a message posted by this
-agent. They cannot act on another author's message.
+`channel_message` requires a Slack channel id and accepts an optional thread id.
+It may post to any channel the injected bot credential can access. An inbound
+task receives its origin ids in channel context. A task without an origin uses
+`channel_lookup` with a complete channel name; the adapter pages through
+`conversations.list`, returns only an exact non-archived match where the bot is
+a member, and never joins a channel. Author display names (`users.info`) and
+permalinks (`chat.getPermalink`) remain trusted enrichment rather than separate
+tools. Edit and retract still require an opaque reference for a message posted
+by this agent.
 
-Workspace search, channel listing and joining, directory lookup, and arbitrary
-cross-channel posting are unsupported. Their contract and access model are
-deferred to a separate proposal.
+Workspace search, channel joining, directory lookup, and user resolution are
+unsupported.
 
 ## Cloud access
 
@@ -95,14 +93,11 @@ After an inbound `channel_message` succeeds in cloud, the adapter posts the
 current run, provider, and origin channel before recording the new thread root.
 A later Slack reply then resumes the same task.
 
-For an automation task, `channel_message` sends an interim top-level update and
-the extension automatically sends the final assistant response after a
-scheduled or manually triggered run settles. An exact `NO_REPLY` final response
-is not sent. Neither post records a thread bridge. The configured channel comes
-from trusted session bootstrap; although its id is a required tool argument,
-the tool accepts only that configured value. A bare reply to a notification is
-therefore ignored unless it separately engages the bot through the normal
-inbound rules.
+An automation or ordinary Operator web task receives Slack messaging and lookup
+when its trusted session bootstrap says the org bot credential is available.
+There is no default destination and no automatic publication of the final
+assistant response. A channel message is sent only by an explicit
+`channel_message` call.
 
 Slack writes are attempted once. The adapter does not retry `chat.postMessage`,
 because Slack accepts no idempotency key for it. For an inbound conversation,

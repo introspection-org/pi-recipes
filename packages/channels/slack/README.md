@@ -24,13 +24,12 @@ Recipe written against `channel_message` is not written against Slack.
 }
 ```
 
-`channel_message` acts on the task's inbound conversation or trusted Operator
-notification target. It requires the configured channel id and, for a threaded
-origin, the thread id; any other destination is rejected. An automation may use
-it for interim updates, while the extension sends the final response
-automatically after a scheduled or manually triggered run settles. Recipe
-authors select tools in the agent YAML file and do not write an extension or
-call the Slack client directly.
+`channel_message` requires a channel id and accepts an optional thread id. It
+may post to any channel the injected Slack bot credential can access. Inbound
+tasks receive their origin ids in channel context; other eligible Operator
+tasks can resolve a complete channel name with `channel_lookup`. Messages are
+published only through explicit tool calls. Recipe authors select tools in the
+agent YAML file and do not write an extension or call the Slack client directly.
 
 Install the recipe dependencies before running `introspection local`. The cloud
 runtime installs the locked production dependencies when it builds a recipe

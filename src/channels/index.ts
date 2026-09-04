@@ -26,6 +26,7 @@ export type {
   ChannelFileIdentity,
   ChannelReadPage,
   ChannelLocalFile,
+  ChannelLookupResult,
   ChannelMessage,
   ChannelMessageIdentity,
   ChannelPostResult,
