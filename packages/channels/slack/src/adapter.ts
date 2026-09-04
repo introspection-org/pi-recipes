@@ -2,6 +2,7 @@ import type {
   ChannelAdapter,
   ChannelAdapterContext,
   ChannelCapabilities,
+  ChannelListEntry,
   ChannelLocalFile,
   ChannelMessage,
   ChannelPostResult,
@@ -28,6 +29,7 @@ import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
  */
 export const SLACK_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   targeting: true,
+  list: true,
   react: true,
   edit: true,
   retract: true,
@@ -41,6 +43,15 @@ export const SLACK_CHANNEL_CAPABILITIES: ChannelCapabilities = {
 
 const SLACK_FILE_VARIANTS = new Set(["original", "video_low"]);
 const SLACK_HISTORY_PAGE_LIMIT = 15;
+const SLACK_CHANNEL_LIST_PAGE_LIMIT = 200;
+
+interface SlackConversation {
+  id?: string;
+  name?: string;
+  is_archived?: boolean;
+  is_member?: boolean;
+  is_private?: boolean;
+}
 
 interface SlackHistoryMessage {
   ts?: string;
@@ -212,6 +223,56 @@ export class SlackChannelAdapter implements ChannelAdapter {
       "form",
       ctx.signal,
     );
+  }
+
+  async list(signal?: AbortSignal): Promise<readonly ChannelListEntry[]> {
+    const channels: ChannelListEntry[] = [];
+    const seenIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+
+    do {
+      const payload = await this.session.call(
+        "conversations.list",
+        {
+          types: "public_channel,private_channel",
+          exclude_archived: true,
+          limit: SLACK_CHANNEL_LIST_PAGE_LIMIT,
+          ...(cursor ? { cursor } : {}),
+        },
+        "form",
+        signal,
+      );
+      const conversations = Array.isArray(payload.channels)
+        ? (payload.channels as SlackConversation[])
+        : [];
+      for (const conversation of conversations) {
+        if (
+          typeof conversation.id !== "string" ||
+          typeof conversation.name !== "string" ||
+          conversation.is_archived === true ||
+          conversation.is_member !== true ||
+          seenIds.has(conversation.id)
+        ) {
+          continue;
+        }
+        seenIds.add(conversation.id);
+        channels.push({
+          id: conversation.id,
+          name: conversation.name,
+          kind: conversation.is_private
+            ? "private_channel"
+            : "public_channel",
+        });
+      }
+
+      const next = nextCursor(payload);
+      if (!next || seenCursors.has(next)) break;
+      seenCursors.add(next);
+      cursor = next;
+    } while (cursor);
+
+    return channels;
   }
 
   async read(

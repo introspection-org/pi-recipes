@@ -33,6 +33,10 @@ interface FakeFetchOptions {
   >;
   permalinks?: Record<string, string>;
   channelName?: string;
+  channelPages?: Record<
+    string,
+    { channels: Array<Record<string, unknown>>; nextCursor?: string }
+  >;
 }
 
 function fakeFile(overrides: Record<string, unknown> = {}) {
@@ -74,6 +78,19 @@ function fakeFetch(options: FakeFetchOptions = {}) {
     }
     if (parsed.pathname.endsWith("/api/files.info")) {
       return response({ payload: { ok: true, file } });
+    }
+    if (parsed.pathname.endsWith("/api/conversations.list")) {
+      const form = new URLSearchParams(String(init.body));
+      const page = options.channelPages?.[form.get("cursor") ?? ""] ?? {
+        channels: [],
+      };
+      return response({
+        payload: {
+          ok: true,
+          channels: page.channels,
+          response_metadata: { next_cursor: page.nextCursor ?? "" },
+        },
+      });
     }
     if (parsed.pathname.endsWith("/api/conversations.info")) {
       return response({
@@ -481,6 +498,49 @@ describe("Slack channel tools", () => {
       .get(name)
       ?.execute("tool-call", params as never, undefined, undefined, undefined as never);
 
+  it("lists every accessible channel across Slack pages", async () => {
+    const { pi, fetchImpl } = slackTools({
+      channelPages: {
+        "": {
+          channels: [
+            { id: "C1", name: "general", is_member: true },
+            { id: "C2", name: "not-joined", is_member: false },
+            { id: "C3", name: "archived", is_member: true, is_archived: true },
+          ],
+          nextCursor: "page-2",
+        },
+        "page-2": {
+          channels: [
+            {
+              id: "G1",
+              name: "incident-response",
+              is_member: true,
+              is_private: true,
+            },
+          ],
+        },
+      },
+    });
+
+    const result = await call(pi, "channel_list", {});
+
+    expect(result!.details).toEqual([
+      { id: "C1", name: "general", kind: "public_channel" },
+      {
+        id: "G1",
+        name: "incident-response",
+        kind: "private_channel",
+      },
+    ]);
+    const calls = fetchImpl.calls.filter((request) =>
+      request.url.includes("conversations.list"),
+    );
+    expect(calls).toHaveLength(2);
+    expect(new URLSearchParams(String(calls[1]!.init.body)).get("cursor")).toBe(
+      "page-2",
+    );
+  });
+
   it("sends to another channel and edits there, without registering a reply bridge", async () => {
     const pi = createMockExtensionAPI();
     const fetchImpl = fakeFetch();
@@ -749,6 +809,7 @@ describe("Slack channel tools", () => {
     expect([...pi.tools.keys()].sort()).toEqual([
       "channel_edit",
       "channel_fetch_file",
+      "channel_list",
       "channel_react",
       "channel_read",
       "channel_reply",

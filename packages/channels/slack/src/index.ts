@@ -48,11 +48,12 @@ export {
  * ```
  *
  * ```yaml
- * tools: [channel_reply, channel_read, channel_react, channel_fetch_file]
+ * tools: [channel_reply, channel_send, channel_list, channel_read, channel_react, channel_fetch_file]
  * ```
  *
- * Explicit read/send targets use this session's credentials. Search, directory
- * lookup, binding authorization and cross-channel reply routing are deferred.
+ * Channel listing and explicit read/send targets use this session's
+ * credentials. Search, directory lookup, binding authorization and
+ * cross-channel reply routing are deferred.
  */
 export const slackRecipeConnectorModule = createChannelConnectorModule({
   provider: "slack",

@@ -32,7 +32,7 @@ Recipe that declares the connector.
 
 The connector package provides the complete Slack tool catalog. Each agent
 lists the exact `channel_*` tools it may call in its YAML file. `channel_reply`,
-`channel_read`, and `channel_react` are active from the start. Other selected
+`channel_list`, `channel_read`, and `channel_react` are active from the start. Other selected
 tools are available through `tool_search`.
 
 ## What Slack registers
@@ -41,6 +41,7 @@ tools are available through `tool_search`.
 | --- | --- |
 | `channel_reply` | `chat.postMessage` into the origin channel and thread |
 | `channel_send` | `chat.postMessage` into an explicit channel and optional thread |
+| `channel_list` | paged `conversations.list` returning accessible channels |
 | `channel_read` | `conversations.replies` in a thread, else `conversations.history` |
 | `channel_react` | `reactions.add` or `reactions.remove` |
 | `channel_edit` | `chat.update` for a message the agent posted |
@@ -58,8 +59,9 @@ Provider rate limits still apply; failures are not automatically retried.
 and canvases are not implemented in this package yet, and the capability
 descriptor says so rather than registering tools that fail.
 
-`channel_send` requires `channel_id`; `thread_id` is optional. `channel_read`
-accepts optional targets, defaulting to the origin. Explicit channel without
+`channel_list` returns all non-archived public and private channels where the
+bot is a member. `channel_send` requires a listed `channel_id`; `thread_id` is
+optional. `channel_read` accepts optional targets, defaulting to the origin. Explicit channel without
 thread means timeline/top-level, not the origin's thread. Reply stays bound.
 Author display names (`users.info`) and
 permalinks (`chat.getPermalink`) are resolved inside the adapter and attached to
@@ -67,7 +69,7 @@ message rows and reply results, so there is no user lookup or permalink tool.
 Edit and retract also require an opaque reference for a message posted by this
 agent. They cannot act on another author's message.
 
-Search, channel listing/info, joining, and directory lookup remain deferred.
+Search, individual channel-info lookup, joining, and directory lookup remain deferred.
 Tools use one existing credential session; they do not select installations or
 enforce project/customer bindings. The optional host target-policy callback
 constrains these tools, not direct shell/API access.

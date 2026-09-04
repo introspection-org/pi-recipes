@@ -17,6 +17,7 @@ import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 const FULL_CAPABILITIES: ChannelCapabilities = {
   targeting: true,
+  list: true,
   react: true,
   edit: true,
   retract: true,
@@ -60,6 +61,9 @@ function stubAdapter(
     async react() {},
     async send(ctx, input) {
       return { ref: ctx.refs.message({ conversation: ctx.target.conversation, thread: ctx.target.thread, id: `sent-${input.text.length}`, authoredByAgent: true }) };
+    },
+    async list() {
+      return [{ id: "C1", name: "general", kind: "public_channel" }];
     },
     async edit(_ctx, input) {
       return { ref: input.ref };
@@ -533,6 +537,7 @@ describe("channel tool surface", () => {
     expect(slack.tools.map((tool) => tool.id)).toEqual([
       "reply",
       "send",
+      "list",
       "read",
       "react",
       "edit",

@@ -19,6 +19,7 @@ import type {
 export const CHANNEL_TOOL_IDS = [
   "reply",
   "send",
+  "list",
   "read",
   "react",
   "edit",
@@ -33,6 +34,7 @@ export type ChannelToolId = (typeof CHANNEL_TOOL_IDS)[number];
 /** Active without a search. The rest are reachable through `tool_search`. */
 const DEFAULT_ACTIVE: readonly ChannelToolId[] = [
   "reply",
+  "list",
   "read",
   "react",
 ];
@@ -47,6 +49,7 @@ export function channelToolIdsFor(
 ): ChannelToolId[] {
   const supported: ChannelToolId[] = ["reply"];
   if (capabilities.targeting) supported.push("send");
+  if (capabilities.list) supported.push("list");
   if (capabilities.read !== false) supported.push("read");
   if (capabilities.react) supported.push("react");
   if (capabilities.edit) supported.push("edit");
@@ -77,6 +80,8 @@ function assertImplemented(adapter: ChannelAdapter): void {
         return typeof adapter.reply !== "function";
       case "send":
         return typeof adapter.send !== "function";
+      case "list":
+        return typeof adapter.list !== "function";
       case "read":
         return typeof adapter.read !== "function";
       case "react":
@@ -162,7 +167,7 @@ function channelContextPrompt(
     "",
     `Channel metadata: ${JSON.stringify(metadata)}`,
     "",
-    "channel_reply always answers this conversation. When explicit targeting is supported, channel_read and channel_send can name another channel/thread using the same connection. Sending elsewhere does not establish follow-up routing.",
+    "channel_reply always answers this conversation. When explicit targeting is supported, channel_list returns available channels, and channel_read and channel_send can name another channel/thread using the same connection. Sending elsewhere does not establish follow-up routing.",
     ...(deferred.length > 0
       ? [
           "Tools in searchable_tools are loaded on demand. If one is not available, use tool_search to enable it before calling it.",
@@ -300,6 +305,22 @@ export function registerChannelTools(
       const ctx = context(signal, explicitTarget(params));
       await options.validateTarget?.(ctx.target, "send");
       return toolResult(await adapter.send!(ctx, { text: params.text }));
+    },
+  }));
+
+  register("list", () => ({
+    name: channelToolName("list"),
+    label: "List channels",
+    description:
+      "List the channels available to the current provider credential session. Returns provider channel ids and names for use with explicitly targeted channel tools.",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    executionMode: "sequential",
+    async execute(
+      _toolCallId: string,
+      _params: Record<string, never>,
+      signal?: AbortSignal,
+    ) {
+      return toolResult(await adapter.list!(signal));
     },
   }));
 

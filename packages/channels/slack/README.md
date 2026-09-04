@@ -24,12 +24,13 @@ Recipe written against `channel_reply` is not written against Slack.
 }
 ```
 
-`channel_reply` answers the origin. `channel_send` takes an explicit channel
+`channel_reply` answers the origin. `channel_list` returns the public and
+private channels available to the bot. `channel_send` takes an explicit channel
 and optional thread; `channel_read` accepts optional channel/thread targets.
 Recipe authors select tools in the agent YAML:
 
 ```yaml
-tools: [channel_reply, channel_send, channel_read, channel_react, channel_fetch_file]
+tools: [channel_reply, channel_send, channel_list, channel_read, channel_react, channel_fetch_file]
 ```
 
 Targets use the existing connection. This package does not add backend binding

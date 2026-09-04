@@ -30,6 +30,8 @@ export interface ChannelTarget {
 export interface ChannelCapabilities {
   /** Accept explicit read targets and expose send. Absent preserves bound tools. */
   readonly targeting?: boolean;
+  /** List conversations available to this provider credential session. */
+  readonly list?: boolean;
   readonly react: boolean;
   readonly edit: boolean;
   readonly retract: boolean;
@@ -118,6 +120,12 @@ export interface ChannelReadPage {
   readonly next_direction?: "older" | "newer";
 }
 
+export interface ChannelListEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: "public_channel" | "private_channel";
+}
+
 export interface ChannelLocalFile {
   readonly id: string;
   readonly name: string;
@@ -190,6 +198,8 @@ export interface ChannelAdapter {
     ctx: ChannelAdapterContext,
     input: { text: string },
   ): Promise<ChannelPostResult>;
+  /** List conversations available to this credential session. */
+  list?(signal?: AbortSignal): Promise<readonly ChannelListEntry[]>;
 
   react?(
     ctx: ChannelAdapterContext,

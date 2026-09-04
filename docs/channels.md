@@ -30,6 +30,7 @@ fetch earlier messages when the provider supports it.
 | --- | --- | --- |
 | `channel_reply` | `text` (Markdown) | always |
 | `channel_send` | `channel_id`, `thread_id?`, `text` | `targeting` |
+| `channel_list` | none | `list` |
 | `channel_read` | `channel_id?`, `thread_id?`, `limit?`, `cursor?` | `read`; addressing requires `targeting` |
 | `channel_react` | `message`, `emoji`, `action?` (`add` or `remove`) | `react` |
 | `channel_edit` | `message`, `text` | `edit` |
@@ -38,7 +39,7 @@ fetch earlier messages when the provider supports it.
 | `channel_fetch_file` | `file` (a `file_…` handle), `variant?` | `fetch_file` |
 | `channel_post_document` | `title`, `markdown` | `documents` |
 
-`channel_reply`, `channel_read`, and `channel_react` are active by default when
+`channel_reply`, `channel_list`, `channel_read`, and `channel_react` are active by default when
 the provider supports them. The other selected tools start inactive, and the
 model can find them through `tool_search`.
 
@@ -48,6 +49,7 @@ work with every adapter.
 
 ### Targets and pagination
 
+- `channel_list({})` returns the channels available to the provider credential session.
 - `channel_read({})` reads the origin conversation.
 - `channel_read({channel_id: "C2"})` reads that channel's timeline.
 - `channel_read({channel_id: "C2", thread_id: "123.4"})` reads that thread.
@@ -103,9 +105,10 @@ carry a `file_…` handle, and that is the only value the tool accepts. A bot ca
 usually read files from every conversation it belongs to, so accepting a raw
 provider file ID would bypass the requirement to observe the file first.
 
-### Enrichment, not lookup tools
+### Listing and enrichment
 
-Author names and permalinks are resolved by the adapter in trusted code and
+`channel_list` returns provider channel IDs and names for explicitly targeted
+reads and sends. Author names and permalinks are resolved by the adapter in trusted code and
 attached to what the agent is already reading: `channel_read` rows carry
 `author.display_name`, and `channel_reply` returns a `permalink` where the
 provider has one. There is no `resolve_user` or `get_permalink` tool, because
@@ -114,7 +117,7 @@ addressing argument.
 
 ### Unsupported operations
 
-Search, channel listing/info, thread listing, channel joining, and directory
+Search, individual channel-info lookup, thread listing, channel joining, and directory
 lookup are deferred. Explicit IDs can come from task context; thread IDs can
 also come from channel reads.
 
@@ -143,7 +146,7 @@ The connector declaration enables the provider package and its supported tool
 catalog. The agent YAML file is the only place that narrows the catalog:
 
 ```yaml
-tools: [channel_reply, channel_send, channel_read, channel_react, channel_edit, channel_retract, channel_fetch_file]
+tools: [channel_reply, channel_send, channel_list, channel_read, channel_react, channel_edit, channel_retract, channel_fetch_file]
 ```
 
 The host fails when an agent selects a tool that the provider does not support.
@@ -157,7 +160,8 @@ Each provider package declares the capabilities that it can support.
 An adapter supplies transport and a capability descriptor. It writes no tool
 schemas. The shared schema keeps providers from defining different forms of
 the same operation. Set `targeting: true` and implement `send(ctx, {text})` to
-opt into the shared targeting schema; omit it for origin-bound tools.
+opt into the shared targeting schema; set `list: true` and implement `list()` to
+expose `channel_list`. Omit these capabilities for origin-bound tools.
 
 ```ts
 import {
