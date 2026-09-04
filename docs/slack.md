@@ -65,11 +65,12 @@ and canvases are not implemented in this package yet, and the capability
 descriptor says so rather than registering tools that fail.
 
 `channel_message` requires a Slack channel id and accepts an optional thread id.
-It may post to any channel the injected bot credential can access. An inbound
-task receives its origin ids in channel context. A task without an origin uses
-`channel_lookup` with a complete channel name; the adapter pages through
-`conversations.list`, returns only an exact non-archived match where the bot is
-a member, and never joins a channel. Author display names (`users.info`) and
+Channel-connection sessions may post only to their inbound conversation.
+Eligible Operator sessions may post to any channel the injected bot credential
+can access. An inbound task receives its origin ids in channel context. An
+eligible task without an origin uses `channel_lookup` with a complete channel
+name; the adapter pages through `conversations.list`, returns only an exact
+non-archived match where the bot is a member, and never joins a channel. Author display names (`users.info`) and
 permalinks (`chat.getPermalink`) remain trusted enrichment rather than separate
 tools. Edit and retract still require an opaque reference for a message posted
 by this agent.
@@ -110,22 +111,6 @@ Run `introspection dev` from the Recipe repository. A Slack event sent to the
 development runtime starts a cloud sandbox with the local Recipe overlay, so the
 adapter uses the cloud task origin and provider proxy and needs no local Slack
 credential. Use `introspection dev --logs` for sandbox logs.
-
-## Test with introspection local
-
-An `introspection local` run has no inbound Slack event, cloud task origin, or
-credential proxy. Install dependencies, then set a bot token and a conversation:
-
-```bash
-pnpm install --frozen-lockfile
-export SLACK_BOT_TOKEN='xoxb-...'
-export SLACK_CHANNEL_ID='C0123456789'
-export SLACK_THREAD_TS='1234567890.123456' # optional
-introspection local -p 'Summarise this thread and reply.'
-```
-
-Local tools call Slack directly with `SLACK_BOT_TOKEN`. Local posts create no
-inbound task or reply bridge, because no Data Plane task exists.
 
 ## File downloads
 

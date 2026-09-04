@@ -39,13 +39,7 @@ export function resolveSlackOrigin(
     };
   }
 
-  const localChannel = env.SLACK_CHANNEL_ID?.trim();
-  if (!localChannel) return null;
-  return {
-    provider: "slack",
-    channel: localChannel,
-    thread_ts: env.SLACK_THREAD_TS?.trim() || null,
-  };
+  return null;
 }
 
 export function slackDownloadRoot(

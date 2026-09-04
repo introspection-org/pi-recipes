@@ -107,8 +107,9 @@ function slackTimestamp(ts: string): string | undefined {
 /**
  * Slack against the neutral channel contract.
  *
- * Conversation-scoped methods act on `ctx.target`. `channel_message` may carry
- * any explicit destination the injected bot credential can access, while
+ * Conversation-scoped methods act on `ctx.target`. Trusted Operator sessions
+ * may supply any destination the injected bot credential can access, while
+ * channel-connection sessions remain bound by the shared tool layer.
  * `channel_lookup` resolves an exact channel name through Slack.
  *
  * User ids and permalinks are resolved here rather than exposed as lookup
@@ -589,23 +590,23 @@ export function slackAvailableTools(
   env: SlackEnv,
   selectedTools?: readonly ChannelToolId[],
 ): readonly ChannelToolId[] | undefined {
-  if (resolveSlackOrigin(env)) {
-    return selectedTools;
-  }
   const selected =
     selectedTools ?? channelToolIdsFor(SLACK_CHANNEL_CAPABILITIES);
-  const available: readonly ChannelToolId[] = hasSlackChannelAccess(env)
-    ? ["message", "lookup"]
-    : [];
-  return available.filter((tool) => selected.includes(tool));
+  const origin = resolveSlackOrigin(env);
+  if (origin) {
+    return selected.filter((tool) => tool !== "lookup");
+  }
+  if (hasSlackChannelAccess(env)) {
+    const providerTools: readonly ChannelToolId[] = ["message", "lookup"];
+    return providerTools.filter((tool) => selected.includes(tool));
+  }
+  return [];
 }
 
 export function slackChannelTarget(env: SlackEnv): ChannelTarget {
   const origin = resolveSlackOrigin(env);
   if (!origin) {
-    throw new Error(
-      "No Slack origin is configured. Cloud tasks supply one automatically. For introspection local, set SLACK_CHANNEL_ID and optionally SLACK_THREAD_TS.",
-    );
+    throw new Error("No Slack origin is configured for this cloud task.");
   }
   return {
     provider: "slack",
@@ -621,6 +622,7 @@ export function createSlackChannelSession(options: {
 }): {
   adapter: SlackChannelAdapter;
   target: () => ChannelTarget | null;
+  messageScope: "origin" | "provider";
   availableTools: readonly ChannelToolId[] | undefined;
 } {
   const env = options.env ?? process.env;
@@ -638,6 +640,8 @@ export function createSlackChannelSession(options: {
             thread: origin.thread_ts,
           }
         : null,
+    messageScope:
+      origin === null && hasSlackChannelAccess(env) ? "provider" : "origin",
     availableTools: slackAvailableTools(env),
   };
 }

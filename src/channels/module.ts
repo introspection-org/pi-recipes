@@ -18,6 +18,8 @@ export interface ChannelConnectorSession {
   readonly adapter: ChannelAdapter;
   /** Resolved lazily so a task with no channel origin still starts. */
   readonly target: ChannelTarget | null | (() => ChannelTarget | null);
+  /** Whether messages are bound to the origin or may use any provider destination. */
+  readonly messageScope?: "origin" | "provider";
   /** Session-specific subset; unsupported tools are omitted rather than failing. */
   readonly availableTools?: readonly ChannelToolId[];
 }
@@ -129,6 +131,7 @@ export function createChannelConnectorModule(
         const sessionTools = tools.filter((tool) => available.has(tool));
         registerChannelTools(pi, session.adapter, {
           target: session.target,
+          messageScope: session.messageScope,
           tools: sessionTools,
           deferredTools: sessionTools.filter((tool) => deferredToolIds.has(tool)),
           refs: new ChannelRefStore(),

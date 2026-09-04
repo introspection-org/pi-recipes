@@ -111,6 +111,8 @@ export interface RegisterChannelToolsOptions {
    * call.
    */
   target: ChannelTarget | null | (() => ChannelTarget | null);
+  /** Origin-bound by default; trusted hosts may grant provider-wide messaging. */
+  messageScope?: "origin" | "provider";
   /** Restrict registration to these ids; defaults to everything supported. */
   tools?: readonly ChannelToolId[];
   /** Selected tools that require `tool_search` before the model may call them. */
@@ -177,9 +179,10 @@ function channelContextPrompt(
  *
  * Two invariants are enforced by construction rather than by review:
  *
- * 1. **Message destinations are explicit.** `channel_message` requires the
- *    provider channel id and accepts a thread id. Provider access is bounded by
- *    the credential injected for this session, not by a closed-over target.
+ * 1. **Message destinations are explicit and scoped.** `channel_message`
+ *    requires the provider channel id and accepts a thread id. It is bound to
+ *    the inbound origin by default; trusted hosts may grant provider-wide
+ *    messaging for sessions whose credential is intended for that use.
  * 2. **Unsupported operations are absent**, not stubs that answer "this
  *    channel cannot do that" — such a stub costs a turn every time and teaches
  *    the model nothing durable.
@@ -221,15 +224,32 @@ export function registerChannelTools(
   const messageContext = (
     input: { channel: string; thread?: string },
     signal?: AbortSignal,
-  ): ChannelAdapterContext => ({
-    target: {
-      provider: adapter.provider,
-      conversation: input.channel,
-      thread: input.thread,
-    },
-    refs,
-    signal,
-  });
+  ): ChannelAdapterContext => {
+    if (options.messageScope !== "provider") {
+      const origin = resolveTarget();
+      if (origin === null) {
+        throw new Error("This task has no inbound channel conversation.");
+      }
+      const expectedThread = origin.thread?.trim() || undefined;
+      if (
+        input.channel !== origin.conversation ||
+        input.thread !== expectedThread
+      ) {
+        throw new Error(
+          "The requested destination is outside this task's inbound conversation.",
+        );
+      }
+    }
+    return {
+      target: {
+        provider: adapter.provider,
+        conversation: input.channel,
+        thread: input.thread,
+      },
+      refs,
+      signal,
+    };
+  };
   const definitions = new Map<ChannelToolId, Record<string, unknown>>();
   const register = (
     id: ChannelToolId,
@@ -242,7 +262,9 @@ export function registerChannelTools(
     name: channelToolName("message"),
     label: "Send channel message",
     description:
-      "Send a message to a channel the current provider bot can access. Pass the exact provider channel id and a thread id when replying in a thread.",
+      options.messageScope === "provider"
+        ? "Send a message to a channel the current provider bot can access. Pass the exact provider channel id and a thread id when replying in a thread."
+        : "Send a message to this task's inbound conversation. Pass the exact channel id and thread id from channel context.",
     parameters: Type.Object(
       {
         channel: Type.String({ minLength: 1 }),

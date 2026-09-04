@@ -57,9 +57,11 @@ export {
  * tools: [channel_message, channel_lookup, channel_read, channel_react, channel_fetch_file]
  * ```
  *
- * `channel_lookup` resolves a complete channel name; `channel_message` may post
- * to any channel the injected bot credential can access. Workspace search,
- * directory lookups, and channel joining remain unsupported.
+ * `channel_lookup` resolves a complete channel name for eligible Operator
+ * sessions. `channel_message` remains origin-bound for channel connections and
+ * may use provider-wide destinations only when the trusted host grants that
+ * scope. Workspace search, directory lookups, and channel joining remain
+ * unsupported.
  */
 export const slackRecipeConnectorModule = createChannelConnectorModule({
   provider: "slack",

@@ -6,10 +6,10 @@ schemas for every provider.
 
 Two properties are structural:
 
-- **Message destinations are explicit.** `channel_message` requires the
-  provider's channel id and accepts a thread id when needed. The provider bot's
-  injected credential is the authorization boundary: a call can reach any
-  channel that bot can access, but no other workspace or provider credential.
+- **Message destinations are explicit and session-scoped.** `channel_message`
+  requires the provider's channel id and accepts a thread id when needed.
+  Channel-born sessions are bound to their inbound conversation by default;
+  trusted hosts may grant provider-wide messaging to eligible sessions.
 - **A tool that the provider cannot support is absent, not failing.** Each
   adapter declares a capability descriptor, and registration filters on it.
   For example, an adapter with no history API has no `channel_read` tool.
@@ -25,7 +25,7 @@ task without an origin receives no invented destination. It can use
 
 | Tool                    | Model arguments                                   | Requires                               |
 | ----------------------- | ------------------------------------------------- | -------------------------------------- |
-| `channel_message`       | `channel`, `thread?`, `text` (Markdown)           | provider messaging access              |
+| `channel_message`       | `channel`, `thread?`, `text` (Markdown)           | inbound origin or provider messaging access |
 | `channel_lookup`        | `name`                                            | exact provider channel-name lookup     |
 | `channel_read`          | `limit?`, `cursor?`                               | an inbound origin and `read` capability |
 | `channel_react`         | `message`, `emoji`, `action?` (`add` or `remove`) | `react`                                                           |

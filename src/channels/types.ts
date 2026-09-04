@@ -8,10 +8,10 @@
  *
  * Two properties are structural rather than documented:
  *
- * - **Message destinations are explicit.** `channel_message` requires a channel
- *   id and accepts a thread id when applicable. An inbound origin is prompt
- *   context, not an authorization boundary; provider credentials determine
- *   which channels the bot can access.
+ * - **Message destinations are explicit and session-scoped.** `channel_message`
+ *   requires a channel id and accepts a thread id when applicable. Channel-born
+ *   sessions are bound to their origin by default; trusted hosts may grant
+ *   provider-wide messaging to eligible sessions.
  * - **Unsupported is absent.** Tools are registered from `ChannelCapabilities`,
  *   so a channel that cannot read earlier messages simply has no read tool. A
  *   tool that always answers "unsupported" costs a model turn and teaches

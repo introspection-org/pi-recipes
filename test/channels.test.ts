@@ -137,6 +137,7 @@ describe("channel tool surface", () => {
     const pi = createMockExtensionAPI();
     registerChannelTools(pi, stubAdapter(), {
       target,
+      messageScope: "provider",
       tools: ["message"],
     });
 
@@ -411,7 +412,7 @@ describe("channel tool surface", () => {
           return adapter.reply(ctx, input);
         },
       },
-      { target, tools: ["message"] },
+      { target, messageScope: "provider", tools: ["message"] },
     );
 
     await pi.tools.get("channel_message")!.execute(
@@ -425,6 +426,21 @@ describe("channel tool surface", () => {
     expect(destinations).toEqual([
       { provider: "test", conversation: "C2", thread: "200.2" },
     ]);
+  });
+
+  it("rejects a message destination outside the origin by default", async () => {
+    const pi = createMockExtensionAPI();
+    registerChannelTools(pi, stubAdapter(), { target, tools: ["message"] });
+
+    await expect(
+      pi.tools.get("channel_message")!.execute(
+        "other-channel",
+        { channel: "C2", thread: "100.1", text: "hello" },
+        undefined,
+        undefined,
+        undefined as never,
+      ),
+    ).rejects.toThrow(/outside this task's inbound conversation/);
   });
 
   it("refuses a target for a different provider", async () => {
