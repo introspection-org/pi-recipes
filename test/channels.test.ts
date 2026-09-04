@@ -491,6 +491,25 @@ describe("channel tool surface", () => {
     ).toThrow(/differ from its declared catalog/);
   });
 
+  it.each(["targeting", "list"] as const)("normalizes omitted and false %s capabilities", (key) => {
+    for (const explicitOnCatalog of [true, false]) {
+      const omitted = { ...LIMITED_CAPABILITIES };
+      const explicit = { ...omitted, [key]: false };
+      const module = createChannelConnectorModule({
+        provider: "test",
+        capabilities: explicitOnCatalog ? explicit : omitted,
+        createSession: () => ({ adapter: stubAdapter(explicitOnCatalog ? omitted : explicit), target }),
+      });
+      expect(() => module.createExtension({ tools: ["reply"] })(createMockExtensionAPI() as never)).not.toThrow();
+    }
+    const mismatch = createChannelConnectorModule({
+      provider: "test",
+      capabilities: LIMITED_CAPABILITIES,
+      createSession: () => ({ adapter: stubAdapter({ ...LIMITED_CAPABILITIES, [key]: true }), target }),
+    });
+    expect(() => mismatch.createExtension({ tools: ["reply"] })(createMockExtensionAPI() as never)).toThrow(/differ from its declared catalog/);
+  });
+
   it("refuses an adapter for a different provider", () => {
     const module = createChannelConnectorModule({
       provider: "slack",

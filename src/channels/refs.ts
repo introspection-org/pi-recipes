@@ -95,7 +95,7 @@ export class ChannelRefStore implements ChannelRefResolver {
   }
 
   file(identity: ChannelFileIdentity): FileRef {
-    const key = JSON.stringify([identity.conversation, identity.id]);
+    const key = JSON.stringify([identity.conversation, identity.thread ?? null, identity.id]);
     const existing = this.byFileIdentity.get(key);
     if (existing) return existing;
     const ref = handle(FILE_PREFIX);

@@ -112,6 +112,33 @@ describe("explicit channel targets", () => {
     await expect(call("react", { message, emoji: "eyes" })).rejects.toThrow("outside the bound");
   });
 
+  it("preserves a file's observed thread when policy changes", async () => {
+    let revoked = false;
+    const { call, adapter, refs } = setup({
+      validateTarget: (target) => {
+        if (revoked && target.thread === "2") throw new Error("thread revoked");
+      },
+    });
+    let file = "";
+    adapter.read = vi.fn(async (ctx) => {
+      // The tool wrapper retains the read scope even if an adapter omits it.
+      file = ctx.refs.file({ conversation: ctx.target.conversation, id: "F1" });
+      return { messages: [] };
+    });
+    await call("read", { channel_id: "B", thread_id: "2" });
+    expect(refs.resolveFile(file)).toMatchObject({ conversation: "B", thread: "2" });
+    await call("fetch_file", { file });
+    const threadFile = file;
+    await call("read", { channel_id: "B" });
+    expect(file).not.toBe(threadFile);
+    revoked = true;
+    vi.mocked(adapter.fetchFile!).mockClear();
+    await expect(call("fetch_file", { file: threadFile })).rejects.toThrow("thread revoked");
+    expect(adapter.fetchFile).not.toHaveBeenCalled();
+    await call("fetch_file", { file });
+    expect(adapter.fetchFile).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects blank targets before calling the provider", async () => {
     const { call, adapter } = setup();
     await expect(call("send", { channel_id: " ", text: "hi" })).rejects.toThrow("must not be empty");

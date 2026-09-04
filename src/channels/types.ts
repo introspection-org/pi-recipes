@@ -148,6 +148,8 @@ export interface ChannelMessageIdentity {
 export interface ChannelFileIdentity {
   readonly conversation: string;
   readonly id: string;
+  /** Read target where this file was observed; absent/null means the timeline. */
+  readonly thread?: string | null;
 }
 
 /**

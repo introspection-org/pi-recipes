@@ -349,6 +349,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
                   // nothing observed through this credential session.
                   id: ctx.refs.file({
                     conversation: ctx.target.conversation,
+                    thread: ctx.target.thread,
                     id: file.id!,
                   }),
                   ...(file.name ? { name: file.name } : {}),

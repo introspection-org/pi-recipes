@@ -51,6 +51,8 @@ function sameCapabilities(
   left: ChannelCapabilities,
   right: ChannelCapabilities,
 ): boolean {
+  left = { ...left, targeting: left.targeting ?? false, list: left.list ?? false };
+  right = { ...right, targeting: right.targeting ?? false, list: right.list ?? false };
   const keys = Object.keys(right) as (keyof ChannelCapabilities)[];
   return (
     Object.keys(left).length === keys.length &&

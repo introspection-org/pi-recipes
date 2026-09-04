@@ -219,7 +219,7 @@ export function registerChannelTools(
         message: (identity) => refs.message(identity),
         resolveMessage: (ref) => refs.resolveMessage(ref),
         resolveAuthored: (ref) => refs.resolveAuthored(ref),
-        file: (identity) => refs.file(identity),
+        file: (identity) => refs.file({ ...identity, thread: target.thread }),
         resolveFile: (ref) => refs.resolveFile(ref),
         cursor: (value) => refs.cursor(value, scope),
         resolveCursor: (value) => refs.resolveCursor(value, scope),
@@ -525,7 +525,7 @@ export function registerChannelTools(
     ) {
       const file = refs.resolveFile(params.file);
       if (!adapter.capabilities.targeting && file.conversation !== resolveTarget().conversation) throw new Error("File reference is outside the bound conversation");
-      const ctx = context(signal, { provider: adapter.provider, conversation: file.conversation });
+      const ctx = context(signal, { provider: adapter.provider, conversation: file.conversation, thread: file.thread });
       await options.validateTarget?.(ctx.target, "fetch_file");
       return toolResult(await adapter.fetchFile!(ctx, params));
     },

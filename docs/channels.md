@@ -104,6 +104,9 @@ a previous session's message is not supported.
 carry a `file_…` handle, and that is the only value the tool accepts. A bot can
 usually read files from every conversation it belongs to, so accepting a raw
 provider file ID would bypass the requirement to observe the file first.
+File handles also retain the channel/thread read scope where they were observed.
+Fetching revalidates that scope; observing the same file through another scope
+creates a separate handle rather than changing the authority of an earlier one.
 
 ### Listing and enrichment
 
