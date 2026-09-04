@@ -257,9 +257,13 @@ describe("createAgentSession", () => {
     const scripted = handle.session.agent.streamFunction;
     handle.session.agent.streamFunction = (model, context, options) => {
       const users = context.messages.filter((message) => message.role === "user");
-      const first = JSON.stringify(users[0]);
-      expect(first.indexOf("hello")).toBeLessThan(first.indexOf("<channel_context>"));
-      expect(JSON.stringify(users).match(/<channel_context>/g)).toHaveLength(1);
+      expect(JSON.stringify(users[0])).toContain("hello");
+      expect(JSON.stringify(users[0])).not.toContain("<channel_context>");
+      expect(context.systemPrompt).toContain('<channel_context>\n{"provider":"test","channel_id":"C1","conversation_scope":"conversation"}\n</channel_context>');
+      for (const reminder of users.filter((message) => JSON.stringify(message).includes("No successful final channel reply"))) {
+        expect(JSON.stringify(reminder)).toContain("<channel_context>");
+        expect(JSON.stringify(reminder)).toContain("C1");
+      }
       return scripted(model, context, options);
     };
     const events: string[] = [];

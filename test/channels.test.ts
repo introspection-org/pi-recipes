@@ -175,6 +175,25 @@ describe("channel tool surface", () => {
     }
   });
 
+  it.each([true, false])("propagates cancellation during listing policy checks (reject=%s)", async (reject) => {
+    const adapter = stubAdapter();
+    adapter.list = vi.fn(async () => [
+      { id: "C1", name: "general", kind: "public_channel" as const },
+      { id: "C2", name: "next", kind: "public_channel" as const },
+    ]);
+    const controller = new AbortController();
+    const error = new Error("cancelled");
+    const validateTarget = vi.fn(async () => {
+      await Promise.resolve();
+      controller.abort(error);
+      if (reject) throw error;
+    });
+    const pi = createMockExtensionAPI();
+    registerChannelTools(pi, adapter, { target, validateTarget });
+    await expect(channelCommand(pi, "list")!.execute("list", {}, controller.signal)).rejects.toBe(error);
+    expect(validateTarget).toHaveBeenCalledOnce();
+  });
+
   it("filters channel listings through the host target policy", async () => {
     const adapter = stubAdapter();
     adapter.list = vi.fn(async () => [

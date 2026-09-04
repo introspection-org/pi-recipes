@@ -303,6 +303,7 @@ export function registerChannelTools(
 
       const allowed = [];
       for (const channel of channels) {
+        signal?.throwIfAborted();
         try {
           await options.validateTarget(
             {
@@ -312,8 +313,10 @@ export function registerChannelTools(
             },
             "list",
           );
+          signal?.throwIfAborted();
           allowed.push(channel);
-        } catch {
+        } catch (error) {
+          if (signal?.aborted) throw error;
           // Listing must fail closed per entry: a denied target's name and id
           // must not become model-visible merely because the credential can see it.
         }
