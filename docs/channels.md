@@ -53,8 +53,8 @@ breaking interface change; old individual tool names are not registered.
 Before each agent run, the extension adds origin metadata to the system prompt:
 provider, channel/thread IDs, conversation scope, and optional name/permalink.
 Labels are untrusted metadata; normal assistant output is not delivered to the
-channel. Recipe instructions decide when to reply, stay silent, read history,
-or send elsewhere; tool descriptions explain how.
+channel. Recipe instructions guide the reply, history reads, and explicit
+sends. Recipes that intentionally stay silent must set `requireReply: false`.
 
 User messages are not rewritten. Cloud ingress retains per-message `from`,
 `message_id`, and `sent_at` attribution. Legacy custom origin entries are
@@ -187,7 +187,7 @@ send idempotency or claim exactly-once delivery.
 ```json
 {
   "dependencies": {
-    "@introspection-ai/recipe-channel-slack": "^0.1.0"
+    "@introspection-ai/recipe-channel-slack": "^0.2.0"
   },
   "pi": {
     "channels": [
@@ -199,8 +199,9 @@ send idempotency or claim exactly-once delivery.
 }
 ```
 
-The channel declaration enables the provider package and its supported tool
-catalog. The agent YAML file is the only place that narrows the catalog:
+The channel declaration enables the provider package, and its optional
+`commands` allowlist narrows the supported operations. Each agent selects the
+tool in its YAML file:
 
 ```yaml
 tools: [channels]

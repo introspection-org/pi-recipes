@@ -15,7 +15,7 @@ protocol.
 ```json
 {
   "dependencies": {
-    "@introspection-ai/recipe-channel-slack": "^0.1.0"
+    "@introspection-ai/recipe-channel-slack": "^0.2.0"
   },
   "pi": {
     "channels": [
