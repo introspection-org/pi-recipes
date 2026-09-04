@@ -31,10 +31,11 @@ same restriction.
 
 ### Required replies
 
-Set `requireReply: true` on a channel connector to require a successful final
-`reply` on turns with a channel origin. It is opt-in; UI and automation turns
-without an origin are unaffected. The agent must select `channels`, and the
-connector must expose `reply`.
+`requireReply` defaults to `true` when channel tools are enabled: inbound turns
+must deliver a successful final `reply`. Set `requireReply: false` explicitly to
+opt out, for example for a read-only command allowlist. UI and automation turns
+without an origin are unaffected. Disabled channel tools remain disabled;
+an enabled connector with required replies must expose `reply`.
 
 `reply` accepts `final` (default `true`). Use `final: false` for progress updates.
 Only a successful final reply satisfies the guard, not reactions or explicit

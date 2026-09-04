@@ -3,7 +3,7 @@ import { createChannelConnectorModule, registerChannelTools, type ChannelAdapter
 import { channelCommand } from "./helpers/channel-command.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
-function setup(requireReply = true, origin = true) {
+function setup(requireReply?: boolean, origin = true) {
   const pi = createMockExtensionAPI();
   const reply = vi.fn<ChannelAdapter["reply"]>(async () => ({ ref: "message-1" }));
   const adapter = {
@@ -13,7 +13,7 @@ function setup(requireReply = true, origin = true) {
     reply,
   } as ChannelAdapter;
   registerChannelTools(pi, adapter, {
-    requireReply,
+    ...(requireReply === undefined ? {} : { requireReply }),
     target: () => {
       if (!origin) throw new Error("No origin");
       return { provider: "test", conversation: "C1", thread: "T1" };
@@ -28,6 +28,15 @@ function setup(requireReply = true, origin = true) {
 }
 
 describe("required channel replies", () => {
+  it("requires replies by default through the provider module and permits explicit opt-out", () => {
+    const { adapter } = setup();
+    const connector = createChannelConnectorModule({
+      provider: "test", capabilities: adapter.capabilities,
+      createSession: () => ({ adapter, target: { provider: "test", conversation: "C1" } }),
+    });
+    expect(() => connector.createExtension({ tools: ["channels"], commands: ["read"] })).toThrow("requireReply");
+    expect(() => connector.createExtension({ tools: ["channels"], commands: ["read"], requireReply: false })).not.toThrow();
+  });
   it("keeps origin in the system prompt across runs without rewriting user attribution", async () => {
     const s = setup();
     const [first] = await s.start() as Array<{ systemPrompt: string; message?: unknown }>;
