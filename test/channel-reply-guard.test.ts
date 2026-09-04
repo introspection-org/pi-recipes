@@ -68,6 +68,26 @@ describe("required channel replies", () => {
     }) as Array<{ message?: unknown }>;
     expect(resumed!.message).toBeUndefined();
   });
+  it("restores compacted origin context with the retained user's attribution", async () => {
+    const s = setup();
+    const [result] = await s.start() as Array<{ message: { content: string } }>;
+    const followUp = 'next\n\n<channel_context>\n{"from":"U2","message_id":"100.2"}\n</channel_context>';
+    const messages = [{ role: "user", content: followUp, timestamp: 1 }];
+    const [rendered] = await s.pi.emitExtensionEvent({ type: "context", messages } as never, {
+      sessionManager: { getBranch: () => [
+        { type: "custom_message", customType: "channel-context", content: result!.message.content },
+        { type: "compaction" },
+      ] },
+    }) as Array<{ messages: any[] }>;
+    const text = rendered!.messages[0].content[0].text;
+    expect(text.match(/<channel_context>/g)).toHaveLength(1);
+    expect(text).toContain('next\n\n<channel_context>');
+    expect(JSON.parse(text.split("<channel_context>\n")[1]!.split("\n</channel_context>")[0]!)).toMatchObject({
+      provider: "test", channel_id: "C1", thread_id: "T1", from: "U2", message_id: "100.2",
+    });
+    expect(messages[0]!.content).toBe(followUp);
+  });
+
   it.each([
     { tools: [], commands: ["reply"] },
     { tools: ["channels"], commands: [] },

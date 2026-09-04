@@ -238,6 +238,9 @@ export function registerChannelTools(
       if (target.conversation !== origin.conversation || (origin.thread && target.thread && target.thread !== origin.thread)) {
         throw new Error("Message reference is outside the bound conversation");
       }
+      // Legacy adapters may omit identity.thread. Their references still
+      // belong to the bound origin, including its thread-level policy.
+      return context(signal, origin);
     }
     return context(signal, target);
   };
@@ -550,13 +553,21 @@ export function registerChannelTools(
     };
   });
 
-  pi.on("context", (event) => {
+  pi.on("context", (event, ctx) => {
     // Keep one durable context entry in the session, but present it to the
     // model as a footer on the first user message, never a synthetic user turn.
     const channelContext = event.messages.find(
       (message) => message.role === "custom" && message.customType === "channel-context",
     );
-    if (!channelContext || channelContext.role !== "custom") return;
+    // Compaction can summarize the first turn and its custom message. The
+    // durable branch still carries the trusted origin; restore it on the
+    // first retained user message without appending another session entry.
+    const storedContext = ctx.sessionManager?.getBranch().find(
+      (entry) => entry.type === "custom_message" && entry.customType === "channel-context",
+    );
+    let contextText = channelContext?.role === "custom" ? channelContext.content
+      : storedContext?.type === "custom_message" ? storedContext.content : undefined;
+    if (contextText === undefined) return;
     const messages = event.messages.filter(
       (message) => !(message.role === "custom" && message.customType === "channel-context"),
     );
@@ -565,7 +576,6 @@ export function registerChannelTools(
     if (!first || first.role !== "user") return;
     let content = typeof first.content === "string"
       ? [{ type: "text" as const, text: first.content }] : first.content;
-    let contextText = channelContext.content;
     if (typeof contextText === "string") {
       const metadata = JSON.parse(contextText.split("\n")[1]!);
       content = content.map(part => {

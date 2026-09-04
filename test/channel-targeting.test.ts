@@ -140,6 +140,23 @@ describe("explicit channel targets", () => {
     expect(adapter.fetchFile).toHaveBeenCalledTimes(1);
   });
 
+  it("retains the bound thread for legacy message references without a thread", async () => {
+    let revoked = false;
+    const validateTarget = vi.fn((target: ChannelTarget) => {
+      if (revoked && target.thread === origin.thread) throw new Error("thread revoked");
+    });
+    const { call, refs, adapter } = setup({ targeting: false, validateTarget });
+    const message = refs.message({ conversation: origin.conversation, id: "legacy", authoredByAgent: true });
+    await call("react", { message, emoji: "eyes" });
+    expect(adapter.react).toHaveBeenCalledWith(expect.objectContaining({ target: origin }), expect.anything());
+    revoked = true;
+    await expect(call("react", { message, emoji: "eyes" })).rejects.toThrow("thread revoked");
+    await expect(call("edit", { message, text: "updated" })).rejects.toThrow("thread revoked");
+    await expect(call("retract", { message })).rejects.toThrow("thread revoked");
+    expect(adapter.edit).not.toHaveBeenCalled();
+    expect(adapter.retract).not.toHaveBeenCalled();
+  });
+
   it("rejects blank targets before calling the provider", async () => {
     const { call, adapter } = setup();
     await expect(call("send", { channel_id: " ", text: "hi" })).rejects.toThrow("must not be empty");
