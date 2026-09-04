@@ -90,6 +90,10 @@ export function createChannelConnectorModule(
         );
       }
       const commands = moduleOptions.commands;
+      if (moduleOptions.requireReply && (!moduleOptions.tools.includes("channels") ||
+          (commands !== undefined && !commands.includes("reply")))) {
+        throw new Error("requireReply needs the channels tool with the reply command enabled");
+      }
       if (commands?.some((command) => !channelToolIds.has(command))) {
         throw new Error("Unknown channels command in connector allowlist");
       }
@@ -115,6 +119,7 @@ export function createChannelConnectorModule(
         registerChannelTools(pi, session.adapter, {
           target: session.target,
           commands: commands as readonly ChannelToolId[] | undefined,
+          requireReply: moduleOptions.requireReply,
           refs: new ChannelRefStore(),
           validateTarget: session.validateTarget,
         });

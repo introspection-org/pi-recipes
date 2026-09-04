@@ -647,15 +647,19 @@ fn validate_connector_config(
             );
             continue;
         };
-        for key in connector.keys().filter(|key| !matches!(key.as_str(), "provider" | "commands")) {
+        for key in connector.keys().filter(|key| !matches!(key.as_str(), "provider" | "commands" | "requireReply")) {
             ctx.error(
                 "pi.connectors_invalid",
                 PACKAGE_JSON,
                 format!("package.json#pi.connectors[{index}] contains unknown field '{key}'"),
-                Some("use provider and optional commands"),
+                Some("use provider, optional commands, and optional requireReply"),
             );
         }
 
+        if connector.get("requireReply").is_some_and(|value| !value.is_boolean()) {
+            ctx.error("pi.connectors_invalid", PACKAGE_JSON,
+                format!("package.json#pi.connectors[{index}].requireReply must be a boolean"), Some("use true or false"));
+        }
         if let Some(commands) = connector.get("commands") {
             let valid = commands.as_array().is_some_and(|values| {
                 let mut seen = BTreeSet::new();
@@ -3245,6 +3249,19 @@ mod tests {
             package_file.content = Some(serde_json::to_string(&package).unwrap());
             let report = check_recipe_files(&files);
             assert_eq!(!report.diagnostics.iter().any(|d| d.code == "pi.connectors_invalid"), valid);
+        }
+    }
+
+    #[test]
+    fn connector_required_reply_shape() {
+        for value in [json!(true), json!(false), json!("true"), json!(1), JsonValue::Null] {
+            let mut files = connector_recipe(&["channels"]);
+            let package_file = files.files.iter_mut().find(|file| file.path == PACKAGE_JSON).unwrap();
+            let mut package: JsonValue = serde_json::from_str(package_file.content.as_deref().unwrap()).unwrap();
+            package["pi"]["connectors"][0]["requireReply"] = value.clone();
+            package_file.content = Some(serde_json::to_string(&package).unwrap());
+            let report = check_recipe_files(&files);
+            assert_eq!(!report.diagnostics.iter().any(|d| d.code == "pi.connectors_invalid"), value.is_boolean());
         }
     }
 

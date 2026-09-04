@@ -33,6 +33,7 @@ export interface RecipeConnectorToolLoadout {
 export interface RecipeConnectorModuleOptions {
   tools: readonly string[];
   commands?: readonly string[];
+  requireReply?: boolean;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }
@@ -145,6 +146,7 @@ export async function loadRecipeConnectors(
           factory: module.createExtension({
             tools: selected.map((tool) => tool.id),
             ...(connector.commands !== undefined ? { commands: connector.commands } : {}),
+            ...(connector.requireReply !== undefined ? { requireReply: connector.requireReply } : {}),
             env: options.env,
             cwd: options.cwd,
           }),

@@ -29,6 +29,22 @@ outside the allowlist and invalid command arguments are rejected before provider
 calls. The host API uses `registerChannelTools(..., { commands: [...] })` for the
 same restriction.
 
+### Required replies
+
+Set `requireReply: true` on a channel connector to require a successful final
+`reply` on turns with a channel origin. It is opt-in; UI and automation turns
+without an origin are unaffected. The agent must select `channels`, and the
+connector must expose `reply`.
+
+`reply` accepts `final` (default `true`). Use `final: false` for progress updates.
+Only a successful final reply satisfies the guard, not reactions or explicit
+sends. The extension adds delivery instructions and queues one corrective
+follow-up if the agent finishes without replying. If that also finishes without
+a reply, a visible `channel-delivery-failed` message records the failure locally.
+It never automatically publishes private assistant text. Aborted and provider-error
+runs are not retried by this guard. Hosts must wait for `agent_settled`, not an
+intermediate `agent_end`, before declaring a run complete.
+
 Migration: replace agent `channel_*` tool names with `channels`, and move any
 operation restrictions to `commands` (without the `channel_` prefix). This is a
 breaking interface change; old individual tool names are not registered.
@@ -43,6 +59,13 @@ the channel. Recipe instructions decide when to reply, stay silent, read history
 or send elsewhere; tool descriptions explain how. Tool discovery remains the
 responsibility of the tool-search extension.
 
+Origin fields are stored once per session branch and rendered at the end of the
+first user message, rather than as a separate user turn. Older duplicate context
+entries are collapsed in model input; stored history is not rewritten.
+Cloud ingress supplies per-message `from`, `message_id`, and `sent_at` attribution
+in this wrapper too.
+The first message merges attribution with origin fields; follow-ups carry only
+their own attribution, without repeating the channel details.
 Origin fields are JSON inside a single `<channel_context>` wrapper. JSON Unicode
 escapes for `<`, `>`, and `&` keep provider labels from breaking the wrapper while
 preserving valid JSON and the original values when parsed.
@@ -55,7 +78,7 @@ through the host's policy. Non-channel triggers receive no channel context.
 
 | Command (`channels` + `command`) | Additional arguments | Requires |
 | --- | --- | --- |
-| `channels reply` | `text` (Markdown) | always |
+| `channels reply` | `text` (Markdown), `final?` (default `true`) | always |
 | `channels send` | `channel_id`, `thread_id?`, `text` | `targeting` |
 | `channels list` | none | `list` |
 | `channels read` | `channel_id?`, `thread_id?`, `limit?`, `cursor?` | `read`; addressing requires `targeting` |

@@ -24,6 +24,7 @@ import {
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 interface FakeFetchOptions {
+  reactionError?: string;
   file?: Record<string, unknown>;
   fileBody?: string;
   bridgeStatus?: number;
@@ -58,6 +59,9 @@ function fakeFetch(options: FakeFetchOptions = {}) {
   const impl = (async (url: string, init: Record<string, unknown> = {}) => {
     calls.push({ url: String(url), init });
     const parsed = new URL(String(url));
+    if (parsed.pathname.startsWith("/api/reactions.") && options.reactionError) {
+      return response({ payload: { ok: false, error: options.reactionError } });
+    }
     if (parsed.hostname === "dp.example") {
       const status = options.bridgeStatus ?? 200;
       return response({
@@ -110,7 +114,8 @@ function fakeFetch(options: FakeFetchOptions = {}) {
     }
     if (parsed.pathname.endsWith("/api/conversations.replies") && options.threadPages) {
       const form = new URLSearchParams(String(init.body));
-      const page = options.threadPages[form.get("cursor") ?? ""] ?? {
+      const oldest = form.get("oldest");
+      const page = options.threadPages[oldest === form.get("ts") ? "" : oldest ?? ""] ?? {
         messages: [],
       };
       return response({
@@ -660,7 +665,7 @@ describe("Slack channel tools", () => {
           messages: messages.slice(0, 8),
           nextCursor: "page-2",
         },
-        "page-2": {
+        "8.1": {
           messages: messages.slice(8),
         },
       },
@@ -700,6 +705,30 @@ describe("Slack channel tools", () => {
     ).toHaveLength(2);
   });
 
+  it("bounds pages and includes Slack's repeated root only once", async () => {
+    const root = { ts: "100.1", text: "root" };
+    const { pi, fetchImpl } = slackTools({ threadPages: {
+      "": { messages: [root, { ts: "101.1", text: "one" }], nextCursor: "next" },
+      "101.1": { messages: [root, { ts: "102.1", text: "two" }], nextCursor: "last" },
+      "102.1": { messages: [root, { ts: "103.1", text: "three" }] },
+    } });
+    let cursor: string | undefined;
+    const texts: string[] = [];
+    for (let index = 0; index < 4; index++) {
+      const result = (await call(pi, "channel_read", { limit: 1, cursor })) as {
+        details: { messages: Array<{ text: string }>; cursor?: string };
+      };
+      expect(result.details.messages).toHaveLength(1);
+      texts.push(result.details.messages[0]!.text);
+      cursor = result.details.cursor;
+    }
+    expect(texts).toEqual(["root", "one", "two", "three"]);
+    expect(cursor).toBeUndefined();
+    const requests = fetchImpl.calls.filter(request => request.url.includes("conversations.replies"));
+    expect(requests).toHaveLength(3);
+    expect(requests.map(request => new URLSearchParams(String(request.init.body)).get("oldest"))).toEqual(["100.1", "101.1", "102.1"]);
+  });
+
   it("passes the current limit when requesting the next thread page", async () => {
     const messages = Array.from({ length: 17 }, (_, index) => ({
       ts: `${index + 1}.1`,
@@ -708,7 +737,7 @@ describe("Slack channel tools", () => {
     }));
     const { pi, fetchImpl } = slackTools({ threadPages: {
       "": { messages: messages.slice(0, 1), nextCursor: "next" },
-      next: { messages: messages.slice(1, 16), nextCursor: "last" },
+      "1.1": { messages: messages.slice(1, 16), nextCursor: "last" },
     } });
 
     const first = (await call(pi, "channel_read", { limit: 1 })) as {
@@ -909,6 +938,21 @@ describe("Slack channel tools", () => {
         name: "eyes",
       });
     }
+  });
+
+  it.each([
+    ["add", "already_reacted"],
+    ["remove", "no_reaction"],
+  ])("treats repeated reaction %s as success", async (action, reactionError) => {
+    const { pi } = slackTools({ reactionError });
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as { details: { ref: string } };
+    await expect(call(pi, "channel_react", { message: posted.details.ref, emoji: "eyes", action })).resolves.toBeDefined();
+  });
+
+  it("does not swallow other reaction errors", async () => {
+    const { pi } = slackTools({ reactionError: "missing_scope" });
+    const posted = (await call(pi, "channel_reply", { text: "first" })) as { details: { ref: string } };
+    await expect(call(pi, "channel_react", { message: posted.details.ref, emoji: "eyes" })).rejects.toThrow("missing_scope");
   });
 
   it("rejects a Slack reaction without a normalized emoji name", async () => {

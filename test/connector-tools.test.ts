@@ -58,7 +58,7 @@ describe("Recipe connector packages", () => {
         version: "0.1.0",
         dependencies: { [channelPackage]: "0.1.0" },
         pi: {
-          connectors: [{ provider: "custom", commands: ["ping"] }],
+          connectors: [{ provider: "custom", commands: ["ping"], requireReply: true }],
         },
       })
     );
@@ -79,7 +79,7 @@ describe("Recipe connector packages", () => {
         "  tools: [",
         '    { id: "ping", name: "package_owned_ping", defaultActive: false },',
         "  ],",
-        '  createExtension(options) { if (options.commands?.join() !== "ping" && options.commands?.length !== 0) throw new Error("commands not forwarded"); return () => {}; },',
+        '  createExtension(options) { if (!options.requireReply) throw new Error("requireReply not forwarded"); if (options.commands?.join() !== "ping" && options.commands?.length !== 0) throw new Error("commands not forwarded"); return () => {}; },',
         "};",
         "",
       ].join("\n")

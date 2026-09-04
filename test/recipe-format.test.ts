@@ -64,6 +64,16 @@ function fixture(): string {
 }
 
 describe("Recipe Format", () => {
+  it.each([true, false, "true", 1, null])("validates requireReply %s", (requireReply) => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(readFileSync(join(recipeDir, "package.json"), "utf8"));
+    pkg.pi.connectors = [{ provider: "slack", requireReply }];
+    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(validatePiPackageManifest(manifest).valid).toBe(typeof requireReply === "boolean");
+    if (typeof requireReply === "boolean") expect(manifest.connectors?.[0]?.requireReply).toBe(requireReply);
+  });
   it.each([
     { commands: ["read", "reply"], valid: true },
     { commands: [], valid: true },

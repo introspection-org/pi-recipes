@@ -13,7 +13,7 @@ import type {
   MessageRef,
 } from "@introspection-ai/recipes/channels";
 
-import type { SlackApiResult } from "./client.js";
+import { SlackApiError, type SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
 import { markdownBlocks, toPlainText } from "./format.js";
 import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
@@ -178,16 +178,21 @@ export class SlackChannelAdapter implements ChannelAdapter {
     },
   ): Promise<void> {
     const message = ctx.refs.resolveMessage(input.ref);
-    await this.session.call(
-      input.action === "remove" ? "reactions.remove" : "reactions.add",
-      {
-        channel: message.conversation,
-        timestamp: message.id,
-        name: reactionName(input.emoji),
-      },
-      "form",
-      ctx.signal,
-    );
+    try {
+      await this.session.call(
+        input.action === "remove" ? "reactions.remove" : "reactions.add",
+        {
+          channel: message.conversation,
+          timestamp: message.id,
+          name: reactionName(input.emoji),
+        },
+        "form",
+        ctx.signal,
+      );
+    } catch (error) {
+      const alreadySatisfied = input.action === "remove" ? "no_reaction" : "already_reacted";
+      if (!(error instanceof SlackApiError) || error.code !== alreadySatisfied) throw error;
+    }
   }
 
   async edit(
@@ -284,27 +289,42 @@ export class SlackChannelAdapter implements ChannelAdapter {
       input.limit ?? SLACK_HISTORY_PAGE_LIMIT,
       SLACK_HISTORY_PAGE_LIMIT,
     );
-    // Exactly one history request per page. Threads page forward; channel
-    // timelines page backward. Never scan a whole thread for a small read.
-    const payload = await this.session.call(
-      thread ? "conversations.replies" : "conversations.history",
-      {
-        channel: ctx.target.conversation,
-        ...(thread ? { ts: thread } : {}),
-        limit,
-        ...(input.cursor ? { cursor: input.cursor } : {}),
-      },
-      "form",
-      ctx.signal,
-    );
-    const raw = messagesFrom(payload);
-    if (!thread) raw.reverse();
-    const next = nextCursor(payload);
-    // `conversations.replies` returns oldest-first, `conversations.history`
-    // newest-first. The tool promises one order for both, so the unthreaded
-    // arm is reversed here rather than left for the model to notice — a
-    // silently backwards transcript reads as a plausible conversation and
-    // inverts every summary drawn from it.
+    // Slack repeats the root outside its reply limit. Keep overflow in the
+    // session-scoped cursor rather than dropping messages or exceeding limit.
+    const continuation = thread && input.cursor
+      ? JSON.parse(input.cursor) as { pending: SlackHistoryMessage[]; oldest?: string }
+      : undefined;
+    let raw = continuation?.pending ?? [];
+    let next = continuation?.oldest;
+    if (!continuation || (raw.length < limit && next)) {
+      const payload = await this.session.call(
+        thread ? "conversations.replies" : "conversations.history",
+        {
+          channel: ctx.target.conversation,
+          // An explicit oldest boundary selects forward pagination on Slack.
+          ...(thread ? { ts: thread, oldest: next ?? thread } : {}),
+          limit: limit - raw.length,
+          ...(!thread && input.cursor ? { cursor: input.cursor } : {}),
+        },
+        "form",
+        ctx.signal,
+      );
+      const page = messagesFrom(payload);
+      raw = [...raw, ...page.filter(message => !thread || !continuation || message.ts !== thread)];
+      // Slack's cursor + oldest combination can skip replies. Page by the
+      // exclusive timestamp boundary instead, keeping the public cursor opaque.
+      const lastReply = page.filter(message => message.ts && message.ts !== thread).at(-1)?.ts;
+      next = thread
+        ? ((payload.has_more === true || nextCursor(payload)) && lastReply ? lastReply : undefined)
+        : nextCursor(payload);
+    }
+    if (thread) raw.sort((a, b) => Number(a.ts) - Number(b.ts));
+    else raw.reverse();
+    const pending = raw.slice(limit);
+    raw = raw.slice(0, limit);
+    const cursor = thread
+      ? (next || pending.length ? JSON.stringify({ pending, oldest: next }) : undefined)
+      : next;
     const messages: ChannelMessage[] = [];
     for (const message of raw) {
       if (!message.ts) continue;
@@ -364,7 +384,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
       messages,
       target: ctx.target,
       next_direction: thread ? "newer" : "older",
-      ...(next ? { cursor: ctx.refs.cursor(next) } : {}),
+      ...(cursor ? { cursor: ctx.refs.cursor(cursor) } : {}),
     };
   }
 

@@ -36,6 +36,10 @@ tools: [channels]
 Targets use the existing connection. This package does not add backend binding
 authorization or cross-channel reply routing. Handles are session-local. Thread
 reads page forward in bounded requests; channel timelines page backward.
+Thread pages count the root toward `limit` and include it only once. Opaque
+cursors retain overflow and an exclusive timestamp boundary, avoiding Slack's
+repeated-root and cursor-ordering quirks. Reaction add/remove are idempotent
+when the requested reaction state already exists.
 
 Install the recipe dependencies before running `introspection local`. The cloud
 runtime installs the locked production dependencies when it builds a recipe

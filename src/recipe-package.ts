@@ -74,6 +74,7 @@ export interface RecipePackageMcpConfig {
 export interface RecipePackageConnector {
   provider: string;
   commands?: string[];
+  requireReply?: boolean;
 }
 
 export function recipeChannelPackageName(provider: string): string {
@@ -238,7 +239,10 @@ function connectorSourceShapeFindings(
       continue;
     }
     const connector = raw as Record<string, unknown>;
-    const unknown = Object.keys(connector).filter((key) => key !== "provider" && key !== "commands");
+    const unknown = Object.keys(connector).filter((key) => !["provider", "commands", "requireReply"].includes(key));
+    if (connector.requireReply !== undefined && typeof connector.requireReply !== "boolean") {
+      findings.push(invalid(`package.json#pi.connectors[${index}].requireReply must be a boolean`));
+    }
     if (connector.commands !== undefined && (!Array.isArray(connector.commands) ||
       connector.commands.some((command) => typeof command !== "string" || !command.trim()) ||
       new Set(connector.commands).size !== connector.commands.length)) {
@@ -715,7 +719,7 @@ function parseConnectors(value: unknown): RecipePackageConnector[] {
     const provider = stringValue(connector.provider);
     if (!provider || seen.has(provider)) continue;
     seen.add(provider);
-    connectors.push({ provider, ...(Array.isArray(connector.commands) ? { commands: connector.commands as string[] } : {}) });
+    connectors.push({ provider, ...(Array.isArray(connector.commands) ? { commands: connector.commands as string[] } : {}), ...(typeof connector.requireReply === "boolean" ? { requireReply: connector.requireReply } : {}) });
   }
   return connectors;
 }

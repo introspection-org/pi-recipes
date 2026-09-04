@@ -51,6 +51,12 @@ export interface SlackPostResult {
 
 type SlackEncoding = "json" | "form";
 
+export class SlackApiError extends Error {
+  constructor(readonly method: string, readonly code: string) {
+    super(`Slack ${method} failed: ${code}`);
+  }
+}
+
 function configured(value: string | undefined): value is string {
   return Boolean(value && value !== "undefined" && value !== "null");
 }
@@ -155,9 +161,7 @@ export class SlackBotSession {
     }
     const payload = (await response.json()) as SlackApiResult;
     if (payload.ok !== true) {
-      throw new Error(
-        `Slack ${method} failed: ${payload.error ?? "unknown error"}`,
-      );
+      throw new SlackApiError(method, payload.error ?? "unknown error");
     }
     return payload;
   }
