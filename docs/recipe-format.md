@@ -81,9 +81,9 @@ MUST commit one supported dependency lockfile: `package-lock.json`,
 `npm-shrinkwrap.json`, `pnpm-lock.yaml`, or `yarn.lock`. npm lockfiles MUST
 carry the same package name and version as `package.json`.
 
-## Connector tools
+## Channel tools
 
-`pi.connectors` declares official provider tools that the host may register for
+`pi.channels` declares official provider tools that the host may register for
 the Recipe. The declaration does not contain a connector ID, workspace ID, or
 credential. A host binds those values when it starts a task.
 
@@ -93,7 +93,7 @@ credential. A host binds those values when it starts a task.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "connectors": [
+    "channels": [
       {
         "provider": "slack"
       }
@@ -109,13 +109,15 @@ and marks which tools are active by default.
 
 The provider package must be in the Recipe's production dependencies and
 lockfile. The host imports the package only when the Recipe declares the
-provider. The agent YAML file is the only place that narrows the package tool
-catalog. An agent lists each allowed tool by its full name, such as
-`channel_reply`, in its `tools` list. The host fails when the agent names a
+provider. An agent lists each allowed tool by its full name, such as
+`channels`, in its `tools` list. The host fails when the agent names a
 tool that the connector does not register.
 
 Chat providers share one connector shape. A channel connector registers the
-provider-neutral `channel_*` tools that its capabilities support. See
+provider-neutral `channels` tool with commands for supported operations. An
+optional `commands` array on the connector restricts these operations for all
+agents using it, for example `{"provider":"slack","commands":["read","reply"]}`.
+Omitting it allows supported commands; an empty list exposes no channel tool. See
 [Channel tools](channels.md).
 
 ## Agents

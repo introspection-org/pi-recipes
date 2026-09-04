@@ -1,8 +1,5 @@
-import {
-  resolveSlackOrigin,
-  type SlackEnv,
-  type SlackOrigin,
-} from "./origin.js";
+import type { ChannelEnvironment } from "@introspection-ai/recipes/channels";
+
 import { slackMessageBody } from "./format.js";
 
 const SLACK_API_BASE = "https://slack.com/api";
@@ -27,7 +24,7 @@ export type SlackFetch = (
 ) => Promise<SlackHttpResponse>;
 
 export interface SlackBotSessionOptions {
-  env?: SlackEnv;
+  env?: ChannelEnvironment;
   fetchImpl?: SlackFetch;
 }
 
@@ -50,6 +47,12 @@ export interface SlackPostResult {
 }
 
 type SlackEncoding = "json" | "form";
+
+export class SlackApiError extends Error {
+  constructor(readonly method: string, readonly code: string) {
+    super(`Slack ${method} failed: ${code}`);
+  }
+}
 
 function configured(value: string | undefined): value is string {
   return Boolean(value && value !== "undefined" && value !== "null");
@@ -77,22 +80,12 @@ function bodyFor(
 }
 
 export class SlackBotSession {
-  readonly env: SlackEnv;
+  readonly env: ChannelEnvironment;
   readonly fetchImpl: SlackFetch;
 
   constructor(options: SlackBotSessionOptions = {}) {
     this.env = options.env ?? process.env;
     this.fetchImpl = options.fetchImpl ?? (fetch as unknown as SlackFetch);
-  }
-
-  origin(): SlackOrigin {
-    const origin = resolveSlackOrigin(this.env);
-    if (!origin) {
-      throw new Error(
-        "No Slack origin is configured. Cloud tasks supply one automatically. For introspection local, set SLACK_CHANNEL_ID and optionally SLACK_THREAD_TS.",
-      );
-    }
-    return origin;
   }
 
   request(
@@ -101,22 +94,11 @@ export class SlackBotSession {
       headers?: Record<string, string>;
     },
   ): Promise<SlackHttpResponse> {
-    const localToken = this.env.SLACK_BOT_TOKEN?.trim();
-    if (localToken) {
-      return this.fetchImpl(url.toString(), {
-        ...init,
-        headers: {
-          ...init.headers,
-          Authorization: `Bearer ${localToken}`,
-        },
-      });
-    }
-
     const locator = this.env.INTROSPECTION_TOKEN?.trim();
     const egressUrl = this.env.INTROSPECTION_EGRESS_URL?.trim();
     if (!locator || !egressUrl) {
       throw new Error(
-        "Slack tools require SLACK_BOT_TOKEN locally or the Introspection cloud egress environment",
+        "Slack tools require the Introspection cloud egress environment. Use introspection dev to test channel recipes.",
       );
     }
     // Keep the provider URL intact. The runtime's proxy fetch dispatcher uses
@@ -155,9 +137,7 @@ export class SlackBotSession {
     }
     const payload = (await response.json()) as SlackApiResult;
     if (payload.ok !== true) {
-      throw new Error(
-        `Slack ${method} failed: ${payload.error ?? "unknown error"}`,
-      );
+      throw new SlackApiError(method, payload.error ?? "unknown error");
     }
     return payload;
   }
@@ -168,20 +148,19 @@ export class SlackBotSession {
    * `to` is required rather than defaulted from the environment: the caller —
    * the adapter — holds the trusted `ChannelAdapterContext.target`, and if this
    * method resolved its own destination the two could disagree, so
-   * the prompt metadata and `channel_read` would describe one conversation while
-   * `channel_reply` posted into another. Falling back to the origin here is
+   * the prompt metadata and `channels read` would describe one conversation while
+   * `channels reply` posted into another. Falling back to the origin here is
    * exactly the kind of second, quieter source of truth the bound tier exists
    * to remove.
    */
   async sendMessage(input: {
     text: string;
     plain_text?: string;
-    to?: { channel: string; thread_ts?: string | null };
+    to: { channel: string; thread_ts?: string | null };
+    /** Explicit sends can opt out of the origin-bound platform reply bridge. */
+    record_bridge?: boolean;
   }, signal?: AbortSignal): Promise<SlackPostResult> {
-    const destination = input.to ?? {
-      channel: this.origin().channel,
-      thread_ts: this.origin().thread_ts,
-    };
+    const destination = input.to;
     const messageBody = slackMessageBody(input.text, {
       plainText: input.plain_text,
     });
@@ -202,6 +181,10 @@ export class SlackBotSession {
     if (!ts)
       throw new Error("Slack chat.postMessage returned no message timestamp");
     const postedThread = payload.message?.thread_ts || threadTs || ts;
+
+    if (input.record_bridge === false) {
+      return { ok: true, channel, ts, thread_ts: postedThread, bridge_recorded: false };
+    }
 
     try {
       const bridgeRecorded = await this.recordPostedMessage(
