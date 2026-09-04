@@ -150,10 +150,16 @@ function channelContextMessage(target: ChannelTarget): string {
       : {}),
     conversation_scope: target.thread ? "thread" : "conversation",
   };
+  const escapeXml = (value: string) => value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
   return [
-    "## Channel context",
-    "",
-    `Channel metadata: ${JSON.stringify(metadata)}`,
+    "<channel_context>",
+    ...Object.entries(metadata).map(([key, value]) => `  <${key}>${escapeXml(value)}</${key}>`),
+    "</channel_context>",
   ].join("\n");
 }
 

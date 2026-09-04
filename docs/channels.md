@@ -25,6 +25,10 @@ the channel. Recipe instructions decide when to reply, stay silent, read history
 or send elsewhere; tool descriptions explain how. Tool discovery remains the
 responsibility of the tool-search extension.
 
+Origin fields use XML elements inside `<channel_context>`, matching the memory
+context format. All values are XML-escaped so provider labels cannot close the
+context block or introduce new elements.
+
 The context message is not an authorization boundary. Tools continue to resolve
 the origin from host state, never from message text, and validate explicit targets
 through the host's policy. Non-channel triggers receive no channel context.
