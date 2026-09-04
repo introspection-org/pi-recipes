@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.24.0](https://github.com/introspection-org/recipes/compare/v0.23.0...v0.24.0) (2026-09-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **channels:** Slack thread reads start with the oldest page and paginate forward rather than starting with the latest page and paginating backward.
+
+### Features
+
+* **channels:** unify channel commands and explicit targets ([#255](https://github.com/introspection-org/recipes/issues/255)) ([81e5f00](https://github.com/introspection-org/recipes/commit/81e5f003a4ef554ffd63786e26dcceb34f1015e5))
+
+
+### Bug Fixes
+
+* **channels:** require inbound replies by default ([#258](https://github.com/introspection-org/recipes/issues/258)) ([ff4696a](https://github.com/introspection-org/recipes/commit/ff4696a63aa9fef9f20b3d72a86fc1fd393217b9))
+
 ## [0.23.0](https://github.com/introspection-org/recipes/compare/v0.22.1...v0.23.0) (2026-09-02)
 
 
