@@ -38,7 +38,7 @@ export {
  * The package supplies transport and a capability descriptor; the tool names,
  * schemas, and opaque message handles come from
  * `@introspection-ai/recipes/channels`, so Slack cannot drift from any other
- * channel and cannot grow an addressing argument of its own.
+ * channel and cannot grow a provider-specific tool schema of its own.
  *
  * Recipes declare the provider. Each agent then selects complete tool names in
  * its YAML file.
@@ -51,9 +51,8 @@ export {
  * tools: [channel_reply, channel_read, channel_react, channel_fetch_file]
  * ```
  *
- * Operations outside the bound channel tool set, including workspace search,
- * directory lookups, and posting to another conversation, are unsupported.
- * A separate proposal can define their contract and access model.
+ * Explicit read/send targets use this session's credentials. Search, directory
+ * lookup, binding authorization and cross-channel reply routing are deferred.
  */
 export const slackRecipeConnectorModule = createChannelConnectorModule({
   provider: "slack",

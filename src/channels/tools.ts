@@ -18,6 +18,7 @@ import type {
  */
 export const CHANNEL_TOOL_IDS = [
   "reply",
+  "send",
   "read",
   "react",
   "edit",
@@ -45,6 +46,7 @@ export function channelToolIdsFor(
   capabilities: ChannelCapabilities,
 ): ChannelToolId[] {
   const supported: ChannelToolId[] = ["reply"];
+  if (capabilities.targeting) supported.push("send");
   if (capabilities.read !== false) supported.push("read");
   if (capabilities.react) supported.push("react");
   if (capabilities.edit) supported.push("edit");
@@ -73,6 +75,8 @@ function assertImplemented(adapter: ChannelAdapter): void {
     switch (id) {
       case "reply":
         return typeof adapter.reply !== "function";
+      case "send":
+        return typeof adapter.send !== "function";
       case "read":
         return typeof adapter.read !== "function";
       case "react":
@@ -111,6 +115,8 @@ export interface RegisterChannelToolsOptions {
   /** Selected tools that require `tool_search` before the model may call them. */
   deferredTools?: readonly ChannelToolId[];
   refs?: ChannelRefStore;
+  /** Optional host tool-layer policy. This does not constrain shell/API egress. */
+  validateTarget?: (target: ChannelTarget, operation: ChannelToolId) => void | Promise<void>;
 }
 
 /** Host surface used here. Opaque so Pi's TypeBox copy stays behind this seam. */
@@ -137,6 +143,8 @@ function channelContextPrompt(
   const deferred = tools.filter((tool) => deferredTools.has(tool));
   const metadata = {
     provider: target.provider,
+    channel_id: target.conversation,
+    ...(target.thread ? { thread_id: target.thread } : {}),
     ...(target.name ? { conversation_name: target.name } : {}),
     ...(target.permalink
       ? { conversation_permalink: target.permalink }
@@ -154,7 +162,7 @@ function channelContextPrompt(
     "",
     `Channel metadata: ${JSON.stringify(metadata)}`,
     "",
-    "Channel tools are bound to the conversation that created this task.",
+    "channel_reply always answers this conversation. When explicit targeting is supported, channel_read and channel_send can name another channel/thread using the same connection. Sending elsewhere does not establish follow-up routing.",
     ...(deferred.length > 0
       ? [
           "Tools in searchable_tools are loaded on demand. If one is not available, use tool_search to enable it before calling it.",
@@ -166,18 +174,10 @@ function channelContextPrompt(
 }
 
 /**
- * Register the bound channel tools an adapter supports.
- *
- * Two invariants are enforced by construction rather than by review:
- *
- * 1. **No schema below carries a conversation, thread, workspace, or user
- *    argument.** The conversation comes from `options.target`, closed over
- *    here. A model that cannot name a destination cannot reach one, so an
- *    agent bound to a thread stays bound to that thread even if the underlying
- *    credential could reach the whole workspace.
- * 2. **Unsupported operations are absent**, not stubs that answer "this
- *    channel cannot do that" — such a stub costs a turn every time and teaches
- *    the model nothing durable.
+ * Register tools for ONE provider credential session. Never share the adapter
+ * or reference store between installations. Explicit targeting is opt-in;
+ * reply/attach/documents retain their origin default. References identify
+ * previously observed resources; they are not durable authorization grants.
  */
 export function registerChannelTools(
   pi: ChannelToolHost,
@@ -205,11 +205,57 @@ export function registerChannelTools(
     cachedTarget = target;
     return target;
   };
-  const context = (signal?: AbortSignal): ChannelAdapterContext => ({
-    target: resolveTarget(),
-    refs,
-    signal,
-  });
+  const context = (signal?: AbortSignal, target = resolveTarget()): ChannelAdapterContext => {
+    const scope = JSON.stringify([target.provider, target.conversation, target.thread ?? null]);
+    return {
+      target,
+      // Cursor scope is applied centrally, including for third-party adapters.
+      refs: {
+        message: (identity) => refs.message(identity),
+        resolveMessage: (ref) => refs.resolveMessage(ref),
+        resolveAuthored: (ref) => refs.resolveAuthored(ref),
+        file: (identity) => refs.file(identity),
+        resolveFile: (ref) => refs.resolveFile(ref),
+        cursor: (value) => refs.cursor(value, scope),
+        resolveCursor: (value) => refs.resolveCursor(value, scope),
+      },
+      signal,
+    };
+  };
+  const explicitTarget = (params: { channel_id?: string; thread_id?: string | null }): ChannelTarget => {
+    if (!adapter.capabilities.targeting && (params.channel_id !== undefined || params.thread_id !== undefined)) {
+      throw new Error("This adapter does not support explicit channel targets.");
+    }
+    const clean = (value: string, field: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) throw new Error(`${field} must not be empty`);
+      return trimmed;
+    };
+    if (params.channel_id !== undefined) {
+      return {
+        provider: adapter.provider,
+        conversation: clean(params.channel_id, "channel_id"),
+        thread: params.thread_id == null ? null : clean(params.thread_id, "thread_id"),
+      };
+    }
+    const origin = resolveTarget();
+    return params.thread_id === undefined ? origin : {
+      provider: origin.provider,
+      conversation: origin.conversation,
+      thread: params.thread_id === null ? null : clean(params.thread_id, "thread_id"),
+    };
+  };
+  const messageContext = (ref: string, signal?: AbortSignal): ChannelAdapterContext => {
+    const message = refs.resolveMessage(ref);
+    const target = { provider: adapter.provider, conversation: message.conversation, thread: message.thread };
+    if (!adapter.capabilities.targeting) {
+      const origin = resolveTarget();
+      if (target.conversation !== origin.conversation || (origin.thread && target.thread && target.thread !== origin.thread)) {
+        throw new Error("Message reference is outside the bound conversation");
+      }
+    }
+    return context(signal, target);
+  };
   const definitions = new Map<ChannelToolId, Record<string, unknown>>();
   const register = (
     id: ChannelToolId,
@@ -233,7 +279,27 @@ export function registerChannelTools(
       params: { text: string },
       signal?: AbortSignal,
     ) {
-      return toolResult(await adapter.reply(context(signal), params));
+      const ctx = context(signal);
+      await options.validateTarget?.(ctx.target, "reply");
+      return toolResult(await adapter.reply(ctx, params));
+    },
+  }));
+
+  register("send", () => ({
+    name: channelToolName("send"),
+    label: "Send to a channel",
+    description: "Send Markdown to an explicit channel, optionally inside a thread, using this connection. No thread means a top-level post. Does not establish cross-channel follow-up routing.",
+    parameters: Type.Object({
+      channel_id: Type.String({ minLength: 1 }),
+      thread_id: Type.Optional(Type.String({ minLength: 1 })),
+      text: Type.String({ minLength: 1 }),
+    }, { additionalProperties: false }),
+    executionMode: "sequential",
+    async execute(_toolCallId: string, params: { channel_id: string; thread_id?: string; text: string }, signal?: AbortSignal) {
+      if (typeof params.channel_id !== "string") throw new Error("channel_send requires channel_id");
+      const ctx = context(signal, explicitTarget(params));
+      await options.validateTarget?.(ctx.target, "send");
+      return toolResult(await adapter.send!(ctx, { text: params.text }));
     },
   }));
 
@@ -241,11 +307,17 @@ export function registerChannelTools(
     name: channelToolName("read"),
     label: "Read earlier messages",
     description:
-      adapter.capabilities.read === "thread"
+      adapter.capabilities.targeting
+        ? "Read a channel timeline or a specific thread. No target uses the origin; channel_id alone reads its timeline; thread_id selects a thread, or null selects the origin channel timeline. Pages are chronological; next_direction describes pagination. Repeat the same target with a cursor."
+        : adapter.capabilities.read === "thread"
         ? "Read earlier messages in this conversation's thread, most recent last."
         : "Read earlier messages in this conversation, most recent last.",
     parameters: Type.Object(
       {
+        ...(adapter.capabilities.targeting ? {
+          channel_id: Type.Optional(Type.String({ minLength: 1 })),
+          thread_id: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
+        } : {}),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
         cursor: Type.Optional(Type.String({ minLength: 1 })),
       },
@@ -254,17 +326,20 @@ export function registerChannelTools(
     executionMode: "sequential",
     async execute(
       _toolCallId: string,
-      params: { limit?: number; cursor?: string },
+      params: { channel_id?: string; thread_id?: string | null; limit?: number; cursor?: string },
       signal?: AbortSignal,
     ) {
+      const ctx = context(signal, explicitTarget(params));
+      if (adapter.capabilities.read === "thread" && !ctx.target.thread) throw new Error("This adapter only supports thread reads");
+      await options.validateTarget?.(ctx.target, "read");
       const cursor = params.cursor
-        ? refs.resolveCursor(params.cursor)
+        ? ctx.refs.resolveCursor(params.cursor)
         : undefined;
       return toolResult(
-        await adapter.read!(context(signal), {
+        { ...await adapter.read!(ctx, {
           limit: params.limit,
           cursor,
-        }),
+        }), target: ctx.target },
       );
     },
   }));
@@ -300,7 +375,9 @@ export function registerChannelTools(
       },
       signal?: AbortSignal,
     ) {
-      await adapter.react!(context(signal), {
+      const ctx = messageContext(params.message, signal);
+      await options.validateTarget?.(ctx.target, "react");
+      await adapter.react!(ctx, {
         ref: params.message,
         emoji: params.emoji,
         action: params.action ?? "add",
@@ -327,8 +404,11 @@ export function registerChannelTools(
       params: { message: string; text: string },
       signal?: AbortSignal,
     ) {
+      refs.resolveAuthored(params.message);
+      const ctx = messageContext(params.message, signal);
+      await options.validateTarget?.(ctx.target, "edit");
       return toolResult(
-        await adapter.edit!(context(signal), {
+        await adapter.edit!(ctx, {
           ref: params.message,
           text: params.text,
         }),
@@ -351,7 +431,10 @@ export function registerChannelTools(
       params: { message: string },
       signal?: AbortSignal,
     ) {
-      await adapter.retract!(context(signal), { ref: params.message });
+      refs.resolveAuthored(params.message);
+      const ctx = messageContext(params.message, signal);
+      await options.validateTarget?.(ctx.target, "retract");
+      await adapter.retract!(ctx, { ref: params.message });
       return toolResult({ retracted: true });
     },
   }));
@@ -375,7 +458,9 @@ export function registerChannelTools(
       params: { path: string; title?: string; comment?: string },
       signal?: AbortSignal,
     ) {
-      return toolResult(await adapter.attach!(context(signal), params));
+      const ctx = context(signal);
+      await options.validateTarget?.(ctx.target, "attach");
+      return toolResult(await adapter.attach!(ctx, params));
     },
   }));
 
@@ -397,7 +482,11 @@ export function registerChannelTools(
       params: { file: string; variant?: string },
       signal?: AbortSignal,
     ) {
-      return toolResult(await adapter.fetchFile!(context(signal), params));
+      const file = refs.resolveFile(params.file);
+      if (!adapter.capabilities.targeting && file.conversation !== resolveTarget().conversation) throw new Error("File reference is outside the bound conversation");
+      const ctx = context(signal, { provider: adapter.provider, conversation: file.conversation });
+      await options.validateTarget?.(ctx.target, "fetch_file");
+      return toolResult(await adapter.fetchFile!(ctx, params));
     },
   }));
 
@@ -419,7 +508,9 @@ export function registerChannelTools(
       params: { title: string; markdown: string },
       signal?: AbortSignal,
     ) {
-      return toolResult(await adapter.postDocument!(context(signal), params));
+      const ctx = context(signal);
+      await options.validateTarget?.(ctx.target, "post_document");
+      return toolResult(await adapter.postDocument!(ctx, params));
     },
   }));
 

@@ -177,6 +177,8 @@ export class SlackBotSession {
     text: string;
     plain_text?: string;
     to?: { channel: string; thread_ts?: string | null };
+    /** Explicit sends can opt out of the origin-bound platform reply bridge. */
+    record_bridge?: boolean;
   }, signal?: AbortSignal): Promise<SlackPostResult> {
     const destination = input.to ?? {
       channel: this.origin().channel,
@@ -202,6 +204,10 @@ export class SlackBotSession {
     if (!ts)
       throw new Error("Slack chat.postMessage returned no message timestamp");
     const postedThread = payload.message?.thread_ts || threadTs || ts;
+
+    if (input.record_bridge === false) {
+      return { ok: true, channel, ts, thread_ts: postedThread, bridge_recorded: false };
+    }
 
     try {
       const bridgeRecorded = await this.recordPostedMessage(

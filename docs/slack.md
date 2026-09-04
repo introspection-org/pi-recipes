@@ -40,38 +40,37 @@ tools are available through `tool_search`.
 | Tool | Slack operation |
 | --- | --- |
 | `channel_reply` | `chat.postMessage` into the origin channel and thread |
+| `channel_send` | `chat.postMessage` into an explicit channel and optional thread |
 | `channel_read` | `conversations.replies` in a thread, else `conversations.history` |
 | `channel_react` | `reactions.add` or `reactions.remove` |
 | `channel_edit` | `chat.update` for a message the agent posted |
 | `channel_retract` | `chat.delete` for a message the agent posted |
 | `channel_fetch_file` | `files.info` plus a private file download |
 
-Slack history returns at most 15 messages to the agent per call. For a thread,
-the first call reads the thread and returns the newest messages. The adapter
-keeps older messages in the current session, and the returned opaque cursor
-pages backward through that cache without another `conversations.replies`
-request.
-
-The connector uses a customer owned internal Slack app. Slack gives internal
-apps the larger `conversations.replies` page and rate limits needed to read a
-thread before selecting its newest messages. The connector does not support a
-commercially distributed Slack app outside the Slack Marketplace, because
-Slack restricts those installations to 15 replies and one request per minute.
+Slack history requests at most 15 messages and makes one history request per
+tool call. Threads start at the beginning and page forward; channel timelines
+start with recent messages and page backward. Each page is chronological, and
+`next_direction` describes pagination. Repeat the target with the cursor.
+This replaces the old unbounded full-thread fetch/backward session cache.
+Provider rate limits still apply; failures are not automatically retried.
 
 `channel_attach` and `channel_post_document` are not registered: `files.uploadV2`
 and canvases are not implemented in this package yet, and the capability
 descriptor says so rather than registering tools that fail.
 
-None of these take a channel or thread argument. Every tool acts on the
-conversation the task came from. Author display names (`users.info`) and
+`channel_send` requires `channel_id`; `thread_id` is optional. `channel_read`
+accepts optional targets, defaulting to the origin. Explicit channel without
+thread means timeline/top-level, not the origin's thread. Reply stays bound.
+Author display names (`users.info`) and
 permalinks (`chat.getPermalink`) are resolved inside the adapter and attached to
 message rows and reply results, so there is no user lookup or permalink tool.
 Edit and retract also require an opaque reference for a message posted by this
 agent. They cannot act on another author's message.
 
-Workspace search, channel listing and joining, directory lookup, and
-cross-channel posting are unsupported. Their contract and access model are
-deferred to a separate proposal.
+Search, channel listing/info, joining, and directory lookup remain deferred.
+Tools use one existing credential session; they do not select installations or
+enforce project/customer bindings. The optional host target-policy callback
+constrains these tools, not direct shell/API access.
 
 ## Cloud access
 
@@ -88,6 +87,11 @@ After `channel_reply` succeeds in cloud, the adapter posts the `connector_posted
 task event to the Data Plane, which checks the agent session, current run,
 provider, and origin channel before recording the new thread root. A later Slack
 reply then resumes the same task.
+
+`channel_send` deliberately does not emit this origin-bound bridge event, even
+when its explicit destination matches the origin. Its result includes the
+actual target and `bridge_recorded: false`. Cross-channel continuation is not
+implemented by this tools-only change.
 
 Slack writes are attempted once. The adapter does not retry `chat.postMessage`,
 because Slack accepts no idempotency key for it. If Slack accepts the post but
@@ -122,8 +126,8 @@ inbound task or reply bridge, because no Data Plane task exists.
 `channel_fetch_file` writes a file under the task files directory and returns its
 path, media type, size, and SHA-256 digest. The bytes land in the workspace and
 not in model context. It accepts only a `file_…` handle from a `channel_read`
-attachment, so the bot's cross-channel file read is not reachable from model
-input. On the wire it accepts only `files.slack.com` download URLs, rejects
+attachment, and resolves that reference's channel before the host policy check.
+On the wire it accepts only `files.slack.com` download URLs, rejects
 redirects, caps the body at 100 MiB, checks the declared size, and removes
 partial files after a failure. The `video_low` variant uses Slack's smaller MP4
 rendition when one exists.

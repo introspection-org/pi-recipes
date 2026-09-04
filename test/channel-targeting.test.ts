@@ -1,0 +1,122 @@
+import { describe, expect, it, vi } from "vitest";
+import { ChannelRefStore, registerChannelTools, type ChannelAdapter, type ChannelTarget } from "../src/channels/index.js";
+import { createMockExtensionAPI } from "./helpers/mock-extension.js";
+
+const origin = { provider: "test", conversation: "A", thread: "1" };
+function setup(options: { target?: ChannelTarget | (() => ChannelTarget); targeting?: boolean; validateTarget?: (target: ChannelTarget) => void } = {}) {
+  const pi = createMockExtensionAPI();
+  const refs = new ChannelRefStore();
+  const adapter: ChannelAdapter = {
+    provider: "test",
+    capabilities: { targeting: options.targeting ?? true, read: "channel", react: true, edit: true, retract: true, attach: false, fetchFile: true, documents: false, resolveAuthors: false, permalinks: false },
+    reply: vi.fn(async (ctx) => ({ ref: ctx.refs.message({ conversation: ctx.target.conversation, thread: ctx.target.thread, id: "posted", authoredByAgent: true }) })),
+    send: vi.fn(async (ctx) => ({ ref: ctx.refs.message({ conversation: ctx.target.conversation, thread: ctx.target.thread, id: "sent", authoredByAgent: true }) })),
+    read: vi.fn(async (ctx) => ({ messages: [{ ref: ctx.refs.message({ conversation: ctx.target.conversation, thread: ctx.target.thread, id: "received" }), author: { id: "user" }, text: "hi" }], cursor: ctx.refs.cursor("provider-page") })),
+    edit: vi.fn(async (_ctx, input) => ({ ref: input.ref })),
+    retract: vi.fn(async () => {}),
+    react: vi.fn(async () => {}),
+    fetchFile: vi.fn(async () => ({ id: "f", path: "/tmp/file", name: "file", size: 1, sha256: "hash", mime_type: "text/plain" })),
+  };
+  registerChannelTools(pi, adapter, { refs, target: options.target ?? origin, validateTarget: options.validateTarget });
+  const call = async (name: string, params: unknown = {}) => {
+    const result = await pi.tools.get(`channel_${name}`)!.execute("call", params as never, undefined, undefined, undefined as never);
+    return result.details as { ref: string; cursor: string; messages: Array<{ ref: string }>; target: ChannelTarget };
+  };
+  return { pi, refs, adapter, call };
+}
+
+describe("explicit channel targets", () => {
+  it("distinguishes origin, explicit channel timeline, and explicit thread", async () => {
+    const { call } = setup();
+    expect((await call("read")).target).toEqual(origin);
+    expect((await call("read", { channel_id: "B" })).target).toEqual({ provider: "test", conversation: "B", thread: null });
+    expect((await call("read", { channel_id: "B", thread_id: "2" })).target).toEqual({ provider: "test", conversation: "B", thread: "2" });
+    expect((await call("read", { thread_id: null })).target).toEqual({ provider: "test", conversation: "A", thread: null });
+    expect((await call("read", { thread_id: "3" })).target.thread).toBe("3");
+  });
+
+  it("supports explicit operations without loading an absent origin", async () => {
+    const target = vi.fn(() => { throw new Error("No origin"); });
+    const { call } = setup({ target });
+    await call("send", { channel_id: "B", text: "hello" });
+    await call("read", { channel_id: "B" });
+    expect(target).not.toHaveBeenCalled();
+    await expect(call("reply", { text: "hi" })).rejects.toThrow("No origin");
+    await expect(call("send", { text: "hi" })).rejects.toThrow("requires channel_id");
+  });
+
+  it("never changes reply's origin after a targeted read or send", async () => {
+    const { call, adapter } = setup();
+    await call("send", { channel_id: "B", thread_id: "2", text: "hello" });
+    await call("read", { channel_id: "B" });
+    await call("reply", { text: "reply" });
+    expect(adapter.reply).toHaveBeenCalledWith(expect.objectContaining({ target: origin }), { text: "reply" });
+  });
+
+  it("uses the message's destination for mutations, not the origin", async () => {
+    const { call, adapter } = setup();
+    const { ref } = await call("send", { channel_id: "B", thread_id: "2", text: "hi" });
+    await call("edit", { message: ref, text: "updated" });
+    await call("react", { message: ref, emoji: "eyes" });
+    await call("retract", { message: ref });
+    for (const method of [adapter.edit, adapter.react, adapter.retract]) {
+      expect(method).toHaveBeenCalledWith(expect.objectContaining({ target: { provider: "test", conversation: "B", thread: "2" } }), expect.anything());
+    }
+  });
+
+  it("rejects edits to received messages and references from another session", async () => {
+    const { call } = setup();
+    const read = await call("read", { channel_id: "B" });
+    await expect(call("edit", { message: read.messages[0]!.ref, text: "no" })).rejects.toThrow("not sent by this agent");
+    const other = await setup().call("send", { channel_id: "B", text: "hi" });
+    await expect(call("react", { message: other.ref, emoji: "eyes" })).rejects.toThrow("Unknown message reference");
+  });
+
+  it("scopes cursors to channel and thread, while allowing page-size changes", async () => {
+    const { call, adapter } = setup();
+    const page = await call("read", { channel_id: "B", thread_id: "2" });
+    await expect(call("read", { cursor: page.cursor })).rejects.toThrow("another channel or thread");
+    await expect(call("read", { channel_id: "B", cursor: page.cursor })).rejects.toThrow("another channel or thread");
+    await expect(call("read", { channel_id: "C", thread_id: "2", cursor: page.cursor })).rejects.toThrow("another channel or thread");
+    await call("read", { channel_id: "B", thread_id: "2", cursor: page.cursor, limit: 1 });
+    expect(adapter.read).toHaveBeenLastCalledWith(expect.anything(), { limit: 1, cursor: "provider-page" });
+  });
+
+  it("keeps same provider message IDs in different channels distinct", async () => {
+    const { call } = setup();
+    const a = await call("send", { channel_id: "A", text: "hi" });
+    const b = await call("send", { channel_id: "B", text: "hi" });
+    expect(a.ref).not.toBe(b.ref);
+  });
+
+  it("rechecks host policy for reads, sends and existing message/file references", async () => {
+    let allowed = true;
+    const validateTarget = vi.fn((target: ChannelTarget) => { if (!allowed || target.conversation !== "B") throw new Error("denied"); });
+    const { call, refs, adapter } = setup({ validateTarget });
+    const post = await call("send", { channel_id: "B", text: "hi" });
+    const file = refs.file({ conversation: "B", id: "F1" });
+    await call("fetch_file", { file });
+    expect(adapter.fetchFile).toHaveBeenCalledWith(expect.objectContaining({ target: { provider: "test", conversation: "B" } }), { file });
+    allowed = false;
+    await expect(call("edit", { message: post.ref, text: "no" })).rejects.toThrow("denied");
+    await expect(call("fetch_file", { file })).rejects.toThrow("denied");
+    await expect(call("read", { channel_id: "B" })).rejects.toThrow("denied");
+    expect(adapter.edit).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy adapters bound even if callers bypass schema validation", async () => {
+    const { pi, call, refs } = setup({ targeting: false });
+    expect(pi.tools.has("channel_send")).toBe(false);
+    await expect(call("read", { channel_id: "B" })).rejects.toThrow("does not support");
+    const message = refs.message({ conversation: "B", id: "1" });
+    await expect(call("react", { message, emoji: "eyes" })).rejects.toThrow("outside the bound");
+  });
+
+  it("rejects blank targets before calling the provider", async () => {
+    const { call, adapter } = setup();
+    await expect(call("send", { channel_id: " ", text: "hi" })).rejects.toThrow("must not be empty");
+    await expect(call("read", { thread_id: " " })).rejects.toThrow("must not be empty");
+    expect(adapter.send).not.toHaveBeenCalled();
+    expect(adapter.read).not.toHaveBeenCalled();
+  });
+});

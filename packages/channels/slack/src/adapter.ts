@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import type {
   ChannelAdapter,
   ChannelAdapterContext,
@@ -20,7 +18,7 @@ import { markdownBlocks, toPlainText } from "./format.js";
 import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
 
 /**
- * What Slack's Bot API supports through the bound-conversation contract.
+ * What Slack's Bot API supports through the channel tool contract.
  *
  * `attach` and `documents` are false because this package does not implement
  * them yet, not because Slack cannot: `files.uploadV2` is a three-call flow and
@@ -29,6 +27,7 @@ import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
  * which is the intended shape of an unimplemented capability.
  */
 export const SLACK_CHANNEL_CAPABILITIES: ChannelCapabilities = {
+  targeting: true,
   react: true,
   edit: true,
   retract: true,
@@ -42,7 +41,6 @@ export const SLACK_CHANNEL_CAPABILITIES: ChannelCapabilities = {
 
 const SLACK_FILE_VARIANTS = new Set(["original", "video_low"]);
 const SLACK_HISTORY_PAGE_LIMIT = 15;
-const SLACK_THREAD_FETCH_LIMIT = 1000;
 
 interface SlackHistoryMessage {
   ts?: string;
@@ -54,20 +52,13 @@ interface SlackHistoryMessage {
     name?: string;
   };
   thread_ts?: string;
+  reply_count?: number;
   files?: Array<{
     id?: string;
     name?: string;
     mimetype?: string;
     size?: number;
   }>;
-}
-
-interface SlackThreadHistoryCursor {
-  conversation: string;
-  thread: string;
-  messages: SlackHistoryMessage[];
-  end: number;
-  limit: number;
 }
 
 /** Slack's own `:emoji:` spelling is not what its reactions API accepts. */
@@ -90,10 +81,8 @@ function slackTimestamp(ts: string): string | undefined {
 /**
  * Slack against the neutral channel contract.
  *
- * Every method acts on the conversation in `ctx.target`, which the host
- * resolved from the task origin. Nothing here reads a destination from model
- * input, so the agent's reach is the thread it was addressed in, whatever the
- * bot credential could otherwise touch.
+ * One adapter belongs to one credential session. The neutral tool layer
+ * resolves the origin or explicit destination into `ctx.target`.
  *
  * User ids and permalinks are resolved here rather than exposed as lookup
  * tools: an agent that needs "who said this" wants a name in the message it is
@@ -104,41 +93,41 @@ export class SlackChannelAdapter implements ChannelAdapter {
   readonly capabilities = SLACK_CHANNEL_CAPABILITIES;
 
   private readonly authors = new Map<string, string | undefined>();
-  private readonly threadHistoryCursors = new Map<
-    string,
-    SlackThreadHistoryCursor
-  >();
-  private conversationName: string | null | undefined;
-  private conversationPermalink: string | null | undefined;
+  private readonly targets = new Map<string, ChannelTarget>();
 
   constructor(readonly session: SlackFileSession) {}
 
   async enrichTarget(ctx: ChannelAdapterContext): Promise<ChannelTarget> {
-    if (this.conversationName === undefined) {
-      this.conversationName =
-        ctx.target.name ??
-        (await this.channelName(ctx.target.conversation, ctx.signal));
-    }
-    if (this.conversationPermalink === undefined) {
-      const root = ctx.target.thread;
-      this.conversationPermalink = root
-        ? await this.permalink(ctx.target.conversation, root, ctx.signal)
-        : null;
-    }
-    return {
+    const key = JSON.stringify([ctx.target.conversation, ctx.target.thread ?? null]);
+    const cached = this.targets.get(key);
+    if (cached) return cached;
+    const target = {
       ...ctx.target,
-      name: this.conversationName,
-      permalink: this.conversationPermalink,
+      name: ctx.target.name ?? await this.channelName(ctx.target.conversation, ctx.signal),
+      permalink: ctx.target.thread ? await this.permalink(ctx.target.conversation, ctx.target.thread, ctx.signal) : null,
     };
+    this.targets.set(key, target);
+    return target;
   }
 
   async reply(
     ctx: ChannelAdapterContext,
     input: { text: string },
   ): Promise<ChannelPostResult> {
+    return this.post(ctx, input, true);
+  }
+
+  async send(ctx: ChannelAdapterContext, input: { text: string }): Promise<ChannelPostResult> {
+    // Explicit sends do not claim platform follow-up routing. The existing
+    // bridge is origin-bound and must be refactored separately.
+    return this.post(ctx, input, false);
+  }
+
+  private async post(ctx: ChannelAdapterContext, input: { text: string }, recordBridge: boolean): Promise<ChannelPostResult> {
     const posted = await this.session.sendMessage(
       {
         text: input.text,
+        record_bridge: recordBridge,
         // The trusted context, not the session's own view of the origin: the
         // two agree under the connector module, and where they would not, the
         // context is the one every other tool acted on.
@@ -162,6 +151,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
     });
     return {
       ref,
+      target: { provider: this.provider, conversation: posted.channel, thread: posted.thread_ts },
       ...(permalink ? { permalink } : {}),
       bridge_recorded: posted.bridge_recorded,
       ...(posted.bridge_error ? { bridge_error: posted.bridge_error } : {}),
@@ -233,33 +223,22 @@ export class SlackChannelAdapter implements ChannelAdapter {
       input.limit ?? SLACK_HISTORY_PAGE_LIMIT,
       SLACK_HISTORY_PAGE_LIMIT,
     );
-    let raw: SlackHistoryMessage[];
-    let next: string | undefined;
-    if (thread) {
-      const page = input.cursor
-        ? this.threadHistoryFromCursor(
-            ctx.target.conversation,
-            thread,
-            input.cursor,
-            limit,
-          )
-        : await this.latestThreadHistory(ctx, thread, limit);
-      raw = page.messages;
-      next = page.cursor;
-    } else {
-      const payload = await this.session.call(
-        "conversations.history",
-        {
-          channel: ctx.target.conversation,
-          limit,
-          ...(input.cursor ? { cursor: input.cursor } : {}),
-        },
-        "form",
-        ctx.signal,
-      );
-      raw = messagesFrom(payload).reverse();
-      next = nextCursor(payload);
-    }
+    // Exactly one history request per page. Threads page forward; channel
+    // timelines page backward. Never scan a whole thread for a small read.
+    const payload = await this.session.call(
+      thread ? "conversations.replies" : "conversations.history",
+      {
+        channel: ctx.target.conversation,
+        ...(thread ? { ts: thread } : {}),
+        limit,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
+      "form",
+      ctx.signal,
+    );
+    const raw = messagesFrom(payload);
+    if (!thread) raw.reverse();
+    const next = nextCursor(payload);
     // `conversations.replies` returns oldest-first, `conversations.history`
     // newest-first. The tool promises one order for both, so the unthreaded
     // arm is reversed here rather than left for the model to notice — a
@@ -277,7 +256,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         ref: ctx.refs.message({
           conversation: ctx.target.conversation,
           id: message.ts,
-          thread: message.thread_ts ?? thread ?? null,
+          thread: message.thread_ts ?? thread ?? message.ts,
         }),
         author: {
           id:
@@ -292,6 +271,8 @@ export class SlackChannelAdapter implements ChannelAdapter {
               : {}),
         },
         text: message.text ?? "",
+        thread_id: message.thread_ts ?? thread ?? message.ts,
+        ...(typeof message.reply_count === "number" ? { reply_count: message.reply_count } : {}),
         ...(slackTimestamp(message.ts)
           ? { timestamp: slackTimestamp(message.ts) }
           : {}),
@@ -304,7 +285,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
                   // Minted, not passed through: `channel_fetch_file` resolves
                   // this handle back to the provider id, so a file id the
                   // model invents (or reads out of injected content) names
-                  // nothing this conversation carried.
+                  // nothing observed through this credential session.
                   id: ctx.refs.file({
                     conversation: ctx.target.conversation,
                     id: file.id!,
@@ -319,79 +300,9 @@ export class SlackChannelAdapter implements ChannelAdapter {
     }
     return {
       messages,
+      target: ctx.target,
+      next_direction: thread ? "newer" : "older",
       ...(next ? { cursor: ctx.refs.cursor(next) } : {}),
-    };
-  }
-
-  private async latestThreadHistory(
-    ctx: ChannelAdapterContext,
-    thread: string,
-    limit: number,
-  ): Promise<{ messages: SlackHistoryMessage[]; cursor?: string }> {
-    const messages: SlackHistoryMessage[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-
-    do {
-      const payload = await this.session.call(
-        "conversations.replies",
-        {
-          channel: ctx.target.conversation,
-          ts: thread,
-          limit: SLACK_THREAD_FETCH_LIMIT,
-          ...(cursor ? { cursor } : {}),
-        },
-        "form",
-        ctx.signal,
-      );
-      messages.push(...messagesFrom(payload).filter((message) => message.ts));
-      cursor = nextCursor(payload);
-      if (cursor && seenCursors.has(cursor)) {
-        throw new Error("Slack returned a repeated thread history cursor");
-      }
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-
-    return this.threadHistoryPage({
-      conversation: ctx.target.conversation,
-      thread,
-      messages,
-      end: messages.length,
-      limit,
-    });
-  }
-
-  private threadHistoryFromCursor(
-    conversation: string,
-    thread: string,
-    cursor: string,
-    limit: number,
-  ): { messages: SlackHistoryMessage[]; cursor?: string } {
-    const state = this.threadHistoryCursors.get(cursor);
-    if (
-      !state ||
-      state.conversation !== conversation ||
-      state.thread !== thread
-    ) {
-      throw new Error(
-        "Unknown Slack thread history cursor. Use a cursor returned for this conversation.",
-      );
-    }
-    return this.threadHistoryPage({ ...state, limit });
-  }
-
-  private threadHistoryPage(
-    state: SlackThreadHistoryCursor,
-  ): { messages: SlackHistoryMessage[]; cursor?: string } {
-    const start = Math.max(0, state.end - state.limit);
-    let cursor: string | undefined;
-    if (start > 0) {
-      cursor = `thread-history:${randomUUID()}`;
-      this.threadHistoryCursors.set(cursor, { ...state, end: start });
-    }
-    return {
-      messages: state.messages.slice(start, state.end),
-      ...(cursor ? { cursor } : {}),
     };
   }
 
@@ -404,9 +315,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         `Unknown Slack file variant '${input.variant}'. Use 'original' or 'video_low'.`,
       );
     }
-    // The bot can read files across every conversation it belongs to, so the
-    // conversation boundary has to be enforced here: only a file this session
-    // saw in this conversation resolves.
+    // Only files previously observed in this credential session resolve.
     const file = ctx.refs.resolveFile(input.file);
     return await this.session.downloadFile(
       {

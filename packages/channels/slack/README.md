@@ -24,9 +24,17 @@ Recipe written against `channel_reply` is not written against Slack.
 }
 ```
 
-Every registered tool acts on the conversation the task came from; none takes a
-channel, thread, or user argument. Recipe authors select tools in the agent YAML
-file and do not write an extension or call the Slack client directly.
+`channel_reply` answers the origin. `channel_send` takes an explicit channel
+and optional thread; `channel_read` accepts optional channel/thread targets.
+Recipe authors select tools in the agent YAML:
+
+```yaml
+tools: [channel_reply, channel_send, channel_read, channel_react, channel_fetch_file]
+```
+
+Targets use the existing connection. This package does not add backend binding
+authorization or cross-channel reply routing. Handles are session-local. Thread
+reads page forward in bounded requests; channel timelines page backward.
 
 Install the recipe dependencies before running `introspection local`. The cloud
 runtime installs the locked production dependencies when it builds a recipe

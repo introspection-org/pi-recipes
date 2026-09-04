@@ -16,6 +16,7 @@ import {
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
 const FULL_CAPABILITIES: ChannelCapabilities = {
+  targeting: true,
   react: true,
   edit: true,
   retract: true,
@@ -57,6 +58,9 @@ function stubAdapter(
       };
     },
     async react() {},
+    async send(ctx, input) {
+      return { ref: ctx.refs.message({ conversation: ctx.target.conversation, thread: ctx.target.thread, id: `sent-${input.text.length}`, authoredByAgent: true }) };
+    },
     async edit(_ctx, input) {
       return { ref: input.ref };
     },
@@ -101,8 +105,8 @@ function schemaProperties(tool: { parameters?: unknown }): string[] {
 }
 
 describe("channel tool surface", () => {
-  it("exposes no addressing argument on any tool, for any adapter", () => {
-    for (const adapter of [stubAdapter(), new SlackChannelAdapter({} as never)]) {
+  it("exposes addressing only on read/send for adapters that opt in", () => {
+    for (const adapter of [stubAdapter({ ...FULL_CAPABILITIES, targeting: false }), stubAdapter(), new SlackChannelAdapter({} as never)]) {
       const pi = createMockExtensionAPI();
       registerChannelTools(pi, adapter, {
         target: { ...target, provider: adapter.provider },
@@ -113,7 +117,7 @@ describe("channel tool surface", () => {
           expect(
             ADDRESSING_KEYS.test(property),
             `${adapter.provider} ${name} exposes addressing argument '${property}'`,
-          ).toBe(false);
+          ).toBe(Boolean(adapter.capabilities.targeting && ["channel_send", "channel_read"].includes(name) && ["channel_id", "thread_id"].includes(property)));
         }
       }
     }
@@ -223,8 +227,8 @@ describe("channel tool surface", () => {
       "When channel_reply is available, use it to deliver the user-facing response. A normal final assistant response is not delivered to the channel.",
     );
     expect(result.systemPrompt).toContain("No messages are included here");
-    expect(result.systemPrompt).not.toContain("C123");
-    expect(result.systemPrompt).not.toContain("1712345678.100");
+    expect(result.systemPrompt).toContain('"channel_id":"C123"');
+    expect(result.systemPrompt).toContain('"thread_id":"1712345678.100"');
     expect(read).not.toHaveBeenCalled();
   });
 
@@ -528,6 +532,7 @@ describe("channel tool surface", () => {
     });
     expect(slack.tools.map((tool) => tool.id)).toEqual([
       "reply",
+      "send",
       "read",
       "react",
       "edit",

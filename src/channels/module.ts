@@ -18,6 +18,8 @@ export interface ChannelConnectorSession {
   readonly adapter: ChannelAdapter;
   /** Resolved lazily so a task with no channel origin still starts. */
   readonly target: ChannelTarget | (() => ChannelTarget);
+  /** Optional tool-layer target policy, not a sandbox egress boundary. */
+  readonly validateTarget?: (target: ChannelTarget, operation: ChannelToolId) => void | Promise<void>;
 }
 
 export interface ChannelConnectorModuleOptions {
@@ -31,10 +33,10 @@ export interface ChannelConnectorModuleOptions {
    */
   capabilities: ChannelCapabilities;
   /**
-   * Resolve the bound conversation and a client for it.
+   * Resolve the default conversation and a client for one credential session.
    *
-   * Called once per session. Throwing is the right failure for a task with no
-   * channel origin: the tools would have nowhere to act.
+   * Called once per session. Return a lazy target for originless tasks so
+   * explicit read/send calls can still use the credential session.
    */
   createSession(options: {
     env: NodeJS.ProcessEnv;
@@ -62,8 +64,8 @@ function sameCapabilities(
  * A provider package supplies transport plus a capability descriptor; the
  * neutral tool schemas, the opaque handles, and the capability filtering live
  * here. Two providers therefore cannot drift into differently-shaped versions
- * of the same operation, and neither can quietly grow an addressing argument,
- * because neither writes a tool schema at all.
+ * of the same operation. Targeting uses the common capability and schema,
+ * not provider-defined arguments.
  *
  * The result satisfies the existing connector contract. The manifest selects
  * the provider package, the agent list selects tools from its catalog, and
@@ -114,6 +116,7 @@ export function createChannelConnectorModule(
           tools,
           deferredTools: tools.filter((tool) => deferredToolIds.has(tool)),
           refs: new ChannelRefStore(),
+          validateTarget: session.validateTarget,
         });
       };
     },
