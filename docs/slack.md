@@ -2,8 +2,8 @@
 
 `@introspection-ai/recipe-channel-slack` is the Slack adapter for the
 [channel tools](channels.md). It supplies Slack Web API transport and a
-capability descriptor; the tool names and schemas are the neutral `channel_*`
-set, so a Recipe written against it is not written against Slack.
+capability descriptor. The `channels` tool and its command schemas are
+provider-neutral, so a Recipe written against it is not written against Slack.
 
 Slack sends inbound events to the existing Events API webhook. The tools make
 ordinary HTTP requests to the Slack Web API with the bot that received the
@@ -30,23 +30,22 @@ protocol.
 Commit the package manager lockfile. The host loads the package only for a
 Recipe that declares the connector.
 
-The connector package provides the complete Slack tool catalog. Each agent
-lists the exact `channel_*` tools it may call in its YAML file. `channel_reply`,
-`channel_list`, `channel_read`, and `channel_react` are active from the start. Other selected
-tools are available through `tool_search`.
+The connector registers one `channels` tool. Agents select `tools: [channels]`;
+all supported commands are immediately visible. An optional connector `commands`
+allowlist restricts operations for every agent using that connector.
 
 ## What Slack registers
 
 | Tool | Slack operation |
 | --- | --- |
-| `channel_reply` | `chat.postMessage` into the origin channel and thread |
-| `channel_send` | `chat.postMessage` into an explicit channel and optional thread |
-| `channel_list` | paged `conversations.list` returning accessible channels |
-| `channel_read` | `conversations.replies` in a thread, else `conversations.history` |
-| `channel_react` | `reactions.add` or `reactions.remove` |
-| `channel_edit` | `chat.update` for a message the agent posted |
-| `channel_retract` | `chat.delete` for a message the agent posted |
-| `channel_fetch_file` | `files.info` plus a private file download |
+| `channels reply` | `chat.postMessage` into the origin channel and thread |
+| `channels send` | `chat.postMessage` into an explicit channel and optional thread |
+| `channels list` | paged `conversations.list` returning accessible channels |
+| `channels read` | `conversations.replies` in a thread, else `conversations.history` |
+| `channels react` | `reactions.add` or `reactions.remove` |
+| `channels edit` | `chat.update` for a message the agent posted |
+| `channels retract` | `chat.delete` for a message the agent posted |
+| `channels fetch_file` | `files.info` plus a private file download |
 
 Slack history requests at most 15 messages and makes one history request per
 tool call. Threads start at the beginning and page forward; channel timelines
@@ -55,13 +54,13 @@ start with recent messages and page backward. Each page is chronological, and
 This replaces the old unbounded full-thread fetch/backward session cache.
 Provider rate limits still apply; failures are not automatically retried.
 
-`channel_attach` and `channel_post_document` are not registered: `files.uploadV2`
+`channels attach` and `channels post_document` are not registered: `files.uploadV2`
 and canvases are not implemented in this package yet, and the capability
 descriptor says so rather than registering tools that fail.
 
-`channel_list` returns all non-archived public and private channels where the
-bot is a member. `channel_send` requires a listed `channel_id`; `thread_id` is
-optional. `channel_read` accepts optional targets, defaulting to the origin. Explicit channel without
+`channels list` returns all non-archived public and private channels where the
+bot is a member. `channels send` requires an explicit `channel_id` (listing first is not required); `thread_id` is
+optional. `channels read` accepts optional targets, defaulting to the origin. Explicit channel without
 thread means timeline/top-level, not the origin's thread. Reply stays bound.
 Author display names (`users.info`) and
 permalinks (`chat.getPermalink`) are resolved inside the adapter and attached to
@@ -85,12 +84,12 @@ allowed path, and adds the bot token before the request leaves for Slack.
 The adapter refuses to send a task locator when the provider proxy URL is
 missing. It never falls back to sending the locator to Slack.
 
-After `channel_reply` succeeds in cloud, the adapter posts the `connector_posted`
+After `channels reply` succeeds in cloud, the adapter posts the `connector_posted`
 task event to the Data Plane, which checks the agent session, current run,
 provider, and origin channel before recording the new thread root. A later Slack
 reply then resumes the same task.
 
-`channel_send` deliberately does not emit this origin-bound bridge event, even
+`channels send` deliberately does not emit this origin-bound bridge event, even
 when its explicit destination matches the origin. Its result includes the
 actual target and `bridge_recorded: false`. Cross-channel continuation is not
 implemented by this tools-only change.
@@ -125,9 +124,9 @@ inbound task or reply bridge, because no Data Plane task exists.
 
 ## File downloads
 
-`channel_fetch_file` writes a file under the task files directory and returns its
+`channels fetch_file` writes a file under the task files directory and returns its
 path, media type, size, and SHA-256 digest. The bytes land in the workspace and
-not in model context. It accepts only a `file_…` handle from a `channel_read`
+not in model context. It accepts only a `file_…` handle from a `channels read`
 attachment, and resolves that reference's channel before the host policy check.
 On the wire it accepts only `files.slack.com` download URLs, rejects
 redirects, caps the body at 100 MiB, checks the declared size, and removes

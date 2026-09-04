@@ -32,6 +32,7 @@ export interface RecipeConnectorToolLoadout {
 
 export interface RecipeConnectorModuleOptions {
   tools: readonly string[];
+  commands?: readonly string[];
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }
@@ -136,13 +137,14 @@ export async function loadRecipeConnectors(
     (manifest.connectors ?? []).map(async (connector) => {
       const module = await loadRecipeConnectorModule(options.recipeDir, connector);
       const selected = module.tools.filter((tool) =>
-        agentTools.includes(tool.name)
+        agentTools.includes(tool.name) && connector.commands?.length !== 0
       );
       return {
         extension: {
           owner: `<connector:${connector.provider}>`,
           factory: module.createExtension({
             tools: selected.map((tool) => tool.id),
+            ...(connector.commands !== undefined ? { commands: connector.commands } : {}),
             env: options.env,
             cwd: options.cwd,
           }),

@@ -168,8 +168,8 @@ export class SlackBotSession {
    * `to` is required rather than defaulted from the environment: the caller —
    * the adapter — holds the trusted `ChannelAdapterContext.target`, and if this
    * method resolved its own destination the two could disagree, so
-   * the prompt metadata and `channel_read` would describe one conversation while
-   * `channel_reply` posted into another. Falling back to the origin here is
+   * the prompt metadata and `channels read` would describe one conversation while
+   * `channels reply` posted into another. Falling back to the origin here is
    * exactly the kind of second, quieter source of truth the bound tier exists
    * to remove.
    */

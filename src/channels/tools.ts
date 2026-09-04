@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type TSchema } from "typebox";
+import { Check } from "typebox/value";
 
 import { ChannelRefStore } from "./refs.js";
 import type {
@@ -13,8 +14,7 @@ import type {
 /**
  * The neutral operation vocabulary.
  *
- * These ids are private to the channel implementation. An agent writes the
- * complete `channel_<id>` name in its YAML tool list.
+ * Commands of the registered `channels` tool.
  */
 export const CHANNEL_TOOL_IDS = [
   "reply",
@@ -30,18 +30,6 @@ export const CHANNEL_TOOL_IDS = [
 ] as const;
 
 export type ChannelToolId = (typeof CHANNEL_TOOL_IDS)[number];
-
-/** Active without a search. The rest are reachable through `tool_search`. */
-const DEFAULT_ACTIVE: readonly ChannelToolId[] = [
-  "reply",
-  "list",
-  "read",
-  "react",
-];
-
-export function channelToolName(id: ChannelToolId): string {
-  return `channel_${id}`;
-}
 
 /** Which operations an adapter's capabilities actually support. */
 export function channelToolIdsFor(
@@ -60,13 +48,8 @@ export function channelToolIdsFor(
   return supported;
 }
 
-export function channelConnectorTools(capabilities: ChannelCapabilities) {
-  const active = new Set<string>(DEFAULT_ACTIVE);
-  return channelToolIdsFor(capabilities).map((id) => ({
-    id,
-    name: channelToolName(id),
-    defaultActive: active.has(id),
-  }));
+export function channelConnectorTools(_capabilities: ChannelCapabilities) {
+  return [{ id: "channels", name: "channels", defaultActive: true }];
 }
 
 /**
@@ -115,10 +98,8 @@ export interface RegisterChannelToolsOptions {
    * run from a non-channel trigger such as an automation.
    */
   target: ChannelTarget | (() => ChannelTarget);
-  /** Restrict registration to these ids; defaults to everything supported. */
-  tools?: readonly ChannelToolId[];
-  /** @deprecated Discovery is owned by the host tool-search layer, not channel context. */
-  deferredTools?: readonly ChannelToolId[];
+  /** Restrict commands; defaults to everything supported. An empty list exposes no tool. */
+  commands?: readonly ChannelToolId[];
   refs?: ChannelRefStore;
   /** Optional host tool-layer policy. This does not constrain shell/API egress. */
   validateTarget?: (target: ChannelTarget, operation: ChannelToolId) => void | Promise<void>;
@@ -176,7 +157,10 @@ export function registerChannelTools(
   assertImplemented(adapter);
   const refs = options.refs ?? new ChannelRefStore();
   const supported = new Set(channelToolIdsFor(adapter.capabilities));
-  const selected = new Set(options.tools ?? [...supported]);
+  const selected = new Set(options.commands ?? [...supported]);
+  for (const command of selected) {
+    if (!supported.has(command)) throw new Error(`Unsupported channels command: ${command}`);
+  }
   const loadTarget =
     typeof options.target === "function"
       ? options.target
@@ -253,15 +237,12 @@ export function registerChannelTools(
   };
 
   register("reply", () => ({
-    name: channelToolName("reply"),
-    label: "Reply in channel",
     description:
       "Post a message to the conversation this task answers. Text is Markdown and is rendered in the channel's native format. Replies land in the origin thread when there is one.",
     parameters: Type.Object(
       { text: Type.String({ minLength: 1 }) },
       { additionalProperties: false },
     ),
-    executionMode: "sequential",
     async execute(
       _toolCallId: string,
       params: { text: string },
@@ -274,17 +255,14 @@ export function registerChannelTools(
   }));
 
   register("send", () => ({
-    name: channelToolName("send"),
-    label: "Send to a channel",
     description: "Send Markdown to an explicit channel, optionally inside a thread, using this connection. No thread means a top-level post. Does not establish cross-channel follow-up routing.",
     parameters: Type.Object({
       channel_id: Type.String({ minLength: 1 }),
       thread_id: Type.Optional(Type.String({ minLength: 1 })),
       text: Type.String({ minLength: 1 }),
     }, { additionalProperties: false }),
-    executionMode: "sequential",
     async execute(_toolCallId: string, params: { channel_id: string; thread_id?: string; text: string }, signal?: AbortSignal) {
-      if (typeof params.channel_id !== "string") throw new Error("channel_send requires channel_id");
+      if (typeof params.channel_id !== "string") throw new Error("send requires channel_id");
       const ctx = context(signal, explicitTarget(params));
       await options.validateTarget?.(ctx.target, "send");
       return toolResult(await adapter.send!(ctx, { text: params.text }));
@@ -292,12 +270,9 @@ export function registerChannelTools(
   }));
 
   register("list", () => ({
-    name: channelToolName("list"),
-    label: "List channels",
     description:
       "List the channels available to the current provider credential session. Returns provider channel ids and names for use with explicitly targeted channel tools.",
     parameters: Type.Object({}, { additionalProperties: false }),
-    executionMode: "sequential",
     async execute(
       _toolCallId: string,
       _params: Record<string, never>,
@@ -328,8 +303,6 @@ export function registerChannelTools(
   }));
 
   register("read", () => ({
-    name: channelToolName("read"),
-    label: "Read earlier messages",
     description:
       adapter.capabilities.targeting
         ? "Read a channel timeline or a specific thread. No target uses the origin; channel_id alone reads its timeline; thread_id selects a thread, or null selects the origin channel timeline. Pages are chronological; next_direction describes pagination. Repeat the same target with a cursor."
@@ -347,7 +320,6 @@ export function registerChannelTools(
       },
       { additionalProperties: false },
     ),
-    executionMode: "sequential",
     async execute(
       _toolCallId: string,
       params: { channel_id?: string; thread_id?: string | null; limit?: number; cursor?: string },
@@ -369,8 +341,6 @@ export function registerChannelTools(
   }));
 
   register("react", () => ({
-    name: channelToolName("react"),
-    label: "React to a message",
     description:
       "Add or remove a provider-supported emoji reaction on a message in this conversation, named by a reference a channel tool returned. The action defaults to add.",
     parameters: Type.Object(
@@ -389,7 +359,6 @@ export function registerChannelTools(
       },
       { additionalProperties: false },
     ),
-    executionMode: "sequential",
     async execute(
       _toolCallId: string,
       params: {
@@ -411,8 +380,6 @@ export function registerChannelTools(
   }));
 
   register("edit", () => ({
-    name: channelToolName("edit"),
-    label: "Edit a message",
     description:
       "Replace the text of a message this agent posted. Messages from other authors cannot be edited.",
     parameters: Type.Object(
@@ -422,7 +389,6 @@ export function registerChannelTools(
       },
       { additionalProperties: false },
     ),
-    executionMode: "sequential",
     async execute(
       _toolCallId: string,
       params: { message: string; text: string },
@@ -441,15 +407,12 @@ export function registerChannelTools(
   }));
 
   register("retract", () => ({
-    name: channelToolName("retract"),
-    label: "Retract a message",
     description:
       "Delete a message this agent posted. Messages from other authors cannot be retracted.",
     parameters: Type.Object(
       { message: Type.String({ minLength: 1 }) },
       { additionalProperties: false },
     ),
-    executionMode: "sequential",
     async execute(
       _toolCallId: string,
       params: { message: string },
@@ -464,8 +427,6 @@ export function registerChannelTools(
   }));
 
   register("attach", () => ({
-    name: channelToolName("attach"),
-    label: "Attach a file",
     description:
       "Upload a file from the task workspace into this conversation.",
     parameters: Type.Object(
@@ -476,7 +437,6 @@ export function registerChannelTools(
       },
       { additionalProperties: false },
     ),
-    executionMode: "sequential",
     async execute(
       _toolCallId: string,
       params: { path: string; title?: string; comment?: string },
@@ -489,10 +449,8 @@ export function registerChannelTools(
   }));
 
   register("fetch_file", () => ({
-    name: channelToolName("fetch_file"),
-    label: "Fetch a channel file",
     description:
-      "Download a file shared in this conversation into the task workspace and return its local path, size, and digest. Takes a file reference from a message returned by channel_read. A provider file id is not accepted. The bytes stay on disk; they are not read into this conversation.",
+      "Download an observed file into the task workspace and return its local path, size, and digest. Takes a file reference returned by the read command. A provider file id is not accepted. The bytes stay on disk; they are not read into this conversation.",
     parameters: Type.Object(
       {
         file: Type.String({ minLength: 1, maxLength: 200 }),
@@ -500,7 +458,6 @@ export function registerChannelTools(
       },
       { additionalProperties: false },
     ),
-    executionMode: "sequential",
     async execute(
       _toolCallId: string,
       params: { file: string; variant?: string },
@@ -515,8 +472,6 @@ export function registerChannelTools(
   }));
 
   register("post_document", () => ({
-    name: channelToolName("post_document"),
-    label: "Post a document",
     description:
       "Publish long-form Markdown to this conversation as a document rather than a message, for output that reads badly when split across chat messages.",
     parameters: Type.Object(
@@ -526,7 +481,6 @@ export function registerChannelTools(
       },
       { additionalProperties: false },
     ),
-    executionMode: "sequential",
     async execute(
       _toolCallId: string,
       params: { title: string; markdown: string },
@@ -538,6 +492,7 @@ export function registerChannelTools(
     },
   }));
 
+  if (definitions.size === 0) return;
   pi.on("before_agent_start", async (event, ctx) => {
     let target: ChannelTarget;
     try {
@@ -571,9 +526,36 @@ export function registerChannelTools(
     };
   });
 
-  // Built as definitions first, then registered, so the name is applied in
-  // exactly one place and cannot drift per tool.
-  for (const [id, definition] of definitions) {
-    pi.registerTool({ ...definition, name: channelToolName(id) } as never);
+  const variants = [...definitions].map(([command, definition]) => {
+    const schema = definition.parameters as TSchema & { properties: Record<string, TSchema> };
+    return Type.Object({ command: Type.Literal(command), ...schema.properties }, {
+      additionalProperties: false,
+      description: definition.description as string,
+    });
+  });
+  // Providers expect a top-level object. Branches retain command-specific required fields.
+  const fields = new Map<string, TSchema[]>();
+  for (const variant of variants) {
+    for (const [key, schema] of Object.entries(variant.properties)) {
+      fields.set(key, [...(fields.get(key) ?? []), schema]);
+    }
   }
+  const properties = Object.fromEntries([...fields].map(([key, schemas]) => [
+    key, key === "command" ? Type.Union(schemas) : Type.Optional(Type.Union(schemas)),
+  ]));
+  const parameters = Type.Object(properties, { additionalProperties: false, anyOf: variants });
+  pi.registerTool({
+    name: "channels",
+    label: "Channels",
+    description: "Read and manage channel conversations using this connection. Choose a command. " +
+      [...definitions].map(([command, definition]) => `${command}: ${definition.description}`).join("\n"),
+    parameters,
+    executionMode: "sequential",
+    async execute(toolCallId: string, params: { command: ChannelToolId } & Record<string, unknown>, ...rest: unknown[]) {
+      if (!Check(parameters, params)) throw new Error("Invalid channels command or arguments; follow the command schema.");
+      const { command, ...input } = params as { command: ChannelToolId } & Record<string, unknown>;
+      const definition = definitions.get(command)!;
+      return (definition.execute as (...args: unknown[]) => Promise<unknown>)(toolCallId, input, ...rest);
+    },
+  } as never);
 }

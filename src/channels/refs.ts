@@ -85,7 +85,7 @@ export class ChannelRefStore implements ChannelRefResolver {
     const providerCursor = this.cursors.get(cursor);
     if (!providerCursor) {
       throw new Error(
-        `Unknown cursor '${cursor}'. Use a cursor returned by a previous channel_read call.`,
+        `Unknown cursor '${cursor}'. Use a cursor returned by a previous channels read call.`,
       );
     }
     if (providerCursor.scope !== scope) {

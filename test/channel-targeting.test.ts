@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { channelCommand } from "./helpers/channel-command.js";
 import { ChannelRefStore, registerChannelTools, type ChannelAdapter, type ChannelTarget } from "../src/channels/index.js";
 import { createMockExtensionAPI } from "./helpers/mock-extension.js";
 
@@ -19,7 +20,7 @@ function setup(options: { target?: ChannelTarget | (() => ChannelTarget); target
   };
   registerChannelTools(pi, adapter, { refs, target: options.target ?? origin, validateTarget: options.validateTarget });
   const call = async (name: string, params: unknown = {}) => {
-    const result = await pi.tools.get(`channel_${name}`)!.execute("call", params as never, undefined, undefined, undefined as never);
+    const result = await channelCommand(pi, name)!.execute("call", params as never, undefined, undefined, undefined as never);
     return result.details as { ref: string; cursor: string; messages: Array<{ ref: string }>; target: ChannelTarget };
   };
   return { pi, refs, adapter, call };
@@ -42,7 +43,7 @@ describe("explicit channel targets", () => {
     await call("read", { channel_id: "B" });
     expect(target).not.toHaveBeenCalled();
     await expect(call("reply", { text: "hi" })).rejects.toThrow("No origin");
-    await expect(call("send", { text: "hi" })).rejects.toThrow("requires channel_id");
+    await expect(call("send", { text: "hi" })).rejects.toThrow("Invalid channels");
   });
 
   it("never changes reply's origin after a targeted read or send", async () => {
@@ -106,8 +107,8 @@ describe("explicit channel targets", () => {
 
   it("keeps legacy adapters bound even if callers bypass schema validation", async () => {
     const { pi, call, refs } = setup({ targeting: false });
-    expect(pi.tools.has("channel_send")).toBe(false);
-    await expect(call("read", { channel_id: "B" })).rejects.toThrow("does not support");
+    expect(channelCommand(pi, "send").parameters).toBeUndefined();
+    await expect(call("read", { channel_id: "B" })).rejects.toThrow("Invalid channels");
     const message = refs.message({ conversation: "B", id: "1" });
     await expect(call("react", { message, emoji: "eyes" })).rejects.toThrow("outside the bound");
   });

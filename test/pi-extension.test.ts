@@ -409,8 +409,7 @@ describe("Recipes extension for Pi", () => {
           "model:",
           "  name: openai/gpt-4.1",
           "tools:",
-          "  - channel_read",
-          "  - channel_react",
+          "  - channels",
           "",
         ].join("\n")
       );
@@ -428,14 +427,12 @@ describe("Recipes extension for Pi", () => {
 
       expect([...pi.tools.keys()].sort()).toEqual([
         "agent",
-        "channel_react",
-        "channel_read",
+        "channels",
       ]);
       expect(pi.activeTools.sort()).toEqual([
-        "channel_react",
-        "channel_read",
+        "channels",
       ]);
-      expect(pi.activeTools).toContain("channel_react");
+      expect(pi.activeTools).toContain("channels");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

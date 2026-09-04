@@ -71,31 +71,30 @@ function sameCapabilities(
  *
  * The result satisfies the existing connector contract. The manifest selects
  * the provider package, the agent list selects tools from its catalog, and
- * `tool_search` exposes selected tools that are not active by default.
+ * `channels` is active immediately; the connector can restrict its commands.
  */
 export function createChannelConnectorModule(
   options: ChannelConnectorModuleOptions,
 ): RecipeConnectorModule {
   const connectorTools = channelConnectorTools(options.capabilities);
-  const deferredToolIds = new Set(
-    connectorTools
-      .filter((tool) => !tool.defaultActive)
-      .map((tool) => tool.id as ChannelToolId),
-  );
   return {
     provider: options.provider,
     tools: connectorTools,
     createExtension(moduleOptions): ExtensionFactory {
       const unknown = moduleOptions.tools.filter(
-        (tool) => !channelToolIds.has(tool),
+        (tool) => tool !== "channels",
       );
       if (unknown.length > 0) {
         throw new Error(
           `Unknown ${options.provider} channel tool(s): ${unknown.join(", ")}`,
         );
       }
-      const tools = moduleOptions.tools as readonly ChannelToolId[];
+      const commands = moduleOptions.commands;
+      if (commands?.some((command) => !channelToolIds.has(command))) {
+        throw new Error("Unknown channels command in connector allowlist");
+      }
       return (pi) => {
+        if (!moduleOptions.tools.includes("channels")) return;
         const session = options.createSession({
           env: moduleOptions.env ?? process.env,
           cwd: moduleOptions.cwd ?? process.cwd(),
@@ -115,8 +114,7 @@ export function createChannelConnectorModule(
         }
         registerChannelTools(pi, session.adapter, {
           target: session.target,
-          tools,
-          deferredTools: tools.filter((tool) => deferredToolIds.has(tool)),
+          commands: commands as readonly ChannelToolId[] | undefined,
           refs: new ChannelRefStore(),
           validateTarget: session.validateTarget,
         });

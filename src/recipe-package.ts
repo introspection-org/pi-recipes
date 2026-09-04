@@ -73,6 +73,7 @@ export interface RecipePackageMcpConfig {
 
 export interface RecipePackageConnector {
   provider: string;
+  commands?: string[];
 }
 
 export function recipeChannelPackageName(provider: string): string {
@@ -237,7 +238,12 @@ function connectorSourceShapeFindings(
       continue;
     }
     const connector = raw as Record<string, unknown>;
-    const unknown = Object.keys(connector).filter((key) => key !== "provider");
+    const unknown = Object.keys(connector).filter((key) => key !== "provider" && key !== "commands");
+    if (connector.commands !== undefined && (!Array.isArray(connector.commands) ||
+      connector.commands.some((command) => typeof command !== "string" || !command.trim()) ||
+      new Set(connector.commands).size !== connector.commands.length)) {
+      findings.push(invalid(`package.json#pi.connectors[${index}].commands must be an array of unique non-empty strings`));
+    }
     if (unknown.length > 0) {
       findings.push(
         invalid(
@@ -709,7 +715,7 @@ function parseConnectors(value: unknown): RecipePackageConnector[] {
     const provider = stringValue(connector.provider);
     if (!provider || seen.has(provider)) continue;
     seen.add(provider);
-    connectors.push({ provider });
+    connectors.push({ provider, ...(Array.isArray(connector.commands) ? { commands: connector.commands as string[] } : {}) });
   }
   return connectors;
 }

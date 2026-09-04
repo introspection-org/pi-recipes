@@ -92,7 +92,7 @@ export interface ChannelMessage {
   readonly ref: MessageRef;
   readonly author: ChannelAuthor;
   readonly text: string;
-  /** Provider thread root/topic usable with channel_read's thread_id. */
+  /** Provider thread root/topic usable with the read command's thread_id. */
   readonly thread_id?: string;
   readonly reply_count?: number;
   readonly timestamp?: string;

@@ -64,6 +64,24 @@ function fixture(): string {
 }
 
 describe("Recipe Format", () => {
+  it.each([
+    { commands: ["read", "reply"], valid: true },
+    { commands: [], valid: true },
+    { commands: ["read", "read"], valid: false },
+    { commands: [""], valid: false },
+    { commands: "read", valid: false },
+    { commands: [42], valid: false },
+  ])("validates connector command allowlist $commands", ({ commands, valid }) => {
+    const recipeDir = fixture();
+    const pkg = JSON.parse(readFileSync(join(recipeDir, "package.json"), "utf8"));
+    pkg.pi.connectors = [{ provider: "slack", commands }];
+    pkg.dependencies = { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" };
+    writeFileSync(join(recipeDir, "package.json"), JSON.stringify(pkg));
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(validatePiPackageManifest(manifest).valid).toBe(valid);
+    if (valid) expect(manifest.connectors?.[0]?.commands).toEqual(commands);
+  });
+
   it("reads a declarative Slack connector", () => {
     const recipeDir = fixture();
     const pkg = JSON.parse(

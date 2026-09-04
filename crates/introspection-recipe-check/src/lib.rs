@@ -647,13 +647,24 @@ fn validate_connector_config(
             );
             continue;
         };
-        for key in connector.keys().filter(|key| key.as_str() != "provider") {
+        for key in connector.keys().filter(|key| !matches!(key.as_str(), "provider" | "commands")) {
             ctx.error(
                 "pi.connectors_invalid",
                 PACKAGE_JSON,
                 format!("package.json#pi.connectors[{index}] contains unknown field '{key}'"),
-                Some("use only provider"),
+                Some("use provider and optional commands"),
             );
+        }
+
+        if let Some(commands) = connector.get("commands") {
+            let valid = commands.as_array().is_some_and(|values| {
+                let mut seen = BTreeSet::new();
+                values.iter().all(|value| value.as_str().is_some_and(|value| !value.trim().is_empty() && seen.insert(value)))
+            });
+            if !valid {
+                ctx.error("pi.connectors_invalid", PACKAGE_JSON,
+                    format!("package.json#pi.connectors[{index}].commands must be an array of unique non-empty strings"), Some("use a list of unique command names"));
+            }
         }
 
         let provider = string_value(connector.get("provider"));
@@ -3218,6 +3229,23 @@ mod tests {
         ]));
 
         assert!(report.valid, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn connector_command_allowlist_shape() {
+        for (commands, valid) in [
+            (json!(["read", "reply"]), true), (json!([]), true),
+            (json!(["read", "read"]), false), (json!([""]), false),
+            (json!("read"), false), (json!([42]), false),
+        ] {
+            let mut files = connector_recipe(&["channels"]);
+            let package_file = files.files.iter_mut().find(|file| file.path == PACKAGE_JSON).unwrap();
+            let mut package: JsonValue = serde_json::from_str(package_file.content.as_deref().unwrap()).unwrap();
+            package["pi"]["connectors"][0]["commands"] = commands;
+            package_file.content = Some(serde_json::to_string(&package).unwrap());
+            let report = check_recipe_files(&files);
+            assert_eq!(!report.diagnostics.iter().any(|d| d.code == "pi.connectors_invalid"), valid);
+        }
     }
 
     #[test]

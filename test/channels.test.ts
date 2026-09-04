@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { channelCommand } from "./helpers/channel-command.js";
 
 import {
   CHANNEL_TOOL_IDS,
   ChannelRefStore,
-  channelToolName,
   createChannelConnectorModule,
   registerChannelTools,
   type ChannelAdapter,
@@ -116,12 +116,13 @@ describe("channel tool surface", () => {
         target: { ...target, provider: adapter.provider },
       });
       expect([...pi.tools.keys()].length).toBeGreaterThan(0);
-      for (const [name, tool] of pi.tools) {
+      for (const name of CHANNEL_TOOL_IDS) {
+        const tool = channelCommand(pi, name);
         for (const property of schemaProperties(tool)) {
           expect(
             ADDRESSING_KEYS.test(property),
             `${adapter.provider} ${name} exposes addressing argument '${property}'`,
-          ).toBe(Boolean(adapter.capabilities.targeting && ["channel_send", "channel_read"].includes(name) && ["channel_id", "thread_id"].includes(property)));
+          ).toBe(Boolean(adapter.capabilities.targeting && ["send", "read"].includes(name) && ["channel_id", "thread_id"].includes(property)));
         }
       }
     }
@@ -131,8 +132,47 @@ describe("channel tool surface", () => {
     const pi = createMockExtensionAPI();
     registerChannelTools(pi, stubAdapter(), { target });
     expect([...pi.tools.keys()].sort()).toEqual(
-      CHANNEL_TOOL_IDS.map(channelToolName).sort(),
+      ["channels"],
     );
+    expect((pi.tools.get("channels")!.parameters as { type: string }).type).toBe("object");
+    expect(CHANNEL_TOOL_IDS.filter((id) => channelCommand(pi, id).parameters)).toEqual([...CHANNEL_TOOL_IDS]);
+  });
+
+  it("enforces command permissions and argument shapes before dispatch", async () => {
+    const pi = createMockExtensionAPI();
+    const adapter = stubAdapter();
+    adapter.reply = vi.fn(adapter.reply);
+    adapter.send = vi.fn(adapter.send!);
+    registerChannelTools(pi, adapter, { target, commands: ["reply"] });
+    const execute = (input: unknown) => pi.tools.get("channels")!.execute("test", input as never, undefined, undefined, undefined as never);
+    for (const input of [
+      { command: "send", channel_id: "C2", text: "no" },
+      { command: "unknown" },
+      { command: "reply" },
+      { command: "reply", text: "no", channel_id: "C2" },
+      { command: "reply", text: 42 },
+    ]) await expect(execute(input)).rejects.toThrow("Invalid channels");
+    expect(adapter.reply).not.toHaveBeenCalled();
+    expect(adapter.send).not.toHaveBeenCalled();
+    await execute({ command: "reply", text: "yes" });
+    expect(adapter.reply).toHaveBeenCalledOnce();
+    expect(channelCommand(pi, "send").parameters).toBeUndefined();
+  });
+
+  it("honors connector command allowlists and rejects unsupported commands", () => {
+    const module = createChannelConnectorModule({ provider: "test", capabilities: LIMITED_CAPABILITIES,
+      createSession: () => ({ adapter: stubAdapter(LIMITED_CAPABILITIES), target }) });
+    const pi = createMockExtensionAPI();
+    module.createExtension({ tools: ["channels"], commands: ["reply"] })(pi as never);
+    expect(channelCommand(pi, "reply").parameters).toBeDefined();
+    expect(channelCommand(pi, "edit").parameters).toBeUndefined();
+    expect(() => module.createExtension({ tools: ["channels"], commands: ["send"] })(createMockExtensionAPI() as never)).toThrow("Unsupported");
+    expect(() => module.createExtension({ tools: ["channels"], commands: ["bogus"] })).toThrow("Unknown");
+    for (const options of [{ tools: [] }, { tools: ["channels"], commands: [] }]) {
+      const empty = createMockExtensionAPI();
+      module.createExtension(options)(empty as never);
+      expect(empty.tools.size).toBe(0);
+    }
   });
 
   it("filters channel listings through the host target policy", async () => {
@@ -149,7 +189,7 @@ describe("channel tool surface", () => {
     const pi = createMockExtensionAPI();
     registerChannelTools(pi, adapter, { target, validateTarget });
 
-    const result = await pi.tools.get("channel_list")!.execute(
+    const result = await channelCommand(pi, "list")!.execute(
       "list-channels",
       {},
       undefined,
@@ -182,11 +222,11 @@ describe("channel tool surface", () => {
       { ...stubAdapter(), react },
       {
         target,
-        tools: ["react"],
+        commands: ["react"],
         refs,
       },
     );
-    const tool = pi.tools.get("channel_react")!;
+    const tool = channelCommand(pi, "react")!;
 
     const added = await tool.execute(
       "add-reaction",
@@ -238,7 +278,7 @@ describe("channel tool surface", () => {
         conversation: "C123",
         thread: "1712345678.100",
       },
-      tools: ["reply", "read"],
+      commands: ["reply", "read"],
     });
 
     const [result] = (await pi.emitExtensionEvent(
@@ -335,8 +375,7 @@ describe("channel tool surface", () => {
     const pi = createMockExtensionAPI();
     registerChannelTools(pi, stubAdapter(), {
       target,
-      tools: ["reply", "edit", "fetch_file"],
-      deferredTools: ["edit", "fetch_file"],
+      commands: ["reply", "edit", "fetch_file"],
     });
 
     const [result] = (await pi.emitExtensionEvent(
@@ -361,7 +400,7 @@ describe("channel tool surface", () => {
         if (attempts === 1) throw new Error("No channel origin");
         return target;
       },
-      tools: ["reply"],
+      commands: ["reply"],
     });
 
     const promptResults = await pi.emitExtensionEvent(
@@ -373,7 +412,7 @@ describe("channel tool surface", () => {
       } as never,
       { signal: undefined },
     );
-    const reply = pi.tools.get("channel_reply");
+    const reply = channelCommand(pi, "reply");
     await reply?.execute(
       "tool-call",
       { text: "hello" },
@@ -402,7 +441,7 @@ describe("channel tool surface", () => {
         provider: "test",
         conversation: `C${++calls}`,
       }),
-      tools: ["reply"],
+      commands: ["reply"],
     });
 
     await pi.emitExtensionEvent(
@@ -414,7 +453,7 @@ describe("channel tool surface", () => {
       } as never,
       { signal: undefined },
     );
-    await pi.tools.get("channel_reply")?.execute(
+    await channelCommand(pi, "reply")?.execute(
       "tool-call",
       { text: "hello" },
       undefined,
@@ -430,11 +469,11 @@ describe("channel tool surface", () => {
     const pi = createMockExtensionAPI();
     registerChannelTools(pi, stubAdapter(), {
       target: { provider: "slack", conversation: "C1" },
-      tools: ["reply"],
+      commands: ["reply"],
     });
 
     await expect(
-      pi.tools.get("channel_reply")?.execute(
+      channelCommand(pi, "reply")?.execute(
         "tool-call",
         { text: "hello" },
         undefined,
@@ -480,11 +519,11 @@ describe("channel tool surface", () => {
       }),
       { target },
     );
-    const names = [...pi.tools.keys()];
-    expect(names).not.toContain("channel_react");
-    expect(names).not.toContain("channel_read");
-    expect(names).not.toContain("channel_post_document");
-    expect(names).toContain("channel_reply");
+    const names = CHANNEL_TOOL_IDS.filter((id) => channelCommand(pi, id).parameters);
+    expect(names).not.toContain("react");
+    expect(names).not.toContain("read");
+    expect(names).not.toContain("post_document");
+    expect(names).toContain("reply");
   });
 
   it("accepts a capability descriptor that matches by value, not identity", () => {
@@ -501,7 +540,7 @@ describe("channel tool surface", () => {
     });
     const pi = createMockExtensionAPI();
     expect(() =>
-      module.createExtension({ tools: ["reply"] })(pi as never),
+      module.createExtension({ tools: ["channels"] })(pi as never),
     ).not.toThrow();
 
     const disagrees = createChannelConnectorModule({
@@ -516,7 +555,7 @@ describe("channel tool surface", () => {
       }),
     });
     expect(() =>
-      disagrees.createExtension({ tools: ["reply"] })(createMockExtensionAPI() as never),
+      disagrees.createExtension({ tools: ["channels"] })(createMockExtensionAPI() as never),
     ).toThrow(/differ from its declared catalog/);
   });
 
@@ -529,14 +568,14 @@ describe("channel tool surface", () => {
         capabilities: explicitOnCatalog ? explicit : omitted,
         createSession: () => ({ adapter: stubAdapter(explicitOnCatalog ? omitted : explicit), target }),
       });
-      expect(() => module.createExtension({ tools: ["reply"] })(createMockExtensionAPI() as never)).not.toThrow();
+      expect(() => module.createExtension({ tools: ["channels"] })(createMockExtensionAPI() as never)).not.toThrow();
     }
     const mismatch = createChannelConnectorModule({
       provider: "test",
       capabilities: LIMITED_CAPABILITIES,
       createSession: () => ({ adapter: stubAdapter({ ...LIMITED_CAPABILITIES, [key]: true }), target }),
     });
-    expect(() => mismatch.createExtension({ tools: ["reply"] })(createMockExtensionAPI() as never)).toThrow(/differ from its declared catalog/);
+    expect(() => mismatch.createExtension({ tools: ["channels"] })(createMockExtensionAPI() as never)).toThrow(/differ from its declared catalog/);
   });
 
   it("refuses an adapter for a different provider", () => {
@@ -550,7 +589,7 @@ describe("channel tool surface", () => {
     });
 
     expect(() =>
-      module.createExtension({ tools: ["reply"] })(
+      module.createExtension({ tools: ["channels"] })(
         createMockExtensionAPI() as never,
       ),
     ).toThrow(/adapter for 'slack' returned provider 'teams'/);
@@ -570,17 +609,11 @@ describe("channel tool surface", () => {
       capabilities: LIMITED_CAPABILITIES,
       createSession: () => ({ adapter: stubAdapter(), target }),
     });
-    expect(module.tools.map((tool) => tool.id)).toEqual([
-      "reply",
-      "edit",
-      "retract",
-    ]);
-    expect(module.tools.filter((tool) => tool.defaultActive).map((t) => t.id)).toEqual([
-      "reply",
-    ]);
+    expect(module.tools.map((tool) => tool.id)).toEqual(["channels"]);
+    expect(module.tools.filter((tool) => tool.defaultActive).map((t) => t.id)).toEqual(["channels"]);
   });
 
-  it("marks non-default tools as searchable through a connector module", async () => {
+  it("registers one immediately active tool without discovery instructions", async () => {
     const module = createChannelConnectorModule({
       provider: "test",
       capabilities: LIMITED_CAPABILITIES,
@@ -590,7 +623,7 @@ describe("channel tool surface", () => {
       }),
     });
     const pi = createMockExtensionAPI();
-    module.createExtension({ tools: ["reply", "edit"] })(pi as never);
+    module.createExtension({ tools: ["channels"] })(pi as never);
 
     const [result] = (await pi.emitExtensionEvent(
       {
@@ -603,8 +636,7 @@ describe("channel tool surface", () => {
     )) as Array<{ systemPrompt: string }>;
 
     expect(JSON.stringify(result)).not.toMatch(/default_tools|searchable_tools|tool_search/);
-    expect(pi.tools.has("channel_reply")).toBe(true);
-    expect(pi.tools.has("channel_edit")).toBe(true);
+    expect([...pi.tools.keys()]).toEqual(["channels"]);
   });
 
   it("keeps the Slack catalog aligned with its declared capabilities", () => {
@@ -616,16 +648,7 @@ describe("channel tool surface", () => {
         target: { ...target, provider: "slack" },
       }),
     });
-    expect(slack.tools.map((tool) => tool.id)).toEqual([
-      "reply",
-      "send",
-      "list",
-      "read",
-      "react",
-      "edit",
-      "retract",
-      "fetch_file",
-    ]);
+    expect(slack.tools.map((tool) => tool.id)).toEqual(["channels"]);
   });
 });
 

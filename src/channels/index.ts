@@ -3,7 +3,6 @@ export {
   CHANNEL_TOOL_IDS,
   channelConnectorTools,
   channelToolIdsFor,
-  channelToolName,
   registerChannelTools,
 } from "./tools.js";
 export type {

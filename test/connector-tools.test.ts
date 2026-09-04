@@ -58,7 +58,7 @@ describe("Recipe connector packages", () => {
         version: "0.1.0",
         dependencies: { [channelPackage]: "0.1.0" },
         pi: {
-          connectors: [{ provider: "custom" }],
+          connectors: [{ provider: "custom", commands: ["ping"] }],
         },
       })
     );
@@ -79,7 +79,7 @@ describe("Recipe connector packages", () => {
         "  tools: [",
         '    { id: "ping", name: "package_owned_ping", defaultActive: false },',
         "  ],",
-        "  createExtension() { return () => {}; },",
+        '  createExtension(options) { if (options.commands?.join() !== "ping" && options.commands?.length !== 0) throw new Error("commands not forwarded"); return () => {}; },',
         "};",
         "",
       ].join("\n")
@@ -97,5 +97,11 @@ describe("Recipe connector packages", () => {
       deferredToolNames: ["package_owned_ping"],
     });
     expect(loaded.extensions).toHaveLength(1);
+    const manifest = readPiPackageManifest(recipeDir);
+    expect(manifest.connectors?.[0]?.commands).toEqual(["ping"]);
+    manifest.connectors![0]!.commands = [];
+    const empty = await loadRecipeConnectors(manifest, ["package_owned_ping"], { recipeDir });
+    expect(empty.loadout.toolNames).toEqual([]);
+    expect(empty.loadout.initialActiveToolNames).toEqual([]);
   });
 });

@@ -1,3 +1,4 @@
+import { channelCommand } from "./helpers/channel-command.js";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -495,8 +496,8 @@ describe("Slack channel tools", () => {
 
   const call = (pi: ReturnType<typeof createMockExtensionAPI>, name: string, params: unknown) =>
     pi.tools
-      .get(name)
-      ?.execute("tool-call", params as never, undefined, undefined, undefined as never);
+      .get("channels")
+      ?.execute("tool-call", { ...(params as object), command: name.replace("channel_", "") } as never, undefined, undefined, undefined as never);
 
   it("lists every accessible channel across Slack pages", async () => {
     const { pi, fetchImpl } = slackTools({
@@ -806,16 +807,7 @@ describe("Slack channel tools", () => {
 
   it("registers the neutral surface Slack supports and nothing else", () => {
     const { pi } = slackTools();
-    expect([...pi.tools.keys()].sort()).toEqual([
-      "channel_edit",
-      "channel_fetch_file",
-      "channel_list",
-      "channel_react",
-      "channel_read",
-      "channel_reply",
-      "channel_retract",
-      "channel_send",
-    ]);
+    expect([...pi.tools.keys()]).toEqual(["channels"]);
   });
 
   it("replies to the bound conversation and returns an opaque reference", async () => {
@@ -861,7 +853,7 @@ describe("Slack channel tools", () => {
       { target: { provider: "slack", conversation: "C1", thread: "100.1" } },
     );
 
-    const result = (await pi.tools.get("channel_reply")!.execute(
+    const result = (await channelCommand(pi, "reply")!.execute(
       "tool-call",
       { text: "hello" },
       controller.signal,

@@ -48,7 +48,7 @@ export {
  * ```
  *
  * ```yaml
- * tools: [channel_reply, channel_send, channel_list, channel_read, channel_react, channel_fetch_file]
+ * tools: [channels]
  * ```
  *
  * Channel listing and explicit read/send targets use this session's

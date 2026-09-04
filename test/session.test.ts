@@ -309,7 +309,7 @@ describe("createAgentSession", () => {
   it("starts connector sessions with the default Slack loadout", async () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
-      tools: ["channel_read", "channel_react", "channel_reply"],
+      tools: ["channels"],
       manifestPi: {
         connectors: [{ provider: "slack" }],
       },
@@ -319,9 +319,7 @@ describe("createAgentSession", () => {
 
     expect(handle.session.getActiveToolNames()).toEqual(
       expect.arrayContaining([
-        "channel_read",
-        "channel_react",
-        "channel_reply",
+        "channels",
       ])
     );
     expect(handle.session.getActiveToolNames()).not.toContain("tool_search");
@@ -330,7 +328,7 @@ describe("createAgentSession", () => {
   it("rejects connector tools unsupported by the provider", async () => {
     const { recipeDir, workspaceDir } = fixture({
       dependencies: { [SLACK_RECIPE_CHANNEL_PACKAGE]: "0.1.0" },
-      tools: ["channel_reply", "channel_delete_workspace"],
+      tools: ["channels", "channel_delete_workspace"],
       manifestPi: {
         connectors: [{ provider: "slack" }],
       },
