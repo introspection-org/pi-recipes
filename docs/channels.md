@@ -25,9 +25,9 @@ the channel. Recipe instructions decide when to reply, stay silent, read history
 or send elsewhere; tool descriptions explain how. Tool discovery remains the
 responsibility of the tool-search extension.
 
-Origin fields use XML elements inside `<channel_context>`, matching the memory
-context format. All values are XML-escaped so provider labels cannot close the
-context block or introduce new elements.
+Origin fields are JSON inside a single `<channel_context>` wrapper. JSON Unicode
+escapes for `<`, `>`, and `&` keep provider labels from breaking the wrapper while
+preserving valid JSON and the original values when parsed.
 
 The context message is not an authorization boundary. Tools continue to resolve
 the origin from host state, never from message text, and validate explicit targets

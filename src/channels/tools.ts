@@ -150,15 +150,14 @@ function channelContextMessage(target: ChannelTarget): string {
       : {}),
     conversation_scope: target.thread ? "thread" : "conversation",
   };
-  const escapeXml = (value: string) => value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
+  // JSON escapes preserve round-tripping without allowing labels to close the wrapper.
+  const json = JSON.stringify(metadata)
+    .replaceAll("&", "\\u0026")
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e");
   return [
     "<channel_context>",
-    ...Object.entries(metadata).map(([key, value]) => `  <${key}>${escapeXml(value)}</${key}>`),
+    json,
     "</channel_context>",
   ].join("\n");
 }
