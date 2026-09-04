@@ -108,7 +108,9 @@ provider file ID would bypass the requirement to observe the file first.
 ### Listing and enrichment
 
 `channel_list` returns provider channel IDs and names for explicitly targeted
-reads and sends. Author names and permalinks are resolved by the adapter in trusted code and
+reads and sends. When the host supplies `validateTarget`, every listed channel
+is checked with the `list` operation and denied entries are omitted before any
+IDs or names become model-visible. Author names and permalinks are resolved by the adapter in trusted code and
 attached to what the agent is already reading: `channel_read` rows carry
 `author.display_name`, and `channel_reply` returns a `permalink` where the
 provider has one. There is no `resolve_user` or `get_permalink` tool, because

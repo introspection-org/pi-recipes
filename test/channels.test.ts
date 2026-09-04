@@ -135,6 +135,43 @@ describe("channel tool surface", () => {
     );
   });
 
+  it("filters channel listings through the host target policy", async () => {
+    const adapter = stubAdapter();
+    adapter.list = vi.fn(async () => [
+      { id: "C1", name: "general", kind: "public_channel" as const },
+      { id: "C2", name: "restricted", kind: "private_channel" as const },
+    ]);
+    const validateTarget = vi.fn(
+      async (candidate: { conversation: string }) => {
+        if (candidate.conversation === "C2") throw new Error("denied");
+      },
+    );
+    const pi = createMockExtensionAPI();
+    registerChannelTools(pi, adapter, { target, validateTarget });
+
+    const result = await pi.tools.get("channel_list")!.execute(
+      "list-channels",
+      {},
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(result.details).toEqual([
+      { id: "C1", name: "general", kind: "public_channel" },
+    ]);
+    expect(validateTarget).toHaveBeenNthCalledWith(
+      1,
+      { provider: "test", conversation: "C1", name: "general" },
+      "list",
+    );
+    expect(validateTarget).toHaveBeenNthCalledWith(
+      2,
+      { provider: "test", conversation: "C2", name: "restricted" },
+      "list",
+    );
+  });
+
   it("adds reactions by default and passes an explicit removal action", async () => {
     const refs = new ChannelRefStore();
     const message = refs.message({ conversation: "C1", id: "100.1" });

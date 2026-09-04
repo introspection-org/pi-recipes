@@ -320,7 +320,27 @@ export function registerChannelTools(
       _params: Record<string, never>,
       signal?: AbortSignal,
     ) {
-      return toolResult(await adapter.list!(signal));
+      const channels = await adapter.list!(signal);
+      if (!options.validateTarget) return toolResult(channels);
+
+      const allowed = [];
+      for (const channel of channels) {
+        try {
+          await options.validateTarget(
+            {
+              provider: adapter.provider,
+              conversation: channel.id,
+              name: channel.name,
+            },
+            "list",
+          );
+          allowed.push(channel);
+        } catch {
+          // Listing must fail closed per entry: a denied target's name and id
+          // must not become model-visible merely because the credential can see it.
+        }
+      }
+      return toolResult(allowed);
     },
   }));
 
