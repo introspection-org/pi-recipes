@@ -81,9 +81,9 @@ MUST commit one supported dependency lockfile: `package-lock.json`,
 `npm-shrinkwrap.json`, `pnpm-lock.yaml`, or `yarn.lock`. npm lockfiles MUST
 carry the same package name and version as `package.json`.
 
-## Connector tools
+## Channel tools
 
-`pi.connectors` declares official provider tools that the host may register for
+`pi.channels` declares official provider tools that the host may register for
 the Recipe. The declaration does not contain a connector ID, workspace ID, or
 credential. A host binds those values when it starts a task.
 
@@ -93,7 +93,7 @@ credential. A host binds those values when it starts a task.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "connectors": [
+    "channels": [
       {
         "provider": "slack"
       }

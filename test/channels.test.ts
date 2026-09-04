@@ -613,6 +613,33 @@ describe("channel tool surface", () => {
     ).toThrow(/adapter for 'slack' returned provider 'teams'/);
   });
 
+  it("passes the shared channel configuration to the provider", () => {
+    let received: unknown;
+    const module = createChannelConnectorModule({
+      provider: "test",
+      capabilities: LIMITED_CAPABILITIES,
+      createSession: ({ config }) => {
+        received = config;
+        return { adapter: stubAdapter(LIMITED_CAPABILITIES), target };
+      },
+    });
+
+    module.createExtension({
+      tools: ["channels"],
+      env: {
+        INTROSPECTION_TASK_CHANNEL_PROVIDER: "test",
+        INTROSPECTION_TASK_CHANNEL_ID: "C1",
+        INTROSPECTION_TASK_THREAD_ID: "100.1",
+      },
+    })(createMockExtensionAPI() as never);
+
+    expect(received).toEqual({
+      provider: "test",
+      channel_ref: "C1",
+      thread_ref: "100.1",
+    });
+  });
+
   it("refuses an adapter that declares more than it implements", () => {
     const adapter = stubAdapter();
     const incomplete = { ...adapter, react: undefined } as unknown as ChannelAdapter;

@@ -18,7 +18,7 @@ protocol.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "connectors": [
+    "channels": [
       {
         "provider": "slack"
       }
@@ -106,21 +106,9 @@ development runtime starts a cloud sandbox with the local Recipe overlay, so the
 adapter uses the cloud task origin and provider proxy and needs no local Slack
 credential. Use `introspection dev --logs` for sandbox logs.
 
-## Test with introspection local
-
-An `introspection local` run has no inbound Slack event, cloud task origin, or
-credential proxy. Install dependencies, then set a bot token and a conversation:
-
-```bash
-pnpm install --frozen-lockfile
-export SLACK_BOT_TOKEN='xoxb-...'
-export SLACK_CHANNEL_ID='C0123456789'
-export SLACK_THREAD_TS='1234567890.123456' # optional
-introspection local -p 'Summarise this thread and reply.'
-```
-
-Local tools call Slack directly with `SLACK_BOT_TOKEN`. Local posts create no
-inbound task or reply bridge, because no Data Plane task exists.
+Standalone channel access through `introspection local` is not supported. It
+has no webhook receiver, cloud task origin, or provider proxy. Use the same
+`introspection dev` workflow for inbound events and outbound channel tools.
 
 ## File downloads
 
@@ -137,4 +125,4 @@ rendition when one exists.
 
 The package exports `SlackChannelAdapter`, `createSlackChannelSession` and
 `slackChannelTarget` for custom hosts and tests, alongside the default
-`slackRecipeConnectorModule`. A normal Recipe uses `pi.connectors` instead.
+`slackRecipeConnectorModule`. A normal Recipe uses `pi.channels` instead.

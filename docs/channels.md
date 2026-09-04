@@ -20,7 +20,7 @@ by the adapter. To restrict commands for the recipe, set an allowlist on the
 connector in `package.json`:
 
 ```json
-{"pi":{"connectors":[{"provider":"slack","commands":["list","read","reply"]}]}}
+{"pi":{"channels":[{"provider":"slack","commands":["list","read","reply"]}]}}
 ```
 
 The allowlist applies to all agents using this connector; an empty list exposes
@@ -45,7 +45,7 @@ It never automatically publishes private assistant text. Aborted and provider-er
 runs are not retried by this guard. Hosts must wait for `agent_settled`, not an
 intermediate `agent_end`, before declaring a run complete.
 
-Migration: replace agent `channel_*` tool names with `channels`, and move any
+Migration: rename `pi.connectors` to `pi.channels`, replace agent `channel_*` tool names with `channels`, and move any
 operation restrictions to `commands` (without the `channel_` prefix). This is a
 breaking interface change; old individual tool names are not registered.
 
@@ -68,6 +68,13 @@ preserving valid JSON and the original values when parsed.
 The context message is not an authorization boundary. Tools continue to resolve
 the origin from host state, never from message text, and validate explicit targets
 through the host's policy. Non-channel triggers receive no channel context.
+
+## Test channel recipes
+
+Use `introspection dev` to test local recipe files through the platform's
+provider proxy. Standalone `SLACK_BOT_TOKEN` credentials and local destination
+aliases are no longer supported. Originless web and automation runs can still
+use explicit channel targets with the connected provider credentials.
 
 ## Commands
 
@@ -182,7 +189,7 @@ send idempotency or claim exactly-once delivery.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "connectors": [
+    "channels": [
       {
         "provider": "slack"
       }
@@ -191,7 +198,7 @@ send idempotency or claim exactly-once delivery.
 }
 ```
 
-The connector declaration enables the provider package and its supported tool
+The channel declaration enables the provider package and its supported tool
 catalog. The agent YAML file is the only place that narrows the catalog:
 
 ```yaml
@@ -216,6 +223,7 @@ expose `channels list`. Omit these capabilities for origin-bound tools.
 import {
   createChannelConnectorModule,
   type ChannelAdapter,
+  type ChannelConfig,
 } from "@introspection-ai/recipes/channels";
 
 const capabilities = {
@@ -232,17 +240,32 @@ class MyAdapter implements ChannelAdapter {
   async retract(ctx, { ref }) { /* retract an agent-authored message */ }
 }
 
+function targetFrom(config: ChannelConfig | null) {
+  if (!config || config.provider !== "my-channel") {
+    throw new Error("No my-channel destination is configured");
+  }
+  return {
+    provider: "my-channel",
+    conversation: config.channel_ref,
+    thread: config.thread_ref,
+  };
+}
+
 export default createChannelConnectorModule({
   provider: "my-channel",
   capabilities,
-  createSession: ({ env }) => ({
+  createSession: ({ config, env }) => ({
     adapter: new MyAdapter(/* client from env */),
     // A function, so a task with no channel origin still starts: the tools
     // fail when called, the session does not fail to open.
-    target: () => resolveTargetFrom(env),
+    target: () => targetFrom(config),
   }),
 });
 ```
+
+The host resolves `ChannelConfig` once from the `INTROSPECTION_TASK_CHANNEL_*`
+environment contract. Provider packages map `channel_ref` and `thread_ref` to
+their own API fields and do not define provider-specific origin types.
 
 Registration checks that the adapter implements every method its capabilities
 claim, so a descriptor cannot promise a tool the adapter does not have.

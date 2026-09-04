@@ -2,7 +2,7 @@
 
 The Slack adapter for the provider-neutral
 [channel tools](https://github.com/introspection-org/recipes/blob/main/docs/channels.md).
-A Recipe installs it when its `package.json#pi.connectors` list includes the
+A Recipe installs it when its `package.json#pi.channels` list includes the
 `slack` provider.
 
 The package supplies Slack Web API transport and a capability descriptor. The
@@ -15,7 +15,7 @@ Recipe written against `channels reply` is not written against Slack.
     "@introspection-ai/recipe-channel-slack": "^0.1.0"
   },
   "pi": {
-    "connectors": [
+    "channels": [
       {
         "provider": "slack"
       }
@@ -41,9 +41,9 @@ cursors retain overflow and an exclusive timestamp boundary, avoiding Slack's
 repeated-root and cursor-ordering quirks. Reaction add/remove are idempotent
 when the requested reaction state already exists.
 
-Install the recipe dependencies before running `introspection local`. The cloud
-runtime installs the locked production dependencies when it builds a recipe
-image or starts an `introspection dev` overlay.
+Use `introspection dev` to test channel recipes. The cloud runtime installs the
+locked production dependencies and receives Slack events for your local Recipe
+files. Standalone channel access through `introspection local` is not supported.
 
 The package calls the Slack Web API. It does not use Socket Mode, WebSockets,
 or streaming. Operations outside the declared `channels` command set are

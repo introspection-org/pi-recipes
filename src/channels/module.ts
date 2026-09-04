@@ -1,6 +1,8 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import type { RecipeConnectorModule } from "../connector-tools.js";
+import { resolveChannelConfig } from "./config.js";
+import type { ChannelConfig } from "./config.js";
 import { ChannelRefStore } from "./refs.js";
 import {
   CHANNEL_TOOL_IDS,
@@ -39,6 +41,7 @@ export interface ChannelConnectorModuleOptions {
    * explicit read/send calls can still use the credential session.
    */
   createSession(options: {
+    config: ChannelConfig | null;
     env: NodeJS.ProcessEnv;
     cwd: string;
   }): ChannelConnectorSession;
@@ -100,6 +103,7 @@ export function createChannelConnectorModule(
       return (pi) => {
         if (!moduleOptions.tools.includes("channels")) return;
         const session = options.createSession({
+          config: resolveChannelConfig(moduleOptions.env ?? process.env),
           env: moduleOptions.env ?? process.env,
           cwd: moduleOptions.cwd ?? process.cwd(),
         });

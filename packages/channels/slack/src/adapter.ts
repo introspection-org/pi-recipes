@@ -1,22 +1,25 @@
-import type {
-  ChannelAdapter,
-  ChannelAdapterContext,
-  ChannelCapabilities,
-  ChannelListEntry,
-  ChannelLocalFile,
-  ChannelMessage,
-  ChannelPostResult,
-  ChannelReactionAction,
-  ChannelReadPage,
-  ChannelTarget,
-  FileRef,
-  MessageRef,
+import {
+  resolveChannelConfig,
+  type ChannelConfig,
+  type ChannelConnectorSession,
+  type ChannelEnvironment,
+  type ChannelAdapter,
+  type ChannelAdapterContext,
+  type ChannelCapabilities,
+  type ChannelListEntry,
+  type ChannelLocalFile,
+  type ChannelMessage,
+  type ChannelPostResult,
+  type ChannelReactionAction,
+  type ChannelReadPage,
+  type ChannelTarget,
+  type FileRef,
+  type MessageRef,
 } from "@introspection-ai/recipes/channels";
 
 import { SlackApiError, type SlackApiResult } from "./client.js";
 import { SlackFileSession } from "./files.js";
 import { markdownBlocks, toPlainText } from "./format.js";
-import { resolveSlackOrigin, type SlackEnv } from "./origin.js";
 
 /**
  * What Slack's Bot API supports through the channel tool contract.
@@ -499,26 +502,30 @@ function messagesFrom(payload: SlackApiResult): SlackHistoryMessage[] {
 }
 
 /** Resolve the bound conversation for a session, or explain why there is none. */
-export function slackChannelTarget(env: SlackEnv): ChannelTarget {
-  const origin = resolveSlackOrigin(env);
-  if (!origin) {
+export function slackChannelTarget(config: ChannelConfig | null): ChannelTarget {
+  if (!config || config.provider !== "slack") {
     throw new Error(
-      "No Slack origin is configured. Cloud tasks supply one automatically. For introspection local, set SLACK_CHANNEL_ID and optionally SLACK_THREAD_TS.",
+      "No Slack channel is configured. Use introspection dev and send a Slack event to the development runtime.",
     );
   }
   return {
     provider: "slack",
-    conversation: origin.channel,
-    thread: origin.thread_ts,
+    conversation: config.channel_ref,
+    thread: config.thread_ref,
   };
 }
 
 export function createSlackChannelSession(options: {
-  env?: SlackEnv;
+  config?: ChannelConfig | null;
+  env?: ChannelEnvironment;
   cwd?: string;
   session?: SlackFileSession;
-}): { adapter: SlackChannelAdapter; target: () => ChannelTarget } {
+} = {}): ChannelConnectorSession {
   const env = options.env ?? process.env;
+  const config =
+    options.config === undefined
+      ? resolveChannelConfig(env)
+      : options.config;
   const session =
     options.session ??
     new SlackFileSession({ env, cwd: options.cwd ?? process.cwd() });
@@ -526,6 +533,6 @@ export function createSlackChannelSession(options: {
     adapter: new SlackChannelAdapter(session),
     // Resolved per call: a Recipe that declares Slack can still run from an
     // automation trigger, where the tools error rather than the session.
-    target: () => slackChannelTarget(env),
+    target: () => slackChannelTarget(config),
   };
 }
