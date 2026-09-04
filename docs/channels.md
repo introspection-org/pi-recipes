@@ -15,14 +15,19 @@ conventional:
   adapter declares a capability descriptor, and registration filters on it.
   For example, an adapter with no history API has no `channel_read` tool.
 
-Before the first model call, the channel extension adds origin metadata to the
-system prompt. The metadata contains the provider, the conversation name and
-permalink when the adapter can resolve them, whether the origin is a thread,
-and the available tools, plus channel/thread IDs for navigation. It contains
-no messages. The injected guidance tells the agent to deliver its user-facing
-response with `channel_reply`, because a normal final assistant response is not
-delivered to the originating channel. `channel_read` remains the only way to
-fetch earlier messages when the provider supports it.
+Before each agent run, the channel extension attaches origin metadata as a
+separate, hidden `channel-context` custom message. Pi converts it to user-role
+model context without changing the user's message. It contains the provider,
+channel/thread IDs, conversation scope, and optional name/permalink, but no
+history or tool inventory. The system prompt contains only stable facts: display
+labels are untrusted metadata, and normal assistant output is not delivered to
+the channel. Recipe instructions decide when to reply, stay silent, read history,
+or send elsewhere; tool descriptions explain how. Tool discovery remains the
+responsibility of the tool-search extension.
+
+The context message is not an authorization boundary. Tools continue to resolve
+the origin from host state, never from message text, and validate explicit targets
+through the host's policy. Non-channel triggers receive no channel context.
 
 ## The tools
 
