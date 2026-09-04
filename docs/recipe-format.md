@@ -90,7 +90,7 @@ credential. A host binds those values when it starts a task.
 ```json
 {
   "dependencies": {
-    "@introspection-ai/recipe-channel-slack": "^0.1.0"
+    "@introspection-ai/recipe-channel-slack": "^0.2.0"
   },
   "pi": {
     "channels": [
@@ -117,8 +117,11 @@ Chat providers share one connector shape. A channel connector registers the
 provider-neutral `channels` tool with commands for supported operations. An
 optional `commands` array on the connector restricts these operations for all
 agents using it, for example `{"provider":"slack","commands":["read","reply"]}`.
-Omitting it allows supported commands; an empty list exposes no channel tool. See
-[Channel tools](channels.md).
+Omitting it allows supported commands; an empty list exposes no channel tool.
+`requireReply` is an optional boolean that defaults to `true` when channel tools
+are enabled. Incoming turns then require a successful final `reply`, so an
+enabled command allowlist must include `reply`. Set `requireReply: false` for
+intentional silence, such as a read-only allowlist. See [Channel tools](channels.md).
 
 ## Agents
 
