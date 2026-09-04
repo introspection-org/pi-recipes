@@ -196,7 +196,7 @@ export function registerChannelTools(
       target,
       // Cursor scope is applied centrally, including for third-party adapters.
       refs: {
-        message: (identity) => refs.message(identity),
+        message: (identity) => refs.message({ ...identity, thread: target.thread ?? identity.thread }),
         resolveMessage: (ref) => refs.resolveMessage(ref),
         resolveAuthored: (ref) => refs.resolveAuthored(ref),
         file: (identity) => refs.file({ ...identity, thread: target.thread }),

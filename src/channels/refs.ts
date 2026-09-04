@@ -37,7 +37,7 @@ export class ChannelRefStore implements ChannelRefResolver {
   private readonly byFileIdentity = new Map<string, FileRef>();
 
   message(identity: ChannelMessageIdentity): MessageRef {
-    const key = JSON.stringify([identity.conversation, identity.id]);
+    const key = JSON.stringify([identity.conversation, identity.thread ?? null, identity.id]);
     const existing = this.byIdentity.get(key);
     if (existing) {
       const previous = this.messages.get(existing)!;

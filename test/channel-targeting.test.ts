@@ -157,6 +157,30 @@ describe("explicit channel targets", () => {
     expect(adapter.retract).not.toHaveBeenCalled();
   });
 
+  it("captures explicit thread scope for adapter message identities that omit it", async () => {
+    let revoked = false;
+    const { call, adapter, refs } = setup({ validateTarget: (target) => {
+      if (revoked && target.thread === "2") throw new Error("thread revoked");
+    } });
+    adapter.send = vi.fn(async (ctx) => ({ ref: ctx.refs.message({ conversation: ctx.target.conversation, id: "sent", authoredByAgent: true }) }));
+    adapter.read = vi.fn(async (ctx) => ({ messages: [{ ref: ctx.refs.message({ conversation: ctx.target.conversation, id: "received" }), author: { id: "user" }, text: "hi" }] }));
+    const sent = await call("send", { channel_id: "B", thread_id: "2", text: "hi" });
+    const read = await call("read", { channel_id: "B", thread_id: "2" });
+    expect(refs.resolveMessage(sent.ref).thread).toBe("2");
+    expect(refs.resolveMessage(read.messages[0]!.ref).thread).toBe("2");
+    // Seeing the same provider IDs on the timeline must not widen old handles.
+    const timeline = await call("read", { channel_id: "B" });
+    await call("send", { channel_id: "B", text: "hi" });
+    revoked = true;
+    await expect(call("react", { message: read.messages[0]!.ref, emoji: "eyes" })).rejects.toThrow("thread revoked");
+    await expect(call("edit", { message: sent.ref, text: "updated" })).rejects.toThrow("thread revoked");
+    await expect(call("retract", { message: sent.ref })).rejects.toThrow("thread revoked");
+    expect(adapter.react).not.toHaveBeenCalled();
+    expect(adapter.edit).not.toHaveBeenCalled();
+    expect(adapter.retract).not.toHaveBeenCalled();
+    await call("react", { message: timeline.messages[0]!.ref, emoji: "eyes" });
+  });
+
   it("rejects blank targets before calling the provider", async () => {
     const { call, adapter } = setup();
     await expect(call("send", { channel_id: " ", text: "hi" })).rejects.toThrow("must not be empty");
