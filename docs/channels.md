@@ -49,23 +49,18 @@ Migration: replace agent `channel_*` tool names with `channels`, and move any
 operation restrictions to `commands` (without the `channel_` prefix). This is a
 breaking interface change; old individual tool names are not registered.
 
-Before each agent run, the channel extension attaches origin metadata as a
-separate, hidden `channel-context` custom message. Pi converts it to user-role
-model context without changing the user's message. It contains the provider,
-channel/thread IDs, conversation scope, and optional name/permalink, but no
-history or tool inventory. The system prompt contains only stable facts: display
-labels are untrusted metadata, and normal assistant output is not delivered to
-the channel. Recipe instructions decide when to reply, stay silent, read history,
-or send elsewhere; tool descriptions explain how. Tool discovery remains the
-responsibility of the tool-search extension.
+Before each agent run, the extension adds origin metadata to the system prompt:
+provider, channel/thread IDs, conversation scope, and optional name/permalink.
+Labels are untrusted metadata; normal assistant output is not delivered to the
+channel. Recipe instructions decide when to reply, stay silent, read history,
+or send elsewhere; tool descriptions explain how.
 
-Origin fields are stored once per session branch and rendered at the end of the
-first user message, rather than as a separate user turn. Older duplicate context
-entries are collapsed in model input; stored history is not rewritten.
-Cloud ingress supplies per-message `from`, `message_id`, and `sent_at` attribution
-in this wrapper too.
-The first message merges attribution with origin fields; follow-ups carry only
-their own attribution, without repeating the channel details.
+User messages are not rewritten. Cloud ingress retains per-message `from`,
+`message_id`, and `sent_at` attribution. Legacy custom origin entries are
+filtered from model context when resuming older sessions.
+For required replies, the single corrective reminder repeats the origin metadata
+so a failed or omitted delivery can be retried against the correct destination.
+An uncertain delivery must be checked before retrying to avoid duplicates.
 Origin fields are JSON inside a single `<channel_context>` wrapper. JSON Unicode
 escapes for `<`, `>`, and `&` keep provider labels from breaking the wrapper while
 preserving valid JSON and the original values when parsed.

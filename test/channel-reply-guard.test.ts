@@ -28,64 +28,18 @@ function setup(requireReply = true, origin = true) {
 }
 
 describe("required channel replies", () => {
-  it("merges first-turn attribution into the channel footer and preserves follow-up attribution", async () => {
+  it("keeps origin in the system prompt across runs without rewriting user attribution", async () => {
     const s = setup();
-    const [result] = await s.start() as Array<{ message: { content: string } }>;
-    const attribution = '\n\n<channel_context>\n{"from":"U1","message_id":"100.1","sent_at":"2026-09-04T07:23:21+00:00"}\n</channel_context>';
-    const followUp = 'next\n\n<channel_context>\n{"from":"U2","message_id":"100.2"}\n</channel_context>';
-    const messages = [
-      { role: "user", content: `hello${attribution}`, timestamp: 0 },
-      { role: "custom", customType: "channel-context", content: result!.message.content, display: false, timestamp: 0 },
-      { role: "user", content: followUp, timestamp: 1 },
-    ];
-    const [rendered] = await s.pi.emitExtensionEvent({ type: "context", messages } as never, {}) as Array<{ messages: any[] }>;
-    const first = rendered!.messages[0].content.map((part: { text: string }) => part.text).join("");
-    expect(first.match(/<channel_context>/g)).toHaveLength(1);
-    expect(JSON.parse(first.split("<channel_context>\n")[1]!.split("\n</channel_context>")[0]!)).toMatchObject({
-      provider: "test", channel_id: "C1", thread_id: "T1", from: "U1", message_id: "100.1", sent_at: "2026-09-04T07:23:21+00:00",
-    });
-    expect(rendered!.messages[0].content).toHaveLength(1);
-    expect(rendered!.messages[0].content[0].text).toContain("hello\n\n<channel_context>");
-    expect(rendered!.messages[1].content).toBe(followUp);
-    expect(messages[0]!.content).toBe(`hello${attribution}`);
-  });
-  it("renders one context footer on the first user message without mutating history", async () => {
-    const s = setup();
-    const [result] = await s.start() as Array<{ message: { content: string } }>;
-    const context = { role: "custom", customType: "channel-context", content: result!.message.content, display: false, timestamp: 0 };
-    const messages = [
-      { role: "user", content: "hello", timestamp: 0 }, context,
-      { role: "user", content: "follow up", timestamp: 1 }, { ...context },
-    ];
-    const [rendered] = await s.pi.emitExtensionEvent({ type: "context", messages } as never, {}) as Array<{ messages: any[] }>;
-    expect(rendered!.messages).toHaveLength(2);
-    expect(rendered!.messages[0].content).toHaveLength(1);
-    expect(rendered!.messages[0].content[0].text).toContain("hello\n\n<channel_context>");
-    expect(rendered!.messages[1].content).toBe("follow up");
-    expect(messages[0]!.content).toBe("hello");
-    const [resumed] = await s.pi.emitExtensionEvent({ type: "before_agent_start", prompt: "next", systemPrompt: "base", systemPromptOptions: { cwd: process.cwd() } }, {
-      sessionManager: { getBranch: () => [{ type: "custom_message", customType: "channel-context" }] },
-    }) as Array<{ message?: unknown }>;
-    expect(resumed!.message).toBeUndefined();
-  });
-  it("restores compacted origin context with the retained user's attribution", async () => {
-    const s = setup();
-    const [result] = await s.start() as Array<{ message: { content: string } }>;
-    const followUp = 'next\n\n<channel_context>\n{"from":"U2","message_id":"100.2"}\n</channel_context>';
-    const messages = [{ role: "user", content: followUp, timestamp: 1 }];
-    const [rendered] = await s.pi.emitExtensionEvent({ type: "context", messages } as never, {
-      sessionManager: { getBranch: () => [
-        { type: "custom_message", customType: "channel-context", content: result!.message.content },
-        { type: "compaction" },
-      ] },
-    }) as Array<{ messages: any[] }>;
-    const text = rendered!.messages[0].content[0].text;
-    expect(text.match(/<channel_context>/g)).toHaveLength(1);
-    expect(text).toContain('next\n\n<channel_context>');
-    expect(JSON.parse(text.split("<channel_context>\n")[1]!.split("\n</channel_context>")[0]!)).toMatchObject({
-      provider: "test", channel_id: "C1", thread_id: "T1", from: "U2", message_id: "100.2",
-    });
-    expect(messages[0]!.content).toBe(followUp);
+    const [first] = await s.start() as Array<{ systemPrompt: string; message?: unknown }>;
+    expect(first!.message).toBeUndefined();
+    expect(first!.systemPrompt).toContain('"channel_id":"C1","thread_id":"T1"');
+    const user = { role: "user", content: 'hello\n\n<channel_context>\n{"from":"U1","message_id":"100.1"}\n</channel_context>', timestamp: 0 };
+    const [result] = await s.pi.emitExtensionEvent({ type: "context", messages: [
+      user, { role: "custom", customType: "channel-context", content: "legacy", display: false, timestamp: 0 },
+    ] } as never, {}) as Array<{ messages: unknown[] }>;
+    expect(result!.messages).toEqual([user]);
+    const [resumed] = await s.start() as Array<{ systemPrompt: string }>;
+    expect(resumed!.systemPrompt).toBe(first!.systemPrompt);
   });
 
   it.each([
@@ -133,6 +87,7 @@ describe("required channel replies", () => {
     await s.start();
     await s.post(false);
     await s.end();
+    expect(s.pi.sentMessages[0]!.message.content).toContain('<channel_context>\n{"provider":"test","channel_id":"C1","thread_id":"T1","conversation_scope":"thread"}\n</channel_context>');
     await s.post();
     await s.end();
     expect(s.pi.sentMessages).toHaveLength(1);
