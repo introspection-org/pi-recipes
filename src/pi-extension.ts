@@ -97,18 +97,32 @@ interface AgentCallParams {
 
 /** Mid-turn completion delivery retries on this cadence until the session idles. */
 const COMPLETION_DELIVERY_RETRY_MS = 100;
+/** Published by the Runtime's proxy-preload.js (introspection-cloud managed-fetch.ts). */
 const MANAGED_FETCH_INSTALLER_SYMBOL = Symbol.for(
   "introspection.installManagedFetch"
 );
+const MANAGED_EGRESS_URL_ENV = "INTROSPECTION_EGRESS_URL";
 
-/** Recompose the Runtime's managed fetch over a host-installed fetch, if present. */
-function ensureManagedFetch(): void {
+/**
+ * Recompose the Runtime's managed fetch over the fetch Pi installs during its
+ * own bootstrap. Returns whether an installer was present.
+ */
+function ensureManagedFetch(): boolean {
   const install = Reflect.get(globalThis, MANAGED_FETCH_INSTALLER_SYMBOL);
-  if (install === undefined) return;
-  if (typeof install !== "function") {
-    throw new Error("Introspection managed fetch installer is invalid");
-  }
+  if (typeof install !== "function") return false;
   install();
+  return true;
+}
+
+/** Managed egress with no installer means provider requests bypass credential injection. */
+function managedFetchMissingWarning(
+  env: NodeJS.ProcessEnv
+): string | undefined {
+  if (!env[MANAGED_EGRESS_URL_ENV]) return undefined;
+  return (
+    `${MANAGED_EGRESS_URL_ENV} is set but the Runtime's managed fetch is not ` +
+    "installed; load proxy-preload.js through NODE_OPTIONS before starting pi"
+  );
 }
 
 interface ChildRun extends ChildRunSnapshot {
@@ -1402,7 +1416,10 @@ export function createRecipesExtension(
     pi.registerTool(agentTool);
 
     pi.on("session_start", async (_event, ctx) => {
-      ensureManagedFetch();
+      if (!ensureManagedFetch()) {
+        const warning = managedFetchMissingWarning(env);
+        if (warning !== undefined) ctx.ui.notify(warning, "warning");
+      }
       sessionCtx = ctx;
       localAgentContext = ctx;
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
