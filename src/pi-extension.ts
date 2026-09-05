@@ -97,6 +97,19 @@ interface AgentCallParams {
 
 /** Mid-turn completion delivery retries on this cadence until the session idles. */
 const COMPLETION_DELIVERY_RETRY_MS = 100;
+const MANAGED_FETCH_INSTALLER_SYMBOL = Symbol.for(
+  "introspection.installManagedFetch"
+);
+
+/** Recompose the Runtime's managed fetch over a host-installed fetch, if present. */
+function ensureManagedFetch(): void {
+  const install = Reflect.get(globalThis, MANAGED_FETCH_INSTALLER_SYMBOL);
+  if (install === undefined) return;
+  if (typeof install !== "function") {
+    throw new Error("Introspection managed fetch installer is invalid");
+  }
+  install();
+}
 
 interface ChildRun extends ChildRunSnapshot {
   runner: RecipeChildAgentRunner;
@@ -1307,6 +1320,7 @@ export function createRecipesExtension(
     });
 
     pi.on("before_provider_request", (event, ctx) => {
+      ensureManagedFetch();
       if (!state || !ctx.model) return undefined;
       return applyRecipeAgentPayloadPolicy(
         event.payload,
@@ -1388,6 +1402,7 @@ export function createRecipesExtension(
     pi.registerTool(agentTool);
 
     pi.on("session_start", async (_event, ctx) => {
+      ensureManagedFetch();
       sessionCtx = ctx;
       localAgentContext = ctx;
       const launchState = safeLoadState(pi, ctx.cwd, ctx);
